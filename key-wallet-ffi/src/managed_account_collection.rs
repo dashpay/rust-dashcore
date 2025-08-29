@@ -11,7 +11,7 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_account::FFIManagedAccount;
-use crate::types::FFINetwork;
+use crate::types::FFINetworks;
 use crate::wallet_manager::FFIWalletManager;
 
 /// Opaque handle to a managed account collection
@@ -90,7 +90,7 @@ pub struct FFIManagedAccountCollectionSummary {
 pub unsafe extern "C" fn managed_wallet_get_account_collection(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIManagedAccountCollection {
     if manager.is_null() || wallet_id.is_null() {
@@ -634,39 +634,38 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_owner_keys(
 }
 
 /// Get the provider operator keys account if it exists in managed collection
-/// Note: This function is only available when the `bls` feature is enabled
+/// Note: Returns null if the `bls` feature is not enabled
 ///
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
-#[cfg(feature = "bls")]
+/// - The returned pointer must be freed with `managed_account_free` when no longer needed (when BLS is enabled)
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
     collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
-    if collection.is_null() {
-        return ptr::null_mut();
-    }
-
-    let collection = &*collection;
-    match &collection.collection.provider_operator_keys {
-        Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
-            Box::into_raw(Box::new(ffi_account))
+) -> *mut std::os::raw::c_void {
+    #[cfg(feature = "bls")]
+    {
+        if collection.is_null() {
+            return ptr::null_mut();
         }
-        None => ptr::null_mut(),
-    }
-}
 
-/// Get the provider operator keys account if it exists (stub when BLS is disabled)
-#[cfg(not(feature = "bls"))]
-#[no_mangle]
-pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
-    _collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
-    // BLS feature not enabled, always return null
-    ptr::null_mut()
+        let collection = &*collection;
+        match &collection.collection.provider_operator_keys {
+            Some(account) => {
+                let ffi_account = FFIManagedAccount::new(account);
+                Box::into_raw(Box::new(ffi_account)) as *mut std::os::raw::c_void
+            }
+            None => ptr::null_mut(),
+        }
+    }
+
+    #[cfg(not(feature = "bls"))]
+    {
+        // BLS feature not enabled, always return null
+        let _ = collection; // Avoid unused parameter warning
+        ptr::null_mut()
+    }
 }
 
 /// Check if provider operator keys account exists in managed collection
@@ -695,40 +694,38 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_operator_keys(
 }
 
 /// Get the provider platform keys account if it exists in managed collection
-/// Note: This function is only available when the `eddsa` feature is enabled
+/// Note: Returns null if the `eddsa` feature is not enabled
 ///
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
-#[cfg(feature = "eddsa")]
+/// - The returned pointer must be freed with `managed_account_free` when no longer needed (when EdDSA is enabled)
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
     collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
-    if collection.is_null() {
-        return ptr::null_mut();
-    }
-
-    let collection = &*collection;
-    match &collection.collection.provider_platform_keys {
-        Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
-            Box::into_raw(Box::new(ffi_account))
+) -> *mut std::os::raw::c_void {
+    #[cfg(feature = "eddsa")]
+    {
+        if collection.is_null() {
+            return ptr::null_mut();
         }
-        None => ptr::null_mut(),
-    }
-}
 
-/// Get the provider platform keys account if it exists (stub when EdDSA is disabled)
-#[cfg(not(feature = "eddsa"))]
-#[no_mangle]
-pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
-    _collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
-    // EdDSA feature not enabled, always return null
-    ptr::null_mut()
+        let collection = &*collection;
+        match &collection.collection.provider_platform_keys {
+            Some(account) => {
+                let ffi_account = FFIManagedAccount::new(account);
+                Box::into_raw(Box::new(ffi_account)) as *mut std::os::raw::c_void
+            }
+            None => ptr::null_mut(),
+        }
+    }
+
+    #[cfg(not(feature = "eddsa"))]
+    {
+        // EdDSA feature not enabled, always return null
+        let _ = collection; // Avoid unused parameter warning
+        ptr::null_mut()
+    }
 }
 
 /// Check if provider platform keys account exists in managed collection

@@ -13,7 +13,7 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::{Mnemonic, Network, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet, FFIWalletAccountCreationOptions};
+use crate::types::{FFINetworks, FFIWallet, FFIWalletAccountCreationOptions};
 
 /// Create a new wallet from mnemonic with options
 ///
@@ -29,7 +29,7 @@ use crate::types::{FFINetwork, FFIWallet, FFIWalletAccountCreationOptions};
 pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    networks: FFINetwork,
+    networks: FFINetworks,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 pub unsafe extern "C" fn wallet_create_from_mnemonic(
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_from_mnemonic_with_options(
@@ -167,7 +167,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic(
 pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     seed: *const u8,
     seed_len: usize,
-    networks: FFINetwork,
+    networks: FFINetworks,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
 pub unsafe extern "C" fn wallet_create_from_seed(
     seed: *const u8,
     seed_len: usize,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_from_seed_with_options(
@@ -248,7 +248,7 @@ pub unsafe extern "C" fn wallet_create_from_seed(
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random_with_options(
-    networks: FFINetwork,
+    networks: FFINetworks,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -286,7 +286,7 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
 /// - The caller must ensure the pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random(
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_random_with_options(
@@ -382,7 +382,7 @@ pub unsafe extern "C" fn wallet_is_watch_only(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_xpub(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -482,7 +482,7 @@ pub unsafe extern "C" fn wallet_free_const(wallet: *const FFIWallet) {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
 ) -> crate::types::FFIAccountResult {
@@ -551,7 +551,7 @@ pub unsafe extern "C" fn wallet_add_account(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
     xpub_bytes: *const u8,
@@ -649,7 +649,7 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
     xpub_string: *const c_char,

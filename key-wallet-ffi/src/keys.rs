@@ -1,7 +1,7 @@
 //! Key derivation and management
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::{FFINetworks, FFIWallet};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
@@ -36,7 +36,7 @@ pub struct FFIExtendedPublicKey {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_xpriv(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn wallet_get_account_xpriv(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_xpub(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -153,7 +153,7 @@ pub unsafe extern "C" fn wallet_get_account_xpub(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_private_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIPrivateKey {
@@ -233,7 +233,7 @@ pub unsafe extern "C" fn wallet_derive_private_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_extended_private_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPrivateKey {
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn wallet_derive_extended_private_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_private_key_as_wif(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -427,7 +427,7 @@ pub unsafe extern "C" fn extended_private_key_free(key: *mut FFIExtendedPrivateK
 #[no_mangle]
 pub unsafe extern "C" fn extended_private_key_to_string(
     key: *const FFIExtendedPrivateKey,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut c_char {
     if key.is_null() {
@@ -503,7 +503,7 @@ pub unsafe extern "C" fn extended_private_key_get_private_key(
 #[no_mangle]
 pub unsafe extern "C" fn private_key_to_wif(
     key: *const FFIPrivateKey,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut c_char {
     if key.is_null() {
@@ -559,7 +559,7 @@ pub unsafe extern "C" fn private_key_to_wif(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_public_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIPublicKey {
@@ -641,7 +641,7 @@ pub unsafe extern "C" fn wallet_derive_public_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_extended_public_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPublicKey {
@@ -722,7 +722,7 @@ pub unsafe extern "C" fn wallet_derive_extended_public_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_public_key_as_hex(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -843,7 +843,7 @@ pub unsafe extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey
 #[no_mangle]
 pub unsafe extern "C" fn extended_public_key_to_string(
     key: *const FFIExtendedPublicKey,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut c_char {
     if key.is_null() {

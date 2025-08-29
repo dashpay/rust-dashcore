@@ -10,7 +10,7 @@ use std::ptr;
 use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::{FFINetworks, FFIWallet};
 use key_wallet::AccountType;
 
 /// Provider key type
@@ -58,7 +58,7 @@ pub struct FFIProviderKeyInfo {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_generate_provider_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     key_type: FFIProviderKeyType,
     key_index: c_uint,
     include_private: bool,
@@ -265,7 +265,7 @@ pub unsafe extern "C" fn provider_key_info_free(info: *mut FFIProviderKeyInfo) {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_sign_with_provider_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     key_type: FFIProviderKeyType,
     _key_index: c_uint,
     data: *const u8,

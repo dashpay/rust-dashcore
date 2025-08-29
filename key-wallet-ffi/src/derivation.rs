@@ -1,7 +1,7 @@
 //! BIP32 and DIP9 derivation path functions
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetwork;
+use crate::types::FFINetworks;
 use dash_network::Network;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
@@ -52,7 +52,7 @@ pub struct FFIExtendedPubKey {
 pub unsafe extern "C" fn derivation_new_master_key(
     seed: *const u8,
     seed_len: usize,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPrivKey {
     if seed.is_null() {
@@ -94,7 +94,7 @@ pub unsafe extern "C" fn derivation_new_master_key(
 /// Derive a BIP44 account path (m/44'/5'/account')
 #[no_mangle]
 pub extern "C" fn derivation_bip44_account_path(
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     path_out: *mut c_char,
     path_max_len: usize,
@@ -159,7 +159,7 @@ pub extern "C" fn derivation_bip44_account_path(
 /// Derive a BIP44 payment path (m/44'/5'/account'/change/index)
 #[no_mangle]
 pub extern "C" fn derivation_bip44_payment_path(
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     is_change: bool,
     address_index: c_uint,
@@ -227,7 +227,7 @@ pub extern "C" fn derivation_bip44_payment_path(
 /// Derive CoinJoin path (m/9'/5'/4'/account')
 #[no_mangle]
 pub extern "C" fn derivation_coinjoin_path(
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     path_out: *mut c_char,
     path_max_len: usize,
@@ -292,7 +292,7 @@ pub extern "C" fn derivation_coinjoin_path(
 /// Derive identity registration path (m/9'/5'/5'/1'/index')
 #[no_mangle]
 pub extern "C" fn derivation_identity_registration_path(
-    network: FFINetwork,
+    network: FFINetworks,
     identity_index: c_uint,
     path_out: *mut c_char,
     path_max_len: usize,
@@ -357,7 +357,7 @@ pub extern "C" fn derivation_identity_registration_path(
 /// Derive identity top-up path (m/9'/5'/5'/2'/identity_index'/top_up_index')
 #[no_mangle]
 pub extern "C" fn derivation_identity_topup_path(
-    network: FFINetwork,
+    network: FFINetworks,
     identity_index: c_uint,
     topup_index: c_uint,
     path_out: *mut c_char,
@@ -424,7 +424,7 @@ pub extern "C" fn derivation_identity_topup_path(
 /// Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index')
 #[no_mangle]
 pub extern "C" fn derivation_identity_authentication_path(
-    network: FFINetwork,
+    network: FFINetworks,
     identity_index: c_uint,
     key_index: c_uint,
     path_out: *mut c_char,
@@ -505,7 +505,7 @@ pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
     seed: *const u8,
     seed_len: usize,
     path: *const c_char,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPrivKey {
     if seed.is_null() || path.is_null() {
@@ -778,7 +778,7 @@ pub unsafe extern "C" fn derivation_string_free(s: *mut c_char) {
 pub unsafe extern "C" fn dip9_derive_identity_key(
     seed: *const u8,
     seed_len: usize,
-    network: FFINetwork,
+    network: FFINetworks,
     identity_index: c_uint,
     key_index: c_uint,
     key_type: FFIDerivationPathType,

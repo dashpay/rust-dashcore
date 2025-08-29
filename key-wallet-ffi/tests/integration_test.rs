@@ -3,7 +3,7 @@
 //! These tests verify the interaction between different FFI modules
 
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
-use key_wallet_ffi::types::FFINetwork;
+use key_wallet_ffi::types::FFINetworks;
 use std::ffi::CString;
 use std::ptr;
 
@@ -35,7 +35,7 @@ fn test_full_wallet_workflow() {
             manager,
             mnemonic,
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -62,7 +62,7 @@ fn test_full_wallet_workflow() {
         key_wallet_ffi::wallet_manager::wallet_manager_get_receive_address(
             manager,
             wallet_id,
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             error,
         )
@@ -73,7 +73,7 @@ fn test_full_wallet_workflow() {
         key_wallet_ffi::wallet_manager::wallet_manager_get_change_address(
             manager,
             wallet_id,
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             error,
         )
@@ -135,7 +135,7 @@ fn test_seed_to_wallet_workflow() {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             seed.as_ptr(),
             seed_len,
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -157,7 +157,7 @@ fn test_derivation_paths() {
 
     // Account path
     let success = key_wallet_ffi::derivation::derivation_bip44_account_path(
-        FFINetwork::Dash,
+        FFINetworks::Dash,
         0,
         path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
         path_buffer.len(),
@@ -175,7 +175,7 @@ fn test_derivation_paths() {
     // Payment path
     path_buffer.fill(0);
     let success = key_wallet_ffi::derivation::derivation_bip44_payment_path(
-        FFINetwork::Dash,
+        FFINetworks::Dash,
         0,
         false,
         5,
@@ -206,7 +206,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             invalid_mnemonic.as_ptr(),
             ptr::null(),
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -218,7 +218,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             ptr::null(),
             ptr::null(),
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -231,7 +231,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             invalid_seed.as_ptr(),
             invalid_seed.len(),
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };

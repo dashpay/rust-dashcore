@@ -9,7 +9,7 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::{FFINetworks, FFIWallet};
 use key_wallet::managed_account::address_pool::KeySource;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
@@ -50,7 +50,7 @@ impl FFIManagedWalletInfo {
 pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: std::os::raw::c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
 pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: std::os::raw::c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
 pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: std::os::raw::c_uint,
     start_index: std::os::raw::c_uint,
     end_index: std::os::raw::c_uint,
@@ -506,7 +506,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
 pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: std::os::raw::c_uint,
     start_index: std::os::raw::c_uint,
     end_index: std::os::raw::c_uint,
@@ -774,7 +774,7 @@ pub unsafe extern "C" fn managed_wallet_info_free(wallet_info: *mut FFIManagedWa
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::managed_wallet::*;
-    use crate::types::FFINetwork;
+    use crate::types::FFINetworks;
     use crate::wallet;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::{CStr, CString};
@@ -802,7 +802,7 @@ mod tests {
             managed_wallet_get_next_bip44_receive_address(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 &mut error,
             )
@@ -821,7 +821,7 @@ mod tests {
             managed_wallet_get_next_bip44_change_address(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 &mut error,
             )
@@ -842,7 +842,7 @@ mod tests {
             managed_wallet_get_bip_44_external_address_range(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 0,
                 10,
@@ -869,7 +869,7 @@ mod tests {
             managed_wallet_get_bip_44_internal_address_range(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 0,
                 10,
@@ -897,7 +897,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -914,7 +914,7 @@ mod tests {
             managed_wallet_get_next_bip44_receive_address(
                 &mut ffi_managed,
                 wallet,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 &mut error,
             )
@@ -941,7 +941,7 @@ mod tests {
             managed_wallet_get_next_bip44_change_address(
                 &mut ffi_managed,
                 wallet,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 &mut error,
             )
@@ -983,7 +983,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -1047,7 +1047,7 @@ mod tests {
             managed_wallet_get_next_bip44_receive_address(
                 &mut ffi_managed,
                 ffi_wallet_ptr,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 &mut error,
             )
@@ -1066,7 +1066,7 @@ mod tests {
             managed_wallet_get_next_bip44_change_address(
                 &mut ffi_managed,
                 ffi_wallet_ptr,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 &mut error,
             )
@@ -1088,7 +1088,7 @@ mod tests {
             managed_wallet_get_bip_44_external_address_range(
                 &mut ffi_managed,
                 ffi_wallet_ptr,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 0,
                 5,
@@ -1122,7 +1122,7 @@ mod tests {
             managed_wallet_get_bip_44_internal_address_range(
                 &mut ffi_managed,
                 ffi_wallet_ptr,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 0,
                 3,
@@ -1169,7 +1169,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -1259,7 +1259,7 @@ mod tests {
             managed_wallet_get_bip_44_external_address_range(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 0,
                 10,
@@ -1278,7 +1278,7 @@ mod tests {
             managed_wallet_get_bip_44_internal_address_range(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 0,
                 10,

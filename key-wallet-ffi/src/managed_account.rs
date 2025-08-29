@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountType, FFINetwork};
+use crate::types::{FFIAccountType, FFINetworks};
 use crate::wallet_manager::FFIWalletManager;
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::ManagedAccount;
@@ -86,7 +86,7 @@ impl FFIManagedAccountResult {
 pub unsafe extern "C" fn managed_wallet_get_account(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     account_type: FFIAccountType,
 ) -> FFIManagedAccountResult {
@@ -218,7 +218,7 @@ pub unsafe extern "C" fn managed_wallet_get_account(
 pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_index(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
+    network: FFINetworks,
     registration_index: c_uint,
 ) -> FFIManagedAccountResult {
     if manager.is_null() {
@@ -306,9 +306,9 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_get_network(
     account: *const FFIManagedAccount,
-) -> FFINetwork {
+) -> FFINetworks {
     if account.is_null() {
-        return FFINetwork::NoNetworks;
+        return FFINetworks::NoNetworks;
     }
 
     let account = &*account;
@@ -511,7 +511,7 @@ pub unsafe extern "C" fn managed_account_result_free_error(result: *mut FFIManag
 pub unsafe extern "C" fn managed_wallet_get_account_count(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> c_uint {
     if manager.is_null() || wallet_id.is_null() {
@@ -795,7 +795,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -820,7 +820,7 @@ mod tests {
             let result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -864,7 +864,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &options,
                 &mut error,
             );
@@ -887,7 +887,7 @@ mod tests {
             let mut result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 FFIAccountType::CoinJoin,
             );
@@ -944,7 +944,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &options,
                 &mut error,
             );
@@ -966,7 +966,7 @@ mod tests {
             let count = managed_wallet_get_account_count(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             );
 
@@ -998,7 +998,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1023,7 +1023,7 @@ mod tests {
             let result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1036,7 +1036,7 @@ mod tests {
 
             // Test get_network
             let network = managed_account_get_network(account);
-            assert_eq!(network, FFINetwork::Testnet);
+            assert_eq!(network, FFINetworks::Testnet);
 
             // Test get_account_type
             let mut index_out: c_uint = 999; // Initialize with unexpected value
@@ -1087,7 +1087,7 @@ mod tests {
         unsafe {
             // Test null account
             let network = managed_account_get_network(ptr::null());
-            assert_eq!(network, FFINetwork::NoNetworks);
+            assert_eq!(network, FFINetworks::NoNetworks);
 
             let mut index_out: c_uint = 0;
             let account_type = managed_account_get_account_type(ptr::null(), &mut index_out);
@@ -1119,7 +1119,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1141,7 +1141,7 @@ mod tests {
             let result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1176,7 +1176,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1201,7 +1201,7 @@ mod tests {
             let result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1271,7 +1271,7 @@ mod tests {
                 manager,
                 mnemonic2.as_ptr(),
                 passphrase2.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &options,
                 &mut error,
             );
@@ -1291,7 +1291,7 @@ mod tests {
             let cj_result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 FFIAccountType::CoinJoin,
             );

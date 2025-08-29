@@ -4,7 +4,7 @@
 #[allow(clippy::module_inception)]
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::FFINetwork;
+    use crate::types::FFINetworks;
     use crate::{wallet, wallet_manager};
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
@@ -54,7 +54,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet, // Create 3 accounts
+                FFINetworks::Testnet, // Create 3 accounts
                 error,
             )
         };
@@ -92,7 +92,7 @@ mod tests {
                     manager,
                     mnemonic.as_ptr(),
                     ptr::null(), // No passphrase
-                    FFINetwork::Testnet,
+                    FFINetworks::Testnet,
                     error,
                 );
                 if !success {
@@ -167,7 +167,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -193,7 +193,7 @@ mod tests {
             wallet_manager::wallet_manager_get_receive_address(
                 manager,
                 wallet_ids,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0, // account_index
                 error,
             )
@@ -209,7 +209,7 @@ mod tests {
             wallet_manager::wallet_manager_get_receive_address(
                 manager,
                 wallet_ids,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 error,
             )
@@ -249,7 +249,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -274,7 +274,7 @@ mod tests {
             wallet_manager::wallet_manager_get_change_address(
                 manager,
                 wallet_ids,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 error,
             )
@@ -305,7 +305,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -367,7 +367,7 @@ mod tests {
         let success = unsafe {
             wallet_manager::wallet_manager_get_monitored_addresses(
                 manager,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut addresses as *mut *mut *mut c_char,
                 &mut count,
                 error,
@@ -385,7 +385,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -412,7 +412,7 @@ mod tests {
                 let addr = wallet_manager::wallet_manager_get_receive_address(
                     manager,
                     wallet_ids,
-                    FFINetwork::Testnet,
+                    FFINetworks::Testnet,
                     0,
                     error,
                 );
@@ -426,7 +426,7 @@ mod tests {
         let success = unsafe {
             wallet_manager::wallet_manager_get_monitored_addresses(
                 manager,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut addresses as *mut *mut *mut c_char,
                 &mut count,
                 error,
@@ -463,7 +463,7 @@ mod tests {
 
         // Get initial height
         let height = unsafe {
-            wallet_manager::wallet_manager_current_height(manager, FFINetwork::Testnet, error)
+            wallet_manager::wallet_manager_current_height(manager, FFINetworks::Testnet, error)
         };
         assert_eq!(height, 0);
 
@@ -471,7 +471,7 @@ mod tests {
         let success = unsafe {
             wallet_manager::wallet_manager_update_height(
                 manager,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 100000,
                 error,
             )
@@ -480,7 +480,7 @@ mod tests {
 
         // Verify height was updated
         let height = unsafe {
-            wallet_manager::wallet_manager_current_height(manager, FFINetwork::Testnet, error)
+            wallet_manager::wallet_manager_current_height(manager, FFINetworks::Testnet, error)
         };
         assert_eq!(height, 100000);
 
@@ -510,7 +510,7 @@ mod tests {
                 manager,
                 invalid_mnemonic.as_ptr(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -544,8 +544,8 @@ mod tests {
                 let success = wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                     manager,
                     mnemonic.as_ptr(),
-                    ptr::null(),         // No passphrase
-                    FFINetwork::Testnet, // 2 accounts per wallet
+                    ptr::null(),          // No passphrase
+                    FFINetworks::Testnet, // 2 accounts per wallet
                     error,
                 );
                 assert!(success);
@@ -579,7 +579,7 @@ mod tests {
                 let addr = wallet_manager::wallet_manager_get_receive_address(
                     manager,
                     wallet_id,
-                    FFINetwork::Testnet,
+                    FFINetworks::Testnet,
                     0,
                     error,
                 );
@@ -616,7 +616,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet, // account_count
+                FFINetworks::Testnet, // account_count
                 error,
             )
         };
@@ -648,7 +648,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -703,7 +703,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -727,7 +727,7 @@ mod tests {
             wallet_manager::wallet_manager_get_change_address(
                 manager,
                 wallet_ids,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0, // address_index
                 error,
             )
@@ -767,7 +767,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -848,7 +848,7 @@ mod tests {
                 ptr::null_mut(),
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet, // account_count
+                FFINetworks::Testnet, // account_count
                 error,
             )
         };
@@ -873,7 +873,7 @@ mod tests {
 
         // Get initial height
         let _height = unsafe {
-            wallet_manager::wallet_manager_current_height(manager, FFINetwork::Testnet, error)
+            wallet_manager::wallet_manager_current_height(manager, FFINetworks::Testnet, error)
         };
 
         // Update height
@@ -881,7 +881,7 @@ mod tests {
         unsafe {
             wallet_manager::wallet_manager_update_height(
                 manager,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 new_height,
                 error,
             );
@@ -889,7 +889,7 @@ mod tests {
 
         // Get updated height
         let current_height = unsafe {
-            wallet_manager::wallet_manager_current_height(manager, FFINetwork::Testnet, error)
+            wallet_manager::wallet_manager_current_height(manager, FFINetworks::Testnet, error)
         };
         assert_eq!(current_height, new_height);
 
@@ -916,7 +916,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -1036,7 +1036,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -1072,7 +1072,7 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1089,7 +1089,7 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &block_context,
                 false,
                 error,
@@ -1110,7 +1110,7 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &chain_locked_context,
                 true,
                 error,
@@ -1125,7 +1125,7 @@ mod tests {
                 ptr::null_mut(),
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1140,7 +1140,7 @@ mod tests {
                 manager,
                 ptr::null(),
                 10,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1155,7 +1155,7 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 0,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1171,7 +1171,7 @@ mod tests {
                 manager,
                 invalid_tx.as_ptr(),
                 invalid_tx.len(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1203,7 +1203,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 error,
             )
         };
@@ -1318,7 +1318,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,           // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet
@@ -1360,7 +1360,7 @@ mod tests {
                 manager2,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 ptr::null(),
                 true,  // downgrade to pubkey wallet
@@ -1431,7 +1431,7 @@ mod tests {
                 manager4,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 ptr::null(),
                 true, // downgrade to pubkey wallet
@@ -1471,7 +1471,7 @@ mod tests {
                 manager5,
                 invalid_mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -1519,7 +1519,7 @@ mod tests {
                 manager1,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 100,         // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet

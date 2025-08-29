@@ -2,7 +2,7 @@
 //! These tests demonstrate current issues with passphrase handling in the FFI layer
 
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
-use key_wallet_ffi::types::FFINetwork;
+use key_wallet_ffi::types::FFINetworks;
 use std::ffi::{CStr, CString};
 
 #[test]
@@ -20,7 +20,7 @@ fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -69,7 +69,7 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet, // account_count (ignored)
+            FFINetworks::Testnet, // account_count (ignored)
             error,
         )
     };
@@ -99,7 +99,7 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
         key_wallet_ffi::wallet_manager::wallet_manager_get_receive_address(
             manager,
             wallet_ids_ptr, // First wallet ID
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0, // account_index
             error,
         )
@@ -146,7 +146,7 @@ fn test_ffi_wallet_with_passphrase_ideal_workflow() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -185,7 +185,7 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             mnemonic.as_ptr(),
             empty_passphrase.as_ptr(),
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -196,7 +196,7 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             mnemonic.as_ptr(),
             actual_passphrase.as_ptr(),
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -206,7 +206,7 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
     let count_no_pass = unsafe {
         key_wallet_ffi::account::wallet_get_account_count(
             wallet_no_pass,
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };
@@ -214,7 +214,7 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
     let count_with_pass = unsafe {
         key_wallet_ffi::account::wallet_get_account_count(
             wallet_with_pass,
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             error,
         )
     };

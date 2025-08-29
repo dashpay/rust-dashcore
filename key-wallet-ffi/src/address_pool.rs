@@ -8,7 +8,7 @@ use std::os::raw::{c_char, c_uint};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::transaction_checking::FFIManagedWallet;
-use crate::types::{FFIAccountType, FFINetwork, FFIWallet};
+use crate::types::{FFIAccountType, FFINetworks, FFIWallet};
 use crate::utils::rust_string_to_c;
 use key_wallet::account::ManagedAccountCollection;
 use key_wallet::managed_account::address_pool::{
@@ -246,7 +246,7 @@ pub struct FFIAddressPoolInfo {
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     managed_wallet: *const FFIManagedWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -376,7 +376,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     managed_wallet: *mut FFIManagedWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -496,7 +496,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
 pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     managed_wallet: *mut FFIManagedWallet,
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -671,7 +671,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_mark_address_used(
     managed_wallet: *mut FFIManagedWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     address: *const c_char,
     error: *mut FFIError,
 ) -> bool {
@@ -1105,7 +1105,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1130,7 +1130,7 @@ mod tests {
             let result = crate::managed_account::managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1206,7 +1206,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1231,7 +1231,7 @@ mod tests {
             let result = crate::managed_account::managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );

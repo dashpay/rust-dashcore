@@ -3,7 +3,7 @@
 mod transaction_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::FFINetwork;
+    use crate::types::FFINetworks;
     use crate::wallet;
     use std::ffi::CString;
     use std::ptr;
@@ -23,7 +23,7 @@ mod transaction_tests {
         let success = unsafe {
             wallet_build_transaction(
                 ptr::null_mut(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 &output,
                 1,
@@ -55,7 +55,7 @@ mod transaction_tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -66,7 +66,7 @@ mod transaction_tests {
         let success = unsafe {
             wallet_build_transaction(
                 wallet,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 ptr::null(),
                 0,
@@ -97,7 +97,7 @@ mod transaction_tests {
         let success = unsafe {
             wallet_sign_transaction(
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
                 &mut signed_tx_out,
@@ -122,7 +122,7 @@ mod transaction_tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -133,7 +133,7 @@ mod transaction_tests {
         let success = unsafe {
             wallet_sign_transaction(
                 wallet,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null(),
                 0,
                 &mut signed_tx_out,
@@ -171,7 +171,7 @@ mod transaction_tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -187,7 +187,7 @@ mod transaction_tests {
         let success = unsafe {
             wallet_build_transaction(
                 wallet,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 &output,
                 1,
@@ -221,7 +221,7 @@ mod transaction_tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -233,7 +233,7 @@ mod transaction_tests {
         let success = unsafe {
             wallet_sign_transaction(
                 wallet,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
                 &mut signed_tx_out,

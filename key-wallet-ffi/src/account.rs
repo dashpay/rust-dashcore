@@ -4,7 +4,7 @@ use std::os::raw::c_uint;
 use std::sync::Arc;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountResult, FFIAccountType, FFINetwork, FFIWallet};
+use crate::types::{FFIAccountResult, FFIAccountType, FFINetworks, FFIWallet};
 #[cfg(feature = "bls")]
 use key_wallet::account::BLSAccount;
 #[cfg(feature = "eddsa")]
@@ -81,7 +81,7 @@ impl FFIEdDSAAccount {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     account_type: FFIAccountType,
 ) -> FFIAccountResult {
@@ -126,7 +126,7 @@ pub unsafe extern "C" fn wallet_get_account(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_top_up_account_with_registration_index(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     registration_index: c_uint,
 ) -> FFIAccountResult {
     if wallet.is_null() {
@@ -262,9 +262,9 @@ pub unsafe extern "C" fn account_get_extended_public_key_as_string(
 /// - `account` must be a valid pointer to an FFIAccount instance
 /// - Returns FFINetwork::NoNetworks if the account is null
 #[no_mangle]
-pub unsafe extern "C" fn account_get_network(account: *const FFIAccount) -> FFINetwork {
+pub unsafe extern "C" fn account_get_network(account: *const FFIAccount) -> FFINetworks {
     if account.is_null() {
-        return FFINetwork::NoNetworks;
+        return FFINetworks::NoNetworks;
     }
 
     let account = &*account;
@@ -374,9 +374,9 @@ pub unsafe extern "C" fn bls_account_get_extended_public_key_as_string(
 /// - Returns FFINetwork::NoNetworks if the account is null
 #[cfg(feature = "bls")]
 #[no_mangle]
-pub unsafe extern "C" fn bls_account_get_network(account: *const FFIBLSAccount) -> FFINetwork {
+pub unsafe extern "C" fn bls_account_get_network(account: *const FFIBLSAccount) -> FFINetworks {
     if account.is_null() {
-        return FFINetwork::NoNetworks;
+        return FFINetworks::NoNetworks;
     }
 
     let account = &*account;
@@ -491,9 +491,9 @@ pub unsafe extern "C" fn eddsa_account_get_extended_public_key_as_string(
 /// - Returns FFINetwork::NoNetworks if the account is null
 #[cfg(feature = "eddsa")]
 #[no_mangle]
-pub unsafe extern "C" fn eddsa_account_get_network(account: *const FFIEdDSAAccount) -> FFINetwork {
+pub unsafe extern "C" fn eddsa_account_get_network(account: *const FFIEdDSAAccount) -> FFINetworks {
     if account.is_null() {
-        return FFINetwork::NoNetworks;
+        return FFINetworks::NoNetworks;
     }
 
     let account = &*account;
@@ -581,7 +581,7 @@ pub unsafe extern "C" fn eddsa_account_get_is_watch_only(account: *const FFIEdDS
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_count(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> c_uint {
     if wallet.is_null() {

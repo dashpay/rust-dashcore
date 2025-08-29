@@ -4,7 +4,7 @@ use std::os::raw::{c_char, c_uint};
 use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::{FFINetworks, FFIWallet};
 
 /// Transaction output for building
 #[repr(C)]
@@ -26,7 +26,7 @@ pub struct FFITxOutput {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_build_transaction(
     wallet: *mut FFIWallet,
-    _network: FFINetwork,
+    _network: FFINetworks,
     account_index: c_uint,
     outputs: *const FFITxOutput,
     outputs_count: usize,
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn wallet_build_transaction(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_sign_transaction(
     wallet: *const FFIWallet,
-    _network: FFINetwork,
+    _network: FFINetworks,
     tx_bytes: *const u8,
     tx_len: usize,
     signed_tx_out: *mut *mut u8,
@@ -136,7 +136,7 @@ pub struct FFITransactionCheckResult {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_check_transaction(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     tx_bytes: *const u8,
     tx_len: usize,
     context_type: FFITransactionContext,

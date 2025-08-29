@@ -9,7 +9,7 @@ use std::ptr;
 
 use crate::account::FFIAccount;
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::{FFINetworks, FFIWallet};
 
 /// Opaque handle to an account collection
 pub struct FFIAccountCollection {
@@ -83,7 +83,7 @@ pub struct FFIAccountCollectionSummary {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_collection(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIAccountCollection {
     if wallet.is_null() {
@@ -606,39 +606,38 @@ pub unsafe extern "C" fn account_collection_has_provider_owner_keys(
 }
 
 /// Get the provider operator keys account if it exists
-/// Note: This function is only available when the `bls` feature is enabled
+/// Note: Returns null if the `bls` feature is not enabled
 ///
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIAccountCollection
-/// - The returned pointer must be freed with `bls_account_free` when no longer needed
-#[cfg(feature = "bls")]
+/// - The returned pointer must be freed with `bls_account_free` when no longer needed (when BLS is enabled)
 #[no_mangle]
 pub unsafe extern "C" fn account_collection_get_provider_operator_keys(
     collection: *const FFIAccountCollection,
-) -> *mut crate::account::FFIBLSAccount {
-    if collection.is_null() {
-        return ptr::null_mut();
-    }
-
-    let collection = &*collection;
-    match &collection.collection.provider_operator_keys {
-        Some(account) => {
-            let ffi_account = crate::account::FFIBLSAccount::new(account);
-            Box::into_raw(Box::new(ffi_account))
-        }
-        None => ptr::null_mut(),
-    }
-}
-
-/// Get the provider operator keys account if it exists (stub when BLS is disabled)
-#[cfg(not(feature = "bls"))]
-#[no_mangle]
-pub unsafe extern "C" fn account_collection_get_provider_operator_keys(
-    _collection: *const FFIAccountCollection,
 ) -> *mut std::os::raw::c_void {
-    // BLS feature not enabled, always return null
-    ptr::null_mut()
+    #[cfg(feature = "bls")]
+    {
+        if collection.is_null() {
+            return ptr::null_mut();
+        }
+
+        let collection = &*collection;
+        match &collection.collection.provider_operator_keys {
+            Some(account) => {
+                let ffi_account = crate::account::FFIBLSAccount::new(account);
+                Box::into_raw(Box::new(ffi_account)) as *mut std::os::raw::c_void
+            }
+            None => ptr::null_mut(),
+        }
+    }
+
+    #[cfg(not(feature = "bls"))]
+    {
+        // BLS feature not enabled, always return null
+        let _ = collection; // Avoid unused parameter warning
+        ptr::null_mut()
+    }
 }
 
 /// Check if provider operator keys account exists
@@ -667,39 +666,38 @@ pub unsafe extern "C" fn account_collection_has_provider_operator_keys(
 }
 
 /// Get the provider platform keys account if it exists
-/// Note: This function is only available when the `eddsa` feature is enabled
+/// Note: Returns null if the `eddsa` feature is not enabled
 ///
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIAccountCollection
-/// - The returned pointer must be freed with `eddsa_account_free` when no longer needed
-#[cfg(feature = "eddsa")]
+/// - The returned pointer must be freed with `eddsa_account_free` when no longer needed (when EdDSA is enabled)
 #[no_mangle]
 pub unsafe extern "C" fn account_collection_get_provider_platform_keys(
     collection: *const FFIAccountCollection,
-) -> *mut crate::account::FFIEdDSAAccount {
-    if collection.is_null() {
-        return ptr::null_mut();
-    }
-
-    let collection = &*collection;
-    match &collection.collection.provider_platform_keys {
-        Some(account) => {
-            let ffi_account = crate::account::FFIEdDSAAccount::new(account);
-            Box::into_raw(Box::new(ffi_account))
-        }
-        None => ptr::null_mut(),
-    }
-}
-
-/// Get the provider platform keys account if it exists (stub when EdDSA is disabled)
-#[cfg(not(feature = "eddsa"))]
-#[no_mangle]
-pub unsafe extern "C" fn account_collection_get_provider_platform_keys(
-    _collection: *const FFIAccountCollection,
 ) -> *mut std::os::raw::c_void {
-    // EdDSA feature not enabled, always return null
-    ptr::null_mut()
+    #[cfg(feature = "eddsa")]
+    {
+        if collection.is_null() {
+            return ptr::null_mut();
+        }
+
+        let collection = &*collection;
+        match &collection.collection.provider_platform_keys {
+            Some(account) => {
+                let ffi_account = crate::account::FFIEdDSAAccount::new(account);
+                Box::into_raw(Box::new(ffi_account)) as *mut std::os::raw::c_void
+            }
+            None => ptr::null_mut(),
+        }
+    }
+
+    #[cfg(not(feature = "eddsa"))]
+    {
+        // EdDSA feature not enabled, always return null
+        let _ = collection; // Avoid unused parameter warning
+        ptr::null_mut()
+    }
 }
 
 /// Check if provider platform keys account exists
@@ -1100,7 +1098,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null(),
                 ptr::null_mut(),
             );
@@ -1109,7 +1107,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1158,7 +1156,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1167,7 +1165,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1179,7 +1177,9 @@ mod tests {
                 assert!(!operator_account.is_null());
 
                 // Free the BLS account
-                crate::account::bls_account_free(operator_account);
+                crate::account::bls_account_free(
+                    operator_account as *mut crate::account::FFIBLSAccount,
+                );
             }
 
             // Clean up
@@ -1206,7 +1206,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1215,7 +1215,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1227,7 +1227,9 @@ mod tests {
                 assert!(!platform_account.is_null());
 
                 // Free the EdDSA account
-                crate::account::eddsa_account_free(platform_account);
+                crate::account::eddsa_account_free(
+                    platform_account as *mut crate::account::FFIEdDSAAccount,
+                );
             }
 
             // Clean up
@@ -1278,7 +1280,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1287,7 +1289,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1334,7 +1336,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1343,7 +1345,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
 
@@ -1422,7 +1424,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1431,7 +1433,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1512,7 +1514,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1521,7 +1523,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
 
@@ -1586,7 +1588,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null(),
                 ptr::null_mut(),
             );
@@ -1595,7 +1597,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());

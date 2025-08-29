@@ -3,7 +3,7 @@
 mod tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::{FFIAccountType, FFINetwork};
+    use crate::types::{FFIAccountType, FFINetworks};
     use crate::wallet;
     use std::ffi::CString;
     use std::ptr;
@@ -11,7 +11,7 @@ mod tests {
     #[test]
     fn test_wallet_get_account_null_wallet() {
         let result = unsafe {
-            wallet_get_account(ptr::null(), FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
+            wallet_get_account(ptr::null(), FFINetworks::Testnet, 0, FFIAccountType::StandardBIP44)
         };
 
         assert!(result.account.is_null());
@@ -38,14 +38,14 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
 
         // Try to get the default account (should exist)
         let result = unsafe {
-            wallet_get_account(wallet, FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
+            wallet_get_account(wallet, FFINetworks::Testnet, 0, FFIAccountType::StandardBIP44)
         };
 
         // Note: Since the account may not exist yet (depends on wallet creation logic),
@@ -77,7 +77,7 @@ mod tests {
         let mut error = FFIError::success();
 
         let count =
-            unsafe { wallet_get_account_count(ptr::null(), FFINetwork::Testnet, &mut error) };
+            unsafe { wallet_get_account_count(ptr::null(), FFINetworks::Testnet, &mut error) };
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -95,12 +95,12 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
 
-        let count = unsafe { wallet_get_account_count(wallet, FFINetwork::Testnet, &mut error) };
+        let count = unsafe { wallet_get_account_count(wallet, FFINetworks::Testnet, &mut error) };
 
         // Should have at least one default account
         assert!(count >= 1);
@@ -124,7 +124,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -133,7 +133,7 @@ mod tests {
         let count = unsafe {
             wallet_get_account_count(
                 wallet,
-                FFINetwork::Dash, // Different network
+                FFINetworks::Dash, // Different network
                 &mut error,
             )
         };
@@ -176,7 +176,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -186,7 +186,7 @@ mod tests {
 
         // Get an account
         let result = unsafe {
-            wallet_get_account(wallet, FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
+            wallet_get_account(wallet, FFINetworks::Testnet, 0, FFIAccountType::StandardBIP44)
         };
 
         if !result.account.is_null() {
@@ -201,7 +201,7 @@ mod tests {
 
                 // Test get network
                 let network = account_get_network(result.account);
-                assert_eq!(network as u32, FFINetwork::Testnet as u32);
+                assert_eq!(network as u32, FFINetworks::Testnet as u32);
 
                 // Test get parent wallet id (may be null)
                 let _wallet_id = account_get_parent_wallet_id(result.account);
@@ -243,7 +243,7 @@ mod tests {
             assert!(xpub.is_null());
 
             let network = account_get_network(ptr::null());
-            assert_eq!(network as u32, FFINetwork::NoNetworks as u32);
+            assert_eq!(network as u32, FFINetworks::NoNetworks as u32);
 
             let wallet_id = account_get_parent_wallet_id(ptr::null());
             assert!(wallet_id.is_null());
