@@ -510,10 +510,9 @@ pub trait RpcApi: Sized {
 
     fn get_transaction_are_locked(
         &self,
-        tx_ids: &Vec<dashcore::Txid>,
+        tx_ids: &[dashcore::Txid],
     ) -> Result<Vec<Option<json::GetTransactionLockedResult>>> {
-        let transaction_ids_json =
-            tx_ids.iter().map(|tx_id| into_json(tx_id)).collect::<Result<Vec<Value>>>()?;
+        let transaction_ids_json = tx_ids.iter().map(into_json).collect::<Result<Vec<Value>>>()?;
         let args = [transaction_ids_json.into()];
         self.call("gettxchainlocks", &args)
     }
@@ -891,22 +890,22 @@ pub trait RpcApi: Sized {
     /// Attempts to add a node to the addnode list.
     /// Nodes added using addnode (or -connect) are protected from DoS disconnection and are not required to be full nodes/support SegWit as other outbound peers are (though such peers will not be synced from).
     fn add_node(&self, addr: &str) -> Result<()> {
-        self.call("addnode", &[into_json(&addr)?, into_json("add")?])
+        self.call("addnode", &[into_json(addr)?, into_json("add")?])
     }
 
     /// Attempts to remove a node from the addnode list.
     fn remove_node(&self, addr: &str) -> Result<()> {
-        self.call("addnode", &[into_json(&addr)?, into_json("remove")?])
+        self.call("addnode", &[into_json(addr)?, into_json("remove")?])
     }
 
     /// Attempts to connect to a node without permanently adding it to the addnode list.
     fn onetry_node(&self, addr: &str) -> Result<()> {
-        self.call("addnode", &[into_json(&addr)?, into_json("onetry")?])
+        self.call("addnode", &[into_json(addr)?, into_json("onetry")?])
     }
 
     /// Immediately disconnects from the specified peer node.
     fn disconnect_node(&self, addr: &str) -> Result<()> {
-        self.call("disconnectnode", &[into_json(&addr)?])
+        self.call("disconnectnode", &[into_json(addr)?])
     }
 
     fn disconnect_node_by_id(&self, node_id: u32) -> Result<()> {
@@ -916,7 +915,7 @@ pub trait RpcApi: Sized {
     /// Returns information about the given added node, or all added nodes (note that onetry addnodes are not listed here)
     fn get_added_node_info(&self, node: Option<&str>) -> Result<Vec<json::GetAddedNodeInfoResult>> {
         if let Some(addr) = node {
-            self.call("getaddednodeinfo", &[into_json(&addr)?])
+            self.call("getaddednodeinfo", &[into_json(addr)?])
         } else {
             self.call("getaddednodeinfo", &[])
         }
@@ -928,7 +927,7 @@ pub trait RpcApi: Sized {
         count: Option<usize>,
     ) -> Result<Vec<json::GetNodeAddressesResult>> {
         let cnt = count.unwrap_or(1);
-        self.call("getnodeaddresses", &[into_json(&cnt)?])
+        self.call("getnodeaddresses", &[into_json(cnt)?])
     }
 
     /// List all banned IPs/Subnets.
@@ -945,18 +944,18 @@ pub trait RpcApi: Sized {
     fn add_ban(&self, subnet: &str, bantime: u64, absolute: bool) -> Result<()> {
         self.call(
             "setban",
-            &[into_json(&subnet)?, into_json("add")?, into_json(&bantime)?, into_json(&absolute)?],
+            &[into_json(subnet)?, into_json("add")?, into_json(bantime)?, into_json(absolute)?],
         )
     }
 
     /// Attempts to remove an IP/Subnet from the banned list.
     fn remove_ban(&self, subnet: &str) -> Result<()> {
-        self.call("setban", &[into_json(&subnet)?, into_json("remove")?])
+        self.call("setban", &[into_json(subnet)?, into_json("remove")?])
     }
 
     /// Disable/enable all p2p network activity.
     fn set_network_active(&self, state: bool) -> Result<bool> {
-        self.call("setnetworkactive", &[into_json(&state)?])
+        self.call("setnetworkactive", &[into_json(state)?])
     }
 
     /// Returns data about each connected network node as an array of
@@ -1738,7 +1737,7 @@ mod tests {
     #[test]
     fn test_raw_tx() {
         use dashcore::consensus::encode;
-        let client = Client::new("http://localhost/".into(), Auth::None).unwrap();
+        let client = Client::new("http://localhost/", Auth::None).unwrap();
         let tx: Transaction = encode::deserialize(&Vec::<u8>::from_hex("0200000001586bd02815cf5faabfec986a4e50d25dbee089bd2758621e61c5fab06c334af0000000006b483045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c012103dae30a4d7870cd87b45dd53e6012f71318fdd059c1c2623b8cc73f8af287bb2dfeffffff021dc4260c010000001976a914f602e88b2b5901d8aab15ebe4a97cf92ec6e03b388ac00e1f505000000001976a914687ffeffe8cf4e4c038da46a9b1d37db385a472d88acfd211500").unwrap()).unwrap();
 
         assert!(client.send_raw_transaction(&tx).is_err());
