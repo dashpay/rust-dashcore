@@ -236,7 +236,7 @@ pub trait Hash:
 
 #[cfg(test)]
 mod tests {
-    use crate::{Hash, sha256d};
+    use crate::{sha256d, Hash};
 
     hash_newtype! {
         /// A test newtype

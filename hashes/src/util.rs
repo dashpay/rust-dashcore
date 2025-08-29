@@ -583,9 +583,9 @@ macro_rules! hash_newtype_known_attrs {
 
 #[cfg(feature = "schemars")]
 pub mod json_hex_string {
-    use schemars::JsonSchema;
-    use schemars::r#gen::SchemaGenerator;
+    use schemars::gen::SchemaGenerator;
     use schemars::schema::{Schema, SchemaObject};
+    use schemars::JsonSchema;
     macro_rules! define_custom_hex {
         ($name:ident, $len:expr) => {
             pub fn $name(generator: &mut SchemaGenerator) -> Schema {
@@ -607,7 +607,7 @@ pub mod json_hex_string {
 
 #[cfg(test)]
 mod test {
-    use crate::{Hash, sha256};
+    use crate::{sha256, Hash};
 
     #[test]
     fn hash_as_ref_array() {
