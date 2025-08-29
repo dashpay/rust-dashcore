@@ -7,7 +7,7 @@ use std::sync::Arc;
 /// FFI Network type (bit flags for multiple networks)
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FFINetwork {
+pub enum FFINetworks {
     NoNetworks = 0,
     Dash = 1,
     Testnet = 2,
@@ -16,11 +16,11 @@ pub enum FFINetwork {
     AllNetworks = 15, // Dash | Testnet | Regtest | Devnet
 }
 
-impl FFINetwork {
+impl FFINetworks {
     /// Parse bit flags into a vector of networks
     pub fn parse_networks(&self) -> Vec<Network> {
         // Handle special cases
-        if self == &FFINetwork::NoNetworks {
+        if self == &FFINetworks::NoNetworks {
             return vec![];
         }
 
@@ -28,16 +28,16 @@ impl FFINetwork {
 
         let mut networks = Vec::new();
 
-        if flags & (FFINetwork::Dash as c_uint) != 0 {
+        if flags & (FFINetworks::Dash as c_uint) != 0 {
             networks.push(Network::Dash);
         }
-        if flags & (FFINetwork::Testnet as c_uint) != 0 {
+        if flags & (FFINetworks::Testnet as c_uint) != 0 {
             networks.push(Network::Testnet);
         }
-        if flags & (FFINetwork::Regtest as c_uint) != 0 {
+        if flags & (FFINetworks::Regtest as c_uint) != 0 {
             networks.push(Network::Regtest);
         }
-        if flags & (FFINetwork::Devnet as c_uint) != 0 {
+        if flags & (FFINetworks::Devnet as c_uint) != 0 {
             networks.push(Network::Devnet);
         }
 
@@ -45,7 +45,7 @@ impl FFINetwork {
     }
 }
 
-impl FFINetwork {
+impl FFINetworks {
     /// Try to convert to a single Network
     /// Returns None if multiple networks are set or if NoNetworks is set
     pub fn try_into_single_network(&self) -> Option<Network> {
@@ -53,10 +53,10 @@ impl FFINetwork {
 
         // Check if it's a single network
         match flags {
-            x if x == FFINetwork::Dash as c_uint => Some(Network::Dash),
-            x if x == FFINetwork::Testnet as c_uint => Some(Network::Testnet),
-            x if x == FFINetwork::Regtest as c_uint => Some(Network::Regtest),
-            x if x == FFINetwork::Devnet as c_uint => Some(Network::Devnet),
+            x if x == FFINetworks::Dash as c_uint => Some(Network::Dash),
+            x if x == FFINetworks::Testnet as c_uint => Some(Network::Testnet),
+            x if x == FFINetworks::Regtest as c_uint => Some(Network::Regtest),
+            x if x == FFINetworks::Devnet as c_uint => Some(Network::Devnet),
             _ => None, // Multiple networks or NoNetworks
         }
     }
@@ -64,10 +64,10 @@ impl FFINetwork {
 
 use std::convert::TryFrom;
 
-impl TryFrom<FFINetwork> for Network {
+impl TryFrom<FFINetworks> for Network {
     type Error = &'static str;
 
-    fn try_from(value: FFINetwork) -> Result<Self, Self::Error> {
+    fn try_from(value: FFINetworks) -> Result<Self, Self::Error> {
         match value.try_into_single_network() {
             Some(network) => Ok(network),
             None => Err("FFINetwork must represent exactly one network"),
@@ -75,14 +75,14 @@ impl TryFrom<FFINetwork> for Network {
     }
 }
 
-impl From<Network> for FFINetwork {
+impl From<Network> for FFINetworks {
     fn from(n: Network) -> Self {
         match n {
-            Network::Dash => FFINetwork::Dash,
-            Network::Testnet => FFINetwork::Testnet,
-            Network::Regtest => FFINetwork::Regtest,
-            Network::Devnet => FFINetwork::Devnet,
-            _ => FFINetwork::Dash, // Default to Dash for unknown networks
+            Network::Dash => FFINetworks::Dash,
+            Network::Testnet => FFINetworks::Testnet,
+            Network::Regtest => FFINetworks::Regtest,
+            Network::Devnet => FFINetworks::Devnet,
+            _ => FFINetworks::Dash, // Default to Dash for unknown networks
         }
     }
 }

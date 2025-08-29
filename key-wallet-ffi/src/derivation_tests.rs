@@ -6,7 +6,7 @@ mod tests {
     use crate::derivation::*;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::mnemonic;
-    use crate::types::FFINetwork;
+    use crate::types::FFINetworks;
     use std::ffi::{CStr, CString};
     use std::ptr;
 
@@ -34,7 +34,7 @@ mod tests {
 
         // Create master key from seed
         let xprv = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         assert!(!xprv.is_null());
@@ -56,7 +56,7 @@ mod tests {
         }
 
         let xprv = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         // Get public key
@@ -84,7 +84,7 @@ mod tests {
         }
 
         let xprv = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         // Convert to string
@@ -114,7 +114,7 @@ mod tests {
         }
 
         let xprv = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         let xpub = unsafe { derivation_xpriv_to_xpub(xprv, &mut error) };
@@ -149,7 +149,7 @@ mod tests {
         }
 
         let xprv = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         let xpub = unsafe { derivation_xpriv_to_xpub(xprv, &mut error) };
@@ -179,7 +179,7 @@ mod tests {
         // Test BIP44 account path
         let mut account_path = vec![0u8; 256];
         let success = derivation_bip44_account_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             account_path.as_mut_ptr() as *mut i8,
             account_path.len(),
@@ -194,7 +194,7 @@ mod tests {
         // Test BIP44 payment path
         let mut payment_path = vec![0u8; 256];
         let success = derivation_bip44_payment_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,     // account_index
             false, // is_change
             0,     // address_index
@@ -216,7 +216,7 @@ mod tests {
         // Test CoinJoin path
         let mut coinjoin_path = vec![0u8; 256];
         let success = derivation_coinjoin_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0, // account_index
             coinjoin_path.as_mut_ptr() as *mut i8,
             coinjoin_path.len(),
@@ -227,7 +227,7 @@ mod tests {
         // Test identity registration path - takes 2 args: network and identity_index
         let mut id_reg_path = vec![0u8; 256];
         let success = derivation_identity_registration_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0, // identity_index
             id_reg_path.as_mut_ptr() as *mut i8,
             id_reg_path.len(),
@@ -238,7 +238,7 @@ mod tests {
         // Test identity topup path - takes 3 args: network, identity_index, topup_index
         let mut id_topup_path = vec![0u8; 256];
         let success = derivation_identity_topup_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0, // identity_index
             2, // topup_index
             id_topup_path.as_mut_ptr() as *mut i8,
@@ -250,7 +250,7 @@ mod tests {
         // Test identity authentication path - takes 3 args: network, identity_index, key_index
         let mut id_auth_path = vec![0u8; 256];
         let success = derivation_identity_authentication_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0, // identity_index
             3, // key_index
             id_auth_path.as_mut_ptr() as *mut i8,
@@ -279,7 +279,7 @@ mod tests {
                 seed.as_ptr(),
                 seed.len(),
                 path.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -307,7 +307,7 @@ mod tests {
             dip9_derive_identity_key(
                 seed.as_ptr(),
                 seed.len(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,                                               // identity index
                 0,                                               // key index
                 FFIDerivationPathType::PathBlockchainIdentities, // key_type
@@ -329,7 +329,7 @@ mod tests {
 
         // Test with null seed
         let xprv =
-            unsafe { derivation_new_master_key(ptr::null(), 64, FFINetwork::Testnet, &mut error) };
+            unsafe { derivation_new_master_key(ptr::null(), 64, FFINetworks::Testnet, &mut error) };
         assert!(xprv.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
@@ -348,7 +348,7 @@ mod tests {
         }
 
         let master_key = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         let xpub = unsafe { derivation_xpriv_to_xpub(master_key, &mut error) };
@@ -380,7 +380,7 @@ mod tests {
         }
 
         let master_key = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         let xpriv_string = unsafe { derivation_xpriv_to_string(master_key, &mut error) };
@@ -411,7 +411,7 @@ mod tests {
         }
 
         let master_key = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         let xpub = unsafe { derivation_xpriv_to_xpub(master_key, &mut error) };
@@ -440,7 +440,7 @@ mod tests {
         // Test identity registration path
         let mut buffer = vec![0u8; 256];
         let success = derivation_identity_registration_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0, // identity_index
             buffer.as_mut_ptr() as *mut i8,
             buffer.len(),
@@ -454,7 +454,7 @@ mod tests {
         // Test identity topup path
         let mut buffer = vec![0u8; 256];
         let success = derivation_identity_topup_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0, // identity_index
             0, // topup_index
             buffer.as_mut_ptr() as *mut i8,
@@ -469,7 +469,7 @@ mod tests {
         // Test identity authentication path
         let mut buffer = vec![0u8; 256];
         let success = derivation_identity_authentication_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0, // identity_index
             0, // key_index
             buffer.as_mut_ptr() as *mut i8,
@@ -502,7 +502,7 @@ mod tests {
 
         // Test with null seed
         let xprv =
-            unsafe { derivation_new_master_key(ptr::null(), 64, FFINetwork::Testnet, &mut error) };
+            unsafe { derivation_new_master_key(ptr::null(), 64, FFINetworks::Testnet, &mut error) };
         assert!(xprv.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
@@ -512,7 +512,7 @@ mod tests {
             derivation_new_master_key(
                 seed.as_ptr(),
                 seed.len(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null_mut(),
             )
         };
@@ -530,13 +530,13 @@ mod tests {
 
         // Test BIP44 account path with null buffer
         let success =
-            derivation_bip44_account_path(FFINetwork::Testnet, 0, ptr::null_mut(), 256, &mut error);
+            derivation_bip44_account_path(FFINetworks::Testnet, 0, ptr::null_mut(), 256, &mut error);
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test BIP44 payment path with null buffer
         let success = derivation_bip44_payment_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             false,
             0,
@@ -549,7 +549,7 @@ mod tests {
 
         // Test CoinJoin path with null buffer
         let success =
-            derivation_coinjoin_path(FFINetwork::Testnet, 0, ptr::null_mut(), 256, &mut error);
+            derivation_coinjoin_path(FFINetworks::Testnet, 0, ptr::null_mut(), 256, &mut error);
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
     }
@@ -561,7 +561,7 @@ mod tests {
         // Test with very small buffer (should fail)
         let mut small_buffer = [0i8; 5];
         let success = derivation_bip44_account_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             small_buffer.as_mut_ptr(),
             small_buffer.len(),
@@ -572,7 +572,7 @@ mod tests {
 
         // Test BIP44 payment path with small buffer
         let success = derivation_bip44_payment_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             false,
             0,
@@ -594,14 +594,14 @@ mod tests {
 
         // Test with Mainnet
         let xprv_main = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Dash, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Dash, &mut error)
         };
         assert!(!xprv_main.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Test with Testnet
         let xprv_test = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
         assert!(!xprv_test.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
@@ -680,7 +680,7 @@ mod tests {
         }
 
         let xprv = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
 
         let xpub = unsafe { derivation_xpriv_to_xpub(xprv, &mut error) };
@@ -710,7 +710,7 @@ mod tests {
                 ptr::null(),
                 64,
                 path.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -723,7 +723,7 @@ mod tests {
                 seed.as_ptr(),
                 seed.len(),
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -746,7 +746,7 @@ mod tests {
                 seed.as_ptr(),
                 seed.len(),
                 invalid_path.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };
@@ -768,7 +768,7 @@ mod tests {
             dip9_derive_identity_key(
                 ptr::null(),
                 64,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 0,
                 FFIDerivationPathType::PathBlockchainIdentities,
@@ -792,7 +792,7 @@ mod tests {
             dip9_derive_identity_key(
                 seed.as_ptr(),
                 seed.len(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 0,
                 0,
                 FFIDerivationPathType::PathBlockchainIdentities,
@@ -813,7 +813,7 @@ mod tests {
 
         // Test identity registration with null buffer
         let success = derivation_identity_registration_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             ptr::null_mut(),
             256,
@@ -824,7 +824,7 @@ mod tests {
 
         // Test identity topup with null buffer
         let success = derivation_identity_topup_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             0,
             ptr::null_mut(),
@@ -836,7 +836,7 @@ mod tests {
 
         // Test identity authentication with null buffer
         let success = derivation_identity_authentication_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             0,
             ptr::null_mut(),
@@ -854,7 +854,7 @@ mod tests {
 
         // Test identity registration with small buffer
         let success = derivation_identity_registration_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             small_buffer.as_mut_ptr(),
             small_buffer.len(),
@@ -865,7 +865,7 @@ mod tests {
 
         // Test identity topup with small buffer
         let success = derivation_identity_topup_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             0,
             small_buffer.as_mut_ptr(),
@@ -877,7 +877,7 @@ mod tests {
 
         // Test identity authentication with small buffer
         let success = derivation_identity_authentication_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             0,
             small_buffer.as_mut_ptr(),
@@ -896,7 +896,7 @@ mod tests {
 
         // Test BIP44 account path with different account indices
         let success1 = derivation_bip44_account_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,
             buffer1.as_mut_ptr() as *mut i8,
             buffer1.len(),
@@ -905,7 +905,7 @@ mod tests {
         assert!(success1);
 
         let success2 = derivation_bip44_account_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             5,
             buffer2.as_mut_ptr() as *mut i8,
             buffer2.len(),
@@ -928,7 +928,7 @@ mod tests {
         // Test receive address path
         let mut buffer = vec![0u8; 256];
         let success = derivation_bip44_payment_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,     // account_index
             false, // is_change (receive)
             5,     // address_index
@@ -943,7 +943,7 @@ mod tests {
         // Test change address path
         let mut buffer = vec![0u8; 256];
         let success = derivation_bip44_payment_path(
-            FFINetwork::Testnet,
+            FFINetworks::Testnet,
             0,    // account_index
             true, // is_change
             3,    // address_index
@@ -968,7 +968,7 @@ mod tests {
 
         // Create master key
         let master_xprv = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetworks::Testnet, &mut error)
         };
         assert!(!master_xprv.is_null());
 
@@ -990,7 +990,7 @@ mod tests {
                 seed.as_ptr(),
                 seed.len(),
                 path.as_ptr(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut error,
             )
         };

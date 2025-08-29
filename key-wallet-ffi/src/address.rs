@@ -8,7 +8,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uchar};
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetwork;
+use crate::types::FFINetworks;
 
 /// Free address string
 ///
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn address_array_free(addresses: *mut *mut c_char, count: 
 #[no_mangle]
 pub unsafe extern "C" fn address_validate(
     address: *const c_char,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> bool {
     if address.is_null() {
@@ -138,7 +138,7 @@ pub unsafe extern "C" fn address_validate(
 #[no_mangle]
 pub unsafe extern "C" fn address_get_type(
     address: *const c_char,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> c_uchar {
     if address.is_null() {

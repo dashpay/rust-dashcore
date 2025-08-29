@@ -11,7 +11,7 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_account::FFIManagedAccount;
-use crate::types::FFINetwork;
+use crate::types::FFINetworks;
 use crate::wallet_manager::FFIWalletManager;
 
 /// Opaque handle to a managed account collection
@@ -90,7 +90,7 @@ pub struct FFIManagedAccountCollectionSummary {
 pub unsafe extern "C" fn managed_wallet_get_account_collection(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIManagedAccountCollection {
     if manager.is_null() || wallet_id.is_null() {

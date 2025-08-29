@@ -14,7 +14,7 @@ use std::ptr;
 use std::sync::Mutex;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetwork;
+use crate::types::FFINetworks;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
 use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
@@ -52,7 +52,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
+    network: FFINetworks,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> bool {
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> bool {
     wallet_manager_add_wallet_from_mnemonic_with_options(
@@ -207,7 +207,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
+    network: FFINetworks,
     birth_height: c_uint,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     downgrade_to_pubkey_wallet: bool,
@@ -656,7 +656,7 @@ pub unsafe extern "C" fn wallet_manager_get_managed_wallet_info(
 pub unsafe extern "C" fn wallet_manager_get_receive_address(
     manager: *mut FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -749,7 +749,7 @@ pub unsafe extern "C" fn wallet_manager_get_receive_address(
 pub unsafe extern "C" fn wallet_manager_get_change_address(
     manager: *mut FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
+    network: FFINetworks,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -922,7 +922,7 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     manager: *mut FFIWalletManager,
     tx_bytes: *const u8,
     tx_len: usize,
-    network: FFINetwork,
+    network: FFINetworks,
     context: *const crate::types::FFITransactionContextDetails,
     update_state_if_found: bool,
     error: *mut FFIError,
@@ -1011,7 +1011,7 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_monitored_addresses(
     manager: *const FFIWalletManager,
-    network: FFINetwork,
+    network: FFINetworks,
     addresses_out: *mut *mut *mut c_char,
     count_out: *mut usize,
     error: *mut FFIError,
@@ -1108,7 +1108,7 @@ pub unsafe extern "C" fn wallet_manager_get_monitored_addresses(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_update_height(
     manager: *mut FFIWalletManager,
-    network: FFINetwork,
+    network: FFINetworks,
     height: c_uint,
     error: *mut FFIError,
 ) -> bool {
@@ -1157,7 +1157,7 @@ pub unsafe extern "C" fn wallet_manager_update_height(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_current_height(
     manager: *const FFIWalletManager,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> c_uint {
     if manager.is_null() {

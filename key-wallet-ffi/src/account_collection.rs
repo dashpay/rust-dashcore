@@ -9,7 +9,7 @@ use std::ptr;
 
 use crate::account::FFIAccount;
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::{FFINetworks, FFIWallet};
 
 /// Opaque handle to an account collection
 pub struct FFIAccountCollection {
@@ -83,7 +83,7 @@ pub struct FFIAccountCollectionSummary {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_collection(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut FFIAccountCollection {
     if wallet.is_null() {
@@ -1100,7 +1100,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null(),
                 ptr::null_mut(),
             );
@@ -1109,7 +1109,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1158,7 +1158,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1167,7 +1167,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1206,7 +1206,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1215,7 +1215,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1278,7 +1278,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1287,7 +1287,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1334,7 +1334,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1343,7 +1343,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
 
@@ -1422,7 +1422,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1431,7 +1431,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());
@@ -1512,7 +1512,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1521,7 +1521,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
 
@@ -1586,7 +1586,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null(),
                 ptr::null_mut(),
             );
@@ -1595,7 +1595,7 @@ mod tests {
             // Get account collection
             let collection = wallet_get_account_collection(
                 wallet,
-                crate::types::FFINetwork::Testnet,
+                crate::types::FFINetworks::Testnet,
                 ptr::null_mut(),
             );
             assert!(!collection.is_null());

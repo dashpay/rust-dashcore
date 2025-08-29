@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetwork;
+use crate::types::FFINetworks;
 
 /// Encrypt a private key with BIP38
 ///
@@ -19,7 +19,7 @@ use crate::types::FFINetwork;
 pub unsafe extern "C" fn bip38_encrypt_private_key(
     private_key: *const c_char,
     passphrase: *const c_char,
-    _network: FFINetwork,
+    _network: FFINetworks,
     error: *mut FFIError,
 ) -> *mut c_char {
     #[cfg(feature = "bip38")]

@@ -2,7 +2,7 @@
 mod utxo_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::FFINetwork;
+    use crate::types::FFINetworks;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::CStr;
     use std::ptr;
@@ -83,7 +83,7 @@ mod utxo_tests {
             #[allow(deprecated)]
             super::super::wallet_get_utxos(
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -106,7 +106,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 ptr::null(),
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -133,7 +133,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -256,7 +256,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -429,7 +429,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -547,7 +547,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -563,7 +563,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetwork::Dash,
+                FFINetworks::Dash,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -579,7 +579,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetwork::Regtest,
+                FFINetworks::Regtest,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -691,7 +691,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 ptr::null_mut(),
                 &mut count_out,
                 error,
@@ -705,7 +705,7 @@ mod utxo_tests {
         let result = unsafe {
             super::super::managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetwork::Testnet,
+                FFINetworks::Testnet,
                 &mut utxos_out,
                 ptr::null_mut(),
                 error,
