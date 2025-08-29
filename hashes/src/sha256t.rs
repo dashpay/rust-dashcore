@@ -20,7 +20,7 @@ use core::ops::Index;
 use core::slice::SliceIndex;
 use core::{cmp, str};
 
-use crate::{Error, sha256};
+use crate::{sha256, Error};
 
 type HashEngine = sha256::HashEngine;
 
