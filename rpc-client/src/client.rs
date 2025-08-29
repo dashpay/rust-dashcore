@@ -114,7 +114,7 @@ fn empty_obj() -> Value {
 ///
 /// Elements of `args` without corresponding `defaults` value, won't
 /// be substituted, because they are required.
-fn handle_defaults<'a, 'b>(args: &'a mut [Value], defaults: &'b [Value]) -> &'a [Value] {
+fn handle_defaults<'a>(args: &'a mut [Value], defaults: &[Value]) -> &'a [Value] {
     assert!(args.len() >= defaults.len());
 
     // Pass over the optional arguments in backwards order, filling in defaults after the first
@@ -158,25 +158,25 @@ pub trait RawTx: Sized + Clone {
     fn raw_hex(self) -> String;
 }
 
-impl<'a> RawTx for &'a Transaction {
+impl RawTx for &Transaction {
     fn raw_hex(self) -> String {
         hex::encode(consensus::encode::serialize(&self))
     }
 }
 
-impl<'a> RawTx for &'a [u8] {
+impl RawTx for &[u8] {
     fn raw_hex(self) -> String {
         self.to_lower_hex_string()
     }
 }
 
-impl<'a> RawTx for &'a Vec<u8> {
+impl RawTx for &Vec<u8> {
     fn raw_hex(self) -> String {
         self.to_lower_hex_string()
     }
 }
 
-impl<'a> RawTx for &'a str {
+impl RawTx for &str {
     fn raw_hex(self) -> String {
         self.to_owned()
     }
@@ -226,7 +226,7 @@ pub trait RpcApi: Sized {
         &self,
         id: &<T as queryable::Queryable<Self>>::Id,
     ) -> Result<T> {
-        T::query(&self, &id)
+        T::query(self, id)
     }
 
     fn get_network_info(&self) -> Result<json::GetNetworkInfoResult> {
@@ -324,7 +324,7 @@ pub trait RpcApi: Sized {
     }
 
     fn get_block_json(&self, hash: &BlockHash) -> Result<Value> {
-        Ok(self.call::<Value>("getblock", &[into_json(hash)?, 1.into()])?)
+        self.call::<Value>("getblock", &[into_json(hash)?, 1.into()])
     }
 
     fn get_block_hex(&self, hash: &BlockHash) -> Result<String> {
@@ -366,9 +366,9 @@ pub trait RpcApi: Sized {
         self.call(
             "getblocktemplate",
             &[into_json(Argument {
-                mode: mode,
-                rules: rules,
-                capabilities: capabilities,
+                mode,
+                rules,
+                capabilities,
             })?],
         )
     }
@@ -498,7 +498,7 @@ pub trait RpcApi: Sized {
     }
 
     fn get_balances(&self) -> Result<json::GetBalancesResult> {
-        Ok(self.call("getbalances", &[])?)
+        self.call("getbalances", &[])
     }
 
     fn get_received_by_address(&self, address: &Address, minconf: Option<u32>) -> Result<Amount> {
@@ -512,10 +512,8 @@ pub trait RpcApi: Sized {
         &self,
         tx_ids: &Vec<dashcore::Txid>,
     ) -> Result<Vec<Option<json::GetTransactionLockedResult>>> {
-        let transaction_ids_json = tx_ids
-            .into_iter()
-            .map(|tx_id| Ok(into_json(tx_id)?))
-            .collect::<Result<Vec<Value>>>()?;
+        let transaction_ids_json =
+            tx_ids.iter().map(|tx_id| into_json(tx_id)).collect::<Result<Vec<Value>>>()?;
         let args = [transaction_ids_json.into()];
         self.call("gettxchainlocks", &args)
     }
@@ -527,8 +525,8 @@ pub trait RpcApi: Sized {
         height: Option<u32>,
     ) -> Result<Vec<json::AssetUnlockStatusResult>> {
         let indices_json = indices
-            .into_iter()
-            .map(|index| Ok(into_json(index.to_string())?))
+            .iter()
+            .map(|index| into_json(index.to_string()))
             .collect::<Result<Vec<Value>>>()?;
         let args = [indices_json.into(), opt_into_json(height)?];
         self.call("getassetunlockstatuses", &args)
@@ -678,18 +676,14 @@ pub trait RpcApi: Sized {
 
     /// To unlock, use [unlock_unspent].
     fn lock_unspent(&self, outputs: &[OutPoint]) -> Result<bool> {
-        let outputs: Vec<_> = outputs
-            .into_iter()
-            .map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap())
-            .collect();
+        let outputs: Vec<_> =
+            outputs.iter().map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap()).collect();
         self.call("lockunspent", &[false.into(), outputs.into()])
     }
 
     fn unlock_unspent(&self, outputs: &[OutPoint]) -> Result<bool> {
-        let outputs: Vec<_> = outputs
-            .into_iter()
-            .map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap())
-            .collect();
+        let outputs: Vec<_> =
+            outputs.iter().map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap()).collect();
         self.call("lockunspent", &[true.into(), outputs.into()])
     }
 
@@ -1698,7 +1692,7 @@ impl RpcApi for Client {
     fn call<T: for<'a> serde::de::Deserialize<'a>>(&self, cmd: &str, args: &[Value]) -> Result<T> {
         let raw_args_json = serde_json::to_string(args)?;
         let raw_args = Some(serde_json::value::RawValue::from_string(raw_args_json)?);
-        let req = self.client.build_request(&cmd, raw_args.as_deref());
+        let req = self.client.build_request(cmd, raw_args.as_deref());
         if log_enabled!(Debug) {
             debug!(target: "dashcore_rpc", "JSON-RPC request: {} {}", cmd, serde_json::Value::from(args));
         }
