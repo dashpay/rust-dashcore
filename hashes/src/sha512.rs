@@ -273,7 +273,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test() {
-        use crate::{Hash, HashEngine, sha512};
+        use crate::{sha512, Hash, HashEngine};
 
         #[derive(Clone)]
         struct Test {
@@ -350,9 +350,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn sha512_serde() {
-        use serde_test::{Configure, Token, assert_tokens};
+        use serde_test::{assert_tokens, Configure, Token};
 
-        use crate::{Hash, sha512};
+        use crate::{sha512, Hash};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 64] = [

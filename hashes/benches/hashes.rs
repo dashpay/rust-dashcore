@@ -1,6 +1,6 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use dashcore_hashes::{Hash, HashEngine, hmac, siphash24};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use dashcore_hashes::{hash160, ripemd160, sha1, sha256, sha256d, sha512, sha512_256};
+use dashcore_hashes::{hmac, siphash24, Hash, HashEngine};
 
 fn bench_sha256(c: &mut Criterion) {
     let mut group = c.benchmark_group("sha256");

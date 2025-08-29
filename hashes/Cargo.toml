@@ -9,7 +9,7 @@ description = "Hash functions used by the rust-dash eccosystem"
 categories = ["algorithms"]
 keywords = [ "crypto", "dash", "hash", "digest" ]
 readme = "README.md"
-edition = "2024"
+edition = "2021"
 exclude = ["tests", "contrib"]
 
 [features]
