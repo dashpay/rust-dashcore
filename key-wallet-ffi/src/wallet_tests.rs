@@ -160,8 +160,9 @@ mod wallet_tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidMnemonic);
 
         // Test with null seed
-        let wallet =
-            unsafe { wallet::wallet_create_from_seed(ptr::null(), 64, FFINetworks::Testnet, error) };
+        let wallet = unsafe {
+            wallet::wallet_create_from_seed(ptr::null(), 64, FFINetworks::Testnet, error)
+        };
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
     }
@@ -225,8 +226,9 @@ mod wallet_tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null seed bytes
-        let wallet =
-            unsafe { wallet::wallet_create_from_seed(ptr::null(), 64, FFINetworks::Testnet, error) };
+        let wallet = unsafe {
+            wallet::wallet_create_from_seed(ptr::null(), 64, FFINetworks::Testnet, error)
+        };
 
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);

@@ -544,7 +544,7 @@ mod tests {
                 let success = wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                     manager,
                     mnemonic.as_ptr(),
-                    ptr::null(),         // No passphrase
+                    ptr::null(),          // No passphrase
                     FFINetworks::Testnet, // 2 accounts per wallet
                     error,
                 );

@@ -529,8 +529,13 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test BIP44 account path with null buffer
-        let success =
-            derivation_bip44_account_path(FFINetworks::Testnet, 0, ptr::null_mut(), 256, &mut error);
+        let success = derivation_bip44_account_path(
+            FFINetworks::Testnet,
+            0,
+            ptr::null_mut(),
+            256,
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 

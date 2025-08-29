@@ -1283,21 +1283,16 @@ FFIAccount *account_collection_get_identity_topup_not_bound(const FFIAccountColl
 
 /*
  Get the provider operator keys account if it exists
- Note: This function is only available when the `bls` feature is enabled
+ Note: Returns null if the `bls` feature is not enabled
 
  # Safety
 
  - `collection` must be a valid pointer to an FFIAccountCollection
- - The returned pointer must be freed with `bls_account_free` when no longer needed
+ - The returned pointer must be freed with `bls_account_free` when no longer needed (when BLS is enabled)
  */
 
-FFIBLSAccount *account_collection_get_provider_operator_keys(const FFIAccountCollection *collection)
+void *account_collection_get_provider_operator_keys(const FFIAccountCollection *collection)
 ;
-
-/*
- Get the provider operator keys account if it exists (stub when BLS is disabled)
- */
- void *account_collection_get_provider_operator_keys(const FFIAccountCollection *_collection) ;
 
 /*
  Check if provider operator keys account exists
@@ -1310,21 +1305,16 @@ FFIBLSAccount *account_collection_get_provider_operator_keys(const FFIAccountCol
 
 /*
  Get the provider platform keys account if it exists
- Note: This function is only available when the `eddsa` feature is enabled
+ Note: Returns null if the `eddsa` feature is not enabled
 
  # Safety
 
  - `collection` must be a valid pointer to an FFIAccountCollection
- - The returned pointer must be freed with `eddsa_account_free` when no longer needed
+ - The returned pointer must be freed with `eddsa_account_free` when no longer needed (when EdDSA is enabled)
  */
 
-FFIEdDSAAccount *account_collection_get_provider_platform_keys(const FFIAccountCollection *collection)
+void *account_collection_get_provider_platform_keys(const FFIAccountCollection *collection)
 ;
-
-/*
- Get the provider platform keys account if it exists (stub when EdDSA is disabled)
- */
- void *account_collection_get_provider_platform_keys(const FFIAccountCollection *_collection) ;
 
 /*
  Check if provider platform keys account exists
@@ -2598,22 +2588,15 @@ bool managed_account_collection_has_provider_owner_keys(const FFIManagedAccountC
 
 /*
  Get the provider operator keys account if it exists in managed collection
- Note: This function is only available when the `bls` feature is enabled
+ Note: Returns null if the `bls` feature is not enabled
 
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - The returned pointer must be freed with `managed_account_free` when no longer needed (when BLS is enabled)
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *collection)
-;
-
-/*
- Get the provider operator keys account if it exists (stub when BLS is disabled)
- */
-
-FFIManagedAccount *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *_collection)
+void *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *collection)
 ;
 
 /*
@@ -2629,23 +2612,15 @@ bool managed_account_collection_has_provider_operator_keys(const FFIManagedAccou
 
 /*
  Get the provider platform keys account if it exists in managed collection
- Note: This function is only available when the `eddsa` feature is enabled
+ Note: Returns null if the `eddsa` feature is not enabled
 
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - The returned pointer must be freed with `managed_account_free` when no longer needed (when EdDSA is enabled)
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *collection)
-;
-
-/*
- Get the provider platform keys account if it exists (stub when EdDSA is disabled)
- */
-
-FFIManagedAccount *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *_collection)
+void *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *collection)
 ;
 
 /*

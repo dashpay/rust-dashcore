@@ -15,7 +15,8 @@ mod address_tests {
 
         // Test valid testnet address (generated from test mnemonic)
         let valid_addr = CString::new("yRd4FhXfVGHXpsuZXPNkMrfD9GVj46pnjt").unwrap();
-        let is_valid = unsafe { address_validate(valid_addr.as_ptr(), FFINetworks::Testnet, error) };
+        let is_valid =
+            unsafe { address_validate(valid_addr.as_ptr(), FFINetworks::Testnet, error) };
         assert!(is_valid);
 
         // Test invalid address
@@ -174,7 +175,8 @@ mod address_tests {
         unsafe {
             for invalid_addr in invalid_addresses.iter() {
                 let addr_str = CString::new(*invalid_addr).unwrap();
-                let is_valid = address_validate(addr_str.as_ptr(), FFINetworks::Testnet, &mut error);
+                let is_valid =
+                    address_validate(addr_str.as_ptr(), FFINetworks::Testnet, &mut error);
                 assert!(!is_valid);
             }
         }
