@@ -1294,10 +1294,6 @@ FFIAccount *account_collection_get_identity_topup_not_bound(const FFIAccountColl
 FFIBLSAccount *account_collection_get_provider_operator_keys(const FFIAccountCollection *collection)
 ;
 
-/*
- Get the provider operator keys account if it exists (stub when BLS is disabled)
- */
- void *account_collection_get_provider_operator_keys(const FFIAccountCollection *_collection) ;
 
 /*
  Check if provider operator keys account exists
@@ -1321,10 +1317,6 @@ FFIBLSAccount *account_collection_get_provider_operator_keys(const FFIAccountCol
 FFIEdDSAAccount *account_collection_get_provider_platform_keys(const FFIAccountCollection *collection)
 ;
 
-/*
- Get the provider platform keys account if it exists (stub when EdDSA is disabled)
- */
- void *account_collection_get_provider_platform_keys(const FFIAccountCollection *_collection) ;
 
 /*
  Check if provider platform keys account exists

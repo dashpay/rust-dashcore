@@ -1438,7 +1438,7 @@ mod tests {
             .is_err()
         );
 
-        let rand_io_err = Error::Io(io::Error::new(io::ErrorKind::Other, ""));
+        let rand_io_err = Error::Io(io::Error::other(""));
 
         // Check serialization that `if len > MAX_VEC_SIZE {return err}` isn't inclusive,
         // by making sure it fails with IO Error and not an `OversizedVectorAllocation` Error.
@@ -1466,7 +1466,7 @@ mod tests {
         Vec<T>: Decodable,
         T: fmt::Debug,
     {
-        let rand_io_err = Error::Io(io::Error::new(io::ErrorKind::Other, ""));
+        let rand_io_err = Error::Io(io::Error::other(""));
         let varint = VarInt((super::MAX_VEC_SIZE / mem::size_of::<T>()) as u64);
         let err = deserialize::<Vec<T>>(&serialize(&varint)).unwrap_err();
         assert_eq!(discriminant(&err), discriminant(&rand_io_err));
@@ -1617,7 +1617,7 @@ mod tests {
                 // Expect the write to succeed
                 let bytes_written = result.expect("Failed to write");
                 // Calculate expected bytes written
-                let expected_bytes = (size + 7) / 8;
+                let expected_bytes = size.div_ceil(8);
                 assert_eq!(
                     bytes_written, expected_bytes,
                     "Incorrect number of bytes written for bitset with size {}",
