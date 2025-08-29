@@ -423,7 +423,7 @@ typedef struct {
  FFI wrapper for ManagedWalletInfo that includes transaction checking capabilities
  */
 typedef struct {
-    ManagedWalletInfo *inner;
+    FFIManagedWalletInfo *inner;
 
 } FFIManagedWallet;
 
