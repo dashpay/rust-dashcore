@@ -9,6 +9,7 @@ use key_wallet_ffi::wallet_manager::{
     wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
     wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
 };
+use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
 
@@ -33,7 +34,7 @@ fn test_managed_account_collection_basic() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             ptr::null(), // Use default options
             &mut error,
         );
@@ -54,7 +55,7 @@ fn test_managed_account_collection_basic() {
         let collection = managed_wallet_get_account_collection(
             manager,
             wallet_ids_out,
-            FFINetworks::Testnet,
+            FFINetwork::Testnet,
             &mut error,
         );
         assert!(!collection.is_null());
@@ -138,7 +139,7 @@ fn test_managed_account_collection_with_special_accounts() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             &options,
             &mut error,
         );
@@ -157,7 +158,7 @@ fn test_managed_account_collection_with_special_accounts() {
         let collection = managed_wallet_get_account_collection(
             manager,
             wallet_ids_out,
-            FFINetworks::Testnet,
+            FFINetwork::Testnet,
             &mut error,
         );
         assert!(!collection.is_null());
@@ -263,7 +264,7 @@ fn test_managed_account_collection_summary() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             &options,
             &mut error,
         );
@@ -282,7 +283,7 @@ fn test_managed_account_collection_summary() {
         let collection = managed_wallet_get_account_collection(
             manager,
             wallet_ids_out,
-            FFINetworks::Testnet,
+            FFINetwork::Testnet,
             &mut error,
         );
         assert!(!collection.is_null());
@@ -357,7 +358,7 @@ fn test_managed_account_collection_summary_data() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             &options,
             &mut error,
         );
@@ -376,7 +377,7 @@ fn test_managed_account_collection_summary_data() {
         let collection = managed_wallet_get_account_collection(
             manager,
             wallet_ids_out,
-            FFINetworks::Testnet,
+            FFINetwork::Testnet,
             &mut error,
         );
         assert!(!collection.is_null());
@@ -427,7 +428,7 @@ fn test_managed_account_collection_null_safety() {
         let collection = managed_wallet_get_account_collection(
             ptr::null(),
             ptr::null(),
-            FFINetworks::Testnet,
+            FFINetwork::Testnet,
             &mut error,
         );
         assert!(collection.is_null());
@@ -463,7 +464,7 @@ fn test_managed_account_collection_nonexistent_accounts() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             ptr::null(), // Default options
             &mut error,
         );
@@ -482,7 +483,7 @@ fn test_managed_account_collection_nonexistent_accounts() {
         let collection = managed_wallet_get_account_collection(
             manager,
             wallet_ids_out,
-            FFINetworks::Testnet,
+            FFINetwork::Testnet,
             &mut error,
         );
         assert!(!collection.is_null());
@@ -524,7 +525,7 @@ fn test_managed_account_collection_wrong_network() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             ptr::null(),
             &mut error,
         );
@@ -543,7 +544,7 @@ fn test_managed_account_collection_wrong_network() {
         let collection = managed_wallet_get_account_collection(
             manager,
             wallet_ids_out,
-            FFINetworks::Dash, // Wrong network (mainnet)
+            FFINetwork::Dash, // Wrong network (mainnet)
             &mut error,
         );
 

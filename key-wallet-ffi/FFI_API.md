@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 226
+**Total Functions**: 227
 
 ## Table of Contents
 
@@ -295,7 +295,7 @@ Functions: 6
 
 ### Utility Functions
 
-Functions: 17
+Functions: 18
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -313,6 +313,7 @@ Functions: 17
 | `derivation_xpub_fingerprint` | Get fingerprint from extended public key (4 bytes)  # Safety  - `xpub` must b... | derivation |
 | `derivation_xpub_free` | Free extended public key  # Safety  - `xpub` must be a valid pointer to an FF... | derivation |
 | `derivation_xpub_to_string` | Get extended public key as string  # Safety  - `xpub` must be a valid pointer... | derivation |
+| `ffi_network_get_name` | No description | types |
 | `free_u32_array` | Free a u32 array allocated by this library  # Safety  - `array` must be a val... | account_collection |
 | `script_p2pkh` | Create a P2PKH script pubkey  # Safety - `pubkey_hash` must be a valid pointe... | transaction |
 | `string_free` | Free a string  # Safety  - `s` must be a valid pointer created by C string cr... | utils |
@@ -867,7 +868,7 @@ Generate addresses up to a specific index in a pool  This ensures that addresses
 #### `managed_wallet_get_account`
 
 ```c
-managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetworks, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedAccountResult
+managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedAccountResult
 ```
 
 **Description:**
@@ -883,7 +884,7 @@ Get a managed account from a managed wallet  This function gets a ManagedAccount
 #### `managed_wallet_get_account_collection`
 
 ```c
-managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetworks, error: *mut FFIError,) -> *mut FFIManagedAccountCollection
+managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, error: *mut FFIError,) -> *mut FFIManagedAccountCollection
 ```
 
 **Description:**
@@ -899,7 +900,7 @@ Get managed account collection for a specific network from wallet manager  # Saf
 #### `managed_wallet_get_account_count`
 
 ```c
-managed_wallet_get_account_count(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetworks, error: *mut FFIError,) -> c_uint
+managed_wallet_get_account_count(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, error: *mut FFIError,) -> c_uint
 ```
 
 **Description:**
@@ -1011,7 +1012,7 @@ Get the next unused receive address  Generates the next unused receive address f
 #### `managed_wallet_get_top_up_account_with_registration_index`
 
 ```c
-managed_wallet_get_top_up_account_with_registration_index(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetworks, registration_index: c_uint,) -> FFIManagedAccountResult
+managed_wallet_get_top_up_account_with_registration_index(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, registration_index: c_uint,) -> FFIManagedAccountResult
 ```
 
 **Description:**
@@ -1027,7 +1028,7 @@ Get a managed IdentityTopUp account with a specific registration index  This is 
 #### `managed_wallet_get_utxos`
 
 ```c
-managed_wallet_get_utxos(managed_info: *const FFIManagedWalletInfo, network: FFINetworks, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
+managed_wallet_get_utxos(managed_info: *const FFIManagedWalletInfo, network: FFINetwork, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1427,7 +1428,7 @@ Generate a provider key at a specific index  This generates a provider key (BLS 
 #### `wallet_get_account`
 
 ```c
-wallet_get_account(wallet: *const FFIWallet, network: FFINetworks, account_index: c_uint, account_type: FFIAccountType,) -> FFIAccountResult
+wallet_get_account(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, account_type: FFIAccountType,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -1443,7 +1444,7 @@ Get an account handle for a specific account type Returns a result containing ei
 #### `wallet_get_account_collection`
 
 ```c
-wallet_get_account_collection(wallet: *const FFIWallet, network: FFINetworks, error: *mut FFIError,) -> *mut FFIAccountCollection
+wallet_get_account_collection(wallet: *const FFIWallet, network: FFINetwork, error: *mut FFIError,) -> *mut FFIAccountCollection
 ```
 
 **Description:**
@@ -1459,7 +1460,7 @@ Get account collection for a specific network from wallet  # Safety  - `wallet` 
 #### `wallet_get_account_count`
 
 ```c
-wallet_get_account_count(wallet: *const FFIWallet, network: FFINetworks, error: *mut FFIError,) -> c_uint
+wallet_get_account_count(wallet: *const FFIWallet, network: FFINetwork, error: *mut FFIError,) -> c_uint
 ```
 
 **Description:**
@@ -1523,7 +1524,7 @@ Get wallet ID (32-byte hash)  # Safety  - `wallet` must be a valid pointer to an
 #### `wallet_get_top_up_account_with_registration_index`
 
 ```c
-wallet_get_top_up_account_with_registration_index(wallet: *const FFIWallet, network: FFINetworks, registration_index: c_uint,) -> FFIAccountResult
+wallet_get_top_up_account_with_registration_index(wallet: *const FFIWallet, network: FFINetwork, registration_index: c_uint,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -2183,7 +2184,7 @@ bls_account_get_network(account: *const FFIBLSAccount) -> FFINetworks
 #### `derivation_bip44_account_path`
 
 ```c
-derivation_bip44_account_path(network: FFINetworks, account_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
+derivation_bip44_account_path(network: FFINetwork, account_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -2888,7 +2889,7 @@ Free address string  # Safety  - `address` must be a valid pointer created by ad
 #### `address_get_type`
 
 ```c
-address_get_type(address: *const c_char, network: FFINetworks, error: *mut FFIError,) -> c_uchar
+address_get_type(address: *const c_char, network: FFINetwork, error: *mut FFIError,) -> c_uchar
 ```
 
 **Description:**
@@ -3000,7 +3001,7 @@ Extract public key hash from P2PKH address  # Safety - `address` must be a valid
 #### `address_validate`
 
 ```c
-address_validate(address: *const c_char, network: FFINetworks, error: *mut FFIError,) -> bool
+address_validate(address: *const c_char, network: FFINetwork, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -3018,7 +3019,7 @@ Validate an address  # Safety  - `address` must be a valid null-terminated C str
 #### `transaction_add_input`
 
 ```c
-transaction_add_input(tx: *mut FFITransaction, input: *const FFITxIn) -> i32
+transaction_add_input(tx: *mut FFITransaction, input: *const FFITxIn,) -> i32
 ```
 
 **Description:**
@@ -3034,7 +3035,7 @@ Add an input to a transaction  # Safety - `tx` must be a valid pointer to an FFI
 #### `transaction_add_output`
 
 ```c
-transaction_add_output(tx: *mut FFITransaction, output: *const FFITxOut) -> i32
+transaction_add_output(tx: *mut FFITransaction, output: *const FFITxOut,) -> i32
 ```
 
 **Description:**
@@ -3257,7 +3258,7 @@ This function is unsafe because it dereferences raw pointers: - `private_key` mu
 #### `derivation_derive_private_key_from_seed`
 
 ```c
-derivation_derive_private_key_from_seed(seed: *const u8, seed_len: usize, path: *const c_char, network: FFINetworks, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
+derivation_derive_private_key_from_seed(seed: *const u8, seed_len: usize, path: *const c_char, network: FFINetwork, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
 ```
 
 **Description:**
@@ -3273,7 +3274,7 @@ Derive private key for a specific path from seed  # Safety  - `seed` must be a v
 #### `derivation_new_master_key`
 
 ```c
-derivation_new_master_key(seed: *const u8, seed_len: usize, network: FFINetworks, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
+derivation_new_master_key(seed: *const u8, seed_len: usize, network: FFINetwork, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
 ```
 
 **Description:**
@@ -3289,7 +3290,7 @@ Create a new master extended private key from seed  # Safety  - `seed` must be a
 #### `dip9_derive_identity_key`
 
 ```c
-dip9_derive_identity_key(seed: *const u8, seed_len: usize, network: FFINetworks, identity_index: c_uint, key_index: c_uint, key_type: FFIDerivationPathType, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
+dip9_derive_identity_key(seed: *const u8, seed_len: usize, network: FFINetwork, identity_index: c_uint, key_index: c_uint, key_type: FFIDerivationPathType, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
 ```
 
 **Description:**
@@ -3575,7 +3576,7 @@ Get word count from mnemonic  # Safety  - `mnemonic` must be a valid null-termin
 #### `derivation_bip44_payment_path`
 
 ```c
-derivation_bip44_payment_path(network: FFINetworks, account_index: c_uint, is_change: bool, address_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
+derivation_bip44_payment_path(network: FFINetwork, account_index: c_uint, is_change: bool, address_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -3588,7 +3589,7 @@ Derive a BIP44 payment path (m/44'/5'/account'/change/index)
 #### `derivation_coinjoin_path`
 
 ```c
-derivation_coinjoin_path(network: FFINetworks, account_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
+derivation_coinjoin_path(network: FFINetwork, account_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -3601,7 +3602,7 @@ Derive CoinJoin path (m/9'/5'/4'/account')
 #### `derivation_identity_authentication_path`
 
 ```c
-derivation_identity_authentication_path(network: FFINetworks, identity_index: c_uint, key_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
+derivation_identity_authentication_path(network: FFINetwork, identity_index: c_uint, key_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -3614,7 +3615,7 @@ Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index')
 #### `derivation_identity_registration_path`
 
 ```c
-derivation_identity_registration_path(network: FFINetworks, identity_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
+derivation_identity_registration_path(network: FFINetwork, identity_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -3627,7 +3628,7 @@ Derive identity registration path (m/9'/5'/5'/1'/index')
 #### `derivation_identity_topup_path`
 
 ```c
-derivation_identity_topup_path(network: FFINetworks, identity_index: c_uint, topup_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
+derivation_identity_topup_path(network: FFINetwork, identity_index: c_uint, topup_index: c_uint, path_out: *mut c_char, path_max_len: usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -3778,6 +3779,16 @@ Get extended public key as string  # Safety  - `xpub` must be a valid pointer to
 - `xpub` must be a valid pointer to an FFIExtendedPubKey - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
 
 **Module:** `derivation`
+
+---
+
+#### `ffi_network_get_name`
+
+```c
+ffi_network_get_name(network: FFINetwork) -> *const c_char
+```
+
+**Module:** `types`
 
 ---
 

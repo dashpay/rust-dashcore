@@ -4,7 +4,7 @@ use std::os::raw::c_uint;
 use std::sync::Arc;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountResult, FFIAccountType, FFINetworks, FFIWallet};
+use crate::types::{FFIAccountResult, FFIAccountType, FFINetwork, FFINetworks, FFIWallet};
 #[cfg(feature = "bls")]
 use key_wallet::account::BLSAccount;
 #[cfg(feature = "eddsa")]
@@ -81,7 +81,7 @@ impl FFIEdDSAAccount {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_index: c_uint,
     account_type: FFIAccountType,
 ) -> FFIAccountResult {
@@ -90,15 +90,7 @@ pub unsafe extern "C" fn wallet_get_account(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            return FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
@@ -126,7 +118,7 @@ pub unsafe extern "C" fn wallet_get_account(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_top_up_account_with_registration_index(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     registration_index: c_uint,
 ) -> FFIAccountResult {
     if wallet.is_null() {
@@ -134,15 +126,7 @@ pub unsafe extern "C" fn wallet_get_top_up_account_with_registration_index(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            return FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     // This function is specifically for IdentityTopUp accounts
     let account_type = key_wallet::AccountType::IdentityTopUp {
@@ -581,7 +565,7 @@ pub unsafe extern "C" fn eddsa_account_get_is_watch_only(account: *const FFIEdDS
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_count(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> c_uint {
     if wallet.is_null() {
@@ -590,17 +574,7 @@ pub unsafe extern "C" fn wallet_get_account_count(
     }
 
     let wallet = &*wallet;
-    let network: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return 0;
-        }
-    };
+    let network: key_wallet::Network = network.into();
 
     match wallet.inner().accounts.get(&network) {
         Some(accounts) => {

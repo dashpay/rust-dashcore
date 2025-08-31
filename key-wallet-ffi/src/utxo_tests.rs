@@ -81,9 +81,9 @@ mod utxo_tests {
         // The deprecated function should always return an empty list
         let success = unsafe {
             #[allow(deprecated)]
-            super::super::wallet_get_utxos(
+            wallet_get_utxos(
                 ptr::null(),
-                FFINetworks::Testnet,
+                FFINetworks::TestnetFlag,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -104,9 +104,9 @@ mod utxo_tests {
 
         // Test with null managed_info
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 ptr::null(),
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -131,9 +131,9 @@ mod utxo_tests {
         let ffi_managed_info = FFIManagedWalletInfo::new(managed_info);
 
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -173,7 +173,7 @@ mod utxo_tests {
 
         // Free the UTXOs
         unsafe {
-            super::super::utxo_array_free(utxos_ptr, count);
+            utxo_array_free(utxos_ptr, count);
         }
     }
 
@@ -181,7 +181,7 @@ mod utxo_tests {
     fn test_utxo_array_free_null() {
         // Should handle null gracefully
         unsafe {
-            super::super::utxo_array_free(ptr::null_mut(), 0);
+            utxo_array_free(ptr::null_mut(), 0);
         }
     }
 
@@ -254,9 +254,9 @@ mod utxo_tests {
         let ffi_managed_info = FFIManagedWalletInfo::new(managed_info);
 
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -294,7 +294,7 @@ mod utxo_tests {
 
         // Clean up
         unsafe {
-            super::super::utxo_array_free(utxos_out, count_out);
+            utxo_array_free(utxos_out, count_out);
         }
     }
 
@@ -427,9 +427,9 @@ mod utxo_tests {
         let ffi_managed_info = FFIManagedWalletInfo::new(managed_info);
 
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -442,7 +442,7 @@ mod utxo_tests {
 
         // Clean up
         unsafe {
-            super::super::utxo_array_free(utxos_out, count_out);
+            utxo_array_free(utxos_out, count_out);
         }
     }
 
@@ -545,9 +545,9 @@ mod utxo_tests {
 
         // Get Testnet UTXOs
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -556,14 +556,14 @@ mod utxo_tests {
         assert!(result);
         assert_eq!(count_out, 1);
         unsafe {
-            super::super::utxo_array_free(utxos_out, count_out);
+            utxo_array_free(utxos_out, count_out);
         }
 
         // Get Mainnet UTXOs
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetworks::Dash,
+                FFINetwork::Dash,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -572,14 +572,14 @@ mod utxo_tests {
         assert!(result);
         assert_eq!(count_out, 1);
         unsafe {
-            super::super::utxo_array_free(utxos_out, count_out);
+            utxo_array_free(utxos_out, count_out);
         }
 
         // Get Regtest UTXOs (should be empty)
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetworks::Regtest,
+                FFINetwork::Regtest,
                 &mut utxos_out,
                 &mut count_out,
                 error,
@@ -671,7 +671,7 @@ mod utxo_tests {
 
         // Free should handle all different UTXO types
         unsafe {
-            super::super::utxo_array_free(utxos_ptr, count);
+            utxo_array_free(utxos_ptr, count);
         }
     }
 
@@ -689,9 +689,9 @@ mod utxo_tests {
 
         // Test with null utxos_out
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 ptr::null_mut(),
                 &mut count_out,
                 error,
@@ -703,9 +703,9 @@ mod utxo_tests {
         // Test with null count_out
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let result = unsafe {
-            super::super::managed_wallet_get_utxos(
+            managed_wallet_get_utxos(
                 &ffi_managed_info,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 &mut utxos_out,
                 ptr::null_mut(),
                 error,

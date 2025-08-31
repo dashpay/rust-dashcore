@@ -25,7 +25,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr() as *const i8,
                 passphrase.as_ptr() as *const i8,
-                FFINetworks::Dash,
+                FFINetworks::DashFlag,
                 &mut error,
             );
             assert!(success);
