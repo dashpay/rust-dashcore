@@ -5,9 +5,8 @@
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFINetworks;
-    use crate::{wallet, wallet_manager};
+    use crate::{wallet, wallet_manager, FFINetwork};
     use std::ffi::{CStr, CString};
-    use std::os::raw::c_char;
     use std::ptr;
     use std::slice;
 
@@ -151,146 +150,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_receive_address() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
-
-        // Add a wallet
-        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
-
-        let success = unsafe {
-            wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-                manager,
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
-                error,
-            )
-        };
-        assert!(success);
-
-        // Get wallet ID
-        let mut wallet_ids: *mut u8 = ptr::null_mut();
-        let mut count: usize = 0;
-
-        let success = unsafe {
-            wallet_manager::wallet_manager_get_wallet_ids(
-                manager,
-                &mut wallet_ids,
-                &mut count,
-                error,
-            )
-        };
-        assert!(success);
-        assert_eq!(count, 1);
-
-        // Get receive address
-        let address = unsafe {
-            wallet_manager::wallet_manager_get_receive_address(
-                manager,
-                wallet_ids,
-                FFINetworks::TestnetFlag,
-                0, // account_index
-                error,
-            )
-        };
-
-        assert!(!address.is_null(), "Failed to get receive address");
-
-        let addr_str = unsafe { CStr::from_ptr(address).to_str().unwrap() };
-        assert!(!addr_str.is_empty());
-
-        // Get another address - should be different
-        let address2 = unsafe {
-            wallet_manager::wallet_manager_get_receive_address(
-                manager,
-                wallet_ids,
-                FFINetworks::TestnetFlag,
-                0,
-                error,
-            )
-        };
-
-        if !address2.is_null() {
-            let addr_str2 = unsafe { CStr::from_ptr(address2).to_str().unwrap() };
-            // Addresses should be different (auto-incremented)
-            assert_ne!(addr_str, addr_str2);
-        }
-
-        // Clean up
-        unsafe {
-            if !address.is_null() {
-                let _ = CString::from_raw(address);
-            }
-            if !address2.is_null() {
-                let _ = CString::from_raw(address2);
-            }
-            wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
-            wallet_manager::wallet_manager_free(manager);
-        }
-    }
-
-    #[test]
-    fn test_get_change_address() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
-
-        // Add a wallet
-        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let success = unsafe {
-            wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-                manager,
-                mnemonic.as_ptr(),
-                ptr::null(),
-                FFINetworks::TestnetFlag,
-                error,
-            )
-        };
-        assert!(success);
-
-        // Get wallet ID
-        let mut wallet_ids: *mut u8 = ptr::null_mut();
-        let mut count: usize = 0;
-
-        let success = unsafe {
-            wallet_manager::wallet_manager_get_wallet_ids(
-                manager,
-                &mut wallet_ids,
-                &mut count,
-                error,
-            )
-        };
-        assert!(success);
-
-        // Get change address
-        let address = unsafe {
-            wallet_manager::wallet_manager_get_change_address(
-                manager,
-                wallet_ids,
-                FFINetworks::TestnetFlag,
-                0,
-                error,
-            )
-        };
-
-        assert!(!address.is_null(), "Failed to get change address");
-
-        // Clean up
-        unsafe {
-            let _ = CString::from_raw(address);
-            wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
-            wallet_manager::wallet_manager_free(manager);
-        }
-    }
-
-    #[test]
     fn test_wallet_balance() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
@@ -353,107 +212,6 @@ mod tests {
     }
 
     #[test]
-    fn test_monitored_addresses() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
-
-        // Initially no monitored addresses
-        let mut addresses: *mut *mut c_char = ptr::null_mut();
-        let mut count: usize = 0;
-
-        let success = unsafe {
-            wallet_manager::wallet_manager_get_monitored_addresses(
-                manager,
-                FFINetworks::TestnetFlag,
-                &mut addresses as *mut *mut *mut c_char,
-                &mut count,
-                error,
-            )
-        };
-
-        assert!(success);
-        assert_eq!(count, 0);
-        assert!(addresses.is_null());
-
-        // Add a wallet and generate addresses
-        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let success = unsafe {
-            wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-                manager,
-                mnemonic.as_ptr(),
-                ptr::null(),
-                FFINetworks::TestnetFlag,
-                error,
-            )
-        };
-        assert!(success);
-
-        // Get wallet ID and generate some addresses
-        let mut wallet_ids: *mut u8 = ptr::null_mut();
-        let mut wallet_count: usize = 0;
-
-        let success = unsafe {
-            wallet_manager::wallet_manager_get_wallet_ids(
-                manager,
-                &mut wallet_ids,
-                &mut wallet_count,
-                error,
-            )
-        };
-        assert!(success);
-
-        // Try to generate a few addresses
-        // Generate a few addresses
-        unsafe {
-            for _ in 0..3 {
-                let addr = wallet_manager::wallet_manager_get_receive_address(
-                    manager,
-                    wallet_ids,
-                    FFINetworks::TestnetFlag,
-                    0,
-                    error,
-                );
-                assert!(!addr.is_null(), "Failed to generate address");
-
-                let _ = CString::from_raw(addr);
-            }
-        }
-
-        // Now check monitored addresses
-        let success = unsafe {
-            wallet_manager::wallet_manager_get_monitored_addresses(
-                manager,
-                FFINetworks::TestnetFlag,
-                &mut addresses as *mut *mut *mut c_char,
-                &mut count,
-                error,
-            )
-        };
-
-        assert!(success);
-        // Should have some monitored addresses now
-        if count > 0 {
-            assert!(!addresses.is_null());
-
-            // Clean up addresses
-            unsafe {
-                wallet_manager::wallet_manager_free_addresses(addresses, count);
-            }
-        }
-
-        // Clean up
-        unsafe {
-            wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, wallet_count);
-        }
-        unsafe {
-            wallet_manager::wallet_manager_free(manager);
-        }
-    }
-
-    #[test]
     fn test_height_management() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
@@ -463,7 +221,7 @@ mod tests {
 
         // Get initial height
         let height = unsafe {
-            wallet_manager::wallet_manager_current_height(manager, FFINetworks::TestnetFlag, error)
+            wallet_manager::wallet_manager_current_height(manager, FFINetwork::Testnet, error)
         };
         assert_eq!(height, 0);
 
@@ -471,7 +229,7 @@ mod tests {
         let success = unsafe {
             wallet_manager::wallet_manager_update_height(
                 manager,
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 100000,
                 error,
             )
@@ -480,7 +238,7 @@ mod tests {
 
         // Verify height was updated
         let height = unsafe {
-            wallet_manager::wallet_manager_current_height(manager, FFINetworks::TestnetFlag, error)
+            wallet_manager::wallet_manager_current_height(manager, FFINetwork::Testnet, error)
         };
         assert_eq!(height, 100000);
 
@@ -520,80 +278,6 @@ mod tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::WalletError);
 
         // Clean up
-        unsafe {
-            wallet_manager::wallet_manager_free(manager);
-        }
-    }
-
-    #[test]
-    fn test_multiple_wallets_management() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
-
-        // Add multiple wallets with different mnemonics
-        // (passphrases don't work due to library bug)
-        let wallet_count = 3;
-        let mnemonics = [TEST_MNEMONIC, TEST_MNEMONIC_2, TEST_MNEMONIC_3];
-        unsafe {
-            for mnemonic_str in &mnemonics[..wallet_count] {
-                let mnemonic = CString::new(*mnemonic_str).unwrap();
-
-                let success = wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-                    manager,
-                    mnemonic.as_ptr(),
-                    ptr::null(),              // No passphrase
-                    FFINetworks::TestnetFlag, // 2 accounts per wallet
-                    error,
-                );
-                assert!(success);
-            }
-        }
-
-        // Verify wallet count
-        let count = unsafe { wallet_manager::wallet_manager_wallet_count(manager, error) };
-        assert_eq!(count, wallet_count);
-
-        // Get all wallet IDs
-        let mut wallet_ids: *mut u8 = ptr::null_mut();
-        let mut id_count: usize = 0;
-
-        let success = unsafe {
-            wallet_manager::wallet_manager_get_wallet_ids(
-                manager,
-                &mut wallet_ids,
-                &mut id_count,
-                error,
-            )
-        };
-        assert!(success);
-        assert_eq!(id_count, wallet_count);
-
-        // Generate addresses for each wallet
-        unsafe {
-            for i in 0..id_count {
-                let wallet_id = wallet_ids.add(i * 32);
-
-                let addr = wallet_manager::wallet_manager_get_receive_address(
-                    manager,
-                    wallet_id,
-                    FFINetworks::TestnetFlag,
-                    0,
-                    error,
-                );
-
-                assert!(!addr.is_null(), "Failed to get address for wallet {}", i);
-
-                let _ = CString::from_raw(addr);
-            }
-        }
-
-        // Clean up
-        unsafe {
-            wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
-        }
         unsafe {
             wallet_manager::wallet_manager_free(manager);
         }
@@ -676,70 +360,6 @@ mod tests {
         // Clean up the wallet (cast from const to mut for free)
         unsafe {
             wallet::wallet_free(wallet as *mut _);
-        }
-
-        // Clean up
-        unsafe {
-            wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
-        }
-        unsafe {
-            wallet_manager::wallet_manager_free(manager);
-        }
-    }
-
-    #[test]
-    fn test_wallet_manager_get_change_address() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
-
-        // Add a wallet
-        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
-        let success = unsafe {
-            wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-                manager,
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
-                error,
-            )
-        };
-        assert!(success);
-
-        // Get wallet ID
-        let mut wallet_ids: *mut u8 = ptr::null_mut();
-        let mut id_count: usize = 0;
-        let success = unsafe {
-            wallet_manager::wallet_manager_get_wallet_ids(
-                manager,
-                &mut wallet_ids,
-                &mut id_count,
-                error,
-            )
-        };
-        assert!(success);
-
-        // Get change address
-        let change_addr = unsafe {
-            wallet_manager::wallet_manager_get_change_address(
-                manager,
-                wallet_ids,
-                FFINetworks::TestnetFlag,
-                0, // address_index
-                error,
-            )
-        };
-
-        if !change_addr.is_null() {
-            let addr_str = unsafe { CStr::from_ptr(change_addr).to_str().unwrap() };
-            assert!(!addr_str.is_empty());
-
-            unsafe {
-                let _ = CString::from_raw(change_addr);
-            }
         }
 
         // Clean up
@@ -873,7 +493,7 @@ mod tests {
 
         // Get initial height
         let _height = unsafe {
-            wallet_manager::wallet_manager_current_height(manager, FFINetworks::TestnetFlag, error)
+            wallet_manager::wallet_manager_current_height(manager, FFINetwork::Testnet, error)
         };
 
         // Update height
@@ -881,7 +501,7 @@ mod tests {
         unsafe {
             wallet_manager::wallet_manager_update_height(
                 manager,
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 new_height,
                 error,
             );
@@ -889,7 +509,7 @@ mod tests {
 
         // Get updated height
         let current_height = unsafe {
-            wallet_manager::wallet_manager_current_height(manager, FFINetworks::TestnetFlag, error)
+            wallet_manager::wallet_manager_current_height(manager, FFINetwork::Testnet, error)
         };
         assert_eq!(current_height, new_height);
 
@@ -1072,7 +692,7 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1089,7 +709,7 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &block_context,
                 false,
                 error,
@@ -1110,7 +730,7 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &chain_locked_context,
                 true,
                 error,
@@ -1125,7 +745,7 @@ mod tests {
                 ptr::null_mut(),
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1140,7 +760,7 @@ mod tests {
                 manager,
                 ptr::null(),
                 10,
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1155,7 +775,7 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 0,
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mempool_context,
                 false,
                 error,
@@ -1171,7 +791,7 @@ mod tests {
                 manager,
                 invalid_tx.as_ptr(),
                 invalid_tx.len(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mempool_context,
                 false,
                 error,

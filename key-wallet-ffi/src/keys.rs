@@ -1,7 +1,7 @@
 //! Key derivation and management
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetworks, FFIWallet};
+use crate::types::{FFINetwork, FFIWallet};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
@@ -36,7 +36,7 @@ pub struct FFIExtendedPublicKey {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_xpriv(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -46,17 +46,7 @@ pub unsafe extern "C" fn wallet_get_account_xpriv(
     }
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     match wallet.inner().get_bip44_account(network_rust, account_index) {
         Some(account) => {
@@ -96,7 +86,7 @@ pub unsafe extern "C" fn wallet_get_account_xpriv(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_xpub(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -106,17 +96,7 @@ pub unsafe extern "C" fn wallet_get_account_xpub(
     }
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     match wallet.inner().get_bip44_account(network_rust, account_index) {
         Some(account) => {
@@ -153,7 +133,7 @@ pub unsafe extern "C" fn wallet_get_account_xpub(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_private_key(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIPrivateKey {
@@ -190,17 +170,7 @@ pub unsafe extern "C" fn wallet_derive_private_key(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     // Use the new wallet method to derive the private key
     match wallet.inner().derive_private_key(network_rust, &path) {
@@ -233,7 +203,7 @@ pub unsafe extern "C" fn wallet_derive_private_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_extended_private_key(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPrivateKey {
@@ -270,17 +240,7 @@ pub unsafe extern "C" fn wallet_derive_extended_private_key(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     // Use the new wallet method to derive the extended private key
     match wallet.inner().derive_extended_private_key(network_rust, &path) {
@@ -312,7 +272,7 @@ pub unsafe extern "C" fn wallet_derive_extended_private_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_private_key_as_wif(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -349,17 +309,7 @@ pub unsafe extern "C" fn wallet_derive_private_key_as_wif(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     // Use the new wallet method to derive the private key as WIF
     match wallet.inner().derive_private_key_as_wif(network_rust, &path) {
@@ -427,7 +377,7 @@ pub unsafe extern "C" fn extended_private_key_free(key: *mut FFIExtendedPrivateK
 #[no_mangle]
 pub unsafe extern "C" fn extended_private_key_to_string(
     key: *const FFIExtendedPrivateKey,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut c_char {
     if key.is_null() {
@@ -503,7 +453,7 @@ pub unsafe extern "C" fn extended_private_key_get_private_key(
 #[no_mangle]
 pub unsafe extern "C" fn private_key_to_wif(
     key: *const FFIPrivateKey,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut c_char {
     if key.is_null() {
@@ -512,17 +462,7 @@ pub unsafe extern "C" fn private_key_to_wif(
     }
 
     let key = unsafe { &*key };
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     // Convert to WIF format
     use dashcore::PrivateKey as DashPrivateKey;
@@ -559,7 +499,7 @@ pub unsafe extern "C" fn private_key_to_wif(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_public_key(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIPublicKey {
@@ -597,17 +537,7 @@ pub unsafe extern "C" fn wallet_derive_public_key(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = match network.try_into() {
-            Ok(n) => n,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Must specify exactly one network".to_string(),
-                );
-                return ptr::null_mut();
-            }
-        };
+        let network_rust: key_wallet::Network = network.into();
 
         // Use the new wallet method to derive the public key
         match wallet.inner().derive_public_key(network_rust, &path) {
@@ -641,7 +571,7 @@ pub unsafe extern "C" fn wallet_derive_public_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_extended_public_key(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPublicKey {
@@ -679,17 +609,7 @@ pub unsafe extern "C" fn wallet_derive_extended_public_key(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = match network.try_into() {
-            Ok(n) => n,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Must specify exactly one network".to_string(),
-                );
-                return ptr::null_mut();
-            }
-        };
+        let network_rust: key_wallet::Network = network.into();
 
         // Use the new wallet method to derive the extended public key
         match wallet.inner().derive_extended_public_key(network_rust, &path) {
@@ -722,7 +642,7 @@ pub unsafe extern "C" fn wallet_derive_extended_public_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_public_key_as_hex(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -760,17 +680,7 @@ pub unsafe extern "C" fn wallet_derive_public_key_as_hex(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = match network.try_into() {
-            Ok(n) => n,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Must specify exactly one network".to_string(),
-                );
-                return ptr::null_mut();
-            }
-        };
+        let network_rust: key_wallet::Network = network.into();
 
         // Use the new wallet method to derive the public key as hex
         match wallet.inner().derive_public_key_as_hex(network_rust, &path) {
@@ -843,7 +753,7 @@ pub unsafe extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey
 #[no_mangle]
 pub unsafe extern "C" fn extended_public_key_to_string(
     key: *const FFIExtendedPublicKey,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut c_char {
     if key.is_null() {

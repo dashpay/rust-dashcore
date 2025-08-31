@@ -58,30 +58,7 @@ fn test_full_wallet_workflow() {
 
     let wallet_id = wallet_ids; // First wallet ID starts at offset 0
 
-    // 6. Derive addresses using wallet manager
-    let receive_addr = unsafe {
-        key_wallet_ffi::wallet_manager::wallet_manager_get_receive_address(
-            manager,
-            wallet_id,
-            FFINetworks::TestnetFlag,
-            0,
-            error,
-        )
-    };
-    assert!(!receive_addr.is_null());
-
-    let change_addr = unsafe {
-        key_wallet_ffi::wallet_manager::wallet_manager_get_change_address(
-            manager,
-            wallet_id,
-            FFINetworks::TestnetFlag,
-            0,
-            error,
-        )
-    };
-    assert!(!change_addr.is_null());
-
-    // 7. Get balance
+    // 6. Get balance
     let mut confirmed: u64 = 0;
     let mut unconfirmed: u64 = 0;
     let success = unsafe {
@@ -99,8 +76,6 @@ fn test_full_wallet_workflow() {
 
     // Clean up
     unsafe {
-        key_wallet_ffi::address::address_free(receive_addr);
-        key_wallet_ffi::address::address_free(change_addr);
         key_wallet_ffi::wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
         key_wallet_ffi::wallet_manager::wallet_manager_free(manager);
         key_wallet_ffi::mnemonic::mnemonic_free(mnemonic);

@@ -15,7 +15,6 @@ pub mod managed_account;
 pub mod managed_account_collection;
 pub mod managed_wallet;
 pub mod mnemonic;
-pub mod provider_keys;
 pub mod transaction;
 pub mod transaction_checking;
 pub mod types;

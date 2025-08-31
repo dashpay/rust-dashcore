@@ -754,6 +754,7 @@ mod tests {
         wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
         wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
     };
+    use crate::FFINetworks;
     use std::ffi::CString;
     use std::ptr;
 

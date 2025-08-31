@@ -14,6 +14,7 @@ use key_wallet::{Mnemonic, Network, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetworks, FFIWallet, FFIWalletAccountCreationOptions};
+use crate::FFINetwork;
 
 /// Create a new wallet from mnemonic with options
 ///
@@ -318,7 +319,7 @@ pub unsafe extern "C" fn wallet_get_id(
     let wallet = &*wallet;
     let wallet_id = wallet.inner().wallet_id;
 
-    std::ptr::copy_nonoverlapping(wallet_id.as_ptr(), id_out, 32);
+    ptr::copy_nonoverlapping(wallet_id.as_ptr(), id_out, 32);
     FFIError::set_success(error);
     true
 }
@@ -382,7 +383,7 @@ pub unsafe extern "C" fn wallet_is_watch_only(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_xpub(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -394,19 +395,8 @@ pub unsafe extern "C" fn wallet_get_xpub(
     unsafe {
         let wallet = &*wallet;
 
-        use std::convert::TryInto;
-        // Try to convert to a single network
-        let network_rust: Network = match network.try_into() {
-            Ok(n) => n,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Must specify exactly one network for getting xpub".to_string(),
-                );
-                return ptr::null_mut();
-            }
-        };
+        // Convert to a single network
+        let network_rust: Network = network.into();
 
         match wallet.inner().get_bip44_account(network_rust, account_index) {
             Some(account) => {
@@ -482,7 +472,7 @@ pub unsafe extern "C" fn wallet_free_const(wallet: *const FFIWallet) {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account(
     wallet: *mut FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
 ) -> crate::types::FFIAccountResult {
@@ -494,15 +484,7 @@ pub unsafe extern "C" fn wallet_add_account(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-        }
-    };
+    let network_rust: Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
@@ -551,7 +533,7 @@ pub unsafe extern "C" fn wallet_add_account(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     wallet: *mut FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
     xpub_bytes: *const u8,
@@ -572,15 +554,7 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-        }
-    };
+    let network_rust: Network = network.into();
 
     use key_wallet::ExtendedPubKey;
 
@@ -649,7 +623,7 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     wallet: *mut FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
     xpub_string: *const c_char,
@@ -669,15 +643,7 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-        }
-    };
+    let network_rust: Network = network.into();
 
     use key_wallet::ExtendedPubKey;
 

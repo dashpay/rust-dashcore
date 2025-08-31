@@ -169,7 +169,7 @@ pub struct FFITransactionCheckResult {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_check_transaction(
     wallet: *mut FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     tx_bytes: *const u8,
     tx_len: usize,
     context_type: FFITransactionContext,
@@ -187,17 +187,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
 
     unsafe {
         let wallet = &mut *wallet;
-        let network_rust: key_wallet::Network = match network.try_into() {
-            Ok(n) => n,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Must specify exactly one network".to_string(),
-                );
-                return false;
-            }
-        };
+        let network_rust: Network = network.into();
         let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
         // Parse the transaction

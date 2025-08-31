@@ -4,7 +4,7 @@
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 use key_wallet_ffi::types::FFINetworks;
 use key_wallet_ffi::FFINetwork;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 #[test]
 fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
@@ -92,34 +92,6 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     };
     assert!(success);
     assert_eq!(count, 1);
-
-    // Try to get a receive address from the wallet
-    // With the updated implementation, wallet_manager now creates accounts for passphrase wallets
-    // using the Default options, so this should succeed
-    let addr = unsafe {
-        key_wallet_ffi::wallet_manager::wallet_manager_get_receive_address(
-            manager,
-            wallet_ids_ptr, // First wallet ID
-            FFINetworks::TestnetFlag,
-            0, // account_index
-            error,
-        )
-    };
-
-    // This should now succeed because wallet_manager creates accounts with Default options
-    assert!(!addr.is_null(), "Should be able to get address from wallet with passphrase");
-    assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
-
-    if !addr.is_null() {
-        let addr_str = unsafe { CStr::from_ptr(addr).to_str().unwrap() };
-        println!("Successfully got address from wallet manager: {}", addr_str);
-        assert!(!addr_str.is_empty());
-
-        // Clean up address
-        unsafe {
-            key_wallet_ffi::address::address_free(addr);
-        }
-    }
 
     // Clean up
     if !wallet_ids_ptr.is_null() && count > 0 {

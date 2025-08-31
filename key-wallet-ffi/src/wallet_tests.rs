@@ -5,7 +5,7 @@ mod wallet_tests {
     use crate::account::account_free;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::{FFIAccountType, FFINetworks};
-    use crate::wallet;
+    use crate::{wallet, FFINetwork};
     use std::ffi::CString;
     use std::ptr;
 
@@ -293,7 +293,7 @@ mod wallet_tests {
         let result = unsafe {
             wallet::wallet_add_account(
                 wallet,
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 FFIAccountType::StandardBIP44,
                 1,
             )
@@ -328,7 +328,7 @@ mod wallet_tests {
         let result = unsafe {
             wallet::wallet_add_account(
                 ptr::null_mut(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 FFIAccountType::StandardBIP44,
                 0,
             )
@@ -391,7 +391,7 @@ mod wallet_tests {
         assert!(!wallet.is_null());
 
         // Get xpub for account 0
-        let xpub = unsafe { wallet::wallet_get_xpub(wallet, FFINetworks::TestnetFlag, 0, error) };
+        let xpub = unsafe { wallet::wallet_get_xpub(wallet, FFINetwork::Testnet, 0, error) };
         assert!(!xpub.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
@@ -412,8 +412,7 @@ mod wallet_tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null wallet
-        let xpub =
-            unsafe { wallet::wallet_get_xpub(ptr::null(), FFINetworks::TestnetFlag, 0, error) };
+        let xpub = unsafe { wallet::wallet_get_xpub(ptr::null(), FFINetwork::Testnet, 0, error) };
         assert!(xpub.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
     }

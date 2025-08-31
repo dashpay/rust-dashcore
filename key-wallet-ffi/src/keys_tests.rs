@@ -31,7 +31,7 @@ mod tests {
             let path = CString::new("m/44'/1'/0'").unwrap();
             let ext_priv = wallet_derive_extended_private_key(
                 wallet,
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 path.as_ptr(),
                 &mut error,
             );
@@ -40,7 +40,7 @@ mod tests {
 
             // Test extended_private_key_to_string
             let xprv_str =
-                extended_private_key_to_string(ext_priv, FFINetworks::TestnetFlag, &mut error);
+                extended_private_key_to_string(ext_priv, FFINetwork::Testnet, &mut error);
             assert!(!xprv_str.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -54,7 +54,7 @@ mod tests {
             assert_eq!(error.code, FFIErrorCode::Success);
 
             // Get WIF from the extracted private key
-            let wif = private_key_to_wif(priv_key, FFINetworks::TestnetFlag, &mut error);
+            let wif = private_key_to_wif(priv_key, FFINetwork::Testnet, &mut error);
             assert!(!wif.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -70,7 +70,7 @@ mod tests {
             // Now test extended public key
             let ext_pub = wallet_derive_extended_public_key(
                 wallet,
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 path.as_ptr(),
                 &mut error,
             );
@@ -78,8 +78,7 @@ mod tests {
             assert_eq!(error.code, FFIErrorCode::Success);
 
             // Test extended_public_key_to_string
-            let xpub_str =
-                extended_public_key_to_string(ext_pub, FFINetworks::TestnetFlag, &mut error);
+            let xpub_str = extended_public_key_to_string(ext_pub, FFINetwork::Testnet, &mut error);
             assert!(!xpub_str.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -130,7 +129,7 @@ mod tests {
 
         // Try to get account xpriv - should fail
         let xpriv_str =
-            unsafe { wallet_get_account_xpriv(wallet, FFINetworks::TestnetFlag, 0, &mut error) };
+            unsafe { wallet_get_account_xpriv(wallet, FFINetwork::Testnet, 0, &mut error) };
 
         // Should return null (not implemented for security)
         assert!(xpriv_str.is_null());
@@ -162,7 +161,7 @@ mod tests {
 
         // Get account xpub
         let xpub_str =
-            unsafe { wallet_get_account_xpub(wallet, FFINetworks::TestnetFlag, 0, &mut error) };
+            unsafe { wallet_get_account_xpub(wallet, FFINetwork::Testnet, 0, &mut error) };
 
         assert!(!xpub_str.is_null());
 
@@ -198,7 +197,7 @@ mod tests {
         // Try to derive private key - should now succeed (44'/1'/0'/0/0 for Dash)
         let path = CString::new("m/44'/1'/0'/0/0").unwrap();
         let privkey_ptr = unsafe {
-            wallet_derive_private_key(wallet, FFINetworks::TestnetFlag, path.as_ptr(), &mut error)
+            wallet_derive_private_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
 
         // Should succeed and return a valid pointer
@@ -206,8 +205,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Convert to WIF to verify it's valid
-        let wif_str =
-            unsafe { private_key_to_wif(privkey_ptr, FFINetworks::TestnetFlag, &mut error) };
+        let wif_str = unsafe { private_key_to_wif(privkey_ptr, FFINetwork::Testnet, &mut error) };
         assert!(!wif_str.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -253,7 +251,7 @@ mod tests {
         // Derive public key using derivation path (44'/1'/0'/0/0 for Dash)
         let path = CString::new("m/44'/1'/0'/0/0").unwrap();
         let pubkey_ptr = unsafe {
-            wallet_derive_public_key(wallet, FFINetworks::TestnetFlag, path.as_ptr(), &mut error)
+            wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
 
         if pubkey_ptr.is_null() {
@@ -307,7 +305,7 @@ mod tests {
             let path = CString::new("m/44'/1'/0'/0/0").unwrap();
             let hex_str = wallet_derive_public_key_as_hex(
                 wallet,
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 path.as_ptr(),
                 &mut error,
             );
@@ -407,9 +405,8 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test with null wallet
-        let xpriv = unsafe {
-            wallet_get_account_xpriv(ptr::null(), FFINetworks::TestnetFlag, 0, &mut error)
-        };
+        let xpriv =
+            unsafe { wallet_get_account_xpriv(ptr::null(), FFINetwork::Testnet, 0, &mut error) };
         assert!(xpriv.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
@@ -439,12 +436,7 @@ mod tests {
         // Test with null wallet (44'/1'/0'/0/0 for Dash)
         let path = CString::new("m/44'/1'/0'/0/0").unwrap();
         let pubkey_ptr = unsafe {
-            wallet_derive_public_key(
-                ptr::null(),
-                FFINetworks::TestnetFlag,
-                path.as_ptr(),
-                &mut error,
-            )
+            wallet_derive_public_key(ptr::null(), FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
 
         assert!(pubkey_ptr.is_null());
@@ -465,7 +457,7 @@ mod tests {
 
         // Test with null path
         let pubkey_ptr = unsafe {
-            wallet_derive_public_key(wallet, FFINetworks::TestnetFlag, ptr::null(), &mut error)
+            wallet_derive_public_key(wallet, FFINetwork::Testnet, ptr::null(), &mut error)
         };
 
         assert!(pubkey_ptr.is_null());
@@ -603,7 +595,7 @@ mod tests {
         // Test different account indices
         for account_index in 0..3 {
             let xpub_str = unsafe {
-                wallet_get_account_xpub(wallet, FFINetworks::TestnetFlag, account_index, &mut error)
+                wallet_get_account_xpub(wallet, FFINetwork::Testnet, account_index, &mut error)
             };
 
             if !xpub_str.is_null() {
@@ -618,9 +610,8 @@ mod tests {
         }
 
         // Test with null wallet
-        let xpub_str = unsafe {
-            wallet_get_account_xpub(ptr::null(), FFINetworks::TestnetFlag, 0, &mut error)
-        };
+        let xpub_str =
+            unsafe { wallet_get_account_xpub(ptr::null(), FFINetwork::Testnet, 0, &mut error) };
 
         assert!(xpub_str.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -660,12 +651,7 @@ mod tests {
             let path = CString::new(*path_str).unwrap();
 
             let pubkey_ptr = unsafe {
-                wallet_derive_public_key(
-                    wallet,
-                    FFINetworks::TestnetFlag,
-                    path.as_ptr(),
-                    &mut error,
-                )
+                wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
             };
 
             if !pubkey_ptr.is_null() {
