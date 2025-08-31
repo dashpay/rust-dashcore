@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 58
+**Total Functions**: 57
 
 ## Table of Contents
 
@@ -132,7 +132,7 @@ Functions: 2
 
 ### Utility Functions
 
-Functions: 12
+Functions: 11
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -142,7 +142,6 @@ Functions: 12
 | `dash_spv_ffi_client_record_send` | No description | client |
 | `dash_spv_ffi_client_rescan_blockchain` | No description | client |
 | `dash_spv_ffi_enable_test_mode` | No description | utils |
-| `dash_spv_ffi_get_network_name` | No description | utils |
 | `dash_spv_ffi_init_logging` | No description | utils |
 | `dash_spv_ffi_spv_stats_destroy` | No description | client |
 | `dash_spv_ffi_string_array_destroy` | Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents | types |
@@ -877,16 +876,6 @@ dash_spv_ffi_client_rescan_blockchain(client: *mut FFIDashSpvClient, _from_heigh
 
 ```c
 dash_spv_ffi_enable_test_mode() -> ()
-```
-
-**Module:** `utils`
-
----
-
-#### `dash_spv_ffi_get_network_name`
-
-```c
-dash_spv_ffi_get_network_name(network: crate::FFINetwork) -> *const c_char
 ```
 
 **Module:** `utils`
