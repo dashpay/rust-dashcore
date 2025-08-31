@@ -2274,7 +2274,7 @@ FFIManagedAccountResult managed_wallet_get_top_up_account_with_registration_inde
 
  - `account` must be a valid pointer to an FFIManagedAccount instance
  */
- FFINetworks managed_account_get_network(const FFIManagedAccount *account) ;
+ FFINetwork managed_account_get_network(const FFIManagedAccount *account) ;
 
 /*
  Get the parent wallet ID of a managed account

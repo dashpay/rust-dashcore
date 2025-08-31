@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountType, FFINetwork, FFINetworks};
+use crate::types::{FFIAccountType, FFINetwork};
 use crate::wallet_manager::FFIWalletManager;
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::ManagedAccount;
@@ -298,9 +298,9 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_get_network(
     account: *const FFIManagedAccount,
-) -> FFINetworks {
+) -> FFINetwork {
     if account.is_null() {
-        return FFINetworks::NoNetworks;
+        return FFINetwork::Dash;
     }
 
     let account = &*account;
@@ -1018,7 +1018,7 @@ mod tests {
 
             // Test get_network
             let network = managed_account_get_network(account);
-            assert_eq!(network, FFINetworks::TestnetFlag);
+            assert_eq!(network, FFINetwork::Testnet);
 
             // Test get_account_type
             let mut index_out: c_uint = 999; // Initialize with unexpected value
@@ -1069,7 +1069,7 @@ mod tests {
         unsafe {
             // Test null account
             let network = managed_account_get_network(ptr::null());
-            assert_eq!(network, FFINetworks::NoNetworks);
+            assert_eq!(network, FFINetwork::Dash);
 
             let mut index_out: c_uint = 0;
             let account_type = managed_account_get_account_type(ptr::null(), &mut index_out);
