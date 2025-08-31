@@ -56,10 +56,10 @@ fn create_test_block(height: u32, transactions: Vec<Transaction>) -> Block {
 fn create_mock_filter(block: &Block) -> BlockFilter {
     let mut content = Vec::new();
     let mut writer = BlockFilterWriter::new(&mut content, block);
-    
+
     // Add output scripts from the block
     writer.add_output_scripts();
-    
+
     // Finish writing and construct the filter
     writer.finish().expect("Failed to finish filter");
     BlockFilter::new(&content)
@@ -83,15 +83,17 @@ async fn test_filter_checking() {
     let block_hash = block.block_hash();
 
     // Check the filter
-    let should_download = manager.check_compact_filter(&filter, &block_hash, Network::Testnet).await;
+    let should_download =
+        manager.check_compact_filter(&filter, &block_hash, Network::Testnet).await;
 
     // The filter matching depends on whether the wallet has any addresses
     // being watched. Since we just created an empty wallet, it may or may not match.
     // We'll just check that the method doesn't panic
     let _ = should_download;
-    
+
     // Test filter caching - calling again should use cached result
-    let should_download_cached = manager.check_compact_filter(&filter, &block_hash, Network::Testnet).await;
+    let should_download_cached =
+        manager.check_compact_filter(&filter, &block_hash, Network::Testnet).await;
     assert_eq!(should_download, should_download_cached, "Cached result should match original");
 }
 
@@ -129,10 +131,10 @@ async fn test_filter_caching() {
     // Create multiple blocks with different hashes
     let block1 = create_test_block(100, vec![create_test_transaction(1000)]);
     let block2 = create_test_block(101, vec![create_test_transaction(2000)]);
-    
+
     let filter1 = create_mock_filter(&block1);
     let filter2 = create_mock_filter(&block2);
-    
+
     let hash1 = block1.block_hash();
     let hash2 = block2.block_hash();
 

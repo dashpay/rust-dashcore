@@ -1,15 +1,20 @@
+use crate::wallet_interface::WalletInterface;
 use crate::{Network, WalletManager};
+use async_trait::async_trait;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Block, BlockHash, Transaction, Txid};
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use crate::wallet_interface::WalletInterface;
-use async_trait::async_trait;
 
 #[async_trait]
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletManager<T> {
-    async fn process_block(&mut self, block: &Block, height: CoreBlockHeight, network: Network) -> Vec<Txid> {
+    async fn process_block(
+        &mut self,
+        block: &Block,
+        height: CoreBlockHeight,
+        network: Network,
+    ) -> Vec<Txid> {
         let mut relevant_txids = Vec::new();
         let block_hash = Some(block.block_hash());
         let timestamp = block.header.time;

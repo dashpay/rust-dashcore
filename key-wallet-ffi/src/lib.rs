@@ -31,17 +31,12 @@ pub mod bip38;
 
 // Re-export main types for convenience
 pub use error::{FFIError, FFIErrorCode};
-pub use types::{FFIBalance, FFINetworks, FFIWallet};
+pub use types::{FFIBalance, FFINetwork, FFINetworks, FFIWallet};
 pub use utxo::FFIUTXO;
 pub use wallet_manager::{
-    FFIWalletManager,
-    wallet_manager_create,
-    wallet_manager_free,
-    wallet_manager_wallet_count,
-    wallet_manager_get_wallet,
-    wallet_manager_get_wallet_balance,
-    wallet_manager_get_wallet_ids,
-    wallet_manager_free_wallet_ids,
+    wallet_manager_create, wallet_manager_free, wallet_manager_free_wallet_ids,
+    wallet_manager_get_wallet, wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids,
+    wallet_manager_wallet_count, FFIWalletManager,
 };
 
 // ============================================================================

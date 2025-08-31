@@ -189,6 +189,16 @@ typedef enum {
 } FFILanguage;
 
 /*
+ FFI Network type (single network)
+ */
+typedef enum {
+    DASH = 0,
+    TESTNET = 1,
+    REGTEST = 2,
+    DEVNET = 3,
+} FFINetwork;
+
+/*
  FFI Network type (bit flags for multiple networks)
  */
 typedef enum {
@@ -223,19 +233,19 @@ typedef enum {
 } FFIProviderKeyType;
 
 /*
- Transaction context for checking
+ FFI-compatible transaction context
  */
 typedef enum {
     /*
-     Transaction is in mempool (unconfirmed)
+     Transaction is in the mempool (unconfirmed)
      */
     MEMPOOL = 0,
     /*
-     Transaction is in a block
+     Transaction is in a block at the given height
      */
     IN_BLOCK = 1,
     /*
-     Transaction is in a chain-locked block
+     Transaction is in a chain-locked block at the given height
      */
     IN_CHAIN_LOCKED_BLOCK = 2,
 } FFITransactionContext;
@@ -312,6 +322,11 @@ typedef struct FFIPrivateKey FFIPrivateKey;
  Opaque type for a public key
  */
 typedef struct FFIPublicKey FFIPublicKey;
+
+/*
+ Opaque handle for a transaction
+ */
+typedef struct FFITransaction FFITransaction;
 
 /*
  Opaque wallet handle
@@ -668,7 +683,7 @@ typedef struct {
 } FFIProviderKeyInfo;
 
 /*
- Transaction output for building
+ Transaction output for building (legacy structure)
  */
 typedef struct {
     const char *address;
@@ -676,6 +691,7 @@ typedef struct {
 } FFITxOutput;
 
 /*
+ Transaction context for checking
  Transaction check result
  */
 typedef struct {
@@ -696,6 +712,50 @@ typedef struct {
      */
     uint32_t affected_accounts_count;
 } FFITransactionCheckResult;
+
+/*
+ FFI-compatible transaction input
+ */
+typedef struct {
+    /*
+     Transaction ID (32 bytes)
+     */
+    uint8_t txid[32];
+    /*
+     Output index
+     */
+    uint32_t vout;
+    /*
+     Script signature length
+     */
+    uint32_t script_sig_len;
+    /*
+     Script signature data pointer
+     */
+    const uint8_t *script_sig;
+    /*
+     Sequence number
+     */
+    uint32_t sequence;
+} FFITxIn;
+
+/*
+ FFI-compatible transaction output
+ */
+typedef struct {
+    /*
+     Amount in duffs
+     */
+    uint64_t amount;
+    /*
+     Script pubkey length
+     */
+    uint32_t script_pubkey_len;
+    /*
+     Script pubkey data pointer
+     */
+    const uint8_t *script_pubkey;
+} FFITxOut;
 
 /*
  UTXO structure for FFI
@@ -1801,6 +1861,55 @@ FFIExtendedPrivKey *dip9_derive_identity_key(const uint8_t *seed,
                                              unsigned int key_index,
                                              FFIDerivationPathType key_type,
                                              FFIError *error)
+;
+
+/*
+ Derive an address from a private key
+
+ # Safety
+ - `private_key` must be a valid pointer to 32 bytes
+ - `network` is the network for the address
+
+ # Returns
+ - Pointer to C string with address (caller must free)
+ - NULL on error
+ */
+ char *key_wallet_derive_address_from_key(const uint8_t *private_key, FFINetwork network) ;
+
+/*
+ Derive an address from a seed at a specific derivation path
+
+ # Safety
+ - `seed` must be a valid pointer to 64 bytes
+ - `network` is the network for the address
+ - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0")
+
+ # Returns
+ - Pointer to C string with address (caller must free)
+ - NULL on error
+ */
+
+char *key_wallet_derive_address_from_seed(const uint8_t *seed,
+                                          FFINetwork network,
+                                          const char *path)
+;
+
+/*
+ Derive a private key from a seed at a specific derivation path
+
+ # Safety
+ - `seed` must be a valid pointer to 64 bytes
+ - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0")
+ - `key_out` must be a valid pointer to a buffer of at least 32 bytes
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+
+int32_t key_wallet_derive_private_key_from_seed(const uint8_t *seed,
+                                                const char *path,
+                                                uint8_t *key_out)
 ;
 
 /*
@@ -3039,6 +3148,159 @@ bool wallet_check_transaction(FFIWallet *wallet,
  void transaction_bytes_free(uint8_t *tx_bytes) ;
 
 /*
+ Create a new empty transaction
+
+ # Returns
+ - Pointer to FFITransaction on success
+ - NULL on error
+ */
+ FFITransaction *transaction_create(void) ;
+
+/*
+ Add an input to a transaction
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `input` must be a valid pointer to an FFITxIn
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t transaction_add_input(FFITransaction *tx, const FFITxIn *input) ;
+
+/*
+ Add an output to a transaction
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `output` must be a valid pointer to an FFITxOut
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t transaction_add_output(FFITransaction *tx, const FFITxOut *output) ;
+
+/*
+ Get the transaction ID
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `txid_out` must be a valid pointer to a buffer of at least 32 bytes
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t transaction_get_txid(const FFITransaction *tx, uint8_t *txid_out) ;
+
+/*
+ Serialize a transaction
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `out_buf` can be NULL to get size only
+ - `out_len` must be a valid pointer to store the size
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t transaction_serialize(const FFITransaction *tx, uint8_t *out_buf, uint32_t *out_len) ;
+
+/*
+ Deserialize a transaction
+
+ # Safety
+ - `data` must be a valid pointer to serialized transaction data
+ - `len` must be the correct length of the data
+
+ # Returns
+ - Pointer to FFITransaction on success
+ - NULL on error
+ */
+ FFITransaction *transaction_deserialize(const uint8_t *data, uint32_t len) ;
+
+/*
+ Destroy a transaction
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction created by transaction functions or null
+ - After calling this function, the pointer becomes invalid
+ */
+ void transaction_destroy(FFITransaction *tx) ;
+
+/*
+ Calculate signature hash for an input
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `script_pubkey` must be a valid pointer to the script pubkey
+ - `hash_out` must be a valid pointer to a buffer of at least 32 bytes
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+
+int32_t transaction_sighash(const FFITransaction *tx,
+                            uint32_t input_index,
+                            const uint8_t *script_pubkey,
+                            uint32_t script_pubkey_len,
+                            uint32_t sighash_type,
+                            uint8_t *hash_out)
+;
+
+/*
+ Sign a transaction input
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `private_key` must be a valid pointer to a 32-byte private key
+ - `script_pubkey` must be a valid pointer to the script pubkey
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+
+int32_t transaction_sign_input(FFITransaction *tx,
+                               uint32_t input_index,
+                               const uint8_t *private_key,
+                               const uint8_t *script_pubkey,
+                               uint32_t script_pubkey_len,
+                               uint32_t sighash_type)
+;
+
+/*
+ Create a P2PKH script pubkey
+
+ # Safety
+ - `pubkey_hash` must be a valid pointer to a 20-byte public key hash
+ - `out_buf` can be NULL to get size only
+ - `out_len` must be a valid pointer to store the size
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t script_p2pkh(const uint8_t *pubkey_hash, uint8_t *out_buf, uint32_t *out_len) ;
+
+/*
+ Extract public key hash from P2PKH address
+
+ # Safety
+ - `address` must be a valid pointer to a null-terminated C string
+ - `hash_out` must be a valid pointer to a buffer of at least 20 bytes
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t address_to_pubkey_hash(const char *address, FFINetwork network, uint8_t *hash_out) ;
+
+/*
  Create a managed wallet from a regular wallet
 
  This creates a ManagedWalletInfo instance from a Wallet, which includes
@@ -3115,6 +3377,8 @@ bool managed_wallet_check_transaction(FFIManagedWallet *managed_wallet,
  - The returned string must be freed by the caller
  */
  char *transaction_classify(const uint8_t *tx_bytes, size_t tx_len, FFIError *error) ;
+
+ const char *ffi_network_get_name(FFINetwork network) ;
 
 /*
  Free a string

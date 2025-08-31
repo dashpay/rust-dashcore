@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
+    use key_wallet_ffi::FFINetwork;
 
     #[test]
     fn test_ffi_string_utf8_edge_cases() {

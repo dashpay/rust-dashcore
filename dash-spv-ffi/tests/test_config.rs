@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
+    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
 

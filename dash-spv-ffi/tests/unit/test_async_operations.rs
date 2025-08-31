@@ -2,6 +2,7 @@
 mod tests {
     use crate::types::FFIDetailedSyncProgress;
     use crate::*;
+    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};

@@ -31,9 +31,7 @@ use dashcore::{
 };
 use dashcore_hashes::{sha256d, Hash};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::{
-    wallet_manager::WalletManager, Utxo,
-};
+use key_wallet_manager::{wallet_manager::WalletManager, Utxo};
 use rand::thread_rng;
 
 /// Helper to create a test wallet manager.

@@ -89,7 +89,11 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("No accounts found for network {:?}, wallet has networks {:?}", network, managed_wallet.inner().networks_supported()),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             return ptr::null_mut();
         }
@@ -219,7 +223,11 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("No accounts found for network {:?}, wallet has networks {:?}", network, managed_wallet.inner().networks_supported()),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             return ptr::null_mut();
         }
@@ -370,7 +378,11 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("No accounts found for network {:?}, wallet has networks {:?}", network, managed_wallet.inner().networks_supported()),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             *count_out = 0;
             *addresses_out = ptr::null_mut();
@@ -564,7 +576,11 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("No accounts found for network {:?}, wallet has networks {:?}", network, managed_wallet.inner().networks_supported()),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             *count_out = 0;
             *addresses_out = ptr::null_mut();

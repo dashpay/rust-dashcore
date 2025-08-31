@@ -9,7 +9,7 @@ use std::os::raw::{c_char, c_uint};
 use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetworks, FFIWallet};
+use crate::types::{FFINetworks, FFITransactionContext, FFIWallet};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
@@ -24,15 +24,7 @@ pub struct FFIManagedWallet {
 }
 
 /// Transaction context for checking
-#[repr(C)]
-pub enum FFITransactionContext {
-    /// Transaction is in mempool (unconfirmed)
-    Mempool = 0,
-    /// Transaction is in a block
-    InBlock = 1,
-    /// Transaction is in a chain-locked block  
-    InChainLockedBlock = 2,
-}
+// FFITransactionContext is imported from types module at the top
 
 /// Account type match result
 #[repr(C)]

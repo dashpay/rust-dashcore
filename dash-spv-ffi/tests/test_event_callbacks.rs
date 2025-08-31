@@ -1,4 +1,5 @@
 use dash_spv_ffi::*;
+use key_wallet_ffi::FFINetwork;
 use serial_test::serial;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};

@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
+    use key_wallet_ffi::types::ffi_network_get_name;
+    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::{CStr, CString};
 
@@ -40,22 +42,22 @@ mod tests {
     #[test]
     fn test_network_names() {
         unsafe {
-            let name = dash_spv_ffi_get_network_name(FFINetwork::Dash);
+            let name = ffi_network_get_name(FFINetwork::Dash);
             assert!(!name.is_null());
             let name_str = CStr::from_ptr(name).to_str().unwrap();
             assert_eq!(name_str, "dash");
 
-            let name = dash_spv_ffi_get_network_name(FFINetwork::Testnet);
+            let name = ffi_network_get_name(FFINetwork::Testnet);
             assert!(!name.is_null());
             let name_str = CStr::from_ptr(name).to_str().unwrap();
             assert_eq!(name_str, "testnet");
 
-            let name = dash_spv_ffi_get_network_name(FFINetwork::Regtest);
+            let name = ffi_network_get_name(FFINetwork::Regtest);
             assert!(!name.is_null());
             let name_str = CStr::from_ptr(name).to_str().unwrap();
             assert_eq!(name_str, "regtest");
 
-            let name = dash_spv_ffi_get_network_name(FFINetwork::Devnet);
+            let name = ffi_network_get_name(FFINetwork::Devnet);
             assert!(!name.is_null());
             let name_str = CStr::from_ptr(name).to_str().unwrap();
             assert_eq!(name_str, "devnet");

@@ -6,6 +6,7 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
+    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
     use std::thread;

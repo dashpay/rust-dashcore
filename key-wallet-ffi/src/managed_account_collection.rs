@@ -137,7 +137,11 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
             FFIError::set_error(
                 error,
                 FFIErrorCode::NotFound,
-                format!("No accounts found for network {:?}, wallet has networks {:?}", network_rust, managed_wallet.inner().networks_supported()),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network_rust,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             ptr::null_mut()
         }

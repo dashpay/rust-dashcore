@@ -14,7 +14,6 @@ exclude = ["Option_BlockCallback", "Option_TransactionCallback", "Option_Balance
 prefix = "dash_spv_ffi_"
 
 [export.rename]
-"FFINetwork" = "DashSpvNetwork"
 "FFIValidationMode" = "DashSpvValidationMode"
 "FFIErrorCode" = "DashSpvErrorCode"
 

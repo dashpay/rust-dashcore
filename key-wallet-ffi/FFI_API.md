@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 212
+**Total Functions**: 226
 
 ## Table of Contents
 
@@ -69,7 +69,7 @@ Functions: 20
 
 ### Wallet Operations
 
-Functions: 55
+Functions: 58
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -77,6 +77,9 @@ Functions: 55
 | `bls_account_get_parent_wallet_id` | No description | account |
 | `eddsa_account_get_parent_wallet_id` | No description | account |
 | `ffi_managed_wallet_free` | Free a managed wallet (FFIManagedWallet type)  # Safety  - `managed_wallet` m... | transaction_checking |
+| `key_wallet_derive_address_from_key` | Derive an address from a private key  # Safety - `private_key` must be a vali... | derivation |
+| `key_wallet_derive_address_from_seed` | Derive an address from a seed at a specific derivation path  # Safety - `seed... | derivation |
+| `key_wallet_derive_private_key_from_seed` | Derive a private key from a seed at a specific derivation path  # Safety - `s... | derivation |
 | `managed_account_get_parent_wallet_id` | Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't s... | managed_account |
 | `managed_wallet_check_transaction` | Check if a transaction belongs to the wallet  This function checks a transact... | transaction_checking |
 | `managed_wallet_free` | Free managed wallet info  # Safety  - `managed_wallet` must be a valid pointe... | managed_wallet |
@@ -219,7 +222,7 @@ Functions: 81
 
 ### Address Management
 
-Functions: 9
+Functions: 10
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -231,17 +234,27 @@ Functions: 9
 | `address_pool_free` | Free an address pool handle  # Safety  - `pool` must be a valid pointer to an... | address_pool |
 | `address_pool_get_address_at_index` | Get a single address info at a specific index from the pool  Returns detailed... | address_pool |
 | `address_pool_get_addresses_in_range` | Get a range of addresses from the pool  Returns an array of FFIAddressInfo st... | address_pool |
+| `address_to_pubkey_hash` | Extract public key hash from P2PKH address  # Safety - `address` must be a va... | transaction |
 | `address_validate` | Validate an address  # Safety  - `address` must be a valid null-terminated C ... | address |
 
 ### Transaction Management
 
-Functions: 4
+Functions: 13
 
 | Function | Description | Module |
 |----------|-------------|--------|
+| `transaction_add_input` | Add an input to a transaction  # Safety - `tx` must be a valid pointer to an ... | transaction |
+| `transaction_add_output` | Add an output to a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_bytes_free` | Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer create... | transaction |
 | `transaction_check_result_free` | Free a transaction check result  # Safety  - `result` must be a valid pointer... | transaction_checking |
 | `transaction_classify` | Get the transaction classification for routing  Returns a string describing t... | transaction_checking |
+| `transaction_create` | Create a new empty transaction  # Returns - Pointer to FFITransaction on succ... | transaction |
+| `transaction_deserialize` | Deserialize a transaction  # Safety - `data` must be a valid pointer to seria... | transaction |
+| `transaction_destroy` | Destroy a transaction  # Safety - `tx` must be a valid pointer to an FFITrans... | transaction |
+| `transaction_get_txid` | Get the transaction ID  # Safety - `tx` must be a valid pointer to an FFITran... | transaction |
+| `transaction_serialize` | Serialize a transaction  # Safety - `tx` must be a valid pointer to an FFITra... | transaction |
+| `transaction_sighash` | Calculate signature hash for an input  # Safety - `tx` must be a valid pointe... | transaction |
+| `transaction_sign_input` | Sign a transaction input  # Safety - `tx` must be a valid pointer to an FFITr... | transaction |
 | `utxo_array_free` | Free UTXO array  # Safety  - `utxos` must be a valid pointer to an array of F... | utxo |
 
 ### Key Management
@@ -282,7 +295,7 @@ Functions: 6
 
 ### Utility Functions
 
-Functions: 16
+Functions: 17
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -301,6 +314,7 @@ Functions: 16
 | `derivation_xpub_free` | Free extended public key  # Safety  - `xpub` must be a valid pointer to an FF... | derivation |
 | `derivation_xpub_to_string` | Get extended public key as string  # Safety  - `xpub` must be a valid pointer... | derivation |
 | `free_u32_array` | Free a u32 array allocated by this library  # Safety  - `array` must be a val... | account_collection |
+| `script_p2pkh` | Create a P2PKH script pubkey  # Safety - `pubkey_hash` must be a valid pointe... | transaction |
 | `string_free` | Free a string  # Safety  - `s` must be a valid pointer created by C string cr... | utils |
 
 ## Detailed Function Documentation
@@ -735,6 +749,54 @@ Free a managed wallet (FFIManagedWallet type)  # Safety  - `managed_wallet` must
 - `managed_wallet` must be a valid pointer to an FFIManagedWallet - This function must only be called once per managed wallet
 
 **Module:** `transaction_checking`
+
+---
+
+#### `key_wallet_derive_address_from_key`
+
+```c
+key_wallet_derive_address_from_key(private_key: *const u8, network: FFINetwork,) -> *mut c_char
+```
+
+**Description:**
+Derive an address from a private key  # Safety - `private_key` must be a valid pointer to 32 bytes - `network` is the network for the address  # Returns - Pointer to C string with address (caller must free) - NULL on error
+
+**Safety:**
+- `private_key` must be a valid pointer to 32 bytes - `network` is the network for the address
+
+**Module:** `derivation`
+
+---
+
+#### `key_wallet_derive_address_from_seed`
+
+```c
+key_wallet_derive_address_from_seed(seed: *const u8, network: FFINetwork, path: *const c_char,) -> *mut c_char
+```
+
+**Description:**
+Derive an address from a seed at a specific derivation path  # Safety - `seed` must be a valid pointer to 64 bytes - `network` is the network for the address - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0")  # Returns - Pointer to C string with address (caller must free) - NULL on error
+
+**Safety:**
+- `seed` must be a valid pointer to 64 bytes - `network` is the network for the address - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0")
+
+**Module:** `derivation`
+
+---
+
+#### `key_wallet_derive_private_key_from_seed`
+
+```c
+key_wallet_derive_private_key_from_seed(seed: *const u8, path: *const c_char, key_out: *mut u8,) -> i32
+```
+
+**Description:**
+Derive a private key from a seed at a specific derivation path  # Safety - `seed` must be a valid pointer to 64 bytes - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0") - `key_out` must be a valid pointer to a buffer of at least 32 bytes  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `seed` must be a valid pointer to 64 bytes - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0") - `key_out` must be a valid pointer to a buffer of at least 32 bytes
+
+**Module:** `derivation`
 
 ---
 
@@ -2919,6 +2981,22 @@ Get a range of addresses from the pool  Returns an array of FFIAddressInfo struc
 
 ---
 
+#### `address_to_pubkey_hash`
+
+```c
+address_to_pubkey_hash(address: *const c_char, network: FFINetwork, hash_out: *mut u8,) -> i32
+```
+
+**Description:**
+Extract public key hash from P2PKH address  # Safety - `address` must be a valid pointer to a null-terminated C string - `hash_out` must be a valid pointer to a buffer of at least 20 bytes  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `address` must be a valid pointer to a null-terminated C string - `hash_out` must be a valid pointer to a buffer of at least 20 bytes
+
+**Module:** `transaction`
+
+---
+
 #### `address_validate`
 
 ```c
@@ -2936,6 +3014,38 @@ Validate an address  # Safety  - `address` must be a valid null-terminated C str
 ---
 
 ### Transaction Management - Detailed
+
+#### `transaction_add_input`
+
+```c
+transaction_add_input(tx: *mut FFITransaction, input: *const FFITxIn) -> i32
+```
+
+**Description:**
+Add an input to a transaction  # Safety - `tx` must be a valid pointer to an FFITransaction - `input` must be a valid pointer to an FFITxIn  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `tx` must be a valid pointer to an FFITransaction - `input` must be a valid pointer to an FFITxIn
+
+**Module:** `transaction`
+
+---
+
+#### `transaction_add_output`
+
+```c
+transaction_add_output(tx: *mut FFITransaction, output: *const FFITxOut) -> i32
+```
+
+**Description:**
+Add an output to a transaction  # Safety - `tx` must be a valid pointer to an FFITransaction - `output` must be a valid pointer to an FFITxOut  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `tx` must be a valid pointer to an FFITransaction - `output` must be a valid pointer to an FFITxOut
+
+**Module:** `transaction`
+
+---
 
 #### `transaction_bytes_free`
 
@@ -2982,6 +3092,115 @@ Get the transaction classification for routing  Returns a string describing the 
 - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `error` must be a valid pointer to an FFIError or null - The returned string must be freed by the caller
 
 **Module:** `transaction_checking`
+
+---
+
+#### `transaction_create`
+
+```c
+transaction_create() -> *mut FFITransaction
+```
+
+**Description:**
+Create a new empty transaction  # Returns - Pointer to FFITransaction on success - NULL on error
+
+**Module:** `transaction`
+
+---
+
+#### `transaction_deserialize`
+
+```c
+transaction_deserialize(data: *const u8, len: u32) -> *mut FFITransaction
+```
+
+**Description:**
+Deserialize a transaction  # Safety - `data` must be a valid pointer to serialized transaction data - `len` must be the correct length of the data  # Returns - Pointer to FFITransaction on success - NULL on error
+
+**Safety:**
+- `data` must be a valid pointer to serialized transaction data - `len` must be the correct length of the data
+
+**Module:** `transaction`
+
+---
+
+#### `transaction_destroy`
+
+```c
+transaction_destroy(tx: *mut FFITransaction) -> ()
+```
+
+**Description:**
+Destroy a transaction  # Safety - `tx` must be a valid pointer to an FFITransaction created by transaction functions or null - After calling this function, the pointer becomes invalid
+
+**Safety:**
+- `tx` must be a valid pointer to an FFITransaction created by transaction functions or null - After calling this function, the pointer becomes invalid
+
+**Module:** `transaction`
+
+---
+
+#### `transaction_get_txid`
+
+```c
+transaction_get_txid(tx: *const FFITransaction, txid_out: *mut u8) -> i32
+```
+
+**Description:**
+Get the transaction ID  # Safety - `tx` must be a valid pointer to an FFITransaction - `txid_out` must be a valid pointer to a buffer of at least 32 bytes  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `tx` must be a valid pointer to an FFITransaction - `txid_out` must be a valid pointer to a buffer of at least 32 bytes
+
+**Module:** `transaction`
+
+---
+
+#### `transaction_serialize`
+
+```c
+transaction_serialize(tx: *const FFITransaction, out_buf: *mut u8, out_len: *mut u32,) -> i32
+```
+
+**Description:**
+Serialize a transaction  # Safety - `tx` must be a valid pointer to an FFITransaction - `out_buf` can be NULL to get size only - `out_len` must be a valid pointer to store the size  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `tx` must be a valid pointer to an FFITransaction - `out_buf` can be NULL to get size only - `out_len` must be a valid pointer to store the size
+
+**Module:** `transaction`
+
+---
+
+#### `transaction_sighash`
+
+```c
+transaction_sighash(tx: *const FFITransaction, input_index: u32, script_pubkey: *const u8, script_pubkey_len: u32, sighash_type: u32, hash_out: *mut u8,) -> i32
+```
+
+**Description:**
+Calculate signature hash for an input  # Safety - `tx` must be a valid pointer to an FFITransaction - `script_pubkey` must be a valid pointer to the script pubkey - `hash_out` must be a valid pointer to a buffer of at least 32 bytes  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `tx` must be a valid pointer to an FFITransaction - `script_pubkey` must be a valid pointer to the script pubkey - `hash_out` must be a valid pointer to a buffer of at least 32 bytes
+
+**Module:** `transaction`
+
+---
+
+#### `transaction_sign_input`
+
+```c
+transaction_sign_input(tx: *mut FFITransaction, input_index: u32, private_key: *const u8, script_pubkey: *const u8, script_pubkey_len: u32, sighash_type: u32,) -> i32
+```
+
+**Description:**
+Sign a transaction input  # Safety - `tx` must be a valid pointer to an FFITransaction - `private_key` must be a valid pointer to a 32-byte private key - `script_pubkey` must be a valid pointer to the script pubkey  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `tx` must be a valid pointer to an FFITransaction - `private_key` must be a valid pointer to a 32-byte private key - `script_pubkey` must be a valid pointer to the script pubkey
+
+**Module:** `transaction`
 
 ---
 
@@ -3575,6 +3794,22 @@ Free a u32 array allocated by this library  # Safety  - `array` must be a valid 
 - `array` must be a valid pointer to an array allocated by this library - `array` must not be used after calling this function
 
 **Module:** `account_collection`
+
+---
+
+#### `script_p2pkh`
+
+```c
+script_p2pkh(pubkey_hash: *const u8, out_buf: *mut u8, out_len: *mut u32,) -> i32
+```
+
+**Description:**
+Create a P2PKH script pubkey  # Safety - `pubkey_hash` must be a valid pointer to a 20-byte public key hash - `out_buf` can be NULL to get size only - `out_len` must be a valid pointer to store the size  # Returns - 0 on success - -1 on error
+
+**Safety:**
+- `pubkey_hash` must be a valid pointer to a 20-byte public key hash - `out_buf` can be NULL to get size only - `out_len` must be a valid pointer to store the size
+
+**Module:** `transaction`
 
 ---
 

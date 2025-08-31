@@ -31,16 +31,6 @@ pub extern "C" fn dash_spv_ffi_version() -> *const c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn dash_spv_ffi_get_network_name(network: crate::FFINetwork) -> *const c_char {
-    match network {
-        crate::FFINetwork::Dash => "dash\0".as_ptr() as *const c_char,
-        crate::FFINetwork::Testnet => "testnet\0".as_ptr() as *const c_char,
-        crate::FFINetwork::Regtest => "regtest\0".as_ptr() as *const c_char,
-        crate::FFINetwork::Devnet => "devnet\0".as_ptr() as *const c_char,
-    }
-}
-
-#[no_mangle]
 pub extern "C" fn dash_spv_ffi_enable_test_mode() {
     std::env::set_var("DASH_SPV_TEST_MODE", "1");
 }

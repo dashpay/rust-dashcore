@@ -1,6 +1,6 @@
+use crate::{null_check, set_last_error, FFIDashSpvClient, FFIErrorCode};
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use crate::{null_check, set_last_error, FFIDashSpvClient, FFIErrorCode};
 
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(

@@ -1,7 +1,6 @@
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::types::{DetailedSyncProgress, MempoolRemovalReason, SyncStage};
 use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
-use dashcore::Network;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
@@ -27,38 +26,6 @@ impl FFIString {
             return Err("Null pointer".to_string());
         }
         CStr::from_ptr(ptr).to_str().map(|s| s.to_string()).map_err(|e| e.to_string())
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FFINetwork {
-    Dash = 0,
-    Testnet = 1,
-    Regtest = 2,
-    Devnet = 3,
-}
-
-impl From<FFINetwork> for Network {
-    fn from(net: FFINetwork) -> Self {
-        match net {
-            FFINetwork::Dash => Network::Dash,
-            FFINetwork::Testnet => Network::Testnet,
-            FFINetwork::Regtest => Network::Regtest,
-            FFINetwork::Devnet => Network::Devnet,
-        }
-    }
-}
-
-impl From<Network> for FFINetwork {
-    fn from(net: Network) -> Self {
-        match net {
-            Network::Dash => FFINetwork::Dash,
-            Network::Testnet => FFINetwork::Testnet,
-            Network::Regtest => FFINetwork::Regtest,
-            Network::Devnet => FFINetwork::Devnet,
-            _ => FFINetwork::Dash,
-        }
     }
 }
 

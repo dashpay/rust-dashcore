@@ -991,7 +991,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
     }
 }
 
-
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
     client: *mut FFIDashSpvClient,
@@ -1082,9 +1081,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
 /// The caller must ensure that:
 /// - The client pointer is valid
 /// - The returned pointer is freed using wallet_manager_free()
-/// 
+///
 /// # Returns
-/// 
+///
 /// An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized.
 /// Swift should treat this as an OpaquePointer.
 #[no_mangle]
@@ -1092,18 +1091,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_wallet_manager(
     client: *mut FFIDashSpvClient,
 ) -> *mut c_void {
     null_check!(client, std::ptr::null_mut());
-    
+
     let client = &*client;
     let inner = client.inner.lock().unwrap();
-    
+
     if let Some(ref spv_client) = *inner {
         // Clone the Arc to the wallet manager
         let wallet_arc = spv_client.wallet().clone();
         let runtime = client.runtime.clone();
-        
+
         // Create the FFIWalletManager with the cloned Arc
         let manager = FFIWalletManager::from_arc(wallet_arc, runtime);
-        
+
         Box::into_raw(Box::new(manager)) as *mut c_void
     } else {
         set_last_error("Client not initialized");

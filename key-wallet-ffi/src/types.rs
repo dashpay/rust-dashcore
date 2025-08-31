@@ -1,7 +1,7 @@
 //! Common types for FFI interface
 
 use key_wallet::{Network, Wallet};
-use std::os::raw::c_uint;
+use std::os::raw::{c_char, c_uint};
 use std::sync::Arc;
 
 /// FFI Network type (bit flags for multiple networks)
@@ -58,6 +58,49 @@ impl FFINetworks {
             x if x == FFINetworks::Regtest as c_uint => Some(Network::Regtest),
             x if x == FFINetworks::Devnet as c_uint => Some(Network::Devnet),
             _ => None, // Multiple networks or NoNetworks
+        }
+    }
+}
+
+/// FFI Network type (single network)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FFINetwork {
+    Dash = 0,
+    Testnet = 1,
+    Regtest = 2,
+    Devnet = 3,
+}
+
+#[no_mangle]
+pub extern "C" fn ffi_network_get_name(network: FFINetwork) -> *const c_char {
+    match network {
+        FFINetwork::Dash => c"dash".as_ptr() as *const c_char,
+        FFINetwork::Testnet => c"testnet".as_ptr() as *const c_char,
+        FFINetwork::Regtest => c"regtest".as_ptr() as *const c_char,
+        FFINetwork::Devnet => c"devnet".as_ptr() as *const c_char,
+    }
+}
+
+impl From<FFINetwork> for Network {
+    fn from(net: FFINetwork) -> Self {
+        match net {
+            FFINetwork::Dash => Network::Dash,
+            FFINetwork::Testnet => Network::Testnet,
+            FFINetwork::Regtest => Network::Regtest,
+            FFINetwork::Devnet => Network::Devnet,
+        }
+    }
+}
+
+impl From<Network> for FFINetwork {
+    fn from(net: Network) -> Self {
+        match net {
+            Network::Dash => FFINetwork::Dash,
+            Network::Testnet => FFINetwork::Testnet,
+            Network::Regtest => FFINetwork::Regtest,
+            Network::Devnet => FFINetwork::Devnet,
+            _ => FFINetwork::Dash,
         }
     }
 }
@@ -144,7 +187,7 @@ pub struct FFIAccountResult {
     /// Error code (0 = success)
     pub error_code: i32,
     /// Error message (NULL if success, must be freed by caller if not NULL)
-    pub error_message: *mut std::os::raw::c_char,
+    pub error_message: *mut c_char,
 }
 
 impl FFIAccountResult {
