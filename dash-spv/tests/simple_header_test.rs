@@ -8,7 +8,6 @@ use dash_spv::{
 };
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::info;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -61,9 +60,7 @@ async fn test_simple_header_sync() {
         MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     let mut client = DashSpvClient::new(config.clone(), network_manager, storage, wallet)
         .await

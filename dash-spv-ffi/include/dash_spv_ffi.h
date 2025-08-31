@@ -85,25 +85,6 @@ typedef struct FFISpvStats {
   uint64_t uptime;
 } FFISpvStats;
 
-/**
- * FFI-safe array that transfers ownership of memory to the C caller.
- *
- * # Safety
- *
- * This struct represents memory that has been allocated by Rust but ownership
- * has been transferred to the C caller. The caller is responsible for:
- * - Not accessing the memory after it has been freed
- * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
- * - Ensuring the data, len, and capacity fields remain consistent
- */
-typedef struct FFIArray {
-  void *data;
-  uintptr_t len;
-  uintptr_t capacity;
-  uintptr_t elem_size;
-  uintptr_t elem_align;
-} FFIArray;
-
 typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);
 
 typedef void (*TransactionCallback)(const uint8_t (*txid)[32],
@@ -155,14 +136,6 @@ typedef struct FFIEventCallbacks {
   void *user_data;
 } FFIEventCallbacks;
 
-typedef struct FFITransaction {
-  struct FFIString txid;
-  int32_t version;
-  uint32_t locktime;
-  uint32_t size;
-  uint32_t weight;
-} FFITransaction;
-
 /**
  * Handle for Core SDK that can be passed to Platform SDK
  */
@@ -177,6 +150,25 @@ typedef struct FFIResult {
   int32_t error_code;
   const char *error_message;
 } FFIResult;
+
+/**
+ * FFI-safe array that transfers ownership of memory to the C caller.
+ *
+ * # Safety
+ *
+ * This struct represents memory that has been allocated by Rust but ownership
+ * has been transferred to the C caller. The caller is responsible for:
+ * - Not accessing the memory after it has been freed
+ * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
+ * - Ensuring the data, len, and capacity fields remain consistent
+ */
+typedef struct FFIArray {
+  void *data;
+  uintptr_t len;
+  uintptr_t capacity;
+  uintptr_t elem_size;
+  uintptr_t elem_align;
+} FFIArray;
 
 /**
  * FFI-safe representation of an unconfirmed transaction
@@ -314,14 +306,6 @@ struct FFISpvStats *dash_spv_ffi_client_get_stats(struct FFIDashSpvClient *clien
 
 bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *client);
 
-FFIBalance *dash_spv_ffi_client_get_address_balance(struct FFIDashSpvClient *client,
-                                                    const char *address);
-
-struct FFIArray *dash_spv_ffi_client_get_utxos(struct FFIDashSpvClient *client);
-
-struct FFIArray *dash_spv_ffi_client_get_utxos_for_address(struct FFIDashSpvClient *client,
-                                                           const char *address);
-
 int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
                                                 struct FFIEventCallbacks callbacks);
 
@@ -331,54 +315,32 @@ void dash_spv_ffi_sync_progress_destroy(struct FFISyncProgress *progress);
 
 void dash_spv_ffi_spv_stats_destroy(struct FFISpvStats *stats);
 
-int32_t dash_spv_ffi_client_watch_address(struct FFIDashSpvClient *client, const char *address);
-
-int32_t dash_spv_ffi_client_unwatch_address(struct FFIDashSpvClient *client, const char *address);
-
-int32_t dash_spv_ffi_client_watch_script(struct FFIDashSpvClient *client, const char *script_hex);
-
-int32_t dash_spv_ffi_client_unwatch_script(struct FFIDashSpvClient *client, const char *script_hex);
-
-struct FFIArray *dash_spv_ffi_client_get_address_history(struct FFIDashSpvClient *client,
-                                                         const char *address);
-
-struct FFITransaction *dash_spv_ffi_client_get_transaction(struct FFIDashSpvClient *client,
-                                                           const char *txid);
-
-int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
-                                                  const char *tx_hex);
-
-struct FFIArray *dash_spv_ffi_client_get_watched_addresses(struct FFIDashSpvClient *client);
-
-struct FFIArray *dash_spv_ffi_client_get_watched_scripts(struct FFIDashSpvClient *client);
-
-FFIBalance *dash_spv_ffi_client_get_total_balance(struct FFIDashSpvClient *client);
-
 int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
                                               uint32_t _from_height);
-
-int32_t dash_spv_ffi_client_get_transaction_confirmations(struct FFIDashSpvClient *client,
-                                                          const char *txid);
-
-int32_t dash_spv_ffi_client_is_transaction_confirmed(struct FFIDashSpvClient *client,
-                                                     const char *txid);
-
-void dash_spv_ffi_transaction_destroy(struct FFITransaction *tx);
-
-struct FFIArray *dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *client,
-                                                       const char *address);
 
 int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *client,
                                                     enum FFIMempoolStrategy strategy);
 
-FFIBalance *dash_spv_ffi_client_get_balance_with_mempool(struct FFIDashSpvClient *client);
-
-int32_t dash_spv_ffi_client_get_mempool_transaction_count(struct FFIDashSpvClient *client);
-
 int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const char *txid);
 
-FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *client,
-                                                    const char *address);
+/**
+ * Get the wallet manager from the SPV client
+ *
+ * Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager.
+ * This allows direct interaction with the wallet manager without going through the client.
+ *
+ * # Safety
+ *
+ * The caller must ensure that:
+ * - The client pointer is valid
+ * - The returned pointer is freed using wallet_manager_free()
+ *
+ * # Returns
+ *
+ * An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized.
+ * Swift should treat this as an OpaquePointer.
+ */
+void *dash_spv_ffi_client_get_wallet_manager(struct FFIDashSpvClient *client);
 
 FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
 
@@ -544,3 +506,6 @@ const char *dash_spv_ffi_version(void);
 const char *dash_spv_ffi_get_network_name(enum FFINetwork network);
 
 void dash_spv_ffi_enable_test_mode(void);
+
+int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
+                                                  const char *tx_hex);

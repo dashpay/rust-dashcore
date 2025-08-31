@@ -11,7 +11,7 @@ use tokio::signal;
 use dash_spv::terminal::TerminalGuard;
 use dash_spv::{ClientConfig, DashSpvClient, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
+use key_wallet_manager::wallet_manager::WalletManager;
 
 #[tokio::main]
 async fn main() {
@@ -222,19 +222,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Log the data directory being used
     tracing::info!("Using data directory: {}", data_dir.display());
 
-    // Create the SPV wallet manager
-    let mut spv_wallet =
-        key_wallet_manager::spv_wallet_manager::SPVWalletManager::with_base(WalletManager::<
-            ManagedWalletInfo,
-        >::new());
-    spv_wallet.base.create_wallet_from_mnemonic(
+    // Create the wallet manager
+    let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new();
+    wallet_manager.create_wallet_from_mnemonic(
         "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside",
         "",
         &[network],
         None,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;
-    let wallet = Arc::new(tokio::sync::RwLock::new(spv_wallet));
+    let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
 
     // Create network manager
     let network_manager =
@@ -303,14 +300,14 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     config: ClientConfig,
     network_manager: dash_spv::network::multi_peer::MultiPeerNetworkManager,
     storage_manager: S,
-    wallet: Arc<tokio::sync::RwLock<key_wallet_manager::spv_wallet_manager::SPVWalletManager>>,
+    wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
     enable_terminal_ui: bool,
     matches: &clap::ArgMatches,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
     let mut client =
         match DashSpvClient::<
-            key_wallet_manager::spv_wallet_manager::SPVWalletManager,
+            WalletManager<ManagedWalletInfo>,
             dash_spv::network::multi_peer::MultiPeerNetworkManager,
             S,
         >::new(config.clone(), network_manager, storage_manager, wallet.clone())
@@ -442,7 +439,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     // Display current wallet addresses
     {
         let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.base.monitored_addresses(config.network);
+        let monitored = wallet_lock.monitored_addresses(config.network);
         if !monitored.is_empty() {
             tracing::info!("Wallet monitoring {} addresses:", monitored.len());
             for (i, addr) in monitored.iter().take(10).enumerate() {
@@ -484,7 +481,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     // Check filters for matches if wallet has addresses before starting monitoring
     let should_check_filters = {
         let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.base.monitored_addresses(config.network);
+        let monitored = wallet_lock.monitored_addresses(config.network);
         !monitored.is_empty() && !matches.get_flag("no-filters")
     };
 

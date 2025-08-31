@@ -380,15 +380,6 @@ pub unsafe extern "C" fn dash_spv_ffi_string_array_destroy(arr: *mut FFIArray) {
 }
 
 #[repr(C)]
-pub struct FFITransaction {
-    pub txid: FFIString,
-    pub version: i32,
-    pub locktime: u32,
-    pub size: u32,
-    pub weight: u32,
-}
-
-#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FFIMempoolStrategy {
     FetchAll = 0,

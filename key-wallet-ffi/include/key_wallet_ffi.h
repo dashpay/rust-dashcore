@@ -320,6 +320,10 @@ typedef struct FFIWallet FFIWallet;
 
 /*
  FFI wrapper for WalletManager
+
+ This struct holds a cloned Arc reference to the WalletManager,
+ allowing FFI code to interact with it directly without going through
+ the SPV client.
  */
 typedef struct FFIWalletManager FFIWalletManager;
 

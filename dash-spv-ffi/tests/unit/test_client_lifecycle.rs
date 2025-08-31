@@ -8,7 +8,6 @@ mod tests {
     use crate::*;
     use serial_test::serial;
     use std::ffi::CString;
-    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -156,70 +155,6 @@ mod tests {
         // Thread count should be reasonable (not growing indefinitely)
         let _final_thread_count = thread::current().id();
         // Can't directly compare thread counts, but test passes if no panic/leak
-    }
-
-    // Wrapper to make pointer Send
-    struct SendableClient(*mut FFIDashSpvClient);
-    unsafe impl Send for SendableClient {}
-
-    #[test]
-    #[serial]
-    #[ignore] // Requires network - client operations hang without peers
-    fn test_concurrent_client_operations() {
-        unsafe {
-            let (config, _temp_dir) = create_test_config_with_dir();
-            let client = dash_spv_ffi_client_new(config);
-            assert!(!client.is_null());
-
-            let client_ptr = Arc::new(Mutex::new(SendableClient(client)));
-            let mut handles = vec![];
-
-            // Spawn threads doing different operations
-            for i in 0..5 {
-                let client_clone = client_ptr.clone();
-                let handle = thread::spawn(move || {
-                    let client = client_clone.lock().unwrap().0;
-
-                    match i % 3 {
-                        0 => {
-                            // Get sync progress
-                            let progress = dash_spv_ffi_client_get_sync_progress(client);
-                            if !progress.is_null() {
-                                dash_spv_ffi_sync_progress_destroy(progress);
-                            }
-                        }
-                        1 => {
-                            // Get stats
-                            let stats = dash_spv_ffi_client_get_stats(client);
-                            if !stats.is_null() {
-                                dash_spv_ffi_spv_stats_destroy(stats);
-                            }
-                        }
-                        2 => {
-                            // Get balance for random address
-                            let addr = CString::new("XjSgy6PaVCB3V4KhCiCDkaVbx9ewxe9R1E").unwrap();
-                            let balance =
-                                dash_spv_ffi_client_get_address_balance(client, addr.as_ptr());
-                            if !balance.is_null() {
-                                // FFIBalance from key-wallet-ffi doesn't need explicit destruction
-                                // dash_spv_ffi_balance_destroy(balance);
-                            }
-                        }
-                        _ => {}
-                    }
-                });
-                handles.push(handle);
-            }
-
-            // Wait for all threads
-            for handle in handles {
-                handle.join().unwrap();
-            }
-
-            let client = client_ptr.lock().unwrap().0;
-            dash_spv_ffi_client_destroy(client);
-            dash_spv_ffi_config_destroy(config);
-        }
     }
 
     #[test]

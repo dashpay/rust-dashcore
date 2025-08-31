@@ -1,55 +1,13 @@
 use crate::{
-    null_check, set_last_error, FFIArray, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
-    FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress, FFITransaction,
+    null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
+    FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress,
 };
 // Import wallet types from key-wallet-ffi
-use key_wallet_ffi::{FFIBalance, FFIUTXO as FFIUtxo};
+use key_wallet_ffi::FFIWalletManager;
 
-// Helper function to convert AddressBalance to FFIBalance
-fn address_balance_to_ffi(balance: dash_spv::types::AddressBalance) -> FFIBalance {
-    FFIBalance {
-        confirmed: balance.confirmed.to_sat(),
-        unconfirmed: balance.unconfirmed.to_sat(),
-        immature: 0,
-        total: balance.total().to_sat(),
-    }
-}
-
-// Helper function to convert key_wallet::Utxo to FFIUtxo
-fn wallet_utxo_to_ffi(utxo: key_wallet::Utxo) -> FFIUtxo {
-    use std::ffi::CString;
-
-    // Convert txid to byte array
-    let mut txid_bytes = [0u8; 32];
-    txid_bytes.copy_from_slice(&utxo.outpoint.txid[..]);
-
-    // Create FFI UTXO
-    let address_str = utxo.address.to_string();
-    let script_bytes = utxo.txout.script_pubkey.to_bytes();
-
-    FFIUtxo {
-        txid: txid_bytes,
-        vout: utxo.outpoint.vout,
-        amount: utxo.txout.value,
-        address: CString::new(address_str).unwrap_or_default().into_raw(),
-        script_pubkey: if script_bytes.is_empty() {
-            std::ptr::null_mut()
-        } else {
-            let script_box = script_bytes.into_boxed_slice();
-            Box::into_raw(script_box) as *mut u8
-        },
-        script_len: utxo.txout.script_pubkey.len(),
-        height: utxo.height,
-        confirmations: if utxo.is_confirmed {
-            1
-        } else {
-            0
-        },
-    }
-}
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
-use dashcore::{Address, ScriptBuf, Txid};
+use dashcore::Txid;
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -148,7 +106,7 @@ pub struct FFIDashSpvClient {
         Mutex<
             Option<
                 DashSpvClient<
-                    key_wallet_manager::spv_wallet_manager::SPVWalletManager<
+                    key_wallet_manager::wallet_manager::WalletManager<
                         key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
                     >,
                     dash_spv::network::MultiPeerNetworkManager,
@@ -157,51 +115,11 @@ pub struct FFIDashSpvClient {
             >,
         >,
     >,
-    runtime: Arc<Runtime>,
+    pub(crate) runtime: Arc<Runtime>,
     event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     sync_callbacks: Arc<Mutex<Option<SyncCallbackData>>>,
     shutdown_signal: Arc<AtomicBool>,
-}
-
-/// Validate a script hex string and convert it to ScriptBuf
-unsafe fn validate_script_hex(script_hex: *const c_char) -> Result<ScriptBuf, i32> {
-    let script_str = match CStr::from_ptr(script_hex).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in script: {}", e));
-            return Err(FFIErrorCode::InvalidArgument as i32);
-        }
-    };
-
-    // Check for odd-length hex string
-    if script_str.len() % 2 != 0 {
-        set_last_error("Hex string must have even length");
-        return Err(FFIErrorCode::InvalidArgument as i32);
-    }
-
-    let script_bytes = match hex::decode(script_str) {
-        Ok(b) => b,
-        Err(e) => {
-            set_last_error(&format!("Invalid hex in script: {}", e));
-            return Err(FFIErrorCode::InvalidArgument as i32);
-        }
-    };
-
-    // Check for empty script
-    if script_bytes.is_empty() {
-        set_last_error("Script cannot be empty");
-        return Err(FFIErrorCode::InvalidArgument as i32);
-    }
-
-    // Check for minimum script length (scripts should be at least 1 byte)
-    // But very short scripts (like 2 bytes) might not be meaningful
-    if script_bytes.len() < 3 {
-        set_last_error("Script too short to be meaningful");
-        return Err(FFIErrorCode::InvalidArgument as i32);
-    }
-
-    Ok(ScriptBuf::from(script_bytes))
 }
 
 #[no_mangle]
@@ -229,11 +147,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
         // Construct concrete implementations for generics
         let network = dash_spv::network::MultiPeerNetworkManager::new(&client_config).await;
         let storage = dash_spv::storage::MemoryStorageManager::new().await;
-        let wallet = key_wallet_manager::spv_wallet_manager::SPVWalletManager::with_base(
-            key_wallet_manager::wallet_manager::WalletManager::<
-                key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
-            >::new(),
-        );
+        let wallet = key_wallet_manager::wallet_manager::WalletManager::<
+            key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
+        >::new();
         let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));
 
         match (network, storage) {
@@ -961,215 +877,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_is_filter_sync_available(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_address_balance(
-    client: *mut FFIDashSpvClient,
-    address: *const c_char,
-) -> *mut FFIBalance {
-    null_check!(client, std::ptr::null_mut());
-    null_check!(address, std::ptr::null_mut());
-
-    let addr_str = match CStr::from_ptr(address).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return std::ptr::null_mut();
-        }
-    };
-
-    let addr = match Address::from_str(addr_str) {
-        Ok(a) => a.assume_checked(),
-        Err(e) => {
-            set_last_error(&format!("Invalid address: {}", e));
-            return std::ptr::null_mut();
-        }
-    };
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            // Aggregate from wallet UTXOs matching the address
-            let wallet = spv_client.wallet().clone();
-            let wallet = wallet.read().await;
-            let target = addr.to_string();
-            let mut confirmed: u64 = 0;
-            let mut unconfirmed: u64 = 0;
-            for u in wallet.base.get_all_utxos() {
-                if u.address.to_string() == target {
-                    if u.is_confirmed || u.is_instantlocked {
-                        confirmed = confirmed.saturating_add(u.txout.value);
-                    } else {
-                        unconfirmed = unconfirmed.saturating_add(u.txout.value);
-                    }
-                }
-            }
-            Ok(dash_spv::types::AddressBalance {
-                confirmed: dashcore::Amount::from_sat(confirmed),
-                unconfirmed: dashcore::Amount::from_sat(unconfirmed),
-                pending: dashcore::Amount::from_sat(0),
-                pending_instant: dashcore::Amount::from_sat(0),
-            })
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(balance) => Box::into_raw(Box::new(address_balance_to_ffi(balance))),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            std::ptr::null_mut()
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(
-    client: *mut FFIDashSpvClient,
-) -> *mut FFIArray {
-    null_check!(
-        client,
-        Box::into_raw(Box::new(FFIArray {
-            data: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-            elem_size: 0,
-            elem_align: 1
-        }))
-    );
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            let wallet = spv_client.wallet().clone();
-            let wallet = wallet.read().await;
-            let utxos = wallet.base.get_all_utxos();
-            let ffi_utxos: Vec<FFIUtxo> =
-                utxos.into_iter().cloned().map(wallet_utxo_to_ffi).collect();
-            Ok(FFIArray::new(ffi_utxos))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(arr) => Box::into_raw(Box::new(arr)),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            Box::into_raw(Box::new(FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: 0,
-                elem_align: 1,
-            }))
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
-    client: *mut FFIDashSpvClient,
-    address: *const c_char,
-) -> *mut FFIArray {
-    null_check!(
-        client,
-        Box::into_raw(Box::new(FFIArray {
-            data: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-            elem_size: 0,
-            elem_align: 1
-        }))
-    );
-    null_check!(
-        address,
-        Box::into_raw(Box::new(FFIArray {
-            data: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-            elem_size: 0,
-            elem_align: 1
-        }))
-    );
-
-    let addr_str = match CStr::from_ptr(address).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return Box::into_raw(Box::new(FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: 0,
-                elem_align: 1,
-            }));
-        }
-    };
-
-    let _addr = match Address::from_str(addr_str) {
-        Ok(a) => a.assume_checked(),
-        Err(e) => {
-            set_last_error(&format!("Invalid address: {}", e));
-            return Box::into_raw(Box::new(FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: 0,
-                elem_align: 1,
-            }));
-        }
-    };
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            let wallet = spv_client.wallet().clone();
-            let wallet = wallet.read().await;
-            let target = _addr.to_string();
-            let utxos = wallet.base.get_all_utxos();
-            let filtered: Vec<FFIUtxo> = utxos
-                .into_iter()
-                .filter(|u| u.address.to_string() == target)
-                .cloned()
-                .map(wallet_utxo_to_ffi)
-                .collect();
-            Ok(FFIArray::new(filtered))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(arr) => Box::into_raw(Box::new(arr)),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            Box::into_raw(Box::new(FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: 0,
-                elem_align: 1,
-            }))
-        }
-    }
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     client: *mut FFIDashSpvClient,
     callbacks: FFIEventCallbacks,
@@ -1254,382 +961,6 @@ pub unsafe extern "C" fn dash_spv_ffi_spv_stats_destroy(stats: *mut FFISpvStats)
 // Wallet operations
 
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_watch_address(
-    client: *mut FFIDashSpvClient,
-    address: *const c_char,
-) -> i32 {
-    null_check!(client);
-    null_check!(address);
-
-    let addr_str = match CStr::from_ptr(address).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    match dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(addr_str) {
-        Ok(a) => {
-            let _ = a.assume_checked();
-        }
-        Err(e) => {
-            set_last_error(&format!("Invalid address: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    }
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref _spv_client) = *guard {
-            // TODO: watch_address not yet implemented in dash-spv
-            Err(dash_spv::SpvError::Config("Not implemented".to_string()))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&format!("Failed to watch address: {}", e));
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_unwatch_address(
-    client: *mut FFIDashSpvClient,
-    address: *const c_char,
-) -> i32 {
-    null_check!(client);
-    null_check!(address);
-
-    let addr_str = match CStr::from_ptr(address).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    match dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(addr_str) {
-        Ok(a) => {
-            let _ = a.assume_checked();
-        }
-        Err(e) => {
-            set_last_error(&format!("Invalid address: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    }
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
-        let mut guard = inner.lock().unwrap();
-        if let Some(ref mut _spv_client) = *guard {
-            // TODO: unwatch_address not yet implemented in dash-spv
-            Err(dash_spv::SpvError::Config("Not implemented".to_string()))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&format!("Failed to unwatch address: {}", e));
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_watch_script(
-    client: *mut FFIDashSpvClient,
-    script_hex: *const c_char,
-) -> i32 {
-    null_check!(client);
-    null_check!(script_hex);
-
-    if let Err(error_code) = validate_script_hex(script_hex) {
-        return error_code;
-    }
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
-        let mut guard = inner.lock().unwrap();
-        if let Some(ref mut _spv_client) = *guard {
-            // TODO: watch_script not yet implemented in dash-spv
-            Err(dash_spv::SpvError::Config("Not implemented".to_string()))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&format!("Failed to watch script: {}", e));
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_unwatch_script(
-    client: *mut FFIDashSpvClient,
-    script_hex: *const c_char,
-) -> i32 {
-    null_check!(client);
-    null_check!(script_hex);
-
-    if let Err(error_code) = validate_script_hex(script_hex) {
-        return error_code;
-    }
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
-        let mut guard = inner.lock().unwrap();
-        if let Some(ref mut _spv_client) = *guard {
-            // TODO: unwatch_script not yet implemented in dash-spv
-            Err(dash_spv::SpvError::Config("Not implemented".to_string()))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&format!("Failed to unwatch script: {}", e));
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_address_history(
-    client: *mut FFIDashSpvClient,
-    address: *const c_char,
-) -> *mut FFIArray {
-    if client.is_null() || address.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let addr_str = match CStr::from_ptr(address).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return Box::into_raw(Box::new(FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: 0,
-                elem_align: 1,
-            }));
-        }
-    };
-
-    let _addr = match Address::from_str(addr_str) {
-        Ok(a) => a.assume_checked(),
-        Err(e) => {
-            set_last_error(&format!("Invalid address: {}", e));
-            return Box::into_raw(Box::new(FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: 0,
-                elem_align: 1,
-            }));
-        }
-    };
-
-    // Not implemented in dash-spv yet
-    Box::into_raw(Box::new(FFIArray {
-        data: std::ptr::null_mut(),
-        len: 0,
-        capacity: 0,
-        elem_size: 0,
-        elem_align: 1,
-    }))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_transaction(
-    client: *mut FFIDashSpvClient,
-    txid: *const c_char,
-) -> *mut FFITransaction {
-    null_check!(client, std::ptr::null_mut());
-    null_check!(txid, std::ptr::null_mut());
-
-    let txid_str = match CStr::from_ptr(txid).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in txid: {}", e));
-            return std::ptr::null_mut();
-        }
-    };
-
-    let _txid = match Txid::from_str(txid_str) {
-        Ok(t) => t,
-        Err(e) => {
-            set_last_error(&format!("Invalid txid: {}", e));
-            return std::ptr::null_mut();
-        }
-    };
-
-    // Not implemented in dash-spv yet
-    std::ptr::null_mut()
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
-    client: *mut FFIDashSpvClient,
-    tx_hex: *const c_char,
-) -> i32 {
-    null_check!(client);
-    null_check!(tx_hex);
-
-    let tx_str = match CStr::from_ptr(tx_hex).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in transaction: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    let tx_bytes = match hex::decode(tx_str) {
-        Ok(b) => b,
-        Err(e) => {
-            set_last_error(&format!("Invalid hex in transaction: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    let _tx = match dashcore::consensus::deserialize::<dashcore::Transaction>(&tx_bytes) {
-        Ok(t) => t,
-        Err(e) => {
-            set_last_error(&format!("Invalid transaction: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref _spv_client) = *guard {
-            // TODO: broadcast_transaction not yet implemented in dash-spv
-            Err(dash_spv::SpvError::Config("Not implemented".to_string()))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&format!("Failed to broadcast transaction: {}", e));
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_watched_addresses(
-    client: *mut FFIDashSpvClient,
-) -> *mut FFIArray {
-    if client.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    // Not implemented in dash-spv yet
-    Box::into_raw(Box::new(FFIArray {
-        data: std::ptr::null_mut(),
-        len: 0,
-        capacity: 0,
-        elem_size: 0,
-        elem_align: 1,
-    }))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_watched_scripts(
-    client: *mut FFIDashSpvClient,
-) -> *mut FFIArray {
-    if client.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    // Not implemented in dash-spv yet
-    Box::into_raw(Box::new(FFIArray {
-        data: std::ptr::null_mut(),
-        len: 0,
-        capacity: 0,
-        elem_size: 0,
-        elem_align: 1,
-    }))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_total_balance(
-    client: *mut FFIDashSpvClient,
-) -> *mut FFIBalance {
-    null_check!(client, std::ptr::null_mut());
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            let wallet = spv_client.wallet().clone();
-            let wallet = wallet.read().await;
-            let total = wallet.base.get_total_balance();
-            Ok(FFIBalance {
-                confirmed: total,
-                unconfirmed: 0,
-                immature: 0,
-                total,
-            })
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(bal) => Box::into_raw(Box::new(bal)),
-        Err(e) => {
-            set_last_error(&format!("Failed to get total balance: {}", e));
-            std::ptr::null_mut()
-        }
-    }
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
     client: *mut FFIDashSpvClient,
     _from_height: u32,
@@ -1660,48 +991,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_transaction_confirmations(
-    client: *mut FFIDashSpvClient,
-    txid: *const c_char,
-) -> i32 {
-    null_check!(client, -1);
-    null_check!(txid, -1);
-
-    // Not implemented in dash-spv yet
-    -1
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_is_transaction_confirmed(
-    client: *mut FFIDashSpvClient,
-    txid: *const c_char,
-) -> i32 {
-    null_check!(client, 0);
-    null_check!(txid, 0);
-
-    // Not implemented in dash-spv yet
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_transaction_destroy(tx: *mut FFITransaction) {
-    if !tx.is_null() {
-        let _ = Box::from_raw(tx);
-    }
-}
-
-// This was already implemented earlier but let me add it for tests that import it directly
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_address_utxos(
-    client: *mut FFIDashSpvClient,
-    address: *const c_char,
-) -> *mut FFIArray {
-    if client.is_null() || address.is_null() {
-        return std::ptr::null_mut();
-    }
-    crate::client::dash_spv_ffi_client_get_utxos_for_address(client, address)
-}
 
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
@@ -1731,45 +1020,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
         Err(e) => {
             set_last_error(&e.to_string());
             FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_balance_with_mempool(
-    client: *mut FFIDashSpvClient,
-) -> *mut FFIBalance {
-    null_check!(client, std::ptr::null_mut());
-
-    set_last_error("Wallet-wide mempool balance not available in current dash-spv version");
-    std::ptr::null_mut()
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_mempool_transaction_count(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client, -1);
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            Ok(spv_client.get_mempool_transaction_count().await as i32)
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(count) => count,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            -1
         }
     }
 }
@@ -1822,60 +1072,41 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
     }
 }
 
+/// Get the wallet manager from the SPV client
+///
+/// Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager.
+/// This allows direct interaction with the wallet manager without going through the client.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - The client pointer is valid
+/// - The returned pointer is freed using wallet_manager_free()
+/// 
+/// # Returns
+/// 
+/// An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized.
+/// Swift should treat this as an OpaquePointer.
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_mempool_balance(
+pub unsafe extern "C" fn dash_spv_ffi_client_get_wallet_manager(
     client: *mut FFIDashSpvClient,
-    address: *const c_char,
-) -> *mut FFIBalance {
+) -> *mut c_void {
     null_check!(client, std::ptr::null_mut());
-    null_check!(address, std::ptr::null_mut());
-
-    let addr_str = match CStr::from_ptr(address).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return std::ptr::null_mut();
-        }
-    };
-
-    let addr = match Address::from_str(addr_str) {
-        Ok(a) => a.assume_checked(),
-        Err(e) => {
-            set_last_error(&format!("Invalid address: {}", e));
-            return std::ptr::null_mut();
-        }
-    };
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result: Result<dash_spv::types::MempoolBalance, dash_spv::SpvError> =
-        client.runtime.block_on(async {
-            let guard = inner.lock().unwrap();
-            if let Some(ref spv_client) = *guard {
-                spv_client.get_mempool_balance(&addr).await
-            } else {
-                Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                    "Client not initialized".to_string(),
-                )))
-            }
-        });
-
-    match result {
-        Ok(mempool_balance) => {
-            // Convert MempoolBalance to FFIBalance
-            let balance = FFIBalance {
-                confirmed: 0, // No confirmed balance in mempool
-                unconfirmed: mempool_balance.pending.to_sat()
-                    + mempool_balance.pending_instant.to_sat(),
-                immature: 0,
-                total: mempool_balance.pending.to_sat() + mempool_balance.pending_instant.to_sat(),
-            };
-            Box::into_raw(Box::new(balance))
-        }
-        Err(e) => {
-            set_last_error(&e.to_string());
-            std::ptr::null_mut()
-        }
+    
+    let client = &*client;
+    let inner = client.inner.lock().unwrap();
+    
+    if let Some(ref spv_client) = *inner {
+        // Clone the Arc to the wallet manager
+        let wallet_arc = spv_client.wallet().clone();
+        let runtime = client.runtime.clone();
+        
+        // Create the FFIWalletManager with the cloned Arc
+        let manager = FFIWalletManager::from_arc(wallet_arc, runtime);
+        
+        Box::into_raw(Box::new(manager)) as *mut c_void
+    } else {
+        set_last_error("Client not initialized");
+        std::ptr::null_mut()
     }
 }

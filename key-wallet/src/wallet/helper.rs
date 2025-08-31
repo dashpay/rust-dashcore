@@ -12,6 +12,10 @@ use alloc::vec::Vec;
 use hex;
 
 impl Wallet {
+    /// Get the networks supported for the wallet
+    pub fn networks_supported(&self) -> Vec<Network> {
+        self.accounts.keys().cloned().collect()
+    }
     /// Get the collection of accounts on a network
     pub fn accounts_on_network(&self, network: Network) -> Option<&AccountCollection> {
         self.accounts.get(&network)

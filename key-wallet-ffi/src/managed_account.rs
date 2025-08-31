@@ -192,7 +192,7 @@ pub unsafe extern "C" fn managed_wallet_get_account(
         }
         None => FFIManagedAccountResult::error(
             FFIErrorCode::NotFound,
-            format!("No accounts found for network {:?}", network_rust),
+            format!("No accounts found for network {:?}, wallet has networks {:?}", network_rust, managed_wallet.inner().networks_supported()),
         ),
     };
 
@@ -288,7 +288,7 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
         }
         None => FFIManagedAccountResult::error(
             FFIErrorCode::NotFound,
-            format!("No accounts found for network {:?}", network_rust),
+            format!("No accounts found for network {:?}, wallet has networks {:?}", network_rust, managed_wallet.inner().networks_supported()),
         ),
     };
 

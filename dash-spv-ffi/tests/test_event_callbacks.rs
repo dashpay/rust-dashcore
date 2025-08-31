@@ -184,13 +184,6 @@ fn test_event_callbacks_setup() {
 
         println!("Client started, waiting for events...");
 
-        // Add a test address to watch
-        let test_address = b"yNDp83M8aHDGNkXPFaVoJZa2D9KparfWDc\0".as_ptr() as *const c_char;
-        let watch_result = dash_spv_ffi_client_watch_address(client, test_address);
-        if watch_result != 0 {
-            println!("Warning: Failed to watch address (may not be implemented)");
-        }
-
         // Try to sync for a short time to see if we get any events
         println!("Starting sync to trigger events...");
         let sync_result = dash_spv_ffi_client_test_sync(client);
@@ -237,60 +230,6 @@ fn test_event_callbacks_setup() {
     // The test passes if we set up callbacks successfully
     // Events may or may not fire depending on network conditions
     println!("Test completed - callbacks were set up successfully");
-}
-
-#[test]
-fn test_get_total_balance() {
-    unsafe {
-        dash_spv_ffi_init_logging(b"info\0".as_ptr() as *const c_char);
-
-        // Create config
-        let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
-        assert!(!config.is_null());
-
-        // Create client
-        let client = dash_spv_ffi_client_new(config);
-        assert!(!client.is_null());
-
-        // Start client
-        let start_result = dash_spv_ffi_client_start(client);
-        assert_eq!(start_result, 0, "Failed to start client");
-
-        // Add some test addresses to watch
-        let addresses = [
-            b"yNDp83M8aHDGNkXPFaVoJZa2D9KparfWDc\0".as_ptr() as *const c_char,
-            b"yP8JPjW4VUbfmtY1KD7zfRyCVVvQQMgZLe\0".as_ptr() as *const c_char,
-        ];
-
-        for address in addresses.iter() {
-            let watch_result = dash_spv_ffi_client_watch_address(client, *address);
-            if watch_result != 0 {
-                println!("Warning: Failed to watch address");
-            }
-        }
-
-        // Get total balance
-        let balance_ptr = dash_spv_ffi_client_get_total_balance(client);
-
-        if !balance_ptr.is_null() {
-            let balance = &*balance_ptr;
-            println!(
-                "Total balance - Confirmed: {}, Unconfirmed: {}, Total: {}",
-                balance.confirmed, balance.unconfirmed, balance.total
-            );
-
-            // FFIBalance from key-wallet-ffi doesn't need explicit destruction
-            // dash_spv_ffi_balance_destroy(balance_ptr);
-            println!("✅ Get total balance works!");
-        } else {
-            println!("⚠️ Failed to get total balance (may need sync first)");
-        }
-
-        // Cleanup
-        dash_spv_ffi_client_stop(client);
-        dash_spv_ffi_client_destroy(client);
-        dash_spv_ffi_config_destroy(config);
-    }
 }
 
 #[test]

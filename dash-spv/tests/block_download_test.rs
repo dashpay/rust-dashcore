@@ -376,12 +376,9 @@ async fn test_process_multiple_filter_matches() {
 async fn test_sync_manager_integration() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let wallet =
-        Arc::new(RwLock::new(key_wallet_manager::spv_wallet_manager::SPVWalletManager::with_base(
-            key_wallet_manager::wallet_manager::WalletManager::<
-                key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
-            >::new(),
-        )));
+    let wallet = Arc::new(RwLock::new(
+        key_wallet_manager::wallet_manager::WalletManager::<ManagedWalletInfo>::new()
+    ));
     let mut sync_manager: SequentialSyncManager<MemoryStorageManager, MockNetworkManager, _> =
         SequentialSyncManager::new(&config, received_heights, wallet)
             .expect("Failed to create SequentialSyncManager for integration test");

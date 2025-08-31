@@ -15,7 +15,6 @@ use dash_spv::{
 use dashcore::Network;
 use env_logger;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::{debug, info, warn};
 use std::sync::Arc;
@@ -29,7 +28,7 @@ const HEADER_SYNC_TIMEOUT: Duration = Duration::from_secs(120); // 2 minutes for
 async fn create_test_client(
     config: ClientConfig,
 ) -> Result<
-    DashSpvClient<SPVWalletManager, MultiPeerNetworkManager, MemoryStorageManager>,
+    DashSpvClient<WalletManager<ManagedWalletInfo>, MultiPeerNetworkManager, MemoryStorageManager>,
     Box<dyn std::error::Error>,
 > {
     // Create network manager
@@ -39,9 +38,7 @@ async fn create_test_client(
     let storage_manager = MemoryStorageManager::new().await?;
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     Ok(DashSpvClient::new(config, network_manager, storage_manager, wallet).await?)
 }

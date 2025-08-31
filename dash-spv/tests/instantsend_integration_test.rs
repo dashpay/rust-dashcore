@@ -1,13 +1,13 @@
 #![cfg(feature = "skip_mock_implementation_incomplete")]
 
-// This test is currently disabled because the SPVWalletManager API has changed
+// This test is currently disabled because the WalletManager<ManagedWalletInfo> API has changed
 // and these methods don't exist anymore. The test needs to be rewritten to use
 // the new wallet interface.
 
 // dash-spv/tests/instantsend_integration_test.rs
 //
-// TODO: These tests need to be updated to work with the new SPVWalletManager API
-// The following methods don't exist in SPVWalletManager:
+// TODO: These tests need to be updated to work with the new WalletManager<ManagedWalletInfo> API
+// The following methods don't exist in WalletManager<ManagedWalletInfo>:
 // - add_utxo
 // - add_watched_address
 // - get_utxos
@@ -32,13 +32,13 @@ use dashcore::{
 use dashcore_hashes::{sha256d, Hash};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{
-    spv_wallet_manager::SPVWalletManager, wallet_manager::WalletManager, Utxo,
+    wallet_manager::WalletManager, Utxo,
 };
 use rand::thread_rng;
 
 /// Helper to create a test wallet manager.
-fn create_test_wallet() -> Arc<RwLock<SPVWalletManager>> {
-    Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new())))
+fn create_test_wallet() -> Arc<RwLock<WalletManager<ManagedWalletInfo>>> {
+    Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()))
 }
 
 /// Create a deterministic test address.
@@ -125,7 +125,7 @@ async fn test_instantsend_end_to_end() {
     );
     initial_utxo.is_confirmed = true;
 
-    // TODO: The SPVWalletManager API has changed. These methods no longer exist:
+    // TODO: The WalletManager<ManagedWalletInfo> API has changed. These methods no longer exist:
     // - add_utxo() - need to use WalletInterface methods or direct base access
     // - add_watched_address() - need to use different approach for monitoring
     // wallet.write().await.add_utxo(initial_utxo).await.unwrap();
@@ -159,7 +159,7 @@ async fn test_instantsend_end_to_end() {
     // not creating new UTXOs for us. We'll test InstantLock processing in the next section.
 
     // 5. Assert the wallet state has been updated correctly.
-    // TODO: get_utxos() method no longer exists on SPVWalletManager
+    // TODO: get_utxos() method no longer exists on WalletManager<ManagedWalletInfo>
     // Need to access UTXOs through WalletInterface or base WalletManager
     // let utxos = wallet.read().await.get_utxos().await;
     // let spent_utxo = utxos.iter().find(|u| u.outpoint == initial_outpoint);

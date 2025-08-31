@@ -11,7 +11,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::Txid;
+use dashcore::{BlockHash, Txid};
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -88,6 +88,9 @@ pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     pub(crate) wallet_infos: BTreeMap<WalletId, T>,
     /// Network-specific state (UTXO sets, transactions, heights)
     network_states: BTreeMap<Network, NetworkState>,
+    /// Filter match cache (per network) - caches whether a filter matched
+    /// This is used for SPV operations to avoid rechecking filters
+    filter_matches: BTreeMap<Network, BTreeMap<BlockHash, bool>>,
 }
 
 impl<T: WalletInfoInterface> Default for WalletManager<T>
@@ -106,6 +109,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
             network_states: BTreeMap::new(),
+            filter_matches: BTreeMap::new(),
         }
     }
 

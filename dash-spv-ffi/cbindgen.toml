@@ -17,7 +17,6 @@ prefix = "dash_spv_ffi_"
 "FFINetwork" = "DashSpvNetwork"
 "FFIValidationMode" = "DashSpvValidationMode"
 "FFIErrorCode" = "DashSpvErrorCode"
-"FFIWatchItemType" = "DashSpvWatchItemType"
 
 [fn]
 prefix = ""
