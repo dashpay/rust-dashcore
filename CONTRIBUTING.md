@@ -1,10 +1,8 @@
 # Contributing to rust-dashcore
 
-**Heads up about upcoming edition change**
+**Branching model (important)**
 
-We're currently preparing to bump MSRV and **change the edition to 2018**.
-To minimize the churn we recommend you to submit your local WIP changes ASAP.
-There will be a lot of rebasing after the edition change.
+Feature work targets the active `v**-dev` branch (development). Submit hotfixes and documentation-only changes to `master` unless maintainers direct otherwise.
 
 :+1::tada: First off, thanks for taking the time to contribute! :tada::+1:
 
@@ -35,154 +33,78 @@ changes to this document in a pull request.
 
 ## General
 
-The Rust Dash Core project operates an open contributor model where anyone is
-welcome to contribute towards development in the form of peer review,
-documentation, testing and patches.
-
-Anyone is invited to contribute without regard to technical experience,
-"expertise", OSS experience, age, or other concern. However, the development of
-standards & reference implementations demands a high-level of rigor, adversarial
-thinking, thorough testing and risk-minimization. Any bug may cost users real
-money. That being said, we deeply welcome people contributing for the first time
-to an open source project or pick up Rust while contributing. Don't be shy,
-you'll learn.
+We welcome contributions of all kinds: bug fixes, features, tests, docs, and reviews. This codebase powers Dash protocol libraries (networking, SPV, wallet, FFI). Changes must be reviewed with security and backward‑compatibility in mind.
 
 
-## Communication channels
+## Communication
 
-Communication about Rust Bitcoin happens primarily in
-[#bitcoin-rust](https://web.libera.chat/?channel=#bitcoin-rust) IRC chat on
-[Libera](https://libera.chat/) with the logs available at
-<https://gnusha.org/bitcoin-rust/> (starting from Jun 2021 and now on) and
-<https://gnusha.org/rust-bitcoin/> (historical archive before Jun 2021).
-
-Discussion about code base improvements happens in GitHub issues and on pull
-requests.
-
-Major projects are tracked [here](https://github.com/orgs/rust-bitcoin/projects).
-Major milestones are tracked [here](https://github.com/rust-bitcoin/rust-bitcoin/milestones).
+- Use GitHub Issues for bugs and feature requests.
+- Use Pull Requests for code changes and design discussions.
+- If enabled, GitHub Discussions can host broader design topics.
 
 
 ## Asking questions
 
-> **Note:** Please don't file an issue to ask a question. You'll get faster
-> results by using the resources below.
-
-We have a dedicated developer channel on IRC, #bitcoin-rust@libera.chat where
-you may get helpful advice if you have questions.
+Prefer opening a GitHub Discussion (if enabled) or a clearly labeled issue. Provide context, reproduction steps, and what you’ve tried.
 
 
 ## Contribution workflow
 
-The codebase is maintained using the "contributor workflow" where everyone
-without exception contributes patch proposals using "pull requests". This
-facilitates social contribution, easy testing and peer review.
+We use the standard fork-and-PR model:
 
-To contribute a patch, the workflow is a as follows:
+1. Fork the repository and create a topic branch.
+2. Make focused commits; keep diffs minimal and self‑contained.
+3. Ensure each commit builds and tests pass to keep `git bisect` meaningful.
+4. Cover new functionality with tests and docs where applicable.
+5. Open a PR early for feedback; keep the description clear and scoped.
 
-1. Fork Repository
-2. Create topic branch
-3. Commit patches
-
-Please keep commits should atomic and diffs easy to read. For this reason
-do not mix any formatting fixes or code moves with actual code changes.
-Further, each commit, individually, should compile and pass tests, in order to
-ensure git bisect and other automated tools function properly.
-
-Please cover every new feature with unit tests.
-
-When refactoring, structure your PR to make it easy to review and don't hesitate
-to split it into multiple small, focused PRs.
-
-Commits should cover both the issue fixed and the solution's rationale.
-Please keep these [guidelines](https://chris.beams.io/posts/git-commit/) in mind.
-
-To facilitate communication with other contributors, the project is making use
-of GitHub's "assignee" field. First check that no one is assigned and then
-comment suggesting that you're working on it. If someone is already assigned,
-don't hesitate to ask if the assigned party or previous commenters are still
-working on it if it has been awhile.
+Commits should explain the why and the what. Conventional Commits are encouraged.
 
 
 ## Preparing PRs
 
-The main library development happens in the `master` branch. This branch must
-always compile without errors (using GitHub CI). All external contributions are
-made within PRs into this branch.
+Active development happens on `v**-dev` branches. Feature work should target the current `v**-dev`. The `master` branch is kept stable; submit hotfixes and documentation changes to `master` unless directed otherwise. All PRs must compile without errors (verified by GitHub CI).
 
 Prerequisites that a PR must satisfy for merging into the `master` branch:
-* each commit within a PR must compile and pass unit tests with no errors, with
-  every feature combination (including compiling the fuzztests) on some
-  reasonably recent compiler (this is partially automated with CI, so the rule
-  is that we will not accept commits which do not pass GitHub CI);
+* each commit within a PR should compile and pass unit tests with no errors, with
+  relevant feature combinations (including building fuzz tests where applicable);
 * the tip of any PR branch must also compile and pass tests with no errors on
-  MSRV (check [README.md] on current MSRV requirements) and pass fuzz tests on
-  nightly rust;
+  MSRV (see README for current MSRV) and run fuzz tests where applicable;
 * contain all necessary tests for the introduced functional (either as a part of
   commits, or, more preferably, as separate commits, so that it's easy to
   reorder them during review and check that the new tests fail without the new
   code);
-* contain all inline docs for newly introduced API and pass doc tests;
-* be based on the recent `master` tip from the original repository at
-  <https://github.com/rust-bitcoin/rust-bitcoin>.
+* include inline docs for newly introduced APIs and pass doc tests;
+* be based on the recent tip of the target branch in this repository.
 
-NB: reviewers may run more complex test/CI scripts, thus, satisfying all the
-requirements above is just a preliminary, but not necessary sufficient step for
-getting the PR accepted as a valid candidate PR for the `master` branch.
+Reviewers may run additional scripts; passing CI is necessary but may not be sufficient for merge. To mirror CI locally:
+```bash
+# Full suite with optional knobs
+DO_COV=true DO_LINT=true DO_FMT=true ./contrib/test.sh
 
-PR authors may also find it useful to run the following script locally in order
-to check that each of the commits within the PR satisfies the requirements
-above, before submitting the PR to review:
-```shell script
-BITCOIN_MSRV=1.29.0 ./contrib/test.sh
+# Or workspace-wide checks
+cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --all-features
 ```
-Please replace the value in `BITCOIN_MSRV=1.29.0` with the current MSRV from
-[README.md].
-
-NB: Please keep in mind that the script above replaces `Cargo.lock` file, which
-is necessary to support current MSRV, incompatible with `stable` and newer cargo
-versions.
 
 ### Peer review
 
-Anyone may participate in peer review which is expressed by comments in the pull
-request. Typically, reviewers will review the code for obvious errors, as well as
-test out the patch set and opine on the technical merits of the patch. Please,
-first review PR on the conceptual level before focusing on code style or
-grammar fixes.
+Anyone may review PRs. Start with design and correctness, then style. Maintain respectful, constructive feedback.
 
 ### Repository maintainers
 
 Pull request merge requirements:
-- all CI test should pass,
-- at least two "accepts"/ACKs from the repository maintainers
-- no reasonable "rejects"/NACKs from anybody who reviewed the code.
-
-Current list of the project maintainers:
-
-- [Andrew Poelstra](https://github.com/apoelstra)
-- [Steven Roose](https://github.com/stevenroose)
-- [Maxim Orlovsky](https://github.com/dr-orlovsky)
-- [Matt Corallo](https://github.com/TheBlueMatt)
-- [Elichai Turkel](https://github.com/elichai)
-- [Sanket Kanjalkar](https://github.com/sanket1729)
-- [Martin Habovštiak](https://github.com/Kixunil)
-- [Riccardo Casatta](https://github.com/RCasatta)
-- [Tobin Harding](https://github.com/tcharding)
+- All CI checks pass.
+- At least one maintainer approval (more may be required for risky changes).
+- No unresolved blocking reviews.
 
 
 ## Coding conventions
 
-Library reflects Bitcoin Core approach whenever possible.
+Follow idiomatic Rust and crate‑local patterns.
 
-### Formatting
+### Formatting & Linting
 
-The repository currently does not use `rustfmt`.
-
-New changes may format the code with `rustfmt`, but they should not re-format
-any existing code for maintaining diff size small, keeping `git blame` intact and
-reduce review time. Repository maintainers may not review PRs introducing large
-blocks of re-formatted code.
+Run `cargo fmt --all` before submitting PRs. Use `cargo clippy --workspace --all-targets -- -D warnings` to catch issues early. Avoid large, unrelated reformatting to keep diffs focused and `git blame` useful.
 
 You may check the [discussion on the formatting](https://github.com/rust-bitcoin/rust-bitcoin/issues/172)
 and [how it is planned to coordinate it with crate refactoring](https://github.com/rust-bitcoin/rust-bitcoin/pull/525)
@@ -192,55 +114,30 @@ avoid any end-line space characters.
 
 ### MSRV
 
-The Minimal Supported Rust Version (MSRV) is 1.29; it is enforced by our CI.
-Later we plan to increase MSRV to support Rust 2018 and you are welcome to check
-the [tracking issue](https://github.com/rust-bitcoin/rust-bitcoin/issues/510).
+The Minimal Supported Rust Version (MSRV) is 1.89; it is enforced by CI. Crates use mixed editions (2021/2024); consult `Cargo.toml` and README for details.
 
 ### Naming conventions
 
-Naming of data structures/enums and their fields/variants must follow names used
-in Bitcoin Core, with the following exceptions:
-- the case should follow Rust standards (i.e. PascalCase for types and
-  snake_case for fields and variants);
-- omit `C`-prefixes.
+Use Rust standards: `UpperCamelCase` for types/traits, `snake_case` for modules/functions/variables, `SCREAMING_SNAKE_CASE` for constants. Prefer descriptive names matching Dash domain concepts.
 
 ### Unsafe code
 
-Use of `unsafe` code is prohibited unless there is a unanimous decision among
-library maintainers on the exclusion from this rule. In such cases there is a
-requirement to test unsafe code with sanitizers including Miri.
+Minimize `unsafe`. When required (especially across FFI boundaries), encapsulate it, document invariants, add tests, and consider Miri/sanitizers.
 
 
 ## Security
 
-Security is the primary focus for this library; disclosure of security
-vulnerabilities helps prevent user loss of funds. If you believe a vulnerability
-may affect other implementations, please disclose this information according to
-the [security guidelines](./SECURITY.md), work on which is currently in progress.
-Before it is completed, feel free to send disclosure to Andrew Poelstra,
-apoelstra@wpsoftware.net, encrypted with his public key from
-<https://www.wpsoftware.net/andrew/andrew.gpg>.
+This library is NOT suitable for consensus‑critical validation. Always validate inputs from untrusted sources and never log or store private keys. Report vulnerabilities privately via GitHub Security Advisories or by contacting the maintainers through a private channel.
 
 
 ## Testing
 
-Related to the security aspect, rust bitcoin developers take testing very
-seriously. Due to the modular nature of the project, writing new test cases is
-easy and good test coverage of the codebase is an important goal. Refactoring
-the project to enable fine-grained unit testing is also an ongoing effort.
-
-Fuzzing is heavily encouraged: feel free to add related material under `fuzz/`
-
-Mutation testing is planned; any contributions helping with that are highly
-welcome!
+Testing is a priority. Keep unit tests close to code and use `tests/` for integration. Add fuzz targets under `fuzz/` when appropriate. Use deterministic test vectors and avoid network dependencies unless explicitly required (mark such tests `#[ignore]`).
 
 
-## Going further
+## References
 
-You may be interested in the guide by Jon Atack on
-[How to review Bitcoin Core PRs](https://github.com/jonatack/bitcoin-development/blob/master/how-to-review-bitcoin-core-prs.md)
-and [How to make Bitcoin Core PRs](https://github.com/jonatack/bitcoin-development/blob/master/how-to-make-bitcoin-core-prs.md).
-While there are differences between the projects in terms of context and
-maturity, many of the suggestions offered apply to this project.
+- See README for workspace overview and MSRV.
+- See CLAUDE.md and AGENTS.md for repo‑specific commands and workflows.
 
-Overall, have fun :)
+Overall, have fun and build safely.
