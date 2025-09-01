@@ -380,10 +380,10 @@ async fn test_sync_manager_integration() {
     let wallet = Arc::new(RwLock::new(key_wallet_manager::wallet_manager::WalletManager::<
         ManagedWalletInfo,
     >::new()));
-    let mut sync_manager: SequentialSyncManager<MemoryStorageManager, MockNetworkManager, _> =
+    let sync_manager: SequentialSyncManager<MemoryStorageManager, MockNetworkManager, _> =
         SequentialSyncManager::new(&config, received_heights, wallet)
             .expect("Failed to create SequentialSyncManager for integration test");
-    let mut network = MockNetworkManager::new();
+    let network = MockNetworkManager::new();
 
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
     let filter_matches = vec![create_test_filter_match(block_hash, 100)];
