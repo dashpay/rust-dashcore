@@ -230,7 +230,7 @@ impl PeerReputationManager {
         // Update score
         let old_score = reputation.score;
         reputation.score =
-            (reputation.score + score_change).max(MIN_SCORE).min(MAX_MISBEHAVIOR_SCORE);
+            (reputation.score + score_change).clamp(MIN_SCORE, MAX_MISBEHAVIOR_SCORE);
 
         // Track positive/negative actions
         if score_change > 0 {

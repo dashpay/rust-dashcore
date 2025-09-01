@@ -847,11 +847,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 }
                 Some(height) => {
                     // When syncing from checkpoint, adjust the storage height
-                    let storage_height = if self.chain_state.synced_from_checkpoint {
-                        height // height is already the storage index
-                    } else {
-                        height
-                    };
+                    let storage_height = height;
 
                     // Get the current tip hash
                     storage

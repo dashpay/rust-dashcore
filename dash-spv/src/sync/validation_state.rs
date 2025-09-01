@@ -10,6 +10,8 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use tracing;
 
+type ValidationStateListener = Box<dyn Fn(&ValidationState) + Send>;
+
 /// Maximum number of state snapshots to maintain
 const MAX_SNAPSHOTS: usize = 10;
 
@@ -113,7 +115,7 @@ pub struct ValidationStateManager {
     /// Maximum age for snapshots
     snapshot_ttl: Duration,
     /// State change listeners
-    change_listeners: Vec<Box<dyn Fn(&ValidationState) + Send>>,
+    change_listeners: Vec<ValidationStateListener>,
 }
 
 /// State snapshot for rollback
