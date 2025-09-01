@@ -11,13 +11,13 @@
     <a href="https://crates.io/crates/dash"><img alt="Crate Info" src="https://img.shields.io/crates/v/dash.svg"/></a>
     <a href="https://github.com/dashevo/rust-dashcore/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
     <a href="https://github.com/dashevo/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashevo/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
-    <a href="https://docs.rs/bitcoin"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-bitcoin-green"/></a>
-    <a href="https://blog.rust-lang.org/2018/09/13/Rust-1.29.html"><img alt="Rustc Version 1.29+" src="https://img.shields.io/badge/rustc-1.29%2B-lightgrey.svg"/></a>
+    <a href="https://docs.rs"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-rust--dashcore-green"/></a>
+    <a href="#minimum-supported-rust-version-msrv"><img alt="Rustc Version 1.89+" src="https://img.shields.io/badge/rustc-1.89%2B-lightgrey.svg"/></a>
     <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/dashevo/rust-dashcore">
   </p>
 </div>
 
-**Heads up for contributors: upcoming edition change**
+For contributors: see CONTRIBUTING.md and AGENTS.md for branch policy and commands.
 
 [Documentation](https://dashcore.readme.io/docs)
 
@@ -102,19 +102,7 @@ The following versions are officially supported and automatically tested:
 * 0.21.0
 
 # Minimum Supported Rust Version (MSRV)
-This library should always compile with any combination of features on **Rust 1.29**.
-
-Because some dependencies have broken the build in minor/patch releases, to
-compile with 1.29.0 you will need to run the following version-pinning command:
-```
-cargo update --package "cc" --precise "1.0.41"
-cargo update --package "log:0.4.x" --precise "0.4.13" # x being the highest patch version, currently 14
-cargo update --package "cfg-if" --precise "0.1.9"
-cargo update --package "serde_json" --precise "1.0.39"
-cargo update --package "serde" --precise "1.0.98"
-cargo update --package "serde_derive" --precise "1.0.98"
-cargo update --package "byteorder" --precise "1.3.4"
-```
+This workspace compiles on Rust 1.89 or newer. Crates use mixed editions (2021 and 2024). See CLAUDE.md/AGENTS.md for common commands and CI expectations.
 
 
 # Documentation
@@ -132,18 +120,17 @@ Contributions are generally welcome. If you intend to make larger changes please
 discuss them in an issue before PRing them to avoid duplicate work and
 architectural mismatches.
 
-## Minimum Supported Rust Version (MSRV)
+## Branching Model
 
-This library should always compile with any combination of features on **Rust 1.89**.
+Feature work targets the active `v**-dev` branch. Submit hotfixes and documentation-only changes to `master` unless maintainers direct otherwise.
 
 ## Installing Rust
 
 Rust can be installed using your package manager of choice or
 [rustup.rs](https://rustup.rs). The former way is considered more secure since
-it typically doesn't involve trust in the CA system. But you should be aware
-that the version of Rust shipped by your distribution might be out of date.
-Generally this isn't a problem for `rust-bitcoin` since we support much older
-versions than the current stable one (see MSRV section).
+it typically doesn't involve trust in the CA system. But be aware that the
+version of Rust shipped by your distribution might be out of date. See the
+MSRV section for the minimum supported version.
 
 ## Building
 
@@ -151,7 +138,7 @@ The library can be built and tested using [`cargo`](https://github.com/rust-lang
 
 ```
 git clone git@github.com:dashpay/rust-dashcore.git
-cd rust-bitcoin
+cd rust-dashcore
 cargo build
 ```
 
