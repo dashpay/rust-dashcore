@@ -14,31 +14,26 @@
 //! - Recovery mechanisms (automatic retries, graceful degradation)
 //! - Error propagation through layers
 
-use std::any::Any;
 use std::collections::HashMap;
-use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use dashcore::{
     block::{Header as BlockHeader, Version},
-    consensus::Encodable,
     hash_types::FilterHeader,
     pow::CompactTarget,
-    Address, BlockHash, Network, OutPoint, Script, Txid,
+    BlockHash, Network, OutPoint, Txid,
 };
 use dashcore_hashes::Hash;
 use tokio::sync::{mpsc, RwLock};
 
 use dash_spv::error::*;
 use dash_spv::network::{NetworkManager, TcpConnection};
-use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager};
+use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dash_spv::sync::sequential::phases::SyncPhase;
 use dash_spv::sync::sequential::recovery::{RecoveryManager, RecoveryStrategy};
 use dash_spv::types::{ChainState, MempoolState, PeerInfo, UnconfirmedTransaction};
-use key_wallet_manager::Utxo;
 
 /// Mock network manager for testing error scenarios
 struct MockNetworkManager {

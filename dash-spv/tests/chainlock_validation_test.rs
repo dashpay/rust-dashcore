@@ -8,11 +8,9 @@
 //! Integration tests for ChainLock validation flow with masternode engine
 
 use dash_spv::client::{ClientConfig, DashSpvClient};
-use dash_spv::error::Result;
 use dash_spv::network::NetworkManager;
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::{ChainState, ValidationMode};
-use dashcore::block::Header;
 use dashcore::blockdata::constants::genesis_block;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Network;
@@ -20,7 +18,6 @@ use dashcore::{BlockHash, ChainLock};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
-use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 use tracing::{info, Level};

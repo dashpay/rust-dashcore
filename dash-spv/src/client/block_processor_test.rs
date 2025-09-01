@@ -135,9 +135,6 @@ mod tests {
         // Verify wallet was called
         {
             let wallet = wallet.read().await;
-            // Since we're using key_wallet_manager::wallet_interface::WalletInterface,
-            // we need to use the trait to access as_any
-            use key_wallet_manager::wallet_interface::WalletInterface;
             let processed = wallet.processed_blocks.lock().await;
             assert_eq!(processed.len(), 1);
             assert_eq!(processed[0].0, block_hash);

@@ -20,16 +20,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use blsful::{Bls12381G2Impl, SecretKey};
-use dash_spv::{
-    client::{ClientConfig, DashSpvClient},
-    network::MultiPeerNetworkManager,
-    storage::MemoryStorageManager,
-};
+use dash_spv; // keep module path available for validator usage
 use dashcore::{
-    Address, Amount, InstantLock, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid,
-    Witness,
+    Address, InstantLock, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness,
 };
-use dashcore_hashes::{sha256d, Hash};
+use dashcore_hashes::Hash;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{wallet_manager::WalletManager, Utxo};
 use rand::thread_rng;
