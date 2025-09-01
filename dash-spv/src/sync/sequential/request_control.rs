@@ -356,7 +356,7 @@ impl RequestController {
             }
         }
 
-        for (_, active) in &self.active_requests {
+        for active in self.active_requests.values() {
             match &active.request.request_type {
                 RequestType::GetHeaders(_) => stats.active_headers += 1,
                 RequestType::GetMnListDiff(_) => stats.active_mnlist += 1,

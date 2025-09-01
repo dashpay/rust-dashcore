@@ -144,6 +144,12 @@ impl Default for ValidationState {
     }
 }
 
+impl Default for ValidationStateManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ValidationStateManager {
     /// Create a new validation state manager
     pub fn new() -> Self {
@@ -267,7 +273,7 @@ impl ValidationStateManager {
             recoverable,
         };
 
-        self.current_state.validation_failures.entry(height).or_insert_with(Vec::new).push(failure);
+        self.current_state.validation_failures.entry(height).or_default().push(failure);
 
         self.current_state.version += 1;
         self.notify_listeners();
@@ -323,7 +329,7 @@ impl ValidationStateManager {
         }
 
         // Check that pending validations are within reasonable range
-        for (height, _) in &self.current_state.pending_validations {
+        for height in self.current_state.pending_validations.keys() {
             if *height > self.current_state.current_height + 1000 {
                 return Err(SyncError::InvalidState(format!(
                     "Pending validation at height {} is too far ahead of current height {}",

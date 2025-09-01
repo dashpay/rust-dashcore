@@ -309,14 +309,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         for (index, header) in headers.iter().enumerate() {
             let prospective_height = current_height + (index as u32) + 1;
 
-            if self.reorg_config.enforce_checkpoints {
-                if !self.checkpoint_manager.validate_block(prospective_height, &header.block_hash())
-                {
-                    return Err(SyncError::Validation(format!(
-                        "Block at height {} does not match checkpoint",
-                        prospective_height
-                    )));
-                }
+            if self.reorg_config.enforce_checkpoints
+                && !self.checkpoint_manager.validate_block(prospective_height, &header.block_hash())
+            {
+                return Err(SyncError::Validation(format!(
+                    "Block at height {} does not match checkpoint",
+                    prospective_height
+                )));
             }
         }
 

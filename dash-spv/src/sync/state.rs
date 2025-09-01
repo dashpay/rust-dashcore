@@ -17,6 +17,12 @@ pub struct SyncState {
     sync_start: Option<SystemTime>,
 }
 
+impl Default for SyncState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SyncState {
     /// Create a new sync state.
     pub fn new() -> Self {

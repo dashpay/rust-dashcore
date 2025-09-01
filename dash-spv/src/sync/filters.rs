@@ -1459,7 +1459,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Check which active requests are now complete
         let mut completed_requests = Vec::new();
 
-        for ((start, end), _active_req) in &self.active_filter_requests {
+        for (start, end) in self.active_filter_requests.keys() {
             if self.is_request_complete(*start, *end).await? {
                 completed_requests.push((*start, *end));
             }
@@ -2794,7 +2794,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         };
 
         // For each requested range
-        for ((start, end), _) in &self.requested_filter_ranges {
+        for (start, end) in self.requested_filter_ranges.keys() {
             let mut current = *start;
 
             // Find gaps within this range
@@ -2905,11 +2905,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
             .unwrap_or(0);
 
-        let gap_size = if block_height > filter_height {
-            block_height - filter_height
-        } else {
-            0
-        };
+        let gap_size = block_height.saturating_sub(filter_height);
 
         // Consider within 1 block as "no gap" to handle edge cases at the tip
         let has_gap = gap_size > 1;

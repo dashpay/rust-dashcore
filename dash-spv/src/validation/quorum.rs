@@ -67,6 +67,12 @@ pub struct QuorumManager {
     max_cached_quorums: usize,
 }
 
+impl Default for QuorumManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QuorumManager {
     /// Create a new quorum manager
     pub fn new() -> Self {
@@ -205,7 +211,7 @@ impl QuorumManager {
         let mut min_height = u32::MAX;
         let mut max_height = 0;
 
-        for ((quorum_type, height), _) in &self.quorums {
+        for (quorum_type, height) in self.quorums.keys() {
             match quorum_type {
                 QuorumType::ChainLock => chainlock_count += 1,
                 QuorumType::InstantSend => instantsend_count += 1,

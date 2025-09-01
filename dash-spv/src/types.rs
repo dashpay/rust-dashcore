@@ -146,7 +146,7 @@ impl DetailedSyncProgress {
 }
 
 /// Chain state maintained by the SPV client.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ChainState {
     /// Block headers indexed by height.
     pub headers: Vec<BlockHeader>,
@@ -174,22 +174,6 @@ pub struct ChainState {
 
     /// Whether the chain was synced from a checkpoint rather than genesis.
     pub synced_from_checkpoint: bool,
-}
-
-impl Default for ChainState {
-    fn default() -> Self {
-        Self {
-            headers: Vec::new(),
-            filter_headers: Vec::new(),
-            last_chainlock_height: None,
-            last_chainlock_hash: None,
-            current_filter_tip: None,
-            masternode_engine: None,
-            last_masternode_diff_height: None,
-            sync_base_height: 0,
-            synced_from_checkpoint: false,
-        }
-    }
 }
 
 impl ChainState {

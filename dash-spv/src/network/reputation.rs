@@ -198,6 +198,12 @@ pub struct PeerReputationManager {
     max_events: usize,
 }
 
+impl Default for PeerReputationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PeerReputationManager {
     /// Create a new reputation manager
     pub fn new() -> Self {
