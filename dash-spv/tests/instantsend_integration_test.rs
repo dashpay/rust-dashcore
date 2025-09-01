@@ -16,8 +16,8 @@
 //
 // These tests are currently ignored until they can be properly updated.
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
+// use std::sync::Arc;
+// use tokio::sync::RwLock;
 
 use blsful::{Bls12381G2Impl, SecretKey};
 use dash_spv; // keep module path available for validator usage
@@ -25,14 +25,12 @@ use dashcore::{
     Address, InstantLock, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use dashcore_hashes::Hash;
-use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::WalletManager;
+// use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+// use key_wallet_manager::wallet_manager::WalletManager;
 use rand::thread_rng;
 
 /// Helper to create a test wallet manager.
-fn create_test_wallet() -> Arc<RwLock<WalletManager<ManagedWalletInfo>>> {
-    Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()))
-}
+// Removed unused helper create_test_wallet (test scaffolding simplified)
 
 /// Create a deterministic test address.
 fn create_test_address() -> Address {

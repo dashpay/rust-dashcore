@@ -69,9 +69,6 @@ struct StorageFailureSimulator {
 #[derive(Clone)]
 enum FailureType {
     None,
-    WriteFailure,
-    ReadFailure,
-    Corruption,
     DiskFull,
 }
 
@@ -92,18 +89,6 @@ impl StorageFailureSimulator {
         if let Some(fail_height) = *self.fail_at_height.read().await {
             if height >= fail_height {
                 return match &*self.failure_type.read().await {
-                    FailureType::WriteFailure => Some(StorageError::WriteFailed(format!(
-                        "Simulated write failure at height {}",
-                        height
-                    ))),
-                    FailureType::ReadFailure => Some(StorageError::ReadFailed(format!(
-                        "Simulated read failure at height {}",
-                        height
-                    ))),
-                    FailureType::Corruption => Some(StorageError::Corruption(format!(
-                        "Simulated corruption at height {}",
-                        height
-                    ))),
                     FailureType::DiskFull => {
                         Some(StorageError::WriteFailed("No space left on device".to_string()))
                     }
@@ -122,8 +107,9 @@ async fn test_recovery_from_network_interruption_during_header_sync() {
     // and verifies that the client can recover and continue from where it left off
 
     // Create storage manager
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = Arc::new(RwLock::new(DiskStorageManager::new(storage_path).await.unwrap()));
+    let storage = Arc::new(RwLock::new(
+        DiskStorageManager::new(tempfile::tempdir().unwrap().path().to_path_buf()).await.unwrap(),
+    ));
 
     // Create network interruptor
     let interruptor = Arc::new(NetworkInterruptor::new());
@@ -221,8 +207,7 @@ async fn test_recovery_from_storage_failure_during_sync() {
     // This test simulates storage failures during synchronization
     // and verifies appropriate error handling and recovery
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage_path = temp_dir.path().to_path_buf();
+    // No temp directory needed in this simulated test
 
     // Create storage with failure simulator
     let failure_sim = Arc::new(StorageFailureSimulator::new());

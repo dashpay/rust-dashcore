@@ -10,15 +10,11 @@ use std::sync::{Arc, Mutex};
 
 use dash_spv::{
     client::ClientConfig,
-    error::{NetworkError, NetworkResult},
-    network::{MultiPeerNetworkManager, NetworkManager},
+    network::MultiPeerNetworkManager,
     storage::{MemoryStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
 };
-use dashcore::{
-    block::Header as BlockHeader, hash_types::FilterHeader, network::message::NetworkMessage,
-    BlockHash, Network,
-};
+use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Network};
 use dashcore_hashes::Hash;
 
 /// Create a mock block header
@@ -174,9 +170,9 @@ async fn test_cfheader_restart_cooldown() {
     storage.store_headers(&headers).await.unwrap();
     storage.store_filter_headers(&filter_headers).await.unwrap();
 
-    // Create a mock network manager (will fail when trying to restart)
-    struct MockNetworkManager;
+    // Network manager mock omitted until restart logic exists
 
+    /*
     #[async_trait::async_trait]
     impl NetworkManager for MockNetworkManager {
         fn as_any(&self) -> &dyn std::any::Any {
@@ -260,6 +256,7 @@ async fn test_cfheader_restart_cooldown() {
             Ok(())
         }
     }
+    */
 
     // Network manager omitted until restart logic is implemented
 

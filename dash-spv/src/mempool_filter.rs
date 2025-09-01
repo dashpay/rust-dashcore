@@ -206,8 +206,9 @@ mod tests {
     #[derive(Clone)]
     enum WatchItem {
         Address(Address),
-        Script(ScriptBuf),
-        Outpoint(OutPoint),
+        // Keep placeholders as unit to avoid dead_code warnings
+        Script(()),
+        Outpoint(()),
     }
 
     impl WatchItem {
@@ -219,27 +220,23 @@ mod tests {
             WatchItem::Address(addr)
         }
 
-        fn script(script: ScriptBuf) -> Self {
-            WatchItem::Script(script)
+        fn script(_script: ScriptBuf) -> Self {
+            WatchItem::Script(())
         }
 
-        fn outpoint(outpoint: OutPoint) -> Self {
-            WatchItem::Outpoint(outpoint)
+        fn outpoint(_outpoint: OutPoint) -> Self {
+            WatchItem::Outpoint(())
         }
     }
 
     struct MockWallet {
-        network: Network,
         watched_addresses: HashSet<Address>,
-        utxos: HashSet<OutPoint>,
     }
 
     impl MockWallet {
-        fn new(network: Network) -> Self {
+        fn new(_network: Network) -> Self {
             Self {
-                network,
                 watched_addresses: HashSet::new(),
-                utxos: HashSet::new(),
             }
         }
 
@@ -247,17 +244,7 @@ mod tests {
             self.watched_addresses.insert(address);
         }
 
-        fn network(&self) -> &Network {
-            &self.network
-        }
-
-        fn watched_addresses(&self) -> &HashSet<Address> {
-            &self.watched_addresses
-        }
-
-        fn utxos(&self) -> &HashSet<OutPoint> {
-            &self.utxos
-        }
+        // Accessor omitted; tests use add_watched_address directly
     }
 
     // Helper to create deterministically generated test addresses

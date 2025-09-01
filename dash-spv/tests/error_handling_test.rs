@@ -55,9 +55,7 @@ impl MockNetworkManager {
         }
     }
 
-    fn set_fail_on_connect(&mut self) {
-        self.fail_on_connect = true;
-    }
+    // Removed unused set_fail_on_connect; use flags directly where needed
 
     fn set_timeout_on_message(&mut self) {
         self.timeout_on_message = true;
@@ -195,7 +193,6 @@ struct MockStorageManager {
     disk_full: bool,
     permission_denied: bool,
     lock_poisoned: bool,
-    data: HashMap<String, Vec<u8>>,
 }
 
 impl MockStorageManager {
@@ -207,7 +204,6 @@ impl MockStorageManager {
             disk_full: false,
             permission_denied: false,
             lock_poisoned: false,
-            data: HashMap::new(),
         }
     }
 

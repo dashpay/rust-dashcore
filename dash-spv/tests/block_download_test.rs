@@ -42,16 +42,8 @@ impl MockNetworkManager {
         }
     }
 
-    async fn add_response(&self, message: NetworkMessage) {
-        self.received_messages.write().await.push(message);
-    }
-
     async fn get_sent_messages(&self) -> Vec<NetworkMessage> {
         self.sent_messages.read().await.clone()
-    }
-
-    async fn clear_sent_messages(&self) {
-        self.sent_messages.write().await.clear();
     }
 }
 
