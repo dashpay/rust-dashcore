@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 57
+**Total Functions**: 61
 
 ## Table of Contents
 
@@ -132,11 +132,15 @@ Functions: 2
 
 ### Utility Functions
 
-Functions: 11
+Functions: 15
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_array_destroy` | No description | types |
+| `dash_spv_ffi_checkpoint_before_height` | Get the last checkpoint at or before a given height | checkpoints |
+| `dash_spv_ffi_checkpoint_before_timestamp` | Get the last checkpoint at or before a given UNIX timestamp (seconds) | checkpoints |
+| `dash_spv_ffi_checkpoint_latest` | Get the latest checkpoint for the given network | checkpoints |
+| `dash_spv_ffi_checkpoints_between_heights` | Get all checkpoints between two heights (inclusive) | checkpoints |
 | `dash_spv_ffi_client_get_stats` | No description | client |
 | `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns an opaque pointer to FFIW... | client |
 | `dash_spv_ffi_client_record_send` | No description | client |
@@ -823,6 +827,67 @@ dash_spv_ffi_array_destroy(arr: *mut FFIArray) -> ()
 ```
 
 **Module:** `types`
+
+---
+
+#### `dash_spv_ffi_checkpoint_before_height`
+
+```c
+dash_spv_ffi_checkpoint_before_height(network: FFINetwork, height: u32, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
+```
+
+**Description:**
+Get the last checkpoint at or before a given height.  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+
+**Safety:**
+- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+
+**Module:** `checkpoints`
+
+---
+
+#### `dash_spv_ffi_checkpoint_before_timestamp`
+
+```c
+dash_spv_ffi_checkpoint_before_timestamp(network: FFINetwork, timestamp: u32, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
+```
+
+**Description:**
+Get the last checkpoint at or before a given UNIX timestamp (seconds).  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+
+**Safety:**
+- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+
+**Module:** `checkpoints`
+
+---
+
+#### `dash_spv_ffi_checkpoint_latest`
+
+```c
+dash_spv_ffi_checkpoint_latest(network: FFINetwork, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
+```
+
+**Description:**
+Get the latest checkpoint for the given network.  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+
+**Safety:**
+- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+
+**Module:** `checkpoints`
+
+---
+
+#### `dash_spv_ffi_checkpoints_between_heights`
+
+```c
+dash_spv_ffi_checkpoints_between_heights(network: FFINetwork, start_height: u32, end_height: u32,) -> FFIArray
+```
+
+**Description:**
+Get all checkpoints between two heights (inclusive).  Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and must free the array buffer using `dash_spv_ffi_array_destroy` when done.
+
+**Module:** `checkpoints`
 
 ---
 

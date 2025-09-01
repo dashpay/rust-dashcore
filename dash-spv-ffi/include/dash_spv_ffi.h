@@ -130,21 +130,6 @@ typedef struct FFIEventCallbacks {
 } FFIEventCallbacks;
 
 /**
- * Handle for Core SDK that can be passed to Platform SDK
- */
-typedef struct CoreSDKHandle {
-  struct FFIDashSpvClient *client;
-} CoreSDKHandle;
-
-/**
- * FFIResult type for error handling
- */
-typedef struct FFIResult {
-  int32_t error_code;
-  const char *error_message;
-} FFIResult;
-
-/**
  * FFI-safe array that transfers ownership of memory to the C caller.
  *
  * # Safety
@@ -162,6 +147,21 @@ typedef struct FFIArray {
   uintptr_t elem_size;
   uintptr_t elem_align;
 } FFIArray;
+
+/**
+ * Handle for Core SDK that can be passed to Platform SDK
+ */
+typedef struct CoreSDKHandle {
+  struct FFIDashSpvClient *client;
+} CoreSDKHandle;
+
+/**
+ * FFIResult type for error handling
+ */
+typedef struct FFIResult {
+  int32_t error_code;
+  const char *error_message;
+} FFIResult;
 
 /**
  * FFI-safe representation of an unconfirmed transaction
@@ -540,6 +540,22 @@ int32_t dash_spv_ffi_config_set_start_from_height(FFIClientConfig *config,
  */
 int32_t dash_spv_ffi_config_set_wallet_creation_time(FFIClientConfig *config,
                                                      uint32_t timestamp);
+
+int32_t dash_spv_ffi_checkpoint_latest(FFINetwork network, uint32_t *out_height, uint8_t *out_hash);
+
+int32_t dash_spv_ffi_checkpoint_before_height(FFINetwork network,
+                                              uint32_t height,
+                                              uint32_t *out_height,
+                                              uint8_t *out_hash);
+
+int32_t dash_spv_ffi_checkpoint_before_timestamp(FFINetwork network,
+                                                 uint32_t timestamp,
+                                                 uint32_t *out_height,
+                                                 uint8_t *out_hash);
+
+struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
+                                                         uint32_t start_height,
+                                                         uint32_t end_height);
 
 const char *dash_spv_ffi_get_last_error(void);
 
