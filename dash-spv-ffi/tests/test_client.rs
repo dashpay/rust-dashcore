@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
+    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
     use std::os::raw::c_void;
@@ -133,50 +134,6 @@ mod tests {
                 let _stats_ref = &*stats;
                 // headers_downloaded and bytes_received are u64, always >= 0
                 dash_spv_ffi_spv_stats_destroy(stats);
-            }
-
-            dash_spv_ffi_client_destroy(client);
-            dash_spv_ffi_config_destroy(config);
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn test_address_balance() {
-        unsafe {
-            let (config, _temp_dir) = create_test_config();
-            let client = dash_spv_ffi_client_new(config);
-
-            let addr = CString::new("XjSgy6PaVCB3V4KhCiCDkaVbx9ewxe9R1E").unwrap();
-            let balance = dash_spv_ffi_client_get_address_balance(client, addr.as_ptr());
-
-            if !balance.is_null() {
-                let balance_ref = &*balance;
-                assert_eq!(
-                    balance_ref.total,
-                    balance_ref.confirmed + balance_ref.unconfirmed + balance_ref.immature
-                );
-                // FFIBalance from key-wallet-ffi doesn't need explicit destruction
-                // since it's a simple struct without heap allocations
-            }
-
-            dash_spv_ffi_client_destroy(client);
-            dash_spv_ffi_config_destroy(config);
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn test_utxos() {
-        unsafe {
-            let (config, _temp_dir) = create_test_config();
-            let client = dash_spv_ffi_client_new(config);
-
-            let utxos = dash_spv_ffi_client_get_utxos(client);
-            // adapt to pointer return
-            if !utxos.is_null() {
-                assert_eq!((*utxos).len, 0);
-                dash_spv_ffi_array_destroy(utxos);
             }
 
             dash_spv_ffi_client_destroy(client);

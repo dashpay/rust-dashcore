@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
+    use key_wallet_ffi::FFINetwork;
 
     #[test]
     fn test_ffi_string_new_and_destroy() {

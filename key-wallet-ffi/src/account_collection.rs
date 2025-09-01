@@ -9,7 +9,8 @@ use std::ptr;
 
 use crate::account::FFIAccount;
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetworks, FFIWallet};
+use crate::types::FFIWallet;
+use crate::FFINetwork;
 
 /// Opaque handle to an account collection
 pub struct FFIAccountCollection {
@@ -83,7 +84,7 @@ pub struct FFIAccountCollectionSummary {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_collection(
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIAccountCollection {
     if wallet.is_null() {
@@ -92,17 +93,7 @@ pub unsafe extern "C" fn wallet_get_account_collection(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     match wallet.inner().accounts_on_network(network_rust) {
         Some(collection) => {
@@ -113,7 +104,11 @@ pub unsafe extern "C" fn wallet_get_account_collection(
             FFIError::set_error(
                 error,
                 FFIErrorCode::NotFound,
-                format!("No accounts found for network {:?}", network_rust),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network_rust,
+                    wallet.inner().networks_supported()
+                ),
             );
             ptr::null_mut()
         }
@@ -1098,18 +1093,15 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetworks::Testnet,
+                crate::types::FFINetworks::TestnetFlag,
                 ptr::null(),
                 ptr::null_mut(),
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(
-                wallet,
-                crate::types::FFINetworks::Testnet,
-                ptr::null_mut(),
-            );
+            let collection =
+                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Check that we have some accounts
@@ -1156,18 +1148,15 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetworks::Testnet,
+                crate::types::FFINetworks::TestnetFlag,
                 &options,
                 ptr::null_mut(),
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(
-                wallet,
-                crate::types::FFINetworks::Testnet,
-                ptr::null_mut(),
-            );
+            let collection =
+                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Check for provider operator keys account (BLS)
@@ -1206,18 +1195,15 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetworks::Testnet,
+                crate::types::FFINetworks::TestnetFlag,
                 &options,
                 ptr::null_mut(),
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(
-                wallet,
-                crate::types::FFINetworks::Testnet,
-                ptr::null_mut(),
-            );
+            let collection =
+                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Check for provider platform keys account (EdDSA)
@@ -1280,18 +1266,15 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetworks::Testnet,
+                crate::types::FFINetworks::TestnetFlag,
                 &options,
                 ptr::null_mut(),
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(
-                wallet,
-                crate::types::FFINetworks::Testnet,
-                ptr::null_mut(),
-            );
+            let collection =
+                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Get the summary
@@ -1336,18 +1319,15 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetworks::Testnet,
+                crate::types::FFINetworks::TestnetFlag,
                 &options,
                 ptr::null_mut(),
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(
-                wallet,
-                crate::types::FFINetworks::Testnet,
-                ptr::null_mut(),
-            );
+            let collection =
+                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
 
             // With SpecificAccounts and empty lists, collection might be null or empty
             if collection.is_null() {
@@ -1424,18 +1404,15 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetworks::Testnet,
+                crate::types::FFINetworks::TestnetFlag,
                 &options,
                 ptr::null_mut(),
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(
-                wallet,
-                crate::types::FFINetworks::Testnet,
-                ptr::null_mut(),
-            );
+            let collection =
+                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Get the summary data
@@ -1514,18 +1491,15 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetworks::Testnet,
+                crate::types::FFINetworks::TestnetFlag,
                 &options,
                 ptr::null_mut(),
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(
-                wallet,
-                crate::types::FFINetworks::Testnet,
-                ptr::null_mut(),
-            );
+            let collection =
+                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
 
             // With AllAccounts but empty lists, collection should still exist
             if collection.is_null() {
@@ -1588,18 +1562,15 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetworks::Testnet,
+                crate::types::FFINetworks::TestnetFlag,
                 ptr::null(),
                 ptr::null_mut(),
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(
-                wallet,
-                crate::types::FFINetworks::Testnet,
-                ptr::null_mut(),
-            );
+            let collection =
+                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Get multiple summaries to test memory management

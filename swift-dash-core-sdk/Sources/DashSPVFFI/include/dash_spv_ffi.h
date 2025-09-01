@@ -3,18 +3,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+// Include shared FFI types (FFINetwork, etc.) from key-wallet-ffi
+#include "key_wallet_ffi.h"
+
 typedef enum FFIMempoolStrategy {
   FetchAll = 0,
   BloomFilter = 1,
   Selective = 2,
 } FFIMempoolStrategy;
-
-typedef enum FFINetwork {
-  Dash = 0,
-  Testnet = 1,
-  Regtest = 2,
-  Devnet = 3,
-} FFINetwork;
 
 typedef enum FFISyncStage {
   Connecting = 0,
@@ -85,25 +81,6 @@ typedef struct FFISpvStats {
   uint64_t uptime;
 } FFISpvStats;
 
-/**
- * FFI-safe array that transfers ownership of memory to the C caller.
- *
- * # Safety
- *
- * This struct represents memory that has been allocated by Rust but ownership
- * has been transferred to the C caller. The caller is responsible for:
- * - Not accessing the memory after it has been freed
- * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
- * - Ensuring the data, len, and capacity fields remain consistent
- */
-typedef struct FFIArray {
-  void *data;
-  uintptr_t len;
-  uintptr_t capacity;
-  uintptr_t elem_size;
-  uintptr_t elem_align;
-} FFIArray;
-
 typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);
 
 typedef void (*TransactionCallback)(const uint8_t (*txid)[32],
@@ -155,14 +132,6 @@ typedef struct FFIEventCallbacks {
   void *user_data;
 } FFIEventCallbacks;
 
-typedef struct FFITransaction {
-  struct FFIString txid;
-  int32_t version;
-  uint32_t locktime;
-  uint32_t size;
-  uint32_t weight;
-} FFITransaction;
-
 /**
  * Handle for Core SDK that can be passed to Platform SDK
  */
@@ -177,6 +146,25 @@ typedef struct FFIResult {
   int32_t error_code;
   const char *error_message;
 } FFIResult;
+
+/**
+ * FFI-safe array that transfers ownership of memory to the C caller.
+ *
+ * # Safety
+ *
+ * This struct represents memory that has been allocated by Rust but ownership
+ * has been transferred to the C caller. The caller is responsible for:
+ * - Not accessing the memory after it has been freed
+ * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
+ * - Ensuring the data, len, and capacity fields remain consistent
+ */
+typedef struct FFIArray {
+  void *data;
+  uintptr_t len;
+  uintptr_t capacity;
+  uintptr_t elem_size;
+  uintptr_t elem_align;
+} FFIArray;
 
 /**
  * FFI-safe representation of an unconfirmed transaction
@@ -314,14 +302,6 @@ struct FFISpvStats *dash_spv_ffi_client_get_stats(struct FFIDashSpvClient *clien
 
 bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *client);
 
-FFIBalance *dash_spv_ffi_client_get_address_balance(struct FFIDashSpvClient *client,
-                                                    const char *address);
-
-struct FFIArray *dash_spv_ffi_client_get_utxos(struct FFIDashSpvClient *client);
-
-struct FFIArray *dash_spv_ffi_client_get_utxos_for_address(struct FFIDashSpvClient *client,
-                                                           const char *address);
-
 int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
                                                 struct FFIEventCallbacks callbacks);
 
@@ -331,103 +311,238 @@ void dash_spv_ffi_sync_progress_destroy(struct FFISyncProgress *progress);
 
 void dash_spv_ffi_spv_stats_destroy(struct FFISpvStats *stats);
 
-int32_t dash_spv_ffi_client_watch_address(struct FFIDashSpvClient *client, const char *address);
-
-int32_t dash_spv_ffi_client_unwatch_address(struct FFIDashSpvClient *client, const char *address);
-
-int32_t dash_spv_ffi_client_watch_script(struct FFIDashSpvClient *client, const char *script_hex);
-
-int32_t dash_spv_ffi_client_unwatch_script(struct FFIDashSpvClient *client, const char *script_hex);
-
-struct FFIArray *dash_spv_ffi_client_get_address_history(struct FFIDashSpvClient *client,
-                                                         const char *address);
-
-struct FFITransaction *dash_spv_ffi_client_get_transaction(struct FFIDashSpvClient *client,
-                                                           const char *txid);
-
-int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
-                                                  const char *tx_hex);
-
-struct FFIArray *dash_spv_ffi_client_get_watched_addresses(struct FFIDashSpvClient *client);
-
-struct FFIArray *dash_spv_ffi_client_get_watched_scripts(struct FFIDashSpvClient *client);
-
-FFIBalance *dash_spv_ffi_client_get_total_balance(struct FFIDashSpvClient *client);
-
 int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
                                               uint32_t _from_height);
-
-int32_t dash_spv_ffi_client_get_transaction_confirmations(struct FFIDashSpvClient *client,
-                                                          const char *txid);
-
-int32_t dash_spv_ffi_client_is_transaction_confirmed(struct FFIDashSpvClient *client,
-                                                     const char *txid);
-
-void dash_spv_ffi_transaction_destroy(struct FFITransaction *tx);
-
-struct FFIArray *dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *client,
-                                                       const char *address);
 
 int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *client,
                                                     enum FFIMempoolStrategy strategy);
 
-FFIBalance *dash_spv_ffi_client_get_balance_with_mempool(struct FFIDashSpvClient *client);
-
-int32_t dash_spv_ffi_client_get_mempool_transaction_count(struct FFIDashSpvClient *client);
-
 int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const char *txid);
 
-FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *client,
-                                                    const char *address);
+/**
+ * Get the wallet manager from the SPV client
+ *
+ * Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager.
+ * This allows direct interaction with the wallet manager without going through the client.
+ *
+ * # Safety
+ *
+ * The caller must ensure that:
+ * - The client pointer is valid
+ * - The returned pointer is freed using wallet_manager_free()
+ *
+ * # Returns
+ *
+ * An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized.
+ * Swift should treat this as an OpaquePointer.
+ */
+void *dash_spv_ffi_client_get_wallet_manager(struct FFIDashSpvClient *client);
 
-FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
+FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network);
 
 FFIClientConfig *dash_spv_ffi_config_mainnet(void);
 
 FFIClientConfig *dash_spv_ffi_config_testnet(void);
 
-int32_t dash_spv_ffi_config_set_data_dir(FFIClientConfig *config, const char *path);
+/**
+ * Sets the data directory for storing blockchain data
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - `path` must be a valid null-terminated C string
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_data_dir(FFIClientConfig *config,
+                                         const char *path);
 
+/**
+ * Sets the validation mode for the SPV client
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
 int32_t dash_spv_ffi_config_set_validation_mode(FFIClientConfig *config,
                                                 enum FFIValidationMode mode);
 
-int32_t dash_spv_ffi_config_set_max_peers(FFIClientConfig *config, uint32_t max_peers);
+/**
+ * Sets the maximum number of peers to connect to
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_max_peers(FFIClientConfig *config,
+                                          uint32_t max_peers);
 
-int32_t dash_spv_ffi_config_add_peer(FFIClientConfig *config, const char *addr);
+/**
+ * Adds a peer address to the configuration
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - `addr` must be a valid null-terminated C string containing a socket address (e.g., "192.168.1.1:9999")
+ * - The caller must ensure both pointers remain valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_add_peer(FFIClientConfig *config,
+                                     const char *addr);
 
-int32_t dash_spv_ffi_config_set_user_agent(FFIClientConfig *config, const char *user_agent);
+/**
+ * Sets the user agent string (currently not supported)
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - `user_agent` must be a valid null-terminated C string
+ * - The caller must ensure both pointers remain valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_user_agent(FFIClientConfig *config,
+                                           const char *user_agent);
 
-int32_t dash_spv_ffi_config_set_relay_transactions(FFIClientConfig *config, bool _relay);
+/**
+ * Sets whether to relay transactions (currently a no-op)
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_relay_transactions(FFIClientConfig *config,
+                                                   bool _relay);
 
-int32_t dash_spv_ffi_config_set_filter_load(FFIClientConfig *config, bool load_filters);
+/**
+ * Sets whether to load bloom filters
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_filter_load(FFIClientConfig *config,
+                                            bool load_filters);
 
-enum FFINetwork dash_spv_ffi_config_get_network(const FFIClientConfig *config);
+/**
+ * Gets the network type from the configuration
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig or null
+ * - If null, returns FFINetwork::Dash as default
+ */
+FFINetwork dash_spv_ffi_config_get_network(const FFIClientConfig *config);
 
+/**
+ * Gets the data directory path from the configuration
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig or null
+ * - If null or no data directory is set, returns an FFIString with null pointer
+ * - The returned FFIString must be freed by the caller using dash_string_free
+ */
 struct FFIString dash_spv_ffi_config_get_data_dir(const FFIClientConfig *config);
 
+/**
+ * Destroys an FFIClientConfig and frees its memory
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet, or null
+ * - After calling this function, the config pointer becomes invalid and must not be used
+ * - This function should only be called once per config instance
+ */
 void dash_spv_ffi_config_destroy(FFIClientConfig *config);
 
-int32_t dash_spv_ffi_config_set_mempool_tracking(FFIClientConfig *config, bool enable);
+/**
+ * Enables or disables mempool tracking
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_mempool_tracking(FFIClientConfig *config,
+                                                 bool enable);
 
+/**
+ * Sets the mempool synchronization strategy
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
 int32_t dash_spv_ffi_config_set_mempool_strategy(FFIClientConfig *config,
                                                  enum FFIMempoolStrategy strategy);
 
+/**
+ * Sets the maximum number of mempool transactions to track
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
 int32_t dash_spv_ffi_config_set_max_mempool_transactions(FFIClientConfig *config,
                                                          uint32_t max_transactions);
 
-int32_t dash_spv_ffi_config_set_mempool_timeout(FFIClientConfig *config, uint64_t timeout_secs);
+/**
+ * Sets the mempool transaction timeout in seconds
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_mempool_timeout(FFIClientConfig *config,
+                                                uint64_t timeout_secs);
 
-int32_t dash_spv_ffi_config_set_fetch_mempool_transactions(FFIClientConfig *config, bool fetch);
+/**
+ * Sets whether to fetch full mempool transaction data
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_fetch_mempool_transactions(FFIClientConfig *config,
+                                                           bool fetch);
 
-int32_t dash_spv_ffi_config_set_persist_mempool(FFIClientConfig *config, bool persist);
+/**
+ * Sets whether to persist mempool state to disk
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_persist_mempool(FFIClientConfig *config,
+                                                bool persist);
 
+/**
+ * Gets whether mempool tracking is enabled
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig or null
+ * - If null, returns false as default
+ */
 bool dash_spv_ffi_config_get_mempool_tracking(const FFIClientConfig *config);
 
+/**
+ * Gets the mempool synchronization strategy
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig or null
+ * - If null, returns FFIMempoolStrategy::Selective as default
+ */
 enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const FFIClientConfig *config);
 
-int32_t dash_spv_ffi_config_set_start_from_height(FFIClientConfig *config, uint32_t height);
+/**
+ * Sets the starting block height for synchronization
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_start_from_height(FFIClientConfig *config,
+                                                  uint32_t height);
 
-int32_t dash_spv_ffi_config_set_wallet_creation_time(FFIClientConfig *config, uint32_t timestamp);
+/**
+ * Sets the wallet creation timestamp for synchronization optimization
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+int32_t dash_spv_ffi_config_set_wallet_creation_time(FFIClientConfig *config,
+                                                     uint32_t timestamp);
 
 const char *dash_spv_ffi_get_last_error(void);
 
@@ -541,6 +656,7 @@ int32_t dash_spv_ffi_init_logging(const char *level);
 
 const char *dash_spv_ffi_version(void);
 
-const char *dash_spv_ffi_get_network_name(enum FFINetwork network);
-
 void dash_spv_ffi_enable_test_mode(void);
+
+int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
+                                                  const char *tx_hex);

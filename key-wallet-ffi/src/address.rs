@@ -8,7 +8,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uchar};
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetworks;
+use crate::types::FFINetwork;
 
 /// Free address string
 ///
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn address_array_free(addresses: *mut *mut c_char, count: 
 #[no_mangle]
 pub unsafe extern "C" fn address_validate(
     address: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> bool {
     if address.is_null() {
@@ -80,17 +80,7 @@ pub unsafe extern "C" fn address_validate(
         }
     };
 
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return false;
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
     use std::str::FromStr;
 
     match key_wallet::Address::from_str(address_str) {
@@ -138,7 +128,7 @@ pub unsafe extern "C" fn address_validate(
 #[no_mangle]
 pub unsafe extern "C" fn address_get_type(
     address: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> c_uchar {
     if address.is_null() {
@@ -160,17 +150,7 @@ pub unsafe extern "C" fn address_get_type(
         }
     };
 
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return u8::MAX;
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
     use std::str::FromStr;
 
     match key_wallet::Address::from_str(address_str) {

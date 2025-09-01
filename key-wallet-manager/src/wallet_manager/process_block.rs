@@ -1,12 +1,20 @@
+use crate::wallet_interface::WalletInterface;
 use crate::{Network, WalletManager};
+use async_trait::async_trait;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Block, BlockHash, Txid};
+use dashcore::{Block, BlockHash, Transaction, Txid};
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
-impl<T: WalletInfoInterface> WalletManager<T> {
-    pub fn process_block(&mut self, block: &Block, height: u32, network: Network) -> Vec<Txid> {
+#[async_trait]
+impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletManager<T> {
+    async fn process_block(
+        &mut self,
+        block: &Block,
+        height: CoreBlockHeight,
+        network: Network,
+    ) -> Vec<Txid> {
         let mut relevant_txids = Vec::new();
         let block_hash = Some(block.block_hash());
         let timestamp = block.header.time;
@@ -36,7 +44,16 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         relevant_txids
     }
 
-    pub fn handle_reorg(
+    async fn process_mempool_transaction(&mut self, tx: &Transaction, network: Network) {
+        let context = TransactionContext::Mempool;
+
+        // Check transaction against all wallets
+        self.check_transaction_in_all_wallets(
+            tx, network, context, true, // update state
+        );
+    }
+
+    async fn handle_reorg(
         &mut self,
         from_height: CoreBlockHeight,
         to_height: CoreBlockHeight,
@@ -60,12 +77,19 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         }
     }
 
-    pub fn check_compact_filter(
-        &self,
+    async fn check_compact_filter(
+        &mut self,
         filter: &BlockFilter,
         block_hash: &BlockHash,
         network: Network,
     ) -> bool {
+        // Check if we've already evaluated this filter
+        if let Some(network_cache) = self.filter_matches.get(&network) {
+            if let Some(&matched) = network_cache.get(block_hash) {
+                return matched;
+            }
+        }
+
         // Collect all scripts we're watching
         let mut script_bytes = Vec::new();
 
@@ -78,8 +102,13 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         }
 
         // Check if any of our scripts match the filter
-        filter
+        let hit = filter
             .match_any(block_hash, &mut script_bytes.iter().map(|s| s.as_slice()))
-            .unwrap_or(false)
+            .unwrap_or(false);
+
+        // Cache the result
+        self.filter_matches.entry(network).or_default().insert(*block_hash, hit);
+
+        hit
     }
 }

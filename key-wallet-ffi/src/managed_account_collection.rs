@@ -11,8 +11,8 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_account::FFIManagedAccount;
-use crate::types::FFINetworks;
 use crate::wallet_manager::FFIWalletManager;
+use crate::FFINetwork;
 
 /// Opaque handle to a managed account collection
 pub struct FFIManagedAccountCollection {
@@ -90,7 +90,7 @@ pub struct FFIManagedAccountCollectionSummary {
 pub unsafe extern "C" fn managed_wallet_get_account_collection(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIManagedAccountCollection {
     if manager.is_null() || wallet_id.is_null() {
@@ -98,17 +98,7 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
         return ptr::null_mut();
     }
 
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     // Get the managed wallet info from the manager
     let managed_wallet_ptr =
@@ -137,7 +127,11 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
             FFIError::set_error(
                 error,
                 FFIErrorCode::NotFound,
-                format!("No accounts found for network {:?}", network_rust),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network_rust,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             ptr::null_mut()
         }

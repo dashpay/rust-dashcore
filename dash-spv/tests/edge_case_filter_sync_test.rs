@@ -178,7 +178,7 @@ async fn test_filter_sync_at_tip_edge_case() {
     // Try to start filter sync when already at tip
     let result = filter_sync.start_sync_headers(&mut network, &mut storage).await;
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), false, "Should not start sync when already at tip");
+    assert!(!result.unwrap(), "Should not start sync when already at tip");
 
     // Verify no messages were sent
     let sent_messages = network.get_sent_messages();

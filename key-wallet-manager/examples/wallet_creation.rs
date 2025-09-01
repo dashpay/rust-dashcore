@@ -1,9 +1,8 @@
-//! Example demonstrating how to create and manage wallets using WalletManager and SPVWalletManager
+//! Example demonstrating how to create and manage wallets using WalletManager
 //!
 //! This example shows:
 //! - Creating wallets with WalletManager
 //! - Creating wallets from mnemonics
-//! - Using SPVWalletManager for SPV-specific functionality
 //! - Managing wallet accounts and addresses
 
 use hex;
@@ -12,7 +11,6 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Network};
-use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::WalletManager;
 
 fn main() {
@@ -124,35 +122,11 @@ fn main() {
         }
     }
 
-    // Example 5: Using SPVWalletManager
-    println!("\n5. Using SPVWalletManager for SPV functionality...");
-
-    let mut spv_manager = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
-
-    // Create a wallet through SPVWalletManager
-    let spv_result = spv_manager.base.create_wallet_with_random_mnemonic(
-        WalletAccountCreationOptions::Default,
-        Network::Testnet,
-    );
-
-    match spv_result {
-        Ok(wallet_id3) => {
-            println!("✅ SPV wallet created!");
-            println!("   Wallet ID: {}", hex::encode(wallet_id3));
-            println!("   Sync status: {:?}", spv_manager.sync_status(Network::Testnet));
-            println!("   Sync height: {}", spv_manager.sync_height(Network::Testnet));
-
-            // Set target height for sync
-            spv_manager.set_target_height(Network::Testnet, 1_000_000);
-            println!("   Target height set to: 1,000,000");
-
-            // Update sync status after setting target
-            println!("   Updated sync status: {:?}", spv_manager.sync_status(Network::Testnet));
-        }
-        Err(e) => {
-            println!("❌ Failed to create SPV wallet: {:?}", e);
-        }
-    }
+    // Example 5: WalletManager now includes SPV functionality
+    println!("\n5. WalletManager now includes filter caching for SPV...");
+    println!("   The SPVWalletManager has been merged into WalletManager");
+    println!("   Filter caching is now built into WalletManager's check_compact_filter method");
+    println!("   WalletManager implements the WalletInterface trait for SPV integration");
 
     // Example 6: Getting wallet balance
     println!("\n6. Checking wallet balances...");

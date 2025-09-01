@@ -8,8 +8,9 @@ use std::os::raw::{c_char, c_uint};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::transaction_checking::FFIManagedWallet;
-use crate::types::{FFIAccountType, FFINetworks, FFIWallet};
+use crate::types::{FFIAccountType, FFIWallet};
 use crate::utils::rust_string_to_c;
+use crate::FFINetwork;
 use key_wallet::account::ManagedAccountCollection;
 use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
@@ -246,7 +247,7 @@ pub struct FFIAddressPoolInfo {
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     managed_wallet: *const FFIManagedWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -259,17 +260,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     }
 
     let managed_wallet = &*(*managed_wallet).inner;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return false;
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
@@ -376,7 +367,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     managed_wallet: *mut FFIManagedWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -389,17 +380,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     }
 
     let managed_wallet = &mut *(*managed_wallet).inner;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return false;
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
@@ -496,7 +477,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
 pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     managed_wallet: *mut FFIManagedWallet,
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -510,17 +491,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 
     let managed_wallet = &mut *(*managed_wallet).inner;
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return false;
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
@@ -671,7 +642,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_mark_address_used(
     managed_wallet: *mut FFIManagedWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     address: *const c_char,
     error: *mut FFIError,
 ) -> bool {
@@ -681,17 +652,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
     }
 
     let managed_wallet = &mut *(*managed_wallet).inner;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return false;
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
 
     // Parse the address string
     let address_str = match std::ffi::CStr::from_ptr(address).to_str() {
@@ -1001,6 +962,7 @@ pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{FFINetwork, FFINetworks};
 
     #[test]
     fn test_address_pool_type_values() {
@@ -1105,7 +1067,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::Testnet,
+                FFINetworks::TestnetFlag,
                 ptr::null(),
                 &mut error,
             );
@@ -1130,7 +1092,7 @@ mod tests {
             let result = crate::managed_account::managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1206,7 +1168,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::Testnet,
+                FFINetworks::TestnetFlag,
                 ptr::null(),
                 &mut error,
             );
@@ -1231,7 +1193,7 @@ mod tests {
             let result = crate::managed_account::managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );

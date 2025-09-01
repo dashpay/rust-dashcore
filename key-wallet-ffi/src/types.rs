@@ -1,7 +1,7 @@
 //! Common types for FFI interface
 
 use key_wallet::{Network, Wallet};
-use std::os::raw::c_uint;
+use std::os::raw::{c_char, c_uint};
 use std::sync::Arc;
 
 /// FFI Network type (bit flags for multiple networks)
@@ -9,11 +9,11 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FFINetworks {
     NoNetworks = 0,
-    Dash = 1,
-    Testnet = 2,
-    Regtest = 4,
-    Devnet = 8,
-    AllNetworks = 15, // Dash | Testnet | Regtest | Devnet
+    DashFlag = 1,
+    TestnetFlag = 2,
+    RegtestFlag = 4,
+    DevnetFlag = 8,
+    AllNetworks = 15, // DashFlag | TestnetFlag | RegtestFlag | DevnetFlag
 }
 
 impl FFINetworks {
@@ -28,16 +28,16 @@ impl FFINetworks {
 
         let mut networks = Vec::new();
 
-        if flags & (FFINetworks::Dash as c_uint) != 0 {
+        if flags & (FFINetworks::DashFlag as c_uint) != 0 {
             networks.push(Network::Dash);
         }
-        if flags & (FFINetworks::Testnet as c_uint) != 0 {
+        if flags & (FFINetworks::TestnetFlag as c_uint) != 0 {
             networks.push(Network::Testnet);
         }
-        if flags & (FFINetworks::Regtest as c_uint) != 0 {
+        if flags & (FFINetworks::RegtestFlag as c_uint) != 0 {
             networks.push(Network::Regtest);
         }
-        if flags & (FFINetworks::Devnet as c_uint) != 0 {
+        if flags & (FFINetworks::DevnetFlag as c_uint) != 0 {
             networks.push(Network::Devnet);
         }
 
@@ -53,11 +53,54 @@ impl FFINetworks {
 
         // Check if it's a single network
         match flags {
-            x if x == FFINetworks::Dash as c_uint => Some(Network::Dash),
-            x if x == FFINetworks::Testnet as c_uint => Some(Network::Testnet),
-            x if x == FFINetworks::Regtest as c_uint => Some(Network::Regtest),
-            x if x == FFINetworks::Devnet as c_uint => Some(Network::Devnet),
+            x if x == FFINetworks::DashFlag as c_uint => Some(Network::Dash),
+            x if x == FFINetworks::TestnetFlag as c_uint => Some(Network::Testnet),
+            x if x == FFINetworks::RegtestFlag as c_uint => Some(Network::Regtest),
+            x if x == FFINetworks::DevnetFlag as c_uint => Some(Network::Devnet),
             _ => None, // Multiple networks or NoNetworks
+        }
+    }
+}
+
+/// FFI Network type (single network)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FFINetwork {
+    Dash = 0,
+    Testnet = 1,
+    Regtest = 2,
+    Devnet = 3,
+}
+
+#[no_mangle]
+pub extern "C" fn ffi_network_get_name(network: FFINetwork) -> *const c_char {
+    match network {
+        FFINetwork::Dash => c"dash".as_ptr() as *const c_char,
+        FFINetwork::Testnet => c"testnet".as_ptr() as *const c_char,
+        FFINetwork::Regtest => c"regtest".as_ptr() as *const c_char,
+        FFINetwork::Devnet => c"devnet".as_ptr() as *const c_char,
+    }
+}
+
+impl From<FFINetwork> for Network {
+    fn from(net: FFINetwork) -> Self {
+        match net {
+            FFINetwork::Dash => Network::Dash,
+            FFINetwork::Testnet => Network::Testnet,
+            FFINetwork::Regtest => Network::Regtest,
+            FFINetwork::Devnet => Network::Devnet,
+        }
+    }
+}
+
+impl From<Network> for FFINetwork {
+    fn from(net: Network) -> Self {
+        match net {
+            Network::Dash => FFINetwork::Dash,
+            Network::Testnet => FFINetwork::Testnet,
+            Network::Regtest => FFINetwork::Regtest,
+            Network::Devnet => FFINetwork::Devnet,
+            _ => FFINetwork::Dash,
         }
     }
 }
@@ -78,11 +121,11 @@ impl TryFrom<FFINetworks> for Network {
 impl From<Network> for FFINetworks {
     fn from(n: Network) -> Self {
         match n {
-            Network::Dash => FFINetworks::Dash,
-            Network::Testnet => FFINetworks::Testnet,
-            Network::Regtest => FFINetworks::Regtest,
-            Network::Devnet => FFINetworks::Devnet,
-            _ => FFINetworks::Dash, // Default to Dash for unknown networks
+            Network::Dash => FFINetworks::DashFlag,
+            Network::Testnet => FFINetworks::TestnetFlag,
+            Network::Regtest => FFINetworks::RegtestFlag,
+            Network::Devnet => FFINetworks::DevnetFlag,
+            _ => FFINetworks::DashFlag, // Default to Dash for unknown networks
         }
     }
 }
@@ -144,7 +187,7 @@ pub struct FFIAccountResult {
     /// Error code (0 = success)
     pub error_code: i32,
     /// Error message (NULL if success, must be freed by caller if not NULL)
-    pub error_message: *mut std::os::raw::c_char,
+    pub error_message: *mut c_char,
 }
 
 impl FFIAccountResult {

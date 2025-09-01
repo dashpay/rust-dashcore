@@ -5,7 +5,6 @@ use dash_spv::storage::MemoryStorageManager;
 use dash_spv::{init_logging, ClientConfig, DashSpvClient};
 use dashcore::Address;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -31,9 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_manager = MemoryStorageManager::new().await?;
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     // Create the client
     let mut client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;

@@ -4,6 +4,7 @@
 
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 use key_wallet_ffi::types::FFINetworks;
+use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
 
@@ -35,7 +36,7 @@ fn test_full_wallet_workflow() {
             manager,
             mnemonic,
             passphrase.as_ptr(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             error,
         )
     };
@@ -57,30 +58,7 @@ fn test_full_wallet_workflow() {
 
     let wallet_id = wallet_ids; // First wallet ID starts at offset 0
 
-    // 6. Derive addresses using wallet manager
-    let receive_addr = unsafe {
-        key_wallet_ffi::wallet_manager::wallet_manager_get_receive_address(
-            manager,
-            wallet_id,
-            FFINetworks::Testnet,
-            0,
-            error,
-        )
-    };
-    assert!(!receive_addr.is_null());
-
-    let change_addr = unsafe {
-        key_wallet_ffi::wallet_manager::wallet_manager_get_change_address(
-            manager,
-            wallet_id,
-            FFINetworks::Testnet,
-            0,
-            error,
-        )
-    };
-    assert!(!change_addr.is_null());
-
-    // 7. Get balance
+    // 6. Get balance
     let mut confirmed: u64 = 0;
     let mut unconfirmed: u64 = 0;
     let success = unsafe {
@@ -98,8 +76,6 @@ fn test_full_wallet_workflow() {
 
     // Clean up
     unsafe {
-        key_wallet_ffi::address::address_free(receive_addr);
-        key_wallet_ffi::address::address_free(change_addr);
         key_wallet_ffi::wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
         key_wallet_ffi::wallet_manager::wallet_manager_free(manager);
         key_wallet_ffi::mnemonic::mnemonic_free(mnemonic);
@@ -135,7 +111,7 @@ fn test_seed_to_wallet_workflow() {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             seed.as_ptr(),
             seed_len,
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             error,
         )
     };
@@ -157,7 +133,7 @@ fn test_derivation_paths() {
 
     // Account path
     let success = key_wallet_ffi::derivation::derivation_bip44_account_path(
-        FFINetworks::Dash,
+        FFINetwork::Dash,
         0,
         path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
         path_buffer.len(),
@@ -175,7 +151,7 @@ fn test_derivation_paths() {
     // Payment path
     path_buffer.fill(0);
     let success = key_wallet_ffi::derivation::derivation_bip44_payment_path(
-        FFINetworks::Dash,
+        FFINetwork::Dash,
         0,
         false,
         5,
@@ -206,7 +182,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             invalid_mnemonic.as_ptr(),
             ptr::null(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             error,
         )
     };
@@ -218,7 +194,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             ptr::null(),
             ptr::null(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             error,
         )
     };
@@ -231,7 +207,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             invalid_seed.as_ptr(),
             invalid_seed.len(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             error,
         )
     };

@@ -1,5 +1,6 @@
-use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy, FFINetwork, FFIString};
+use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy, FFIString};
 use dash_spv::{ClientConfig, ValidationMode};
+use key_wallet_ffi::FFINetwork;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -49,6 +50,12 @@ pub extern "C" fn dash_spv_ffi_config_testnet() -> *mut FFIClientConfig {
     }))
 }
 
+/// Sets the data directory for storing blockchain data
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - `path` must be a valid null-terminated C string
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_data_dir(
     config: *mut FFIClientConfig,
@@ -70,6 +77,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_data_dir(
     }
 }
 
+/// Sets the validation mode for the SPV client
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_validation_mode(
     config: *mut FFIClientConfig,
@@ -82,6 +94,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_validation_mode(
     FFIErrorCode::Success as i32
 }
 
+/// Sets the maximum number of peers to connect to
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
     config: *mut FFIClientConfig,
@@ -96,6 +113,12 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
 
 // Note: dash-spv doesn't have min_peers, only max_peers
 
+/// Adds a peer address to the configuration
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - `addr` must be a valid null-terminated C string containing a socket address (e.g., "192.168.1.1:9999")
+/// - The caller must ensure both pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     config: *mut FFIClientConfig,
@@ -123,6 +146,12 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     }
 }
 
+/// Sets the user agent string (currently not supported)
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - `user_agent` must be a valid null-terminated C string
+/// - The caller must ensure both pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_user_agent(
     config: *mut FFIClientConfig,
@@ -145,6 +174,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_user_agent(
     }
 }
 
+/// Sets whether to relay transactions (currently a no-op)
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_relay_transactions(
     config: *mut FFIClientConfig,
@@ -157,6 +191,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_relay_transactions(
     FFIErrorCode::Success as i32
 }
 
+/// Sets whether to load bloom filters
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_filter_load(
     config: *mut FFIClientConfig,
@@ -169,6 +208,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_filter_load(
     FFIErrorCode::Success as i32
 }
 
+/// Gets the network type from the configuration
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig or null
+/// - If null, returns FFINetwork::Dash as default
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_get_network(
     config: *const FFIClientConfig,
@@ -181,6 +225,12 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_network(
     config.network.into()
 }
 
+/// Gets the data directory path from the configuration
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig or null
+/// - If null or no data directory is set, returns an FFIString with null pointer
+/// - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
     config: *const FFIClientConfig,
@@ -202,6 +252,12 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
     }
 }
 
+/// Destroys an FFIClientConfig and frees its memory
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet, or null
+/// - After calling this function, the config pointer becomes invalid and must not be used
+/// - This function should only be called once per config instance
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_destroy(config: *mut FFIClientConfig) {
     if !config.is_null() {
@@ -221,6 +277,11 @@ impl FFIClientConfig {
 
 // Mempool configuration functions
 
+/// Enables or disables mempool tracking
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_tracking(
     config: *mut FFIClientConfig,
@@ -233,6 +294,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_tracking(
     FFIErrorCode::Success as i32
 }
 
+/// Sets the mempool synchronization strategy
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_strategy(
     config: *mut FFIClientConfig,
@@ -245,6 +311,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_strategy(
     FFIErrorCode::Success as i32
 }
 
+/// Sets the maximum number of mempool transactions to track
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
     config: *mut FFIClientConfig,
@@ -257,6 +328,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
     FFIErrorCode::Success as i32
 }
 
+/// Sets the mempool transaction timeout in seconds
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_timeout(
     config: *mut FFIClientConfig,
@@ -269,6 +345,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_timeout(
     FFIErrorCode::Success as i32
 }
 
+/// Sets whether to fetch full mempool transaction data
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
     config: *mut FFIClientConfig,
@@ -281,6 +362,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
     FFIErrorCode::Success as i32
 }
 
+/// Sets whether to persist mempool state to disk
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
     config: *mut FFIClientConfig,
@@ -293,6 +379,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
     FFIErrorCode::Success as i32
 }
 
+/// Gets whether mempool tracking is enabled
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig or null
+/// - If null, returns false as default
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
     config: *const FFIClientConfig,
@@ -305,6 +396,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
     config.enable_mempool_tracking
 }
 
+/// Gets the mempool synchronization strategy
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig or null
+/// - If null, returns FFIMempoolStrategy::Selective as default
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
     config: *const FFIClientConfig,
@@ -319,6 +415,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
 
 // Checkpoint sync configuration functions
 
+/// Sets the starting block height for synchronization
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
     config: *mut FFIClientConfig,
@@ -331,6 +432,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
     FFIErrorCode::Success as i32
 }
 
+/// Sets the wallet creation timestamp for synchronization optimization
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_set_wallet_creation_time(
     config: *mut FFIClientConfig,

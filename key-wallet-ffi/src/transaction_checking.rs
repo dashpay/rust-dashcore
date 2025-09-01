@@ -9,7 +9,7 @@ use std::os::raw::{c_char, c_uint};
 use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetworks, FFIWallet};
+use crate::types::{FFINetwork, FFITransactionContext, FFIWallet};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
@@ -23,17 +23,8 @@ pub struct FFIManagedWallet {
     pub(crate) inner: *mut ManagedWalletInfo,
 }
 
-/// Transaction context for checking
-#[repr(C)]
-pub enum FFITransactionContext {
-    /// Transaction is in mempool (unconfirmed)
-    Mempool = 0,
-    /// Transaction is in a block
-    InBlock = 1,
-    /// Transaction is in a chain-locked block  
-    InChainLockedBlock = 2,
-}
-
+// Transaction context for checking
+// FFITransactionContext is imported from types module at the top
 /// Account type match result
 #[repr(C)]
 pub struct FFIAccountMatch {
@@ -125,7 +116,7 @@ pub unsafe extern "C" fn wallet_create_managed_wallet(
 pub unsafe extern "C" fn managed_wallet_check_transaction(
     managed_wallet: *mut FFIManagedWallet,
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     tx_bytes: *const u8,
     tx_len: usize,
     context_type: FFITransactionContext,
@@ -142,17 +133,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     }
 
     let managed_wallet = &mut *(*managed_wallet).inner;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return false;
-        }
-    };
+    let network_rust: key_wallet::Network = network.into();
     let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
     // Parse the transaction

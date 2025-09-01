@@ -21,7 +21,6 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-pub mod spv_wallet_manager;
 pub mod wallet_interface;
 pub mod wallet_manager;
 
@@ -41,5 +40,4 @@ pub use key_wallet::wallet::managed_wallet_info::coin_selection::{
 };
 pub use key_wallet::wallet::managed_wallet_info::fee::{FeeEstimator, FeeRate};
 pub use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
-pub use spv_wallet_manager::{ProcessBlockResult, SPVStats, SPVSyncStatus, SPVWalletManager};
 pub use wallet_manager::{WalletError, WalletManager};

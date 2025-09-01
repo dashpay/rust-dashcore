@@ -189,53 +189,41 @@ typedef enum {
 } FFILanguage;
 
 /*
+ FFI Network type (single network)
+ */
+typedef enum {
+    DASH = 0,
+    TESTNET = 1,
+    REGTEST = 2,
+    DEVNET = 3,
+} FFINetwork;
+
+/*
  FFI Network type (bit flags for multiple networks)
  */
 typedef enum {
     NO_NETWORKS = 0,
-    DASH = 1,
-    TESTNET = 2,
-    REGTEST = 4,
-    DEVNET = 8,
+    DASH_FLAG = 1,
+    TESTNET_FLAG = 2,
+    REGTEST_FLAG = 4,
+    DEVNET_FLAG = 8,
     ALL_NETWORKS = 15,
 } FFINetworks;
 
 /*
- Provider key type
+ FFI-compatible transaction context
  */
 typedef enum {
     /*
-     BLS voting keys (m/9'/5'/3'/1'/[key_index])
-     */
-    VOTING_KEYS = 0,
-    /*
-     BLS owner keys (m/9'/5'/3'/2'/[key_index])
-     */
-    OWNER_KEYS = 1,
-    /*
-     BLS operator keys (m/9'/5'/3'/3'/[key_index])
-     */
-    OPERATOR_KEYS = 2,
-    /*
-     EdDSA platform P2P keys (m/9'/5'/3'/4'/[key_index])
-     */
-    PLATFORM_KEYS = 3,
-} FFIProviderKeyType;
-
-/*
- Transaction context for checking
- */
-typedef enum {
-    /*
-     Transaction is in mempool (unconfirmed)
+     Transaction is in the mempool (unconfirmed)
      */
     MEMPOOL = 0,
     /*
-     Transaction is in a block
+     Transaction is in a block at the given height
      */
     IN_BLOCK = 1,
     /*
-     Transaction is in a chain-locked block
+     Transaction is in a chain-locked block at the given height
      */
     IN_CHAIN_LOCKED_BLOCK = 2,
 } FFITransactionContext;
@@ -314,12 +302,21 @@ typedef struct FFIPrivateKey FFIPrivateKey;
 typedef struct FFIPublicKey FFIPublicKey;
 
 /*
+ Opaque handle for a transaction
+ */
+typedef struct FFITransaction FFITransaction;
+
+/*
  Opaque wallet handle
  */
 typedef struct FFIWallet FFIWallet;
 
 /*
  FFI wrapper for WalletManager
+
+ This struct holds a cloned Arc reference to the WalletManager,
+ allowing FFI code to interact with it directly without going through
+ the SPV client.
  */
 typedef struct FFIWalletManager FFIWalletManager;
 
@@ -634,37 +631,7 @@ typedef struct {
 } FFIManagedAccountCollectionSummary;
 
 /*
- Provider key info
- */
-typedef struct {
-    /*
-     Key index
-     */
-    unsigned int key_index;
-    /*
-     Public key bytes (48 bytes for BLS, 32 bytes for EdDSA)
-     */
-    uint8_t *public_key;
-    /*
-     Public key length
-     */
-    size_t public_key_len;
-    /*
-     Private key bytes (32 bytes, only if available)
-     */
-    uint8_t *private_key;
-    /*
-     Private key length (0 if not available)
-     */
-    size_t private_key_len;
-    /*
-     Derivation path as string
-     */
-    char *derivation_path;
-} FFIProviderKeyInfo;
-
-/*
- Transaction output for building
+ Transaction output for building (legacy structure)
  */
 typedef struct {
     const char *address;
@@ -692,6 +659,50 @@ typedef struct {
      */
     uint32_t affected_accounts_count;
 } FFITransactionCheckResult;
+
+/*
+ FFI-compatible transaction input
+ */
+typedef struct {
+    /*
+     Transaction ID (32 bytes)
+     */
+    uint8_t txid[32];
+    /*
+     Output index
+     */
+    uint32_t vout;
+    /*
+     Script signature length
+     */
+    uint32_t script_sig_len;
+    /*
+     Script signature data pointer
+     */
+    const uint8_t *script_sig;
+    /*
+     Sequence number
+     */
+    uint32_t sequence;
+} FFITxIn;
+
+/*
+ FFI-compatible transaction output
+ */
+typedef struct {
+    /*
+     Amount in duffs
+     */
+    uint64_t amount;
+    /*
+     Script pubkey length
+     */
+    uint32_t script_pubkey_len;
+    /*
+     Script pubkey data pointer
+     */
+    const uint8_t *script_pubkey;
+} FFITxOut;
 
 /*
  UTXO structure for FFI
@@ -794,7 +805,7 @@ extern "C" {
  */
 
 FFIAccountResult wallet_get_account(const FFIWallet *wallet,
-                                    FFINetworks network,
+                                    FFINetwork network,
                                     unsigned int account_index,
                                     FFIAccountType account_type)
 ;
@@ -811,7 +822,7 @@ FFIAccountResult wallet_get_account(const FFIWallet *wallet,
  */
 
 FFIAccountResult wallet_get_top_up_account_with_registration_index(const FFIWallet *wallet,
-                                                                   FFINetworks network,
+                                                                   FFINetwork network,
                                                                    unsigned int registration_index)
 ;
 
@@ -1039,7 +1050,7 @@ FFIAccountType eddsa_account_get_account_type(const FFIEdDSAAccount *account,
  */
 
 unsigned int wallet_get_account_count(const FFIWallet *wallet,
-                                      FFINetworks network,
+                                      FFINetwork network,
                                       FFIError *error)
 ;
 
@@ -1054,7 +1065,7 @@ unsigned int wallet_get_account_count(const FFIWallet *wallet,
  */
 
 FFIAccountCollection *wallet_get_account_collection(const FFIWallet *wallet,
-                                                    FFINetworks network,
+                                                    FFINetwork network,
                                                     FFIError *error)
 ;
 
@@ -1417,7 +1428,7 @@ void account_collection_summary_free(FFIAccountCollectionSummary *summary)
  - `address` must be a valid null-terminated C string
  - `error` must be a valid pointer to an FFIError
  */
- bool address_validate(const char *address, FFINetworks network, FFIError *error) ;
+ bool address_validate(const char *address, FFINetwork network, FFIError *error) ;
 
 /*
  Get address type
@@ -1433,7 +1444,7 @@ void account_collection_summary_free(FFIAccountCollectionSummary *summary)
  - `address` must be a valid null-terminated C string
  - `error` must be a valid pointer to an FFIError
  */
- unsigned char address_get_type(const char *address, FFINetworks network, FFIError *error) ;
+ unsigned char address_get_type(const char *address, FFINetwork network, FFIError *error) ;
 
 /*
  Free an address pool handle
@@ -1457,7 +1468,7 @@ void account_collection_summary_free(FFIAccountCollectionSummary *summary)
  */
 
 bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet,
-                                          FFINetworks network,
+                                          FFINetwork network,
                                           FFIAccountType account_type,
                                           unsigned int account_index,
                                           FFIAddressPoolType pool_type,
@@ -1478,7 +1489,7 @@ bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet
  */
 
 bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
-                                  FFINetworks network,
+                                  FFINetwork network,
                                   FFIAccountType account_type,
                                   unsigned int account_index,
                                   FFIAddressPoolType pool_type,
@@ -1502,7 +1513,7 @@ bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
 
 bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet,
                                                 const FFIWallet *wallet,
-                                                FFINetworks network,
+                                                FFINetwork network,
                                                 FFIAccountType account_type,
                                                 unsigned int account_index,
                                                 FFIAddressPoolType pool_type,
@@ -1524,7 +1535,7 @@ bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet
  */
 
 bool managed_wallet_mark_address_used(FFIManagedWallet *managed_wallet,
-                                      FFINetworks network,
+                                      FFINetwork network,
                                       const char *address,
                                       FFIError *error)
 ;
@@ -1607,7 +1618,7 @@ void address_info_array_free(FFIAddressInfo **infos,
 
 FFIExtendedPrivKey *derivation_new_master_key(const uint8_t *seed,
                                               size_t seed_len,
-                                              FFINetworks network,
+                                              FFINetwork network,
                                               FFIError *error)
 ;
 
@@ -1615,7 +1626,7 @@ FFIExtendedPrivKey *derivation_new_master_key(const uint8_t *seed,
  Derive a BIP44 account path (m/44'/5'/account')
  */
 
-bool derivation_bip44_account_path(FFINetworks network,
+bool derivation_bip44_account_path(FFINetwork network,
                                    unsigned int account_index,
                                    char *path_out,
                                    size_t path_max_len,
@@ -1626,7 +1637,7 @@ bool derivation_bip44_account_path(FFINetworks network,
  Derive a BIP44 payment path (m/44'/5'/account'/change/index)
  */
 
-bool derivation_bip44_payment_path(FFINetworks network,
+bool derivation_bip44_payment_path(FFINetwork network,
                                    unsigned int account_index,
                                    bool is_change,
                                    unsigned int address_index,
@@ -1639,7 +1650,7 @@ bool derivation_bip44_payment_path(FFINetworks network,
  Derive CoinJoin path (m/9'/5'/4'/account')
  */
 
-bool derivation_coinjoin_path(FFINetworks network,
+bool derivation_coinjoin_path(FFINetwork network,
                               unsigned int account_index,
                               char *path_out,
                               size_t path_max_len,
@@ -1650,7 +1661,7 @@ bool derivation_coinjoin_path(FFINetworks network,
  Derive identity registration path (m/9'/5'/5'/1'/index')
  */
 
-bool derivation_identity_registration_path(FFINetworks network,
+bool derivation_identity_registration_path(FFINetwork network,
                                            unsigned int identity_index,
                                            char *path_out,
                                            size_t path_max_len,
@@ -1661,7 +1672,7 @@ bool derivation_identity_registration_path(FFINetworks network,
  Derive identity top-up path (m/9'/5'/5'/2'/identity_index'/top_up_index')
  */
 
-bool derivation_identity_topup_path(FFINetworks network,
+bool derivation_identity_topup_path(FFINetwork network,
                                     unsigned int identity_index,
                                     unsigned int topup_index,
                                     char *path_out,
@@ -1673,7 +1684,7 @@ bool derivation_identity_topup_path(FFINetworks network,
  Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index')
  */
 
-bool derivation_identity_authentication_path(FFINetworks network,
+bool derivation_identity_authentication_path(FFINetwork network,
                                              unsigned int identity_index,
                                              unsigned int key_index,
                                              char *path_out,
@@ -1695,7 +1706,7 @@ bool derivation_identity_authentication_path(FFINetworks network,
 FFIExtendedPrivKey *derivation_derive_private_key_from_seed(const uint8_t *seed,
                                                             size_t seed_len,
                                                             const char *path,
-                                                            FFINetworks network,
+                                                            FFINetwork network,
                                                             FFIError *error)
 ;
 
@@ -1792,11 +1803,60 @@ bool derivation_xpub_fingerprint(const FFIExtendedPubKey *xpub,
 
 FFIExtendedPrivKey *dip9_derive_identity_key(const uint8_t *seed,
                                              size_t seed_len,
-                                             FFINetworks network,
+                                             FFINetwork network,
                                              unsigned int identity_index,
                                              unsigned int key_index,
                                              FFIDerivationPathType key_type,
                                              FFIError *error)
+;
+
+/*
+ Derive an address from a private key
+
+ # Safety
+ - `private_key` must be a valid pointer to 32 bytes
+ - `network` is the network for the address
+
+ # Returns
+ - Pointer to C string with address (caller must free)
+ - NULL on error
+ */
+ char *key_wallet_derive_address_from_key(const uint8_t *private_key, FFINetwork network) ;
+
+/*
+ Derive an address from a seed at a specific derivation path
+
+ # Safety
+ - `seed` must be a valid pointer to 64 bytes
+ - `network` is the network for the address
+ - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0")
+
+ # Returns
+ - Pointer to C string with address (caller must free)
+ - NULL on error
+ */
+
+char *key_wallet_derive_address_from_seed(const uint8_t *seed,
+                                          FFINetwork network,
+                                          const char *path)
+;
+
+/*
+ Derive a private key from a seed at a specific derivation path
+
+ # Safety
+ - `seed` must be a valid pointer to 64 bytes
+ - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0")
+ - `key_out` must be a valid pointer to a buffer of at least 32 bytes
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+
+int32_t key_wallet_derive_private_key_from_seed(const uint8_t *seed,
+                                                const char *path,
+                                                uint8_t *key_out)
 ;
 
 /*
@@ -1821,7 +1881,7 @@ FFIExtendedPrivKey *dip9_derive_identity_key(const uint8_t *seed,
  */
 
 char *wallet_get_account_xpriv(const FFIWallet *wallet,
-                               FFINetworks network,
+                               FFINetwork network,
                                unsigned int account_index,
                                FFIError *error)
 ;
@@ -1837,7 +1897,7 @@ char *wallet_get_account_xpriv(const FFIWallet *wallet,
  */
 
 char *wallet_get_account_xpub(const FFIWallet *wallet,
-                              FFINetworks network,
+                              FFINetwork network,
                               unsigned int account_index,
                               FFIError *error)
 ;
@@ -1855,7 +1915,7 @@ char *wallet_get_account_xpub(const FFIWallet *wallet,
  */
 
 FFIPrivateKey *wallet_derive_private_key(const FFIWallet *wallet,
-                                         FFINetworks network,
+                                         FFINetwork network,
                                          const char *derivation_path,
                                          FFIError *error)
 ;
@@ -1873,7 +1933,7 @@ FFIPrivateKey *wallet_derive_private_key(const FFIWallet *wallet,
  */
 
 FFIExtendedPrivateKey *wallet_derive_extended_private_key(const FFIWallet *wallet,
-                                                          FFINetworks network,
+                                                          FFINetwork network,
                                                           const char *derivation_path,
                                                           FFIError *error)
 ;
@@ -1890,7 +1950,7 @@ FFIExtendedPrivateKey *wallet_derive_extended_private_key(const FFIWallet *walle
  */
 
 char *wallet_derive_private_key_as_wif(const FFIWallet *wallet,
-                                       FFINetworks network,
+                                       FFINetwork network,
                                        const char *derivation_path,
                                        FFIError *error)
 ;
@@ -1929,7 +1989,7 @@ char *wallet_derive_private_key_as_wif(const FFIWallet *wallet,
  */
 
 char *extended_private_key_to_string(const FFIExtendedPrivateKey *key,
-                                     FFINetworks network,
+                                     FFINetwork network,
                                      FFIError *error)
 ;
 
@@ -1958,7 +2018,7 @@ FFIPrivateKey *extended_private_key_get_private_key(const FFIExtendedPrivateKey 
  - `error` must be a valid pointer to an FFIError
  - The returned string must be freed with `string_free`
  */
- char *private_key_to_wif(const FFIPrivateKey *key, FFINetworks network, FFIError *error) ;
+ char *private_key_to_wif(const FFIPrivateKey *key, FFINetwork network, FFIError *error) ;
 
 /*
  Derive public key at a specific path
@@ -1973,7 +2033,7 @@ FFIPrivateKey *extended_private_key_get_private_key(const FFIExtendedPrivateKey 
  */
 
 FFIPublicKey *wallet_derive_public_key(const FFIWallet *wallet,
-                                       FFINetworks network,
+                                       FFINetwork network,
                                        const char *derivation_path,
                                        FFIError *error)
 ;
@@ -1991,7 +2051,7 @@ FFIPublicKey *wallet_derive_public_key(const FFIWallet *wallet,
  */
 
 FFIExtendedPublicKey *wallet_derive_extended_public_key(const FFIWallet *wallet,
-                                                        FFINetworks network,
+                                                        FFINetwork network,
                                                         const char *derivation_path,
                                                         FFIError *error)
 ;
@@ -2008,7 +2068,7 @@ FFIExtendedPublicKey *wallet_derive_extended_public_key(const FFIWallet *wallet,
  */
 
 char *wallet_derive_public_key_as_hex(const FFIWallet *wallet,
-                                      FFINetworks network,
+                                      FFINetwork network,
                                       const char *derivation_path,
                                       FFIError *error)
 ;
@@ -2047,7 +2107,7 @@ char *wallet_derive_public_key_as_hex(const FFIWallet *wallet,
  */
 
 char *extended_public_key_to_string(const FFIExtendedPublicKey *key,
-                                    FFINetworks network,
+                                    FFINetwork network,
                                     FFIError *error)
 ;
 
@@ -2128,7 +2188,7 @@ bool derivation_path_parse(const char *path,
 
 FFIManagedAccountResult managed_wallet_get_account(const FFIWalletManager *manager,
                                                    const uint8_t *wallet_id,
-                                                   FFINetworks network,
+                                                   FFINetwork network,
                                                    unsigned int account_index,
                                                    FFIAccountType account_type)
 ;
@@ -2150,7 +2210,7 @@ FFIManagedAccountResult managed_wallet_get_account(const FFIWalletManager *manag
 
 FFIManagedAccountResult managed_wallet_get_top_up_account_with_registration_index(const FFIWalletManager *manager,
                                                                                   const uint8_t *wallet_id,
-                                                                                  FFINetworks network,
+                                                                                  FFINetwork network,
                                                                                   unsigned int registration_index)
 ;
 
@@ -2161,7 +2221,7 @@ FFIManagedAccountResult managed_wallet_get_top_up_account_with_registration_inde
 
  - `account` must be a valid pointer to an FFIManagedAccount instance
  */
- FFINetworks managed_account_get_network(const FFIManagedAccount *account) ;
+ FFINetwork managed_account_get_network(const FFIManagedAccount *account) ;
 
 /*
  Get the parent wallet ID of a managed account
@@ -2266,7 +2326,7 @@ FFIAccountType managed_account_get_account_type(const FFIManagedAccount *account
 
 unsigned int managed_wallet_get_account_count(const FFIWalletManager *manager,
                                               const uint8_t *wallet_id,
-                                              FFINetworks network,
+                                              FFINetwork network,
                                               FFIError *error)
 ;
 
@@ -2340,7 +2400,7 @@ FFIAddressPool *managed_account_get_address_pool(const FFIManagedAccount *accoun
 
 FFIManagedAccountCollection *managed_wallet_get_account_collection(const FFIWalletManager *manager,
                                                                    const uint8_t *wallet_id,
-                                                                   FFINetworks network,
+                                                                   FFINetwork network,
                                                                    FFIError *error)
 ;
 
@@ -2702,7 +2762,7 @@ void managed_account_collection_summary_free(FFIManagedAccountCollectionSummary 
 
 char *managed_wallet_get_next_bip44_receive_address(FFIManagedWalletInfo *managed_wallet,
                                                     const FFIWallet *wallet,
-                                                    FFINetworks network,
+                                                    FFINetwork network,
                                                     unsigned int account_index,
                                                     FFIError *error)
 ;
@@ -2723,7 +2783,7 @@ char *managed_wallet_get_next_bip44_receive_address(FFIManagedWalletInfo *manage
 
 char *managed_wallet_get_next_bip44_change_address(FFIManagedWalletInfo *managed_wallet,
                                                    const FFIWallet *wallet,
-                                                   FFINetworks network,
+                                                   FFINetwork network,
                                                    unsigned int account_index,
                                                    FFIError *error)
 ;
@@ -2746,7 +2806,7 @@ char *managed_wallet_get_next_bip44_change_address(FFIManagedWalletInfo *managed
 
 bool managed_wallet_get_bip_44_external_address_range(FFIManagedWalletInfo *managed_wallet,
                                                       const FFIWallet *wallet,
-                                                      FFINetworks network,
+                                                      FFINetwork network,
                                                       unsigned int account_index,
                                                       unsigned int start_index,
                                                       unsigned int end_index,
@@ -2773,7 +2833,7 @@ bool managed_wallet_get_bip_44_external_address_range(FFIManagedWalletInfo *mana
 
 bool managed_wallet_get_bip_44_internal_address_range(FFIManagedWalletInfo *managed_wallet,
                                                       const FFIWallet *wallet,
-                                                      FFINetworks network,
+                                                      FFINetwork network,
                                                       unsigned int account_index,
                                                       unsigned int start_index,
                                                       unsigned int end_index,
@@ -2889,68 +2949,6 @@ bool mnemonic_to_seed(const char *mnemonic,
  void mnemonic_free(char *mnemonic) ;
 
 /*
- Generate a provider key at a specific index
-
- This generates a provider key (BLS or EdDSA) at the specified index.
- For voting, owner, and operator keys, this generates BLS keys.
- For platform keys, this generates EdDSA keys.
-
- # Safety
-
- - `wallet` must be a valid pointer to an FFIWallet
- - `info_out` must be a valid pointer to store the key info
- - `error` must be a valid pointer to an FFIError or null
- - The returned public_key, private_key, and derivation_path must be freed by the caller
- */
-
-bool wallet_generate_provider_key(const FFIWallet *wallet,
-                                  FFINetworks network,
-                                  FFIProviderKeyType key_type,
-                                  unsigned int key_index,
-                                  bool include_private,
-                                  FFIProviderKeyInfo *info_out,
-                                  FFIError *error)
-;
-
-/*
- Free provider key info
-
- # Safety
-
- - `info` must be a valid pointer to an FFIProviderKeyInfo
- - This function must only be called once per info structure
- */
- void provider_key_info_free(FFIProviderKeyInfo *info) ;
-
-/*
- Sign data with a provider key
-
- This signs arbitrary data with the provider key at the specified index.
- For BLS keys, this produces a BLS signature.
- For EdDSA keys, this produces an Ed25519 signature.
-
- # Safety
-
- - `wallet` must be a valid pointer to an FFIWallet
- - `data` must be a valid pointer to data with at least `data_len` bytes
- - `signature_out` must be a valid pointer to store the signature pointer
- - `signature_len_out` must be a valid pointer to store the signature length
- - `error` must be a valid pointer to an FFIError or null
- - The returned signature must be freed with `libc::free`
- */
-
-bool wallet_sign_with_provider_key(const FFIWallet *wallet,
-                                   FFINetworks network,
-                                   FFIProviderKeyType key_type,
-                                   unsigned int _key_index,
-                                   const uint8_t *data,
-                                   size_t data_len,
-                                   uint8_t **signature_out,
-                                   size_t *signature_len_out,
-                                   FFIError *error)
-;
-
-/*
  Build a transaction
 
  # Safety
@@ -3012,7 +3010,7 @@ bool wallet_sign_transaction(const FFIWallet *wallet,
  */
 
 bool wallet_check_transaction(FFIWallet *wallet,
-                              FFINetworks network,
+                              FFINetwork network,
                               const uint8_t *tx_bytes,
                               size_t tx_len,
                               FFITransactionContext context_type,
@@ -3033,6 +3031,159 @@ bool wallet_check_transaction(FFIWallet *wallet,
  - After calling this function, the pointer becomes invalid
  */
  void transaction_bytes_free(uint8_t *tx_bytes) ;
+
+/*
+ Create a new empty transaction
+
+ # Returns
+ - Pointer to FFITransaction on success
+ - NULL on error
+ */
+ FFITransaction *transaction_create(void) ;
+
+/*
+ Add an input to a transaction
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `input` must be a valid pointer to an FFITxIn
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t transaction_add_input(FFITransaction *tx, const FFITxIn *input) ;
+
+/*
+ Add an output to a transaction
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `output` must be a valid pointer to an FFITxOut
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t transaction_add_output(FFITransaction *tx, const FFITxOut *output) ;
+
+/*
+ Get the transaction ID
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `txid_out` must be a valid pointer to a buffer of at least 32 bytes
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t transaction_get_txid(const FFITransaction *tx, uint8_t *txid_out) ;
+
+/*
+ Serialize a transaction
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `out_buf` can be NULL to get size only
+ - `out_len` must be a valid pointer to store the size
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t transaction_serialize(const FFITransaction *tx, uint8_t *out_buf, uint32_t *out_len) ;
+
+/*
+ Deserialize a transaction
+
+ # Safety
+ - `data` must be a valid pointer to serialized transaction data
+ - `len` must be the correct length of the data
+
+ # Returns
+ - Pointer to FFITransaction on success
+ - NULL on error
+ */
+ FFITransaction *transaction_deserialize(const uint8_t *data, uint32_t len) ;
+
+/*
+ Destroy a transaction
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction created by transaction functions or null
+ - After calling this function, the pointer becomes invalid
+ */
+ void transaction_destroy(FFITransaction *tx) ;
+
+/*
+ Calculate signature hash for an input
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `script_pubkey` must be a valid pointer to the script pubkey
+ - `hash_out` must be a valid pointer to a buffer of at least 32 bytes
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+
+int32_t transaction_sighash(const FFITransaction *tx,
+                            uint32_t input_index,
+                            const uint8_t *script_pubkey,
+                            uint32_t script_pubkey_len,
+                            uint32_t sighash_type,
+                            uint8_t *hash_out)
+;
+
+/*
+ Sign a transaction input
+
+ # Safety
+ - `tx` must be a valid pointer to an FFITransaction
+ - `private_key` must be a valid pointer to a 32-byte private key
+ - `script_pubkey` must be a valid pointer to the script pubkey
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+
+int32_t transaction_sign_input(FFITransaction *tx,
+                               uint32_t input_index,
+                               const uint8_t *private_key,
+                               const uint8_t *script_pubkey,
+                               uint32_t script_pubkey_len,
+                               uint32_t sighash_type)
+;
+
+/*
+ Create a P2PKH script pubkey
+
+ # Safety
+ - `pubkey_hash` must be a valid pointer to a 20-byte public key hash
+ - `out_buf` can be NULL to get size only
+ - `out_len` must be a valid pointer to store the size
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t script_p2pkh(const uint8_t *pubkey_hash, uint8_t *out_buf, uint32_t *out_len) ;
+
+/*
+ Extract public key hash from P2PKH address
+
+ # Safety
+ - `address` must be a valid pointer to a null-terminated C string
+ - `hash_out` must be a valid pointer to a buffer of at least 20 bytes
+
+ # Returns
+ - 0 on success
+ - -1 on error
+ */
+ int32_t address_to_pubkey_hash(const char *address, FFINetwork network, uint8_t *hash_out) ;
 
 /*
  Create a managed wallet from a regular wallet
@@ -3066,7 +3217,7 @@ bool wallet_check_transaction(FFIWallet *wallet,
 
 bool managed_wallet_check_transaction(FFIManagedWallet *managed_wallet,
                                       const FFIWallet *wallet,
-                                      FFINetworks network,
+                                      FFINetwork network,
                                       const uint8_t *tx_bytes,
                                       size_t tx_len,
                                       FFITransactionContext context_type,
@@ -3112,6 +3263,8 @@ bool managed_wallet_check_transaction(FFIManagedWallet *managed_wallet,
  */
  char *transaction_classify(const uint8_t *tx_bytes, size_t tx_len, FFIError *error) ;
 
+ const char *ffi_network_get_name(FFINetwork network) ;
+
 /*
  Free a string
 
@@ -3136,7 +3289,7 @@ bool managed_wallet_check_transaction(FFIManagedWallet *managed_wallet,
  */
 
 bool managed_wallet_get_utxos(const FFIManagedWalletInfo *managed_info,
-                              FFINetworks network,
+                              FFINetwork network,
                               FFIUTXO **utxos_out,
                               size_t *count_out,
                               FFIError *error)
@@ -3313,7 +3466,7 @@ FFIWallet *wallet_create_random_with_options(FFINetworks networks,
  */
 
 char *wallet_get_xpub(const FFIWallet *wallet,
-                      FFINetworks network,
+                      FFINetwork network,
                       unsigned int account_index,
                       FFIError *error)
 ;
@@ -3357,7 +3510,7 @@ char *wallet_get_xpub(const FFIWallet *wallet,
  */
 
 FFIAccountResult wallet_add_account(FFIWallet *wallet,
-                                    FFINetworks network,
+                                    FFINetwork network,
                                     FFIAccountType account_type,
                                     unsigned int account_index)
 ;
@@ -3375,7 +3528,7 @@ FFIAccountResult wallet_add_account(FFIWallet *wallet,
  */
 
 FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
-                                                    FFINetworks network,
+                                                    FFINetwork network,
                                                     FFIAccountType account_type,
                                                     unsigned int account_index,
                                                     const uint8_t *xpub_bytes,
@@ -3395,7 +3548,7 @@ FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
  */
 
 FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
-                                                     FFINetworks network,
+                                                     FFINetwork network,
                                                      FFIAccountType account_type,
                                                      unsigned int account_index,
                                                      const char *xpub_string)
@@ -3578,42 +3731,6 @@ FFIManagedWalletInfo *wallet_manager_get_managed_wallet_info(const FFIWalletMana
 ;
 
 /*
- Get next receive address for a wallet
-
- # Safety
-
- - `manager` must be a valid pointer to an FFIWalletManager
- - `wallet_id` must be a valid pointer to a 32-byte wallet ID
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- */
-
-char *wallet_manager_get_receive_address(FFIWalletManager *manager,
-                                         const uint8_t *wallet_id,
-                                         FFINetworks network,
-                                         unsigned int account_index,
-                                         FFIError *error)
-;
-
-/*
- Get next change address for a wallet
-
- # Safety
-
- - `manager` must be a valid pointer to an FFIWalletManager
- - `wallet_id` must be a valid pointer to a 32-byte wallet ID
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- */
-
-char *wallet_manager_get_change_address(FFIWalletManager *manager,
-                                        const uint8_t *wallet_id,
-                                        FFINetworks network,
-                                        unsigned int account_index,
-                                        FFIError *error)
-;
-
-/*
  Get wallet balance
 
  Returns the confirmed and unconfirmed balance for a specific wallet
@@ -3656,29 +3773,10 @@ bool wallet_manager_get_wallet_balance(const FFIWalletManager *manager,
 bool wallet_manager_process_transaction(FFIWalletManager *manager,
                                         const uint8_t *tx_bytes,
                                         size_t tx_len,
-                                        FFINetworks network,
+                                        FFINetwork network,
                                         const FFITransactionContextDetails *context,
                                         bool update_state_if_found,
                                         FFIError *error)
-;
-
-/*
- Get monitored addresses for a network
-
- # Safety
-
- - `manager` must be a valid pointer to an FFIWalletManager
- - `addresses_out` must be a valid pointer to a pointer that will receive the addresses array
- - `count_out` must be a valid pointer to receive the count
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- */
-
-bool wallet_manager_get_monitored_addresses(const FFIWalletManager *manager,
-                                            FFINetworks network,
-                                            char ***addresses_out,
-                                            size_t *count_out,
-                                            FFIError *error)
 ;
 
 /*
@@ -3692,7 +3790,7 @@ bool wallet_manager_get_monitored_addresses(const FFIWalletManager *manager,
  */
 
 bool wallet_manager_update_height(FFIWalletManager *manager,
-                                  FFINetworks network,
+                                  FFINetwork network,
                                   unsigned int height,
                                   FFIError *error)
 ;
@@ -3708,7 +3806,7 @@ bool wallet_manager_update_height(FFIWalletManager *manager,
  */
 
 unsigned int wallet_manager_current_height(const FFIWalletManager *manager,
-                                           FFINetworks network,
+                                           FFINetwork network,
                                            FFIError *error)
 ;
 

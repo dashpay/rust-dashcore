@@ -39,7 +39,4 @@ pub trait WalletInterface: Send + Sync {
         block_hash: &dashcore::BlockHash,
         network: Network,
     ) -> bool;
-
-    /// Get a reference to self as Any for downcasting in tests
-    fn as_any(&self) -> &dyn std::any::Any;
 }

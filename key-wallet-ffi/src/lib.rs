@@ -15,7 +15,6 @@ pub mod managed_account;
 pub mod managed_account_collection;
 pub mod managed_wallet;
 pub mod mnemonic;
-pub mod provider_keys;
 pub mod transaction;
 pub mod transaction_checking;
 pub mod types;
@@ -31,8 +30,13 @@ pub mod bip38;
 
 // Re-export main types for convenience
 pub use error::{FFIError, FFIErrorCode};
-pub use types::{FFIBalance, FFINetworks, FFIWallet};
+pub use types::{FFIBalance, FFINetwork, FFINetworks, FFIWallet};
 pub use utxo::FFIUTXO;
+pub use wallet_manager::{
+    wallet_manager_create, wallet_manager_free, wallet_manager_free_wallet_ids,
+    wallet_manager_get_wallet, wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids,
+    wallet_manager_wallet_count, FFIWalletManager,
+};
 
 // ============================================================================
 // Initialization and Version

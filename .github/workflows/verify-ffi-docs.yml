@@ -1,0 +1,126 @@
+name: Verify FFI Documentation
+
+on:
+  push:
+    paths:
+      - 'key-wallet-ffi/src/**/*.rs'
+      - 'key-wallet-ffi/FFI_API.md'
+      - 'key-wallet-ffi/scripts/generate_ffi_docs.py'
+      - 'dash-spv-ffi/src/**/*.rs'
+      - 'dash-spv-ffi/FFI_API.md'
+      - 'dash-spv-ffi/scripts/generate_ffi_docs.py'
+      - '.github/workflows/verify-ffi-docs.yml'
+  pull_request:
+    paths:
+      - 'key-wallet-ffi/src/**/*.rs'
+      - 'key-wallet-ffi/FFI_API.md'
+      - 'key-wallet-ffi/scripts/generate_ffi_docs.py'
+      - 'dash-spv-ffi/src/**/*.rs'
+      - 'dash-spv-ffi/FFI_API.md'
+      - 'dash-spv-ffi/scripts/generate_ffi_docs.py'
+      - '.github/workflows/verify-ffi-docs.yml'
+
+jobs:
+  verify-key-wallet-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Generate key-wallet-ffi documentation
+        run: |
+          cd key-wallet-ffi
+          python3 scripts/generate_ffi_docs.py
+      - name: Check if key-wallet-ffi documentation is up to date
+        run: |
+          cd key-wallet-ffi
+          if ! git diff --exit-code FFI_API.md; then
+            echo "❌ key-wallet-ffi documentation is out of date!"
+            echo ""
+            echo "The FFI_API.md file needs to be regenerated."
+            echo "Please run the following command and commit the changes:"
+            echo ""
+            echo "  cd key-wallet-ffi && make update-docs"
+            echo ""
+            echo "Changes detected:"
+            git diff FFI_API.md
+            exit 1
+          else
+            echo "✅ key-wallet-ffi documentation is up to date"
+          fi
+
+  verify-dash-spv-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Generate dash-spv-ffi documentation
+        run: |
+          cd dash-spv-ffi
+          python3 scripts/generate_ffi_docs.py
+      - name: Check if dash-spv-ffi documentation is up to date
+        run: |
+          cd dash-spv-ffi
+          if ! git diff --exit-code FFI_API.md; then
+            echo "❌ dash-spv-ffi documentation is out of date!"
+            echo ""
+            echo "The FFI_API.md file needs to be regenerated."
+            echo "Please run the following command and commit the changes:"
+            echo ""
+            echo "  cd dash-spv-ffi && make update-docs"
+            echo ""
+            echo "Changes detected:"
+            git diff FFI_API.md
+            exit 1
+          else
+            echo "✅ dash-spv-ffi documentation is up to date"
+          fi
+
+  update-docs-comment:
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name == 'pull_request'
+    needs:
+      - verify-key-wallet-docs
+      - verify-dash-spv-docs
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ⚠️ FFI Documentation Update Required
+
+              The FFI API documentation is out of date. Please regenerate it by running:
+
+              For key-wallet-ffi:
+              \`\`\`bash
+              cd key-wallet-ffi
+              make update-docs
+              \`\`\`
+
+              For dash-spv-ffi:
+              \`\`\`bash
+              cd dash-spv-ffi
+              make update-docs
+              \`\`\`
+
+              Then commit the changes:
+              \`\`\`bash
+              git add */FFI_API.md
+              git commit -m "docs: update FFI API documentation"
+              \`\`\`
+
+              This ensures the documentation stays in sync with the actual FFI functions.`
+            })

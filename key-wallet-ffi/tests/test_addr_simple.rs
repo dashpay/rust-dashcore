@@ -12,7 +12,7 @@ fn test_address_simple() {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             seed.as_ptr(),
             seed.len(),
-            FFINetworks::Testnet,
+            FFINetworks::TestnetFlag,
             error,
         )
     };

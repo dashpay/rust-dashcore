@@ -60,10 +60,6 @@ mod tests {
             // Return true for all filters in test
             true
         }
-
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
     }
 
     fn create_test_block(network: Network) -> Block {
@@ -142,8 +138,7 @@ mod tests {
             // Since we're using key_wallet_manager::wallet_interface::WalletInterface,
             // we need to use the trait to access as_any
             use key_wallet_manager::wallet_interface::WalletInterface;
-            let mock_wallet = wallet.as_any().downcast_ref::<MockWallet>().unwrap();
-            let processed = mock_wallet.processed_blocks.lock().await;
+            let processed = wallet.processed_blocks.lock().await;
             assert_eq!(processed.len(), 1);
             assert_eq!(processed[0].0, block_hash);
         }
@@ -244,10 +239,6 @@ mod tests {
                 // Always return false - filter doesn't match
                 false
             }
-
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
         }
 
         let (task_tx, task_rx) = mpsc::unbounded_channel();
@@ -323,9 +314,7 @@ mod tests {
         // Verify wallet was called
         {
             let wallet = wallet.read().await;
-            use key_wallet_manager::wallet_interface::WalletInterface;
-            let mock_wallet = wallet.as_any().downcast_ref::<MockWallet>().unwrap();
-            let processed = mock_wallet.processed_transactions.lock().await;
+            let processed = wallet.processed_transactions.lock().await;
             assert_eq!(processed.len(), 1);
             assert_eq!(processed[0], txid);
         }

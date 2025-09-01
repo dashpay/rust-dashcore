@@ -13,7 +13,6 @@ use dashcore::{block::Header as BlockHeader, block::Version, Network};
 use dashcore_hashes::Hash;
 use env_logger;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::{debug, info};
 use std::sync::Arc;
@@ -308,9 +307,7 @@ async fn test_header_sync_with_client_integration() {
         MemoryStorageManager::new().await.expect("Failed to create storage manager");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await;
     assert!(client.is_ok(), "Client creation should succeed");

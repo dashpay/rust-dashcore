@@ -9,7 +9,8 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetworks, FFIWallet};
+use crate::types::FFIWallet;
+use crate::FFINetwork;
 use key_wallet::managed_account::address_pool::KeySource;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
@@ -50,7 +51,7 @@ impl FFIManagedWalletInfo {
 pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_index: std::os::raw::c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -70,17 +71,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
 
     let managed_wallet = unsafe { &mut *managed_wallet };
     let wallet = unsafe { &*wallet };
-    let network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network = network.into();
 
     // Get the account collection for the network
     let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
@@ -89,7 +80,11 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("No accounts found for network {:?}", network),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             return ptr::null_mut();
         }
@@ -180,7 +175,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
 pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_index: std::os::raw::c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -200,17 +195,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
 
     let managed_wallet = unsafe { &mut *managed_wallet };
     let wallet = unsafe { &*wallet };
-    let network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network = network.into();
 
     // Get the account collection for the network
     let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
@@ -219,7 +204,11 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("No accounts found for network {:?}", network),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             return ptr::null_mut();
         }
@@ -312,7 +301,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
 pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_index: std::os::raw::c_uint,
     start_index: std::os::raw::c_uint,
     end_index: std::os::raw::c_uint,
@@ -349,19 +338,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
 
     let managed_wallet = unsafe { &mut *managed_wallet };
     let wallet = unsafe { &*wallet };
-    let network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            *count_out = 0;
-            *addresses_out = ptr::null_mut();
-            return false;
-        }
-    };
+    let network = network.into();
 
     // Get the account collection for the network
     let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
@@ -370,7 +347,11 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("No accounts found for network {:?}", network),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             *count_out = 0;
             *addresses_out = ptr::null_mut();
@@ -506,7 +487,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
 pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetworks,
+    network: FFINetwork,
     account_index: std::os::raw::c_uint,
     start_index: std::os::raw::c_uint,
     end_index: std::os::raw::c_uint,
@@ -543,19 +524,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
 
     let managed_wallet = unsafe { &mut *managed_wallet };
     let wallet = unsafe { &*wallet };
-    let network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            *count_out = 0;
-            *addresses_out = ptr::null_mut();
-            return false;
-        }
-    };
+    let network = network.into();
 
     // Get the account collection for the network
     let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
@@ -564,7 +533,11 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("No accounts found for network {:?}", network),
+                format!(
+                    "No accounts found for network {:?}, wallet has networks {:?}",
+                    network,
+                    managed_wallet.inner().networks_supported()
+                ),
             );
             *count_out = 0;
             *addresses_out = ptr::null_mut();
@@ -802,7 +775,7 @@ mod tests {
             managed_wallet_get_next_bip44_receive_address(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 &mut error,
             )
@@ -821,7 +794,7 @@ mod tests {
             managed_wallet_get_next_bip44_change_address(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 &mut error,
             )
@@ -834,7 +807,7 @@ mod tests {
     #[test]
     fn test_managed_wallet_get_bip_44_external_address_range_null_pointers() {
         let mut error = FFIError::success();
-        let mut addresses_out: *mut *mut std::os::raw::c_char = ptr::null_mut();
+        let mut addresses_out: *mut *mut c_char = ptr::null_mut();
         let mut count_out: usize = 0;
 
         // Test with null managed wallet
@@ -842,7 +815,7 @@ mod tests {
             managed_wallet_get_bip_44_external_address_range(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 0,
                 10,
@@ -861,7 +834,7 @@ mod tests {
     #[test]
     fn test_managed_wallet_get_bip_44_internal_address_range_null_pointers() {
         let mut error = FFIError::success();
-        let mut addresses_out: *mut *mut std::os::raw::c_char = ptr::null_mut();
+        let mut addresses_out: *mut *mut c_char = ptr::null_mut();
         let mut count_out: usize = 0;
 
         // Test with null managed wallet
@@ -869,7 +842,7 @@ mod tests {
             managed_wallet_get_bip_44_internal_address_range(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 0,
                 10,
@@ -897,7 +870,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::Testnet,
+                FFINetworks::TestnetFlag,
                 &mut error,
             )
         };
@@ -914,7 +887,7 @@ mod tests {
             managed_wallet_get_next_bip44_receive_address(
                 &mut ffi_managed,
                 wallet,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 &mut error,
             )
@@ -941,7 +914,7 @@ mod tests {
             managed_wallet_get_next_bip44_change_address(
                 &mut ffi_managed,
                 wallet,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 &mut error,
             )
@@ -983,7 +956,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::Testnet,
+                FFINetworks::TestnetFlag,
                 &mut error,
             )
         };
@@ -1047,7 +1020,7 @@ mod tests {
             managed_wallet_get_next_bip44_receive_address(
                 &mut ffi_managed,
                 ffi_wallet_ptr,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 &mut error,
             )
@@ -1066,7 +1039,7 @@ mod tests {
             managed_wallet_get_next_bip44_change_address(
                 &mut ffi_managed,
                 ffi_wallet_ptr,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 &mut error,
             )
@@ -1081,14 +1054,14 @@ mod tests {
         }
 
         // Test 3: Get external address range
-        let mut addresses_out: *mut *mut std::os::raw::c_char = ptr::null_mut();
+        let mut addresses_out: *mut *mut c_char = ptr::null_mut();
         let mut count_out: usize = 0;
 
         let success = unsafe {
             managed_wallet_get_bip_44_external_address_range(
                 &mut ffi_managed,
                 ffi_wallet_ptr,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 0,
                 5,
@@ -1115,14 +1088,14 @@ mod tests {
         }
 
         // Test 4: Get internal address range
-        let mut addresses_out: *mut *mut std::os::raw::c_char = ptr::null_mut();
+        let mut addresses_out: *mut *mut c_char = ptr::null_mut();
         let mut count_out: usize = 0;
 
         let success = unsafe {
             managed_wallet_get_bip_44_internal_address_range(
                 &mut ffi_managed,
                 ffi_wallet_ptr,
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 0,
                 3,
@@ -1169,7 +1142,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::Testnet,
+                FFINetworks::TestnetFlag,
                 &mut error,
             )
         };
@@ -1259,7 +1232,7 @@ mod tests {
             managed_wallet_get_bip_44_external_address_range(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 0,
                 10,
@@ -1273,12 +1246,12 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test with null count_out for internal range
-        let mut addresses_out: *mut *mut std::os::raw::c_char = ptr::null_mut();
+        let mut addresses_out: *mut *mut c_char = ptr::null_mut();
         let success = unsafe {
             managed_wallet_get_bip_44_internal_address_range(
                 ptr::null_mut(),
                 ptr::null(),
-                FFINetworks::Testnet,
+                FFINetwork::Testnet,
                 0,
                 0,
                 10,

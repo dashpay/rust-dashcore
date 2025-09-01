@@ -14,8 +14,8 @@ pub use platform_integration::*;
 pub use types::*;
 pub use utils::*;
 
-// Re-export commonly used types
-pub use types::FFINetwork;
+// FFINetwork is now defined in types.rs for cbindgen compatibility
+// It must match the definition in key_wallet_ffi
 
 #[cfg(test)]
 #[path = "../tests/unit/test_type_conversions.rs"]
@@ -37,6 +37,7 @@ mod test_client_lifecycle;
 #[path = "../tests/unit/test_async_operations.rs"]
 mod test_async_operations;
 
+mod broadcast;
 #[cfg(test)]
 #[path = "../tests/unit/test_memory_management.rs"]
 mod test_memory_management;

@@ -18,7 +18,6 @@ use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Network;
 use dashcore::{BlockHash, ChainLock};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
 use std::time::Duration;
@@ -189,9 +188,7 @@ async fn test_chainlock_validation_without_masternode_engine() {
     let network = MockNetworkManager::new();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     // Create client config
     let config = ClientConfig {
@@ -249,9 +246,7 @@ async fn test_chainlock_validation_with_masternode_engine() {
     network.add_chain_lock(chain_lock.clone());
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     // Create client config with masternodes enabled
     let config = ClientConfig {
@@ -304,9 +299,7 @@ async fn test_chainlock_queue_and_process_flow() {
     let network = MockNetworkManager::new();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     // Create client config
     let config = ClientConfig {
@@ -360,9 +353,7 @@ async fn test_chainlock_manager_cache_operations() {
     let network = MockNetworkManager::new();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     // Create client config
     let config = ClientConfig {
@@ -420,9 +411,7 @@ async fn test_client_chainlock_update_flow() {
     let network = MockNetworkManager::new();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
-        ManagedWalletInfo,
-    >::new())));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
     // Create client config with masternodes enabled
     let config = ClientConfig {

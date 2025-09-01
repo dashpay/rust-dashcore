@@ -5,6 +5,10 @@ use crate::account::ManagedAccount;
 use crate::Network;
 
 impl ManagedWalletInfo {
+    /// Get the networks supported for the wallet
+    pub fn networks_supported(&self) -> Vec<Network> {
+        self.accounts.keys().cloned().collect()
+    }
     // BIP44 Account Helpers
 
     /// Get the first BIP44 managed account for a given network
