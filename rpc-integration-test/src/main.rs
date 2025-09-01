@@ -39,6 +39,11 @@ use dashcore_rpc::dashcore_rpc_json::{
 use dashcore_rpc::json::ProTxListType;
 use dashcore_rpc::json::QuorumType::LlmqTest;
 
+const FAUCET_WALLET_NAME: &str = "main";
+const TEST_WALLET_NAME: &str = "testwallet";
+const DEFAULT_WALLET_NODE_RPC_URL: &str = "http://127.0.0.1:20002";
+const DEFAULT_EVO_NODE_RPC_URL: &str = "http://127.0.0.1:20302";
+
 lazy_static! {
     static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
     static ref NET: Network = Network::Regtest;
@@ -49,14 +54,6 @@ lazy_static! {
             .unwrap();
     /// The default fee amount to use when needed.
     static ref FEE: Amount = Amount::from_btc(0.001).unwrap();
-    // Default name for faucet wallet
-    static ref FAUCET_WALLET_NAME: &'static str = "main";
-    // Default name for test wallet
-    static ref TEST_WALLET_NAME: &'static str = "testwallet";
-    // Default RPC url for wallet node
-    static ref DEFAULT_WALLET_NODE_RPC_URL: &'static str = "http://127.0.0.1:20002";
-    // Default RPC url for evo node
-    static ref DEFAULT_EVO_NODE_RPC_URL: &'static str = "http://127.0.0.1:20302";
 }
 
 struct StdLogger;
@@ -220,10 +217,10 @@ fn main() {
     evo_client.get_blockchain_info().unwrap();
 
     // Create/Load test wallet to perform operations on RPC
-    match wallet_client.load_wallet(&TEST_WALLET_NAME) {
+    match wallet_client.load_wallet(TEST_WALLET_NAME) {
         Err(e) => match e {
             dashcore_rpc::Error::JsonRpc(JsonRpcError::Rpc(ref e)) if e.code == -18 => {
-                wallet_client.create_wallet(&TEST_WALLET_NAME, None, None, None, None).unwrap();
+                wallet_client.create_wallet(TEST_WALLET_NAME, None, None, None, None).unwrap();
                 trace!(target: "integration_test", "Wallet \"{}\" created", TEST_WALLET_NAME);
             }
             dashcore_rpc::Error::JsonRpc(JsonRpcError::Rpc(ref e)) if e.code == -35 => {
@@ -1243,8 +1240,8 @@ fn test_create_wallet(cl: &Client) {
     wallet_list.sort();
 
     // Main wallet created for tests
-    assert!(wallet_list.iter().any(|w| w == &TEST_WALLET_NAME || w == &FAUCET_WALLET_NAME));
-    wallet_list.retain(|w| w != &TEST_WALLET_NAME && !w.is_empty() && w != &FAUCET_WALLET_NAME);
+    assert!(wallet_list.iter().any(|w| w == TEST_WALLET_NAME || w == FAUCET_WALLET_NAME));
+    wallet_list.retain(|w| w != TEST_WALLET_NAME && !w.is_empty() && w != FAUCET_WALLET_NAME);
 
     // Created wallets
     assert!(wallet_list.iter().zip(wallet_names).all(|(a, b)| a == b));
