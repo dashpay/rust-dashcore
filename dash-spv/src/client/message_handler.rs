@@ -236,7 +236,7 @@ impl<
                         // Emit event
                         let event = SpvEvent::MempoolTransactionAdded {
                             txid,
-                            transaction: tx,
+                            transaction: Box::new(tx),
                             amount,
                             addresses,
                             is_instant_send,
@@ -495,7 +495,7 @@ impl<
         // Send block to the background processor without waiting for completion
         let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
         let task = crate::client::BlockProcessingTask::ProcessBlock {
-            block,
+            block: Box::new(block),
             response_tx,
         };
 

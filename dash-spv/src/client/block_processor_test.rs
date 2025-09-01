@@ -108,7 +108,7 @@ mod tests {
         let (response_tx, _response_rx) = oneshot::channel();
         task_tx
             .send(BlockProcessingTask::ProcessBlock {
-                block: block.clone(),
+                block: Box::new(block.clone()),
                 response_tx,
             })
             .unwrap();
@@ -300,7 +300,7 @@ mod tests {
         let (response_tx, _response_rx) = oneshot::channel();
         task_tx
             .send(BlockProcessingTask::ProcessTransaction {
-                tx: tx.clone(),
+                tx: Box::new(tx.clone()),
                 response_tx,
             })
             .unwrap();
@@ -354,7 +354,7 @@ mod tests {
         let (response_tx, _response_rx) = oneshot::channel();
         task_tx
             .send(BlockProcessingTask::ProcessBlock {
-                block: block.clone(),
+                block: Box::new(block.clone()),
                 response_tx,
             })
             .unwrap();

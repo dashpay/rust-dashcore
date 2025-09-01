@@ -798,7 +798,7 @@ pub enum SpvEvent {
         /// Transaction ID.
         txid: Txid,
         /// Raw transaction data.
-        transaction: Transaction,
+        transaction: Box<Transaction>,
         /// Net amount change (positive for received, negative for sent).
         amount: i64,
         /// Addresses affected by this transaction.
