@@ -121,10 +121,8 @@ async fn test_recovery_from_network_interruption_during_header_sync() {
     // This test simulates a network interruption during header synchronization
     // and verifies that the client can recover and continue from where it left off
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage_path = temp_dir.path().to_path_buf();
-
     // Create storage manager
+    let temp_dir = tempfile::tempdir().unwrap();
     let storage = Arc::new(RwLock::new(DiskStorageManager::new(storage_path).await.unwrap()));
 
     // Create network interruptor
@@ -238,8 +236,6 @@ async fn test_recovery_from_storage_failure_during_sync() {
 
     // Simulate sync with storage failures
     for height in 0..target_height {
-        let header = create_test_header(height);
-
         // Check if we should simulate a failure
         if let Some(error) = failure_sim.should_fail(height).await {
             eprintln!("Storage failure at height {}: {:?}", height, error);

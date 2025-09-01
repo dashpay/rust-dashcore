@@ -26,7 +26,7 @@ use dashcore::{
 };
 use dashcore_hashes::Hash;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::{wallet_manager::WalletManager, Utxo};
+use key_wallet_manager::wallet_manager::WalletManager;
 use rand::thread_rng;
 
 /// Helper to create a test wallet manager.
@@ -97,46 +97,14 @@ fn create_signed_instantlock(tx: &Transaction, _sk: &SecretKey<Bls12381G2Impl>) 
 #[tokio::test]
 #[ignore = "instantsend tests not yet updated"]
 async fn test_instantsend_end_to_end() {
-    let wallet = create_test_wallet();
-    let address = create_test_address();
-
-    // 1. Setup: Add a UTXO to the wallet to be spent.
-    let initial_amount = 100_000_000; // 1 DASH
-    let initial_outpoint = OutPoint {
-        txid: Txid::from_byte_array([1; 32]),
-        vout: 0,
-    };
-    let mut initial_utxo = Utxo::new(
-        initial_outpoint,
-        TxOut {
-            value: initial_amount,
-            script_pubkey: address.script_pubkey(),
-        },
-        address.clone(),
-        100,   // block height
-        false, // is_coinbase
-    );
-    initial_utxo.is_confirmed = true;
-
-    // TODO: The WalletManager<ManagedWalletInfo> API has changed. These methods no longer exist:
-    // - add_utxo() - need to use WalletInterface methods or direct base access
-    // - add_watched_address() - need to use different approach for monitoring
-    // wallet.write().await.add_utxo(initial_utxo).await.unwrap();
-    // wallet.write().await.add_watched_address(address).await.unwrap();
-
-    // 2. Create a transaction that spends the UTXO.
-    let spend_amount = 80_000_000;
-    let spend_tx = create_regular_transaction(
-        vec![initial_outpoint],
-        vec![(spend_amount, ScriptBuf::new())], // Send to an external address
-    );
+    // 1. Create a dummy spending transaction (skipped wallet operations due to API changes)
+    let spend_tx = create_regular_transaction(vec![], vec![(80_000_000, ScriptBuf::new())]);
 
     // At this point, the transaction is in the mempool (conceptually).
     // The wallet balance would show the initial_amount as confirmed.
 
     // 3. Create a valid InstantLock for the spending transaction.
     let sk = SecretKey::<Bls12381G2Impl>::random(&mut thread_rng());
-    let pk = sk.public_key();
     let instant_lock = create_signed_instantlock(&spend_tx, &sk);
 
     // 4. Simulate the client receiving and processing the InstantLock.
@@ -171,7 +139,6 @@ async fn test_instantsend_end_to_end() {
     // Let's simplify and focus on the direct impact of the InstantLock on a UTXO.
 
     // Let's create a new UTXO that represents a payment *to* us, and then InstantLock it.
-    let wallet = create_test_wallet();
     let address = create_test_address();
     // TODO: add_watched_address() method no longer exists
     // wallet.write().await.add_watched_address(address.clone()).await.unwrap();
@@ -186,20 +153,7 @@ async fn test_instantsend_end_to_end() {
         vec![dummy_input],
         vec![(incoming_amount, address.script_pubkey())],
     );
-    let incoming_outpoint = OutPoint {
-        txid: incoming_tx.txid(),
-        vout: 0,
-    };
-    let incoming_utxo = Utxo::new(
-        incoming_outpoint,
-        TxOut {
-            value: incoming_amount,
-            script_pubkey: address.script_pubkey(),
-        },
-        address.clone(),
-        0,     // In mempool
-        false, // is_coinbase
-    );
+    // Create an outpoint for the received UTXO (skipped due to API changes)
     // TODO: add_utxo() method no longer exists
     // wallet.write().await.add_utxo(incoming_utxo).await.unwrap();
 
@@ -211,7 +165,6 @@ async fn test_instantsend_end_to_end() {
 
     // Create and process the InstantLock.
     let sk = SecretKey::<Bls12381G2Impl>::random(&mut thread_rng());
-    let pk = sk.public_key();
     let instant_lock = create_signed_instantlock(&incoming_tx, &sk);
 
     let validator = dash_spv::validation::InstantLockValidator::new();

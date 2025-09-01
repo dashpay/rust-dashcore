@@ -155,9 +155,7 @@ async fn test_cfheader_restart_cooldown() {
     let mut config = ClientConfig::new(Network::Dash);
     config.cfheader_gap_restart_cooldown_secs = 1; // 1 second cooldown for testing
 
-    let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
-        FilterSyncManager::new(&config, received_heights);
+    // FilterSyncManager instantiation omitted until restart logic is implemented
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
 
@@ -263,7 +261,7 @@ async fn test_cfheader_restart_cooldown() {
         }
     }
 
-    let network = MockNetworkManager;
+    // Network manager omitted until restart logic is implemented
 
     // Note: The following tests are skipped because MockNetworkManager doesn't implement
     // the full MultiPeerNetworkManager interface required by maybe_restart_cfheader_sync_for_gap
