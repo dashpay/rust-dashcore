@@ -81,7 +81,7 @@ jobs:
       - name: Run clippy (excluding strict-checked crates)
         run: |
           # Auto-discover all workspace crates and exclude strict-checked ones
-          STRICT_CRATES=("key-wallet" "key-wallet-manager" "key-wallet-ffi" "dashcore_hashes" "dashcore")
+          STRICT_CRATES=("key-wallet" "key-wallet-manager" "key-wallet-ffi" "dashcore_hashes" "dashcore" "dash-spv" "dash-spv-ffi")
           mapfile -t ALL_CRATES < <(cargo metadata --no-deps --format-version=1 | jq -r '.packages[].name' | sort -u)
           for crate in "${ALL_CRATES[@]}"; do
             if printf '%s\n' "${STRICT_CRATES[@]}" | grep -qx "$crate"; then
@@ -163,6 +163,30 @@ jobs:
       
       - name: Clippy dashcore_hashes (deny all warnings)
         run: cargo clippy -p dashcore_hashes --all-features --lib --bins --tests -- -D warnings
+
+      # Check dash-spv with strict warnings
+      - name: Check dash-spv (deny warnings)
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          cargo check -p dash-spv --all-features --lib --bins --tests
+          cargo build -p dash-spv --all-features --lib --bins
+          cargo test -p dash-spv --all-features --lib --bins
+
+      - name: Clippy dash-spv (deny all warnings)
+        run: cargo clippy -p dash-spv --all-features --lib --bins --tests -- -D warnings
+
+      # Check dash-spv-ffi with strict warnings
+      - name: Check dash-spv-ffi (deny warnings)
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          cargo check -p dash-spv-ffi --all-features --lib --bins --tests
+          cargo build -p dash-spv-ffi --all-features --lib --bins
+          cargo test -p dash-spv-ffi --all-features --lib --bins
+
+      - name: Clippy dash-spv-ffi (deny all warnings)
+        run: cargo clippy -p dash-spv-ffi --all-features --lib --bins --tests -- -D warnings
   
   fmt:
     name: Format
