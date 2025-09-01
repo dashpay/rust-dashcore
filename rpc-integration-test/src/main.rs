@@ -12,7 +12,7 @@
 extern crate lazy_static;
 extern crate log;
 
-use log::{Log, trace};
+use log::trace;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
@@ -33,8 +33,7 @@ use dashcore_rpc::{
 use dashcore_rpc::dashcore::address::NetworkUnchecked;
 use dashcore_rpc::dashcore::{BlockHash, ProTxHash, QuorumHash, ScriptBuf};
 use dashcore_rpc::dashcore_rpc_json::{
-    GetBlockTemplateModes, GetBlockTemplateRules, ProTxInfo, ProTxRevokeReason, QuorumType,
-    ScanTxOutRequest,
+    GetBlockTemplateModes, GetBlockTemplateRules, ProTxInfo, ProTxRevokeReason, ScanTxOutRequest,
 };
 use dashcore_rpc::json::ProTxListType;
 use dashcore_rpc::json::QuorumType::LlmqTest;
@@ -75,16 +74,6 @@ impl log::Log for StdLogger {
 }
 
 static LOGGER: StdLogger = StdLogger;
-
-/// Assert that the call returns a "deprecated" error.
-macro_rules! assert_deprecated {
-    ($call:expr) => {
-        match $call.unwrap_err() {
-            Error::JsonRpc(JsonRpcError::Rpc(ref e)) if e.code == -32 => {}
-            e => panic!("expected deprecated error for {}, got: {}", stringify!($call), e),
-        }
-    };
-}
 
 /// Assert that the call returns a "method not found" error.
 macro_rules! assert_not_found {
@@ -1421,7 +1410,7 @@ fn test_get_quorum_dkgstatus(cl: &Client) {
     // assert!(quorum_dkgstatus.minable_commitments.len() >= 0);
 }
 
-fn test_get_quorum_sign(cl: &Client, wallet_client: &Client) {
+fn test_get_quorum_sign(cl: &Client, _wallet_client: &Client) {
     let list = cl.get_quorum_list(Some(1)).unwrap();
     let quorum_type = list.quorums_by_type.keys().next().unwrap().to_owned();
 
@@ -1533,9 +1522,9 @@ fn test_get_protx_info(cl: &Client) {
     let ProTxInfo {
         pro_tx_hash: _,
         collateral_hash: _,
-        collateral_index,
+        collateral_index: _,
         collateral_address: _,
-        operator_reward,
+        operator_reward: _,
         state: _,
         confirmations: _,
         wallet: _,
