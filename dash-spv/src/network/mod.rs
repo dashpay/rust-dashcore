@@ -238,7 +238,7 @@ impl NetworkManager for TcpNetworkManager {
     }
 
     fn is_connected(&self) -> bool {
-        self.connection.as_ref().map_or(false, |c| c.is_connected())
+        self.connection.as_ref().is_some_and(|c| c.is_connected())
     }
 
     fn peer_count(&self) -> usize {
@@ -285,7 +285,7 @@ impl NetworkManager for TcpNetworkManager {
     }
 
     fn should_ping(&self) -> bool {
-        self.connection.as_ref().map_or(false, |c| c.should_ping())
+        self.connection.as_ref().is_some_and(|c| c.should_ping())
     }
 
     fn cleanup_old_pings(&mut self) {

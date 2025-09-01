@@ -635,18 +635,19 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
         // If we're syncing from a checkpoint, we need to account for sync_base_height
-        let effective_tip_height = if self.chain_state.synced_from_checkpoint
-            && current_tip_height.is_some()
-        {
-            let stored_headers = current_tip_height.unwrap();
-            let actual_height = self.chain_state.sync_base_height + stored_headers;
-            tracing::info!(
-                "Syncing from checkpoint: sync_base_height={}, stored_headers={}, effective_height={}",
-                self.chain_state.sync_base_height,
-                stored_headers,
-                actual_height
-            );
-            Some(actual_height)
+        let effective_tip_height = if self.chain_state.synced_from_checkpoint {
+            if let Some(stored_headers) = current_tip_height {
+                let actual_height = self.chain_state.sync_base_height + stored_headers;
+                tracing::info!(
+                    "Syncing from checkpoint: sync_base_height={}, stored_headers={}, effective_height={}",
+                    self.chain_state.sync_base_height,
+                    stored_headers,
+                    actual_height
+                );
+                Some(actual_height)
+            } else {
+                None
+            }
         } else {
             tracing::info!(
                 "Not syncing from checkpoint or no tip height. synced_from_checkpoint={}, current_tip_height={:?}",

@@ -139,7 +139,7 @@ impl Default for PeerReputation {
 impl PeerReputation {
     /// Check if the peer is currently banned
     pub fn is_banned(&self) -> bool {
-        self.banned_until.map_or(false, |until| Instant::now() < until)
+        self.banned_until.is_some_and(|until| Instant::now() < until)
     }
 
     /// Get remaining ban time

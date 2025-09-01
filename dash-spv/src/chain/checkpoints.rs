@@ -147,7 +147,7 @@ impl CheckpointManager {
 
     /// Check if we're past the last checkpoint
     pub fn is_past_last_checkpoint(&self, height: u32) -> bool {
-        self.sorted_heights.last().map_or(true, |&last| height > last)
+        self.sorted_heights.last().is_none_or(|&last| height > last)
     }
 
     /// Get the last checkpoint before a given timestamp

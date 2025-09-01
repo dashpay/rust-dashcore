@@ -189,59 +189,60 @@ impl ChainLockManager {
         }
 
         // Full validation with masternode engine if available
-        let engine_guard = self
-            .masternode_engine
-            .read()
-            .map_err(|_| ValidationError::InvalidChainLock("Lock poisoned".to_string()))?;
-
         let mut validated = false;
+        {
+            let engine_guard = self
+                .masternode_engine
+                .read()
+                .map_err(|_| ValidationError::InvalidChainLock("Lock poisoned".to_string()))?;
 
-        if let Some(engine) = engine_guard.as_ref() {
-            // Use the masternode engine's verify_chain_lock method
-            match engine.verify_chain_lock(&chain_lock) {
-                Ok(()) => {
-                    info!(
-                        "✅ ChainLock validated with masternode engine for height {}",
-                        chain_lock.block_height
-                    );
-                    validated = true;
-                }
-                Err(e) => {
-                    // Check if the error is due to missing masternode lists
-                    let error_string = e.to_string();
-                    if error_string.contains("No masternode lists in engine") {
-                        // ChainLock validation requires masternode list at (block_height - CHAINLOCK_VALIDATION_MASTERNODE_OFFSET)
-                        let required_height = chain_lock
-                            .block_height
-                            .saturating_sub(CHAINLOCK_VALIDATION_MASTERNODE_OFFSET);
-                        warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
-                            chain_lock.block_height, required_height);
-                        drop(engine_guard); // Release the read lock before acquiring write lock
-                        self.queue_pending_chainlock(chain_lock.clone()).map_err(|e| {
-                            ValidationError::InvalidChainLock(format!(
-                                "Failed to queue pending ChainLock: {}",
+            if let Some(engine) = engine_guard.as_ref() {
+                // Use the masternode engine's verify_chain_lock method
+                match engine.verify_chain_lock(&chain_lock) {
+                    Ok(()) => {
+                        info!(
+                            "✅ ChainLock validated with masternode engine for height {}",
+                            chain_lock.block_height
+                        );
+                        validated = true;
+                    }
+                    Err(e) => {
+                        // Check if the error is due to missing masternode lists
+                        let error_string = e.to_string();
+                        if error_string.contains("No masternode lists in engine") {
+                            // ChainLock validation requires masternode list at (block_height - CHAINLOCK_VALIDATION_MASTERNODE_OFFSET)
+                            let required_height = chain_lock
+                                .block_height
+                                .saturating_sub(CHAINLOCK_VALIDATION_MASTERNODE_OFFSET);
+                            warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
+                                chain_lock.block_height, required_height);
+                            self.queue_pending_chainlock(chain_lock.clone()).map_err(|e| {
+                                ValidationError::InvalidChainLock(format!(
+                                    "Failed to queue pending ChainLock: {}",
+                                    e
+                                ))
+                            })?;
+                        } else {
+                            return Err(ValidationError::InvalidChainLock(format!(
+                                "MasternodeListEngine validation failed: {:?}",
                                 e
-                            ))
-                        })?;
-                    } else {
-                        return Err(ValidationError::InvalidChainLock(format!(
-                            "MasternodeListEngine validation failed: {:?}",
-                            e
-                        )));
+                            )));
+                        }
                     }
                 }
+            } else {
+                // Queue for later validation when engine becomes available
+                warn!(
+                    "⚠️ Masternode engine not available, queueing ChainLock for later validation"
+                );
+                self.queue_pending_chainlock(chain_lock.clone()).map_err(|e| {
+                    ValidationError::InvalidChainLock(format!(
+                        "Failed to queue pending ChainLock: {}",
+                        e
+                    ))
+                })?;
             }
-        } else {
-            // Queue for later validation when engine becomes available
-            warn!("⚠️ Masternode engine not available, queueing ChainLock for later validation");
-            drop(engine_guard); // Release the read lock before acquiring write lock
-            self.queue_pending_chainlock(chain_lock.clone()).map_err(|e| {
-                ValidationError::InvalidChainLock(format!(
-                    "Failed to queue pending ChainLock: {}",
-                    e
-                ))
-            })?;
-        }
+        } // engine_guard dropped before any await
 
         // Store the chain lock with appropriate validation status
         self.store_chain_lock_with_validation(chain_lock.clone(), storage, validated).await?;

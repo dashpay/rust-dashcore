@@ -309,7 +309,7 @@ impl ChainState {
     /// Update chain lock status
     pub fn update_chain_lock(&mut self, height: u32, hash: BlockHash) {
         // Only update if this is a newer chain lock
-        if self.last_chainlock_height.map_or(true, |h| height > h) {
+        if self.last_chainlock_height.is_none_or(|h| height > h) {
             self.last_chainlock_height = Some(height);
             self.last_chainlock_hash = Some(hash);
         }
@@ -317,7 +317,7 @@ impl ChainState {
 
     /// Check if a block at given height is chain-locked
     pub fn is_height_chain_locked(&self, height: u32) -> bool {
-        self.last_chainlock_height.map_or(false, |locked_height| height <= locked_height)
+        self.last_chainlock_height.is_some_and(|locked_height| height <= locked_height)
     }
 
     /// Check if we have a chain lock
