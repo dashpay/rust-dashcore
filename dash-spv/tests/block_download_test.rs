@@ -27,6 +27,7 @@ use dash_spv::{
     sync::{sequential::SequentialSyncManager, FilterSyncManager},
     types::FilterMatch,
 };
+use key_wallet::wallet::ManagedWalletInfo;
 
 /// Mock network manager for testing
 struct MockNetworkManager {
