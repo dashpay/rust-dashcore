@@ -446,7 +446,7 @@ pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
     }
 
     let seed_slice = slice::from_raw_parts(seed, seed_len);
-    let network_rust: Network = network.try_into().unwrap_or(Network::Dash);
+    let network_rust: Network = network.into();
 
     let path_str = match CStr::from_ptr(path).to_str() {
         Ok(s) => s,
@@ -722,7 +722,7 @@ pub unsafe extern "C" fn dip9_derive_identity_key(
     }
 
     let seed_slice = slice::from_raw_parts(seed, seed_len);
-    let network_rust: Network = network.try_into().unwrap_or(Network::Dash);
+    let network_rust: Network = network.into();
 
     use key_wallet::bip32::{ChildNumber, DerivationPath};
     use key_wallet::dip9::{

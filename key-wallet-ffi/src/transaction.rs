@@ -138,9 +138,8 @@ pub unsafe extern "C" fn wallet_sign_transaction(
     }
 }
 
-/// Transaction context for checking
+// Transaction context for checking
 // FFITransactionContext is imported from types module at the top
-
 /// Transaction check result
 #[repr(C)]
 pub struct FFITransactionCheckResult {

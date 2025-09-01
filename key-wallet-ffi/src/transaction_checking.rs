@@ -23,9 +23,8 @@ pub struct FFIManagedWallet {
     pub(crate) inner: *mut ManagedWalletInfo,
 }
 
-/// Transaction context for checking
+// Transaction context for checking
 // FFITransactionContext is imported from types module at the top
-
 /// Account type match result
 #[repr(C)]
 pub struct FFIAccountMatch {

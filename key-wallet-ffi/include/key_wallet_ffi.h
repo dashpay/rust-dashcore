@@ -639,7 +639,6 @@ typedef struct {
 } FFITxOutput;
 
 /*
- Transaction context for checking
  Transaction check result
  */
 typedef struct {
