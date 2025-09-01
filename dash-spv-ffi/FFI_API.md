@@ -233,10 +233,10 @@ dash_spv_ffi_config_get_data_dir(config: *const FFIClientConfig,) -> FFIString
 ```
 
 **Description:**
-Gets the data directory path from the configuration  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null or no data directory is set, returns an FFIString with null pointer - The returned FFIString must be freed by the caller using dash_string_free
+Gets the data directory path from the configuration  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null or no data directory is set, returns an FFIString with null pointer - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
 
 **Safety:**
-- `config` must be a valid pointer to an FFIClientConfig or null - If null or no data directory is set, returns an FFIString with null pointer - The returned FFIString must be freed by the caller using dash_string_free
+- `config` must be a valid pointer to an FFIClientConfig or null - If null or no data directory is set, returns an FFIString with null pointer - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
 
 **Module:** `config`
 
@@ -585,7 +585,7 @@ dash_spv_ffi_client_is_filter_sync_available(client: *mut FFIDashSpvClient,) -> 
 #### `dash_spv_ffi_client_sync_to_tip`
 
 ```c
-dash_spv_ffi_client_sync_to_tip(client: *mut FFIDashSpvClient, completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void) -> ()
+dash_spv_ffi_client_sync_to_tip(client: *mut FFIDashSpvClient, completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>, user_data: *mut c_void,) -> i32
 ```
 
 **Description:**
@@ -601,7 +601,7 @@ This function is unsafe because: - `client` must be a valid pointer to an initia
 #### `dash_spv_ffi_client_sync_to_tip_with_progress`
 
 ```c
-dash_spv_ffi_client_sync_to_tip_with_progress(client: *mut FFIDashSpvClient, progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void) -> ()
+dash_spv_ffi_client_sync_to_tip_with_progress(client: *mut FFIDashSpvClient, progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>, completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>, user_data: *mut c_void,) -> i32
 ```
 
 **Description:**
@@ -843,10 +843,10 @@ dash_spv_ffi_client_get_wallet_manager(client: *mut FFIDashSpvClient,) -> *mut c
 ```
 
 **Description:**
-Get the wallet manager from the SPV client  Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager. This allows direct interaction with the wallet manager without going through the client.  # Safety  The caller must ensure that: - The client pointer is valid - The returned pointer is freed using wallet_manager_free()  # Returns  An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized. Swift should treat this as an OpaquePointer.
+Get the wallet manager from the SPV client  Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager. This allows direct interaction with the wallet manager without going through the client.  # Safety  The caller must ensure that: - The client pointer is valid - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi  # Returns  An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized. Swift should treat this as an OpaquePointer.
 
 **Safety:**
-The caller must ensure that: - The client pointer is valid - The returned pointer is freed using wallet_manager_free()
+The caller must ensure that: - The client pointer is valid - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi
 
 **Module:** `client`
 

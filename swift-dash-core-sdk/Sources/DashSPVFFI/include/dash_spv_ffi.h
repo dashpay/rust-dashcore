@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+// Include shared FFI types (FFINetwork, etc.) from key-wallet-ffi
+#include "key_wallet_ffi.h"
+
 typedef enum FFIMempoolStrategy {
   FetchAll = 0,
   BloomFilter = 1,

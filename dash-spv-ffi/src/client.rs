@@ -1080,7 +1080,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
 ///
 /// The caller must ensure that:
 /// - The client pointer is valid
-/// - The returned pointer is freed using wallet_manager_free()
+/// - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi
 ///
 /// # Returns
 ///

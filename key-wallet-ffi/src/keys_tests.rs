@@ -5,7 +5,7 @@
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::keys::*;
-    use crate::types::FFINetworks;
+    use crate::types::{FFINetwork, FFINetworks};
     use crate::wallet;
     use std::ffi::{CStr, CString};
     use std::ptr;

@@ -22,58 +22,92 @@ class FFIFunction:
     return_type: str = None
 
 def extract_ffi_functions(file_path: Path) -> List[FFIFunction]:
-    """Extract all #[no_mangle] functions from a Rust file."""
-    functions = []
-    
+    """Extract all #[no_mangle] extern "C" functions from a Rust file.
+
+    Handles nested parentheses in parameter types (e.g., function pointers).
+    """
+    functions: List[FFIFunction] = []
+
     with open(file_path, 'r') as f:
         content = f.read()
-    
-    # Find all #[no_mangle] functions with their documentation
-    pattern = r'(?:///.*\n)*(?:\s*#\[no_mangle\]\s*\n)(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(((?:[^)]|\n)*)\)\s*(?:->\s*([^{]+))?'
-    
-    for match in re.finditer(pattern, content):
-        full_match = match.group(0)
-        func_name = match.group(1)
-        params = match.group(2)
-        return_type = match.group(3) if match.group(3) else "()"
-        
-        # Extract doc comments
-        doc_lines = []
-        for line in full_match.split('\n'):
+
+    for m in re.finditer(r'(?m)^\s*#\[no_mangle\]\s*$', content):
+        idx = m.end()
+        fn_match = re.search(r'\bextern\s+"C"\s+fn\s+([A-Za-z0-9_]+)\s*\(', content[idx:], re.S)
+        if not fn_match:
+            continue
+        name = fn_match.group(1)
+        abs_start = idx + fn_match.start()
+        paren_start = content.find('(', abs_start)
+        if paren_start == -1:
+            continue
+        depth = 0
+        i = paren_start
+        while i < len(content):
+            ch = content[i]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        if depth != 0:
+            continue
+        paren_end = i
+
+        params_raw = content[paren_start + 1:paren_end]
+        brace_idx = content.find('{', paren_end)
+        header_tail = content[paren_end:brace_idx if brace_idx != -1 else len(content)]
+        ret_match = re.search(r'->\s*([^\n{]+)', header_tail)
+        return_type = ret_match.group(1).strip() if ret_match else '()'
+
+        # Collect contiguous doc comments above #[no_mangle]
+        doc_lines_rev: List[str] = []
+        line_start = content.rfind('\n', 0, m.start()) + 1
+        j = line_start - 1
+        while j > 0:
+            prev_nl = content.rfind('\n', 0, j)
+            line = content[prev_nl + 1:j]
             if line.strip().startswith('///'):
-                doc_lines.append(line.strip()[3:].strip())
-        
-        # Extract safety comments
+                doc_lines_rev.append(line.strip()[3:].strip())
+                j = prev_nl
+                continue
+            if line.strip() == '' and doc_lines_rev:
+                j = prev_nl
+                continue
+            break
+        doc_lines = list(reversed(doc_lines_rev)) if doc_lines_rev else []
+
         safety_comment = None
-        if '# Safety' in '\n'.join(doc_lines):
-            safety_start = False
-            safety_lines = []
-            for line in doc_lines:
-                if '# Safety' in line:
-                    safety_start = True
-                    continue
-                if safety_start:
-                    if line.startswith('#'):
+        if doc_lines:
+            joined = '\n'.join(doc_lines)
+            if '# Safety' in joined:
+                safety_lines: List[str] = []
+                in_safety = False
+                for dl in doc_lines:
+                    if dl.strip().startswith('# Safety'):
+                        in_safety = True
+                        continue
+                    if in_safety and dl.strip().startswith('#'):
                         break
-                    safety_lines.append(line)
-            safety_comment = ' '.join(safety_lines).strip()
-        
-        # Clean up parameters
-        params_clean = re.sub(r'\s+', ' ', params.strip())
-        return_type_clean = return_type.strip()
-        
+                    if in_safety:
+                        safety_lines.append(dl)
+                safety_comment = ' '.join(safety_lines).strip() if safety_lines else None
+
+        params_clean = re.sub(r'\s+', ' ', params_raw.strip())
         module_name = file_path.stem
-        
+
         functions.append(FFIFunction(
-            name=func_name,
-            signature=f"{func_name}({params_clean}) -> {return_type_clean}",
+            name=name,
+            signature=f"{name}({params_clean}) -> {return_type}",
             module=module_name,
             doc_comment=' '.join(doc_lines) if doc_lines else None,
             safety_comment=safety_comment,
             params=params_clean,
-            return_type=return_type_clean
+            return_type=return_type,
         ))
-    
+
     return functions
 
 def categorize_functions(functions: List[FFIFunction]) -> Dict[str, List[FFIFunction]]:
@@ -261,7 +295,7 @@ def main():
     
     all_functions = []
     
-    for rust_file in src_dir.glob("*.rs"):
+    for rust_file in src_dir.rglob("*.rs"):
         functions = extract_ffi_functions(rust_file)
         all_functions.extend(functions)
     

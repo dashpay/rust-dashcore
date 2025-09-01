@@ -326,7 +326,7 @@ int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const c
  *
  * The caller must ensure that:
  * - The client pointer is valid
- * - The returned pointer is freed using wallet_manager_free()
+ * - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi
  *
  * # Returns
  *
@@ -429,7 +429,7 @@ FFINetwork dash_spv_ffi_config_get_network(const FFIClientConfig *config);
  * # Safety
  * - `config` must be a valid pointer to an FFIClientConfig or null
  * - If null or no data directory is set, returns an FFIString with null pointer
- * - The returned FFIString must be freed by the caller using dash_string_free
+ * - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
  */
 struct FFIString dash_spv_ffi_config_get_data_dir(const FFIClientConfig *config);
 

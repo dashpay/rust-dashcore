@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 221
+**Total Functions**: 222
 
 ## Table of Contents
 
@@ -66,7 +66,7 @@ Functions: 17
 
 ### Wallet Operations
 
-Functions: 56
+Functions: 57
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -122,6 +122,7 @@ Functions: 56
 | `wallet_get_account_xpub` | Get extended public key for account  # Safety  - `wallet` must be a valid poi... | keys |
 | `wallet_get_id` | Get wallet ID (32-byte hash)  # Safety  - `wallet` must be a valid pointer to... | wallet |
 | `wallet_get_top_up_account_with_registration_index` | Get an IdentityTopUp account handle with a specific registration index This i... | account |
+| `wallet_get_utxos` | Get all UTXOs (deprecated - use managed_wallet_get_utxos instead)  # Safety  ... | utxo |
 | `wallet_get_xpub` | Get extended public key for account  # Safety  - `wallet` must be a valid poi... | wallet |
 | `wallet_has_mnemonic` | Check if wallet has mnemonic  # Safety  - `wallet` must be a valid pointer to... | wallet |
 | `wallet_is_watch_only` | Check if wallet is watch-only  # Safety  - `wallet` must be a valid pointer t... | wallet |
@@ -1464,6 +1465,22 @@ Get an IdentityTopUp account handle with a specific registration index This is u
 - `wallet` must be a valid pointer to an FFIWallet instance - The caller must ensure the wallet pointer remains valid for the duration of this call
 
 **Module:** `account`
+
+---
+
+#### `wallet_get_utxos`
+
+```c
+wallet_get_utxos(_wallet: *const crate::types::FFIWallet, _network: FFINetworks, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Get all UTXOs (deprecated - use managed_wallet_get_utxos instead)  # Safety  This function is deprecated and returns an empty list. Use `managed_wallet_get_utxos` with a ManagedWalletInfo instead.
+
+**Safety:**
+This function is deprecated and returns an empty list. Use `managed_wallet_get_utxos` with a ManagedWalletInfo instead.
+
+**Module:** `utxo`
 
 ---
 

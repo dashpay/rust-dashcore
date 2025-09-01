@@ -75,12 +75,11 @@ mkdir -p target/ios/release
 cp target/aarch64-apple-ios/release/libdash_spv_ffi.a target/ios/release/
 cp target/aarch64-apple-ios/release/libkey_wallet_ffi.a target/ios/release/
 
-# Navigate back to swift directory
+# Navigate back to swift directory and sync headers
 cd swift-dash-core-sdk
 
-# Copy the generated header file
-echo -e "${GREEN}Copying generated header file...${NC}"
-cp ../dash-spv-ffi/include/dash_spv_ffi.h Sources/DashSPVFFI/include/
+echo -e "${GREEN}Syncing headers to Swift SDK...${NC}"
+./sync-headers.sh
 
 # Copy libraries to example directory
 echo -e "${GREEN}Copying libraries to example directory...${NC}"

@@ -88,7 +88,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
     wallet_id_len: usize,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> FFIBalance {
     // Implementation
