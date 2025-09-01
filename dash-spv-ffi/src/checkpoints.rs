@@ -26,7 +26,7 @@ fn manager_for_network(network: FFINetwork) -> Result<CheckpointManager, String>
 /// - `out_height` must be a valid pointer to a `u32`.
 /// - `out_hash` must point to at least 32 writable bytes.
 #[no_mangle]
-pub extern "C" fn dash_spv_ffi_checkpoint_latest(
+pub unsafe extern "C" fn dash_spv_ffi_checkpoint_latest(
     network: FFINetwork,
     out_height: *mut u32,
     out_hash: *mut u8, // expects at least 32 bytes
@@ -43,11 +43,9 @@ pub extern "C" fn dash_spv_ffi_checkpoint_latest(
         }
     };
     if let Some(cp) = mgr.last_checkpoint() {
-        unsafe {
-            *out_height = cp.height;
-            let hash = cp.block_hash.to_byte_array();
-            std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        }
+        *out_height = cp.height;
+        let hash = cp.block_hash.to_byte_array();
+        std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
         FFIErrorCode::Success as i32
     } else {
         set_last_error("No checkpoints available for network");
@@ -61,7 +59,7 @@ pub extern "C" fn dash_spv_ffi_checkpoint_latest(
 /// - `out_height` must be a valid pointer to a `u32`.
 /// - `out_hash` must point to at least 32 writable bytes.
 #[no_mangle]
-pub extern "C" fn dash_spv_ffi_checkpoint_before_height(
+pub unsafe extern "C" fn dash_spv_ffi_checkpoint_before_height(
     network: FFINetwork,
     height: u32,
     out_height: *mut u32,
@@ -79,11 +77,9 @@ pub extern "C" fn dash_spv_ffi_checkpoint_before_height(
         }
     };
     if let Some(cp) = mgr.last_checkpoint_before_height(height) {
-        unsafe {
-            *out_height = cp.height;
-            let hash = cp.block_hash.to_byte_array();
-            std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        }
+        *out_height = cp.height;
+        let hash = cp.block_hash.to_byte_array();
+        std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
         FFIErrorCode::Success as i32
     } else {
         set_last_error("No checkpoint at or before given height");
@@ -97,7 +93,7 @@ pub extern "C" fn dash_spv_ffi_checkpoint_before_height(
 /// - `out_height` must be a valid pointer to a `u32`.
 /// - `out_hash` must point to at least 32 writable bytes.
 #[no_mangle]
-pub extern "C" fn dash_spv_ffi_checkpoint_before_timestamp(
+pub unsafe extern "C" fn dash_spv_ffi_checkpoint_before_timestamp(
     network: FFINetwork,
     timestamp: u32,
     out_height: *mut u32,
@@ -115,11 +111,9 @@ pub extern "C" fn dash_spv_ffi_checkpoint_before_timestamp(
         }
     };
     if let Some(cp) = mgr.last_checkpoint_before_timestamp(timestamp) {
-        unsafe {
-            *out_height = cp.height;
-            let hash = cp.block_hash.to_byte_array();
-            std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        }
+        *out_height = cp.height;
+        let hash = cp.block_hash.to_byte_array();
+        std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
         FFIErrorCode::Success as i32
     } else {
         set_last_error("No checkpoint at or before given timestamp");

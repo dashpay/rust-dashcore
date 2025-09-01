@@ -30,6 +30,25 @@ typedef enum FFIValidationMode {
  */
 typedef struct FFIDashSpvClient FFIDashSpvClient;
 
+/**
+ * FFI-safe array that transfers ownership of memory to the C caller.
+ *
+ * # Safety
+ *
+ * This struct represents memory that has been allocated by Rust but ownership
+ * has been transferred to the C caller. The caller is responsible for:
+ * - Not accessing the memory after it has been freed
+ * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
+ * - Ensuring the data, len, and capacity fields remain consistent
+ */
+typedef struct FFIArray {
+  void *data;
+  uintptr_t len;
+  uintptr_t capacity;
+  uintptr_t elem_size;
+  uintptr_t elem_align;
+} FFIArray;
+
 typedef ClientConfig FFIClientConfig;
 
 typedef struct FFIString {
@@ -130,25 +149,6 @@ typedef struct FFIEventCallbacks {
 } FFIEventCallbacks;
 
 /**
- * FFI-safe array that transfers ownership of memory to the C caller.
- *
- * # Safety
- *
- * This struct represents memory that has been allocated by Rust but ownership
- * has been transferred to the C caller. The caller is responsible for:
- * - Not accessing the memory after it has been freed
- * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
- * - Ensuring the data, len, and capacity fields remain consistent
- */
-typedef struct FFIArray {
-  void *data;
-  uintptr_t len;
-  uintptr_t capacity;
-  uintptr_t elem_size;
-  uintptr_t elem_align;
-} FFIArray;
-
-/**
  * Handle for Core SDK that can be passed to Platform SDK
  */
 typedef struct CoreSDKHandle {
@@ -195,6 +195,49 @@ typedef struct FFIUnconfirmedTransaction {
   struct FFIString *addresses;
   uintptr_t addresses_len;
 } FFIUnconfirmedTransaction;
+
+/**
+ * Get the latest checkpoint for the given network.
+ *
+ * # Safety
+ * - `out_height` must be a valid pointer to a `u32`.
+ * - `out_hash` must point to at least 32 writable bytes.
+ */
+int32_t dash_spv_ffi_checkpoint_latest(FFINetwork network, uint32_t *out_height, uint8_t *out_hash);
+
+/**
+ * Get the last checkpoint at or before a given height.
+ *
+ * # Safety
+ * - `out_height` must be a valid pointer to a `u32`.
+ * - `out_hash` must point to at least 32 writable bytes.
+ */
+int32_t dash_spv_ffi_checkpoint_before_height(FFINetwork network,
+                                              uint32_t height,
+                                              uint32_t *out_height,
+                                              uint8_t *out_hash);
+
+/**
+ * Get the last checkpoint at or before a given UNIX timestamp (seconds).
+ *
+ * # Safety
+ * - `out_height` must be a valid pointer to a `u32`.
+ * - `out_hash` must point to at least 32 writable bytes.
+ */
+int32_t dash_spv_ffi_checkpoint_before_timestamp(FFINetwork network,
+                                                 uint32_t timestamp,
+                                                 uint32_t *out_height,
+                                                 uint8_t *out_hash);
+
+/**
+ * Get all checkpoints between two heights (inclusive).
+ *
+ * Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and
+ * must free the array buffer using `dash_spv_ffi_array_destroy` when done.
+ */
+struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
+                                                         uint32_t start_height,
+                                                         uint32_t end_height);
 
 struct FFIDashSpvClient *dash_spv_ffi_client_new(const FFIClientConfig *config);
 
@@ -561,49 +604,6 @@ int32_t dash_spv_ffi_config_set_start_from_height(FFIClientConfig *config,
  */
 int32_t dash_spv_ffi_config_set_wallet_creation_time(FFIClientConfig *config,
                                                      uint32_t timestamp);
-
-/**
- * Get the latest checkpoint for the given network.
- *
- * # Safety
- * - `out_height` must be a valid pointer to a `u32`.
- * - `out_hash` must point to at least 32 writable bytes.
- */
-int32_t dash_spv_ffi_checkpoint_latest(FFINetwork network, uint32_t *out_height, uint8_t *out_hash);
-
-/**
- * Get the last checkpoint at or before a given height.
- *
- * # Safety
- * - `out_height` must be a valid pointer to a `u32`.
- * - `out_hash` must point to at least 32 writable bytes.
- */
-int32_t dash_spv_ffi_checkpoint_before_height(FFINetwork network,
-                                              uint32_t height,
-                                              uint32_t *out_height,
-                                              uint8_t *out_hash);
-
-/**
- * Get the last checkpoint at or before a given UNIX timestamp (seconds).
- *
- * # Safety
- * - `out_height` must be a valid pointer to a `u32`.
- * - `out_hash` must point to at least 32 writable bytes.
- */
-int32_t dash_spv_ffi_checkpoint_before_timestamp(FFINetwork network,
-                                                 uint32_t timestamp,
-                                                 uint32_t *out_height,
-                                                 uint8_t *out_hash);
-
-/**
- * Get all checkpoints between two heights (inclusive).
- *
- * Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and
- * must free the array buffer using `dash_spv_ffi_array_destroy` when done.
- */
-struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
-                                                         uint32_t start_height,
-                                                         uint32_t end_height);
 
 const char *dash_spv_ffi_get_last_error(void);
 
