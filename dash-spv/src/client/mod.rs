@@ -617,17 +617,15 @@ impl<
     /// Changing the network is not supported at runtime.
     pub async fn update_config(&mut self, new_config: ClientConfig) -> Result<()> {
         if new_config.network != self.config.network {
-            return Err(SpvError::Config(
-                "Cannot change network at runtime".to_string(),
-            ));
+            return Err(SpvError::Config("Cannot change network at runtime".to_string()));
         }
 
         // Track changes that may require reinitialization of helpers
-        let mempool_changed =
-            new_config.enable_mempool_tracking != self.config.enable_mempool_tracking
-                || new_config.mempool_strategy != self.config.mempool_strategy
-                || new_config.max_mempool_transactions != self.config.max_mempool_transactions
-                || new_config.recent_send_window_secs != self.config.recent_send_window_secs;
+        let mempool_changed = new_config.enable_mempool_tracking
+            != self.config.enable_mempool_tracking
+            || new_config.mempool_strategy != self.config.mempool_strategy
+            || new_config.max_mempool_transactions != self.config.max_mempool_transactions
+            || new_config.recent_send_window_secs != self.config.recent_send_window_secs;
 
         // Apply full config replacement, preserving network (already checked equal)
         self.config = new_config;

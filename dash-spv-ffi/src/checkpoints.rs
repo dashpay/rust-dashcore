@@ -1,7 +1,7 @@
 use crate::{set_last_error, FFIArray, FFIErrorCode};
 use dash_spv::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
-use dashcore::Network;
 use dashcore::hashes::Hash;
+use dashcore::Network;
 use key_wallet_ffi::FFINetwork;
 
 /// FFI representation of a checkpoint (height + block hash)

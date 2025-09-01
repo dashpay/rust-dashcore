@@ -361,9 +361,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
         if let Some(ref mut spv_client) = *guard {
             spv_client.update_config(new_config).await.map_err(|e| e)
         } else {
-            Err(dash_spv::SpvError::Config(
-                "Client not initialized".to_string(),
-            ))
+            Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
         }
     });
 
