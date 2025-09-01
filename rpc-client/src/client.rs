@@ -114,7 +114,7 @@ fn empty_obj() -> Value {
 ///
 /// Elements of `args` without corresponding `defaults` value, won't
 /// be substituted, because they are required.
-fn handle_defaults<'a, 'b>(args: &'a mut [Value], defaults: &'b [Value]) -> &'a [Value] {
+fn handle_defaults<'a>(args: &'a mut [Value], defaults: &[Value]) -> &'a [Value] {
     assert!(args.len() >= defaults.len());
 
     // Pass over the optional arguments in backwards order, filling in defaults after the first
@@ -158,25 +158,25 @@ pub trait RawTx: Sized + Clone {
     fn raw_hex(self) -> String;
 }
 
-impl<'a> RawTx for &'a Transaction {
+impl RawTx for &Transaction {
     fn raw_hex(self) -> String {
         hex::encode(consensus::encode::serialize(&self))
     }
 }
 
-impl<'a> RawTx for &'a [u8] {
+impl RawTx for &[u8] {
     fn raw_hex(self) -> String {
         self.to_lower_hex_string()
     }
 }
 
-impl<'a> RawTx for &'a Vec<u8> {
+impl RawTx for &Vec<u8> {
     fn raw_hex(self) -> String {
         self.to_lower_hex_string()
     }
 }
 
-impl<'a> RawTx for &'a str {
+impl RawTx for &str {
     fn raw_hex(self) -> String {
         self.to_owned()
     }
@@ -226,7 +226,7 @@ pub trait RpcApi: Sized {
         &self,
         id: &<T as queryable::Queryable<Self>>::Id,
     ) -> Result<T> {
-        T::query(&self, &id)
+        T::query(self, id)
     }
 
     fn get_network_info(&self) -> Result<json::GetNetworkInfoResult> {
@@ -324,7 +324,7 @@ pub trait RpcApi: Sized {
     }
 
     fn get_block_json(&self, hash: &BlockHash) -> Result<Value> {
-        Ok(self.call::<Value>("getblock", &[into_json(hash)?, 1.into()])?)
+        self.call::<Value>("getblock", &[into_json(hash)?, 1.into()])
     }
 
     fn get_block_hex(&self, hash: &BlockHash) -> Result<String> {
@@ -366,9 +366,9 @@ pub trait RpcApi: Sized {
         self.call(
             "getblocktemplate",
             &[into_json(Argument {
-                mode: mode,
-                rules: rules,
-                capabilities: capabilities,
+                mode,
+                rules,
+                capabilities,
             })?],
         )
     }
@@ -498,7 +498,7 @@ pub trait RpcApi: Sized {
     }
 
     fn get_balances(&self) -> Result<json::GetBalancesResult> {
-        Ok(self.call("getbalances", &[])?)
+        self.call("getbalances", &[])
     }
 
     fn get_received_by_address(&self, address: &Address, minconf: Option<u32>) -> Result<Amount> {
@@ -510,12 +510,9 @@ pub trait RpcApi: Sized {
 
     fn get_transaction_are_locked(
         &self,
-        tx_ids: &Vec<dashcore::Txid>,
+        tx_ids: &[dashcore::Txid],
     ) -> Result<Vec<Option<json::GetTransactionLockedResult>>> {
-        let transaction_ids_json = tx_ids
-            .into_iter()
-            .map(|tx_id| Ok(into_json(tx_id)?))
-            .collect::<Result<Vec<Value>>>()?;
+        let transaction_ids_json = tx_ids.iter().map(into_json).collect::<Result<Vec<Value>>>()?;
         let args = [transaction_ids_json.into()];
         self.call("gettxchainlocks", &args)
     }
@@ -527,8 +524,8 @@ pub trait RpcApi: Sized {
         height: Option<u32>,
     ) -> Result<Vec<json::AssetUnlockStatusResult>> {
         let indices_json = indices
-            .into_iter()
-            .map(|index| Ok(into_json(index.to_string())?))
+            .iter()
+            .map(|index| into_json(index.to_string()))
             .collect::<Result<Vec<Value>>>()?;
         let args = [indices_json.into(), opt_into_json(height)?];
         self.call("getassetunlockstatuses", &args)
@@ -678,18 +675,14 @@ pub trait RpcApi: Sized {
 
     /// To unlock, use [unlock_unspent].
     fn lock_unspent(&self, outputs: &[OutPoint]) -> Result<bool> {
-        let outputs: Vec<_> = outputs
-            .into_iter()
-            .map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap())
-            .collect();
+        let outputs: Vec<_> =
+            outputs.iter().map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap()).collect();
         self.call("lockunspent", &[false.into(), outputs.into()])
     }
 
     fn unlock_unspent(&self, outputs: &[OutPoint]) -> Result<bool> {
-        let outputs: Vec<_> = outputs
-            .into_iter()
-            .map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap())
-            .collect();
+        let outputs: Vec<_> =
+            outputs.iter().map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap()).collect();
         self.call("lockunspent", &[true.into(), outputs.into()])
     }
 
@@ -784,7 +777,7 @@ pub trait RpcApi: Sized {
         &self,
         rawtxs: &[R],
     ) -> Result<Vec<json::TestMempoolAcceptResult>> {
-        let hexes: Vec<Value> = rawtxs.to_vec().into_iter().map(|r| r.raw_hex().into()).collect();
+        let hexes: Vec<Value> = rawtxs.iter().cloned().map(|r| r.raw_hex().into()).collect();
         self.call("testmempoolaccept", &[hexes.into()])
     }
 
@@ -897,22 +890,22 @@ pub trait RpcApi: Sized {
     /// Attempts to add a node to the addnode list.
     /// Nodes added using addnode (or -connect) are protected from DoS disconnection and are not required to be full nodes/support SegWit as other outbound peers are (though such peers will not be synced from).
     fn add_node(&self, addr: &str) -> Result<()> {
-        self.call("addnode", &[into_json(&addr)?, into_json("add")?])
+        self.call("addnode", &[into_json(addr)?, into_json("add")?])
     }
 
     /// Attempts to remove a node from the addnode list.
     fn remove_node(&self, addr: &str) -> Result<()> {
-        self.call("addnode", &[into_json(&addr)?, into_json("remove")?])
+        self.call("addnode", &[into_json(addr)?, into_json("remove")?])
     }
 
     /// Attempts to connect to a node without permanently adding it to the addnode list.
     fn onetry_node(&self, addr: &str) -> Result<()> {
-        self.call("addnode", &[into_json(&addr)?, into_json("onetry")?])
+        self.call("addnode", &[into_json(addr)?, into_json("onetry")?])
     }
 
     /// Immediately disconnects from the specified peer node.
     fn disconnect_node(&self, addr: &str) -> Result<()> {
-        self.call("disconnectnode", &[into_json(&addr)?])
+        self.call("disconnectnode", &[into_json(addr)?])
     }
 
     fn disconnect_node_by_id(&self, node_id: u32) -> Result<()> {
@@ -922,7 +915,7 @@ pub trait RpcApi: Sized {
     /// Returns information about the given added node, or all added nodes (note that onetry addnodes are not listed here)
     fn get_added_node_info(&self, node: Option<&str>) -> Result<Vec<json::GetAddedNodeInfoResult>> {
         if let Some(addr) = node {
-            self.call("getaddednodeinfo", &[into_json(&addr)?])
+            self.call("getaddednodeinfo", &[into_json(addr)?])
         } else {
             self.call("getaddednodeinfo", &[])
         }
@@ -934,7 +927,7 @@ pub trait RpcApi: Sized {
         count: Option<usize>,
     ) -> Result<Vec<json::GetNodeAddressesResult>> {
         let cnt = count.unwrap_or(1);
-        self.call("getnodeaddresses", &[into_json(&cnt)?])
+        self.call("getnodeaddresses", &[into_json(cnt)?])
     }
 
     /// List all banned IPs/Subnets.
@@ -951,18 +944,18 @@ pub trait RpcApi: Sized {
     fn add_ban(&self, subnet: &str, bantime: u64, absolute: bool) -> Result<()> {
         self.call(
             "setban",
-            &[into_json(&subnet)?, into_json("add")?, into_json(&bantime)?, into_json(&absolute)?],
+            &[into_json(subnet)?, into_json("add")?, into_json(bantime)?, into_json(absolute)?],
         )
     }
 
     /// Attempts to remove an IP/Subnet from the banned list.
     fn remove_ban(&self, subnet: &str) -> Result<()> {
-        self.call("setban", &[into_json(&subnet)?, into_json("remove")?])
+        self.call("setban", &[into_json(subnet)?, into_json("remove")?])
     }
 
     /// Disable/enable all p2p network activity.
     fn set_network_active(&self, state: bool) -> Result<bool> {
-        self.call("setnetworkactive", &[into_json(&state)?])
+        self.call("setnetworkactive", &[into_json(state)?])
     }
 
     /// Returns data about each connected network node as an array of
@@ -1698,7 +1691,7 @@ impl RpcApi for Client {
     fn call<T: for<'a> serde::de::Deserialize<'a>>(&self, cmd: &str, args: &[Value]) -> Result<T> {
         let raw_args_json = serde_json::to_string(args)?;
         let raw_args = Some(serde_json::value::RawValue::from_string(raw_args_json)?);
-        let req = self.client.build_request(&cmd, raw_args.as_deref());
+        let req = self.client.build_request(cmd, raw_args.as_deref());
         if log_enabled!(Debug) {
             debug!(target: "dashcore_rpc", "JSON-RPC request: {} {}", cmd, serde_json::Value::from(args));
         }
@@ -1744,7 +1737,7 @@ mod tests {
     #[test]
     fn test_raw_tx() {
         use dashcore::consensus::encode;
-        let client = Client::new("http://localhost/".into(), Auth::None).unwrap();
+        let client = Client::new("http://localhost/", Auth::None).unwrap();
         let tx: Transaction = encode::deserialize(&Vec::<u8>::from_hex("0200000001586bd02815cf5faabfec986a4e50d25dbee089bd2758621e61c5fab06c334af0000000006b483045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c012103dae30a4d7870cd87b45dd53e6012f71318fdd059c1c2623b8cc73f8af287bb2dfeffffff021dc4260c010000001976a914f602e88b2b5901d8aab15ebe4a97cf92ec6e03b388ac00e1f505000000001976a914687ffeffe8cf4e4c038da46a9b1d37db385a472d88acfd211500").unwrap()).unwrap();
 
         assert!(client.send_raw_transaction(&tx).is_err());
