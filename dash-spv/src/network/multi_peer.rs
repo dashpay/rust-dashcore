@@ -831,7 +831,7 @@ impl MultiPeerNetworkManager {
 
             let handle = tokio::spawn(async move {
                 let mut conn_guard = conn.write().await;
-                conn_guard.send_message(msg).await.map_err(|e| Error::Network(e))
+                conn_guard.send_message(msg).await.map_err(Error::Network)
             });
             handles.push(handle);
         }

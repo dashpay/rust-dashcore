@@ -124,39 +124,14 @@ impl RequestController {
 
     /// Check if a request type is allowed in the current phase
     pub fn is_request_allowed(&self, phase: &SyncPhase, request_type: &RequestType) -> bool {
-        match (phase, request_type) {
-            (
-                SyncPhase::DownloadingHeaders {
-                    ..
-                },
-                RequestType::GetHeaders(_),
-            ) => true,
-            (
-                SyncPhase::DownloadingMnList {
-                    ..
-                },
-                RequestType::GetMnListDiff(_),
-            ) => true,
-            (
-                SyncPhase::DownloadingCFHeaders {
-                    ..
-                },
-                RequestType::GetCFHeaders(_, _),
-            ) => true,
-            (
-                SyncPhase::DownloadingFilters {
-                    ..
-                },
-                RequestType::GetCFilters(_, _),
-            ) => true,
-            (
-                SyncPhase::DownloadingBlocks {
-                    ..
-                },
-                RequestType::GetBlock(_),
-            ) => true,
-            _ => false,
-        }
+        matches!(
+            (phase, request_type),
+            (SyncPhase::DownloadingHeaders { .. }, RequestType::GetHeaders(_))
+                | (SyncPhase::DownloadingMnList { .. }, RequestType::GetMnListDiff(_))
+                | (SyncPhase::DownloadingCFHeaders { .. }, RequestType::GetCFHeaders(_, _))
+                | (SyncPhase::DownloadingFilters { .. }, RequestType::GetCFilters(_, _))
+                | (SyncPhase::DownloadingBlocks { .. }, RequestType::GetBlock(_))
+        )
     }
 
     /// Queue a request for sending
@@ -307,8 +282,7 @@ impl RequestController {
 
             RequestType::GetBlock(hash) => {
                 let inv = dashcore::network::message_blockdata::Inventory::Block(*hash);
-                let getdata = dashcore::network::message::NetworkMessage::GetData(vec![inv]);
-                getdata
+                dashcore::network::message::NetworkMessage::GetData(vec![inv])
             }
         };
 
@@ -365,9 +339,11 @@ impl RequestController {
 
     /// Get statistics about pending and active requests
     pub fn get_stats(&self) -> RequestStats {
-        let mut stats = RequestStats::default();
-        stats.pending_count = self.pending_requests.len();
-        stats.active_count = self.active_requests.len();
+        let mut stats = RequestStats {
+            pending_count: self.pending_requests.len(),
+            active_count: self.active_requests.len(),
+            ..Default::default()
+        };
 
         // Count by type
         for request in &self.pending_requests {
