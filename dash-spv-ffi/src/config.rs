@@ -208,6 +208,23 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_filter_load(
     FFIErrorCode::Success as i32
 }
 
+/// Enables or disables masternode synchronization
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_masternode_sync_enabled(
+    config: *mut FFIClientConfig,
+    enable: bool,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.enable_masternodes = enable;
+    FFIErrorCode::Success as i32
+}
+
 /// Gets the network type from the configuration
 ///
 /// # Safety
