@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 61
+**Total Functions**: 63
 
 ## Table of Contents
 
@@ -34,10 +34,11 @@ Functions: 4
 
 ### Configuration
 
-Functions: 23
+Functions: 25
 
 | Function | Description | Module |
 |----------|-------------|--------|
+| `dash_spv_ffi_client_update_config` | Update the running client's configuration | client |
 | `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  # Safety - `config` must be a valid... | config |
 | `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must be... | config |
 | `dash_spv_ffi_config_get_data_dir` | Gets the data directory path from the configuration  # Safety - `config` must... | config |
@@ -49,6 +50,7 @@ Functions: 23
 | `dash_spv_ffi_config_set_data_dir` | Sets the data directory for storing blockchain data  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_set_fetch_mempool_transactions` | Sets whether to fetch full mempool transaction data  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_set_filter_load` | Sets whether to load bloom filters  # Safety - `config` must be a valid point... | config |
+| `dash_spv_ffi_config_set_masternode_sync_enabled` | Enables or disables masternode synchronization  # Safety - `config` must be a... | config |
 | `dash_spv_ffi_config_set_max_mempool_transactions` | Sets the maximum number of mempool transactions to track  # Safety - `config`... | config |
 | `dash_spv_ffi_config_set_max_peers` | Sets the maximum number of peers to connect to  # Safety - `config` must be a... | config |
 | `dash_spv_ffi_config_set_mempool_strategy` | Sets the mempool synchronization strategy  # Safety - `config` must be a vali... | config |
@@ -197,6 +199,22 @@ dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient) -> i32
 ---
 
 ### Configuration - Detailed
+
+#### `dash_spv_ffi_client_update_config`
+
+```c
+dash_spv_ffi_client_update_config(client: *mut FFIDashSpvClient, config: *const FFIClientConfig,) -> i32
+```
+
+**Description:**
+Update the running client's configuration.  # Safety - `client` must be a valid pointer to an `FFIDashSpvClient`. - `config` must be a valid pointer to an `FFIClientConfig`. - The network in `config` must match the client's network; changing networks at runtime is not supported.
+
+**Safety:**
+- `client` must be a valid pointer to an `FFIDashSpvClient`. - `config` must be a valid pointer to an `FFIClientConfig`. - The network in `config` must match the client's network; changing networks at runtime is not supported.
+
+**Module:** `client`
+
+---
 
 #### `dash_spv_ffi_config_add_peer`
 
@@ -354,6 +372,22 @@ dash_spv_ffi_config_set_filter_load(config: *mut FFIClientConfig, load_filters: 
 
 **Description:**
 Sets whether to load bloom filters  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Safety:**
+- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Module:** `config`
+
+---
+
+#### `dash_spv_ffi_config_set_masternode_sync_enabled`
+
+```c
+dash_spv_ffi_config_set_masternode_sync_enabled(config: *mut FFIClientConfig, enable: bool,) -> i32
+```
+
+**Description:**
+Enables or disables masternode synchronization  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call

@@ -339,6 +339,43 @@ impl FFIDashSpvClient {
     }
 }
 
+/// Update the running client's configuration.
+///
+/// # Safety
+/// - `client` must be a valid pointer to an `FFIDashSpvClient`.
+/// - `config` must be a valid pointer to an `FFIClientConfig`.
+/// - The network in `config` must match the client's network; changing networks at runtime is not supported.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
+    client: *mut FFIDashSpvClient,
+    config: *const FFIClientConfig,
+) -> i32 {
+    null_check!(client);
+    null_check!(config);
+
+    let client = &(*client);
+    let new_config = (&*config).clone_inner();
+
+    let result = client.runtime.block_on(async {
+        let mut guard = client.inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            spv_client.update_config(new_config).await.map_err(|e| e)
+        } else {
+            Err(dash_spv::SpvError::Config(
+                "Client not initialized".to_string(),
+            ))
+        }
+    });
+
+    match result {
+        Ok(()) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
