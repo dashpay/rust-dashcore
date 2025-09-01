@@ -302,7 +302,7 @@ impl NetworkManager for TcpNetworkManager {
         if let Some(connection) = &self.connection {
             // For single peer connection, return the peer's best height
             match connection.peer_info().best_height {
-                Some(height) if height > 0 => Ok(Some(height as u32)),
+                Some(height) if height > 0 => Ok(Some(height)),
                 _ => Ok(None),
             }
         } else {

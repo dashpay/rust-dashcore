@@ -884,7 +884,7 @@ impl MultiPeerNetworkManager {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             addr.hash(&mut hasher);
-            crate::types::PeerId(hasher.finish() as u64)
+            crate::types::PeerId(hasher.finish())
         } else {
             // Default to PeerId(0) if no peer available
             crate::types::PeerId(0)
@@ -1176,7 +1176,7 @@ impl NetworkManager for MultiPeerNetworkManager {
 
             if let Some(peer_height) = peer_info.best_height {
                 if peer_height > 0 {
-                    best_height = best_height.max(peer_height as u32);
+                    best_height = best_height.max(peer_height);
                     log::debug!(
                         "get_peer_best_height: Updated best_height to {} from peer {}",
                         best_height,
