@@ -1,6 +1,7 @@
 pub mod callbacks;
 pub mod client;
 pub mod config;
+pub mod checkpoints;
 pub mod error;
 pub mod platform_integration;
 pub mod types;
@@ -9,6 +10,7 @@ pub mod utils;
 pub use callbacks::*;
 pub use client::*;
 pub use config::*;
+pub use checkpoints::*;
 pub use error::*;
 pub use platform_integration::*;
 pub use types::*;
