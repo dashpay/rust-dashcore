@@ -542,7 +542,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             "Initializing headers2 compression state for peer {} with genesis header",
                             peer_id
                         );
-                            self.headers2_state.init_peer_state(peer_id, genesis_header.clone());
+                            self.headers2_state.init_peer_state(peer_id, *genesis_header);
                         }
                     } else if self.chain_state.tip_height() > 0 {
                         // Get our current tip to use as the base for compression

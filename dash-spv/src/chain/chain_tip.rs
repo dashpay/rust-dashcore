@@ -101,7 +101,7 @@ impl ChainTipManager {
             Err(e) => {
                 // Restore the old tip if adding the new one failed
                 if let Some(tip) = old_tip {
-                    self.tips.insert(tip_hash.clone(), tip);
+                    self.tips.insert(*tip_hash, tip);
                 }
                 Err(e)
             }

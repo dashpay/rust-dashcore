@@ -84,7 +84,7 @@ impl Headers2StateManager {
     pub fn init_peer_state(&mut self, peer_id: PeerId, last_header: Header) {
         let state = self.peer_states.entry(peer_id).or_insert_with(CompressionState::new);
         // Set the previous header in the compression state
-        state.prev_header = Some(last_header.clone());
+        state.prev_header = Some(last_header);
         tracing::debug!(
             "Initialized compression state for peer {} with header at height implied by hash {}",
             peer_id,
