@@ -97,7 +97,9 @@ mod tests {
             chainlock_manager
                 .process_chain_lock(chainlock, &chain_state, &mut storage)
                 .await
-                .expect(&format!("ChainLock at height {} should process successfully", height));
+                .unwrap_or_else(|_| {
+                    panic!("ChainLock at height {} should process successfully", height)
+                });
         }
 
         // Test reorganization protection

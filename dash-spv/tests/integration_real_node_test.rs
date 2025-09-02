@@ -13,7 +13,6 @@ use dash_spv::{
     types::ValidationMode,
 };
 use dashcore::Network;
-use env_logger;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::{debug, info, warn};

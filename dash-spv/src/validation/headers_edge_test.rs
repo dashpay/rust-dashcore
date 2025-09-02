@@ -298,7 +298,7 @@ mod tests {
         );
 
         // Chain with duplicate headers (same header repeated)
-        let headers = vec![header.clone(), header.clone()];
+        let headers = vec![header, header];
 
         // Should fail because second header's prev_blockhash won't match first header's hash
         let result = validator.validate_chain_basic(&headers);

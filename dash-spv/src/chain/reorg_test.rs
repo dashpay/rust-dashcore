@@ -10,7 +10,7 @@ mod tests {
     use dashcore_hashes::Hash;
 
     fn create_test_header(prev: &BlockHeader, nonce: u32) -> BlockHeader {
-        let mut header = prev.clone();
+        let mut header = *prev;
         header.prev_blockhash = prev.block_hash();
         header.nonce = nonce;
         header.time = prev.time + 600; // 10 minutes later

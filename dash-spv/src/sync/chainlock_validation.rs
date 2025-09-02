@@ -344,8 +344,10 @@ mod tests {
 
     #[test]
     fn test_cache_eviction() {
-        let mut config = ChainLockValidationConfig::default();
-        config.cache_size = 2;
+        let config = ChainLockValidationConfig {
+            cache_size: 2,
+            ..Default::default()
+        };
 
         let mut validator = ChainLockValidator::new(config);
 

@@ -338,6 +338,7 @@ impl FFIEventCallbacks {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn call_wallet_transaction(
         &self,
         wallet_id: &str,

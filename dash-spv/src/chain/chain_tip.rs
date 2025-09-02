@@ -272,7 +272,7 @@ mod tests {
         let new_work = ChainWork::from_bytes(work_bytes);
 
         // The extend operation should succeed
-        let result = manager.extend_tip(&tip1_hash, new_header.clone(), new_work);
+        let result = manager.extend_tip(&tip1_hash, new_header, new_work);
         assert!(result.is_ok());
 
         // The old tip should be gone
@@ -315,7 +315,7 @@ mod tests {
         work_bytes[31] = 6;
         let new_work = ChainWork::from_bytes(work_bytes);
 
-        let result = manager.extend_tip(&tip1_hash, new_header.clone(), new_work);
+        let result = manager.extend_tip(&tip1_hash, new_header, new_work);
         assert!(result.is_ok());
 
         // Verify final state - old tip gone, new tip present

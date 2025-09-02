@@ -132,16 +132,8 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     let mut hash_array = [0u8; 32];
     hash_array.copy_from_slice(quorum_hash_bytes);
 
-    // Convert quorum type and hash for engine lookup
-    let llmq_type = match LLMQType::try_from(quorum_type as u8) {
-        Ok(t) => t,
-        Err(_) => {
-            return FFIResult::error(
-                FFIErrorCode::InvalidArgument,
-                &format!("Invalid quorum type: {}", quorum_type),
-            );
-        }
-    };
+    // Convert quorum type and hash for engine lookup (infallible)
+    let llmq_type: LLMQType = (quorum_type as u8).into();
     let quorum_hash = QuorumHash::from_byte_array(hash_array);
 
     // Get the masternode list engine directly for efficient access

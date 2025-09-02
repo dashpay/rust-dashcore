@@ -11,7 +11,6 @@ use dash_spv::{
 };
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
 use dashcore_hashes::Hash;
-use env_logger;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::{debug, info};
@@ -138,7 +137,7 @@ async fn test_header_batch_processing() {
         storage
             .store_headers(&batch)
             .await
-            .expect(&format!("Failed to store batch {}-{}", batch_start, batch_end));
+            .unwrap_or_else(|_| panic!("Failed to store batch {}-{}", batch_start, batch_end));
 
         let expected_tip = batch_end - 1;
         assert_eq!(

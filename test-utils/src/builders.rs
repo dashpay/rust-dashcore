@@ -138,7 +138,7 @@ impl TestTransactionBuilder {
 
     pub fn add_output(mut self, value: u64, script_pubkey: ScriptBuf) -> Self {
         let output = TxOut {
-            value: value,
+            value,
             script_pubkey,
         };
         self.outputs.push(output);

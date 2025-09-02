@@ -1,6 +1,7 @@
 //! Comprehensive unit tests for bloom filter module
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::bloom::{
         builder::BloomFilterBuilder,
@@ -667,16 +668,16 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = BloomFilterConfig::default();
+        // Construct with desired custom fields instead of reassigning after Default
+        let config = BloomFilterConfig {
+            false_positive_rate: 0.0001,
+            elements: 1,
+            max_false_positive_rate: 0.1,
+            ..Default::default()
+        };
 
-        // Valid configurations
-        config.false_positive_rate = 0.0001;
         assert!(config.false_positive_rate > 0.0 && config.false_positive_rate < 1.0);
-
-        config.elements = 1;
         assert!(config.elements > 0);
-
-        config.max_false_positive_rate = 0.1;
         assert!(config.max_false_positive_rate > config.false_positive_rate);
     }
 

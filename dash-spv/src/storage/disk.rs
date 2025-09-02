@@ -49,6 +49,7 @@ enum WorkerCommand {
 
 /// Notifications from the background worker
 #[derive(Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 enum WorkerNotification {
     HeaderSegmentSaved {
         segment_id: u32,

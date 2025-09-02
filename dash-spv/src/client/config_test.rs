@@ -128,8 +128,10 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_max_headers() {
-        let mut config = ClientConfig::default();
-        config.max_headers_per_message = 0;
+        let config = ClientConfig {
+            max_headers_per_message: 0,
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -138,8 +140,10 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_filter_checkpoint_interval() {
-        let mut config = ClientConfig::default();
-        config.filter_checkpoint_interval = 0;
+        let config = ClientConfig {
+            filter_checkpoint_interval: 0,
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -148,8 +152,10 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_max_peers() {
-        let mut config = ClientConfig::default();
-        config.max_peers = 0;
+        let config = ClientConfig {
+            max_peers: 0,
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -158,8 +164,10 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_max_concurrent_filter_requests() {
-        let mut config = ClientConfig::default();
-        config.max_concurrent_filter_requests = 0;
+        let config = ClientConfig {
+            max_concurrent_filter_requests: 0,
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -168,9 +176,11 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_mempool_config() {
-        let mut config = ClientConfig::default();
-        config.enable_mempool_tracking = true;
-        config.max_mempool_transactions = 0;
+        let config = ClientConfig {
+            enable_mempool_tracking: true,
+            max_mempool_transactions: 0,
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -179,9 +189,11 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_mempool_timeout() {
-        let mut config = ClientConfig::default();
-        config.enable_mempool_tracking = true;
-        config.mempool_timeout_secs = 0;
+        let config = ClientConfig {
+            enable_mempool_tracking: true,
+            mempool_timeout_secs: 0,
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -190,10 +202,12 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_selective_strategy() {
-        let mut config = ClientConfig::default();
-        config.enable_mempool_tracking = true;
-        config.mempool_strategy = MempoolStrategy::Selective;
-        config.recent_send_window_secs = 0;
+        let config = ClientConfig {
+            enable_mempool_tracking: true,
+            mempool_strategy: MempoolStrategy::Selective,
+            recent_send_window_secs: 0,
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -242,8 +256,10 @@ mod tests {
 
     #[test]
     fn test_wallet_creation_time() {
-        let mut config = ClientConfig::default();
-        config.wallet_creation_time = Some(1234567890);
+        let config = ClientConfig {
+            wallet_creation_time: Some(1234567890),
+            ..Default::default()
+        };
 
         assert_eq!(config.wallet_creation_time, Some(1234567890));
     }

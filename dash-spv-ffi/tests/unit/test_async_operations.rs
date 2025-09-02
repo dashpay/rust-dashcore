@@ -146,7 +146,7 @@ mod tests {
 
             // Check progress was in valid range
             let last_progress = *test_data.last_progress.lock().unwrap();
-            assert!(last_progress >= 0.0 && last_progress <= 100.0);
+            assert!((0.0..=100.0).contains(&last_progress));
 
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);

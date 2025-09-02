@@ -255,7 +255,7 @@ async fn test_recovery_from_validation_errors() {
     let mut recovery_manager = RecoveryManager::new();
 
     // Test various validation error scenarios
-    let validation_errors = vec![
+    let validation_errors = [
         ValidationError::InvalidProofOfWork,
         ValidationError::InvalidHeaderChain("Timestamp before previous block".to_string()),
         ValidationError::InvalidFilterHeaderChain("Filter header mismatch".to_string()),
@@ -390,7 +390,7 @@ async fn test_recovery_statistics_tracking() {
     let mut storage = MockStorageManager::new();
 
     // Simulate various recovery scenarios
-    let scenarios = vec![
+    let scenarios = [
         (SyncError::Timeout("Test timeout".to_string()), true),
         (SyncError::Network("Connection failed".to_string()), true),
         (SyncError::Validation("Invalid header".to_string()), false),

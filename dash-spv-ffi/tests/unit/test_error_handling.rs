@@ -123,7 +123,7 @@ mod tests {
         let sync_err = SpvError::Sync(SyncError::Timeout("Test timeout".to_string()));
         assert_eq!(FFIErrorCode::from(sync_err) as i32, FFIErrorCode::SyncError as i32);
 
-        let io_err = SpvError::Io(std::io::Error::new(std::io::ErrorKind::Other, "test"));
+        let io_err = SpvError::Io(std::io::Error::other("test"));
         assert_eq!(FFIErrorCode::from(io_err) as i32, FFIErrorCode::RuntimeError as i32);
 
         let config_err = SpvError::Config("test".to_string());

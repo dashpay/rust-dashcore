@@ -35,6 +35,10 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> MockStorage<K, V> {
     pub fn len(&self) -> usize {
         self.data.lock().unwrap().len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.lock().unwrap().is_empty()
+    }
 }
 
 impl<K, V> Default for MockStorage<K, V> {
@@ -83,6 +87,12 @@ impl ErrorInjector {
         } else {
             *self.should_fail.lock().unwrap()
         }
+    }
+}
+
+impl Default for ErrorInjector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

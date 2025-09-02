@@ -21,6 +21,9 @@ impl FFIString {
         }
     }
 
+    /// # Safety
+    /// - `ptr` must be either null or point to a valid, NUL-terminated C string.
+    /// - The pointer must remain valid for the duration of this call.
     pub unsafe fn from_ptr(ptr: *const c_char) -> Result<String, String> {
         if ptr.is_null() {
             return Err("Null pointer".to_string());
@@ -236,8 +239,8 @@ impl From<PeerInfo> for FFIPeerInfo {
                 .as_secs(),
             version: info.version.unwrap_or(0),
             services: info.services.unwrap_or(0),
-            user_agent: FFIString::new(&info.user_agent.as_deref().unwrap_or("")),
-            best_height: info.best_height.unwrap_or(0) as u32,
+            user_agent: FFIString::new(info.user_agent.as_deref().unwrap_or("")),
+            best_height: info.best_height.unwrap_or(0),
         }
     }
 }
@@ -284,6 +287,10 @@ impl FFIArray {
         }
     }
 
+    /// # Safety
+    /// - The `data` pointer must be valid for reads of `len * size_of::<T>()` bytes.
+    /// - The memory must not be mutated for the duration of the returned slice borrow.
+    /// - Caller must ensure the `elem_size`/`elem_align` match `T` when interpreting the data.
     pub unsafe fn as_slice<T>(&self) -> &[T] {
         if self.data.is_null() || self.len == 0 {
             &[]
@@ -294,6 +301,9 @@ impl FFIArray {
 }
 
 #[no_mangle]
+/// # Safety
+/// - `s.ptr` must be a pointer previously returned by `FFIString::new` or compatible.
+/// - It must not be used after this call.
 pub unsafe extern "C" fn dash_spv_ffi_string_destroy(s: FFIString) {
     if !s.ptr.is_null() {
         let _ = CString::from_raw(s.ptr);
@@ -301,6 +311,9 @@ pub unsafe extern "C" fn dash_spv_ffi_string_destroy(s: FFIString) {
 }
 
 #[no_mangle]
+/// # Safety
+/// - `arr` must be either null or a valid pointer to an `FFIArray` previously constructed in Rust.
+/// - The memory referenced by `arr.data` must not be used after this call.
 pub unsafe extern "C" fn dash_spv_ffi_array_destroy(arr: *mut FFIArray) {
     if !arr.is_null() {
         // Only deallocate the vector buffer recorded in the struct; do not free the struct itself.
@@ -325,6 +338,10 @@ pub unsafe extern "C" fn dash_spv_ffi_array_destroy(arr: *mut FFIArray) {
 /// - Frees the underlying vector buffer stored in FFIArray
 /// - Does not free the FFIArray struct itself (safe for both stack- and heap-allocated structs)
 #[no_mangle]
+/// # Safety
+/// - `arr` must be either null or a valid pointer to an `FFIArray` whose elements are `*mut FFIString`.
+/// - Each element pointer must be valid or null; non-null entries are freed.
+/// - The memory referenced by `arr.data` must not be used after this call.
 pub unsafe extern "C" fn dash_spv_ffi_string_array_destroy(arr: *mut FFIArray) {
     if arr.is_null() {
         return;

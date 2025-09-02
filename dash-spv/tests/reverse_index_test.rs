@@ -73,7 +73,7 @@ async fn test_reverse_index_disk_storage() {
             let stored_header = storage.get_header(i).await.unwrap().unwrap();
             let hash = stored_header.block_hash();
             let height = storage.get_header_height_by_hash(&hash).await.unwrap();
-            assert_eq!(height, Some(i as u32), "Height mismatch after reload for header {}", i);
+            assert_eq!(height, Some(i), "Height mismatch after reload for header {}", i);
         }
     }
 }

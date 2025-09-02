@@ -95,6 +95,12 @@ impl MockNetworkManager {
     }
 }
 
+impl Default for MockNetworkManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl NetworkManager for MockNetworkManager {
     fn as_any(&self) -> &dyn Any {

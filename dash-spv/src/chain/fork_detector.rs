@@ -257,7 +257,7 @@ mod tests {
         // Add genesis
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis header");
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         // Header that extends main chain
         let header1 = create_test_header(genesis.block_hash(), 1);
@@ -266,7 +266,7 @@ mod tests {
 
         // Add header1 to chain
         storage.store_header(&header1, 1).expect("Failed to store header1");
-        chain_state.add_header(header1.clone());
+        chain_state.add_header(header1);
 
         // Header that creates a fork from genesis
         let fork_header = create_test_header(genesis.block_hash(), 2);
@@ -307,12 +307,12 @@ mod tests {
         // Add genesis
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis header");
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         // Add a header to extend the main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
         storage.store_header(&header1, 1).expect("Failed to store header1");
-        chain_state.add_header(header1.clone());
+        chain_state.add_header(header1);
 
         // Create 3 forks from genesis, should only keep 2
         for i in 0..3 {

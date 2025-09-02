@@ -662,7 +662,7 @@ async fn test_tip_height_segment_boundary_race() {
 
         // Verify tip is at segment boundary
         let tip_height = storage.get_tip_height().await.unwrap();
-        assert_eq!(tip_height, Some((segment_size - 1) as u32));
+        assert_eq!(tip_height, Some(segment_size - 1));
 
         storage.shutdown().await.unwrap();
     }
@@ -676,7 +676,7 @@ async fn test_tip_height_segment_boundary_race() {
         for i in 1..12 {
             let start = i * segment_size;
             let headers: Vec<BlockHeader> =
-                (start..start + segment_size).map(|h| create_test_header(h as u32)).collect();
+                (start..start + segment_size).map(create_test_header).collect();
             storage.store_headers(&headers).await.unwrap();
 
             // After storing each segment, verify tip consistency
@@ -691,7 +691,7 @@ async fn test_tip_height_segment_boundary_race() {
         }
 
         // Final consistency check - try to access the original tip
-        let original_tip = (segment_size - 1) as u32;
+        let original_tip = segment_size - 1;
         let header_at_original_tip = storage.get_header(original_tip).await.unwrap();
 
         // This might be None due to eviction, which is expected

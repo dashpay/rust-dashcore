@@ -38,14 +38,14 @@ mod tests {
         // Add a checkpoint header at height 1000
         let checkpoint_header = create_test_header(BlockHash::from([0u8; 32]), 1000);
         storage.store_header(&checkpoint_header, 1000).expect("Failed to store checkpoint");
-        chain_state.add_header(checkpoint_header.clone());
+        chain_state.add_header(checkpoint_header);
 
         // Add more headers building on checkpoint
         let mut prev_hash = checkpoint_header.block_hash();
         for i in 1..5 {
             let header = create_test_header(prev_hash, 1000 + i);
             storage.store_header(&header, 1000 + i).expect("Failed to store header");
-            chain_state.add_header(header.clone());
+            chain_state.add_header(header);
             prev_hash = header.block_hash();
         }
 
@@ -70,14 +70,14 @@ mod tests {
         // Setup genesis and main chain
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         // Build main chain
         let mut main_chain_tip = genesis.block_hash();
         for i in 1..10 {
             let header = create_test_header(main_chain_tip, i);
             storage.store_header(&header, i).expect("Failed to store header");
-            chain_state.add_header(header.clone());
+            chain_state.add_header(header);
             main_chain_tip = header.block_hash();
         }
 
@@ -122,12 +122,12 @@ mod tests {
         // Setup genesis and build a main chain
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         // Build main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
         storage.store_header(&header1, 1).expect("Failed to store header");
-        chain_state.add_header(header1.clone());
+        chain_state.add_header(header1);
 
         // Create more forks than the limit from genesis (not tip)
         let mut created_forks = Vec::new();
@@ -149,7 +149,7 @@ mod tests {
         // Since all forks have equal work, eviction order is not guaranteed
         // Just verify we have 3 unique forks
         assert_eq!(fork_nonces.len(), 3);
-        assert!(fork_nonces.iter().all(|&n| n >= 100 && n <= 104));
+        assert!(fork_nonces.iter().all(|&n| (100..=104).contains(&n)));
     }
 
     #[test]
@@ -161,12 +161,12 @@ mod tests {
         // Setup genesis and build a main chain
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         // Build main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
         storage.store_header(&header1, 1).expect("Failed to store header");
-        chain_state.add_header(header1.clone());
+        chain_state.add_header(header1);
 
         // Create two forks from genesis (not tip)
         let fork1_header = create_test_header(genesis.block_hash(), 100);
@@ -207,14 +207,14 @@ mod tests {
         // Setup genesis
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
-        chain_state.lock().unwrap().add_header(genesis.clone());
+        chain_state.lock().unwrap().add_header(genesis);
 
         // Build a base chain
         let mut prev_hash = genesis.block_hash();
         for i in 1..20 {
             let header = create_test_header(prev_hash, i);
             storage.store_header(&header, i).expect("Failed to store header");
-            chain_state.lock().unwrap().add_header(header.clone());
+            chain_state.lock().unwrap().add_header(header);
             prev_hash = header.block_hash();
         }
 
@@ -229,7 +229,7 @@ mod tests {
             let handle = thread::spawn(move || {
                 // Each thread creates forks at different heights
                 for i in 0..10 {
-                    let fork_height = (thread_id * 3 + i % 3) as u32;
+                    let fork_height = thread_id * 3 + i % 3;
                     let chain_state_lock = chain_state_clone.lock().unwrap();
 
                     if let Some(fork_point_header) = chain_state_lock.header_at_height(fork_height)
@@ -262,12 +262,12 @@ mod tests {
         let forks = detector_lock.get_forks();
 
         // Should have multiple forks but within the limit
-        assert!(forks.len() > 0);
+        assert!(!forks.is_empty());
         assert!(forks.len() <= 50);
 
         // All forks should have valid structure
         for fork in forks {
-            assert!(fork.headers.len() > 0);
+            assert!(!fork.headers.is_empty());
             assert_eq!(fork.tip_hash, fork.headers.last().unwrap().block_hash());
             assert_eq!(fork.tip_height, fork.fork_height + fork.headers.len() as u32);
         }
@@ -287,7 +287,7 @@ mod tests {
         // Add genesis
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         // Test 2: Header connecting to non-existent block
         let phantom_hash = BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(&[42u8]));
@@ -310,12 +310,12 @@ mod tests {
         // Setup genesis and build a main chain
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         // Build main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
         storage.store_header(&header1, 1).expect("Failed to store header");
-        chain_state.add_header(header1.clone());
+        chain_state.add_header(header1);
 
         // Create multiple forks from genesis (not tip)
         let mut fork_tips = Vec::new();
@@ -328,16 +328,16 @@ mod tests {
         assert_eq!(detector.get_forks().len(), 5);
 
         // Remove specific forks
-        for i in 0..3 {
-            let removed = detector.remove_fork(&fork_tips[i]);
+        for tip in fork_tips.iter().take(3) {
+            let removed = detector.remove_fork(tip);
             assert!(removed.is_some());
         }
 
         assert_eq!(detector.get_forks().len(), 2);
 
         // Verify removed forks can't be found
-        for i in 0..3 {
-            assert!(detector.get_fork(&fork_tips[i]).is_none());
+        for tip in fork_tips.iter().take(3) {
+            assert!(detector.get_fork(tip).is_none());
         }
 
         // Clear all remaining forks
@@ -355,7 +355,7 @@ mod tests {
         // Add genesis to storage and chain state
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         // Chain state tip is at genesis (height 0)
         assert_eq!(chain_state.tip_height(), 0);
@@ -374,13 +374,13 @@ mod tests {
 
         // Add headers to chain state but not storage (simulating sync issue)
         let genesis = genesis_block(Network::Dash).header;
-        chain_state.add_header(genesis.clone());
+        chain_state.add_header(genesis);
 
         let header1 = create_test_header(genesis.block_hash(), 1);
-        chain_state.add_header(header1.clone());
+        chain_state.add_header(header1);
 
         let header2 = create_test_header(header1.block_hash(), 2);
-        chain_state.add_header(header2.clone());
+        chain_state.add_header(header2);
 
         // Try to extend from header1 (in chain state but not storage)
         let header3 = create_test_header(header1.block_hash(), 3);

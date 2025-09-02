@@ -548,7 +548,7 @@ mod tests {
         let reorg_mgr = ReorgManager::new(100, false);
 
         let genesis = genesis_block(Network::Dash).header;
-        let tip = ChainTip::new(genesis.clone(), 0, ChainWork::from_header(&genesis));
+        let tip = ChainTip::new(genesis, 0, ChainWork::from_header(&genesis));
 
         // Create a fork with less work - should not reorg
         let fork = Fork {
@@ -556,7 +556,7 @@ mod tests {
             fork_height: 0,
             tip_hash: genesis.block_hash(),
             tip_height: 1,
-            headers: vec![genesis.clone()],
+            headers: vec![genesis],
             chain_work: ChainWork::zero(), // Less work
         };
 
@@ -564,7 +564,7 @@ mod tests {
         let result = reorg_mgr.should_reorganize(&tip, &fork, &storage);
         // Fork has less work, so should return Ok(false), not an error
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]
@@ -572,7 +572,7 @@ mod tests {
         let reorg_mgr = ReorgManager::new(10, false);
 
         let genesis = genesis_block(Network::Dash).header;
-        let tip = ChainTip::new(genesis.clone(), 100, ChainWork::from_header(&genesis));
+        let tip = ChainTip::new(genesis, 100, ChainWork::from_header(&genesis));
 
         // Create a fork that would require deep reorg
         let fork = Fork {
