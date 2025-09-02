@@ -13,11 +13,11 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 #[derive(Debug)]
 pub enum BlockProcessingTask {
     ProcessBlock {
-        block: dashcore::Block,
+        block: Box<dashcore::Block>,
         response_tx: oneshot::Sender<Result<()>>,
     },
     ProcessTransaction {
-        tx: dashcore::Transaction,
+        tx: Box<dashcore::Transaction>,
         response_tx: oneshot::Sender<Result<()>>,
     },
     ProcessCompactFilter {
@@ -126,7 +126,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                     }
 
                     // Process block and handle errors
-                    let result = self.process_block_internal(block).await;
+                    let result = self.process_block_internal(*block).await;
 
                     match &result {
                         Ok(()) => {
@@ -160,7 +160,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                     response_tx,
                 } => {
                     let txid = tx.txid();
-                    let result = self.process_transaction_internal(tx).await;
+                    let result = self.process_transaction_internal(*tx).await;
 
                     if let Err(e) = &result {
                         tracing::error!("❌ TRANSACTION PROCESSING FAILED for tx {}: {}", txid, e);

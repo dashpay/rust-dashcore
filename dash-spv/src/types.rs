@@ -146,7 +146,7 @@ impl DetailedSyncProgress {
 }
 
 /// Chain state maintained by the SPV client.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ChainState {
     /// Block headers indexed by height.
     pub headers: Vec<BlockHeader>,
@@ -174,22 +174,6 @@ pub struct ChainState {
 
     /// Whether the chain was synced from a checkpoint rather than genesis.
     pub synced_from_checkpoint: bool,
-}
-
-impl Default for ChainState {
-    fn default() -> Self {
-        Self {
-            headers: Vec::new(),
-            filter_headers: Vec::new(),
-            last_chainlock_height: None,
-            last_chainlock_hash: None,
-            current_filter_tip: None,
-            masternode_engine: None,
-            last_masternode_diff_height: None,
-            sync_base_height: 0,
-            synced_from_checkpoint: false,
-        }
-    }
 }
 
 impl ChainState {
@@ -309,7 +293,7 @@ impl ChainState {
     /// Update chain lock status
     pub fn update_chain_lock(&mut self, height: u32, hash: BlockHash) {
         // Only update if this is a newer chain lock
-        if self.last_chainlock_height.map_or(true, |h| height > h) {
+        if self.last_chainlock_height.is_none_or(|h| height > h) {
             self.last_chainlock_height = Some(height);
             self.last_chainlock_hash = Some(hash);
         }
@@ -317,7 +301,7 @@ impl ChainState {
 
     /// Check if a block at given height is chain-locked
     pub fn is_height_chain_locked(&self, height: u32) -> bool {
-        self.last_chainlock_height.map_or(false, |locked_height| height <= locked_height)
+        self.last_chainlock_height.is_some_and(|locked_height| height <= locked_height)
     }
 
     /// Check if we have a chain lock
@@ -814,7 +798,7 @@ pub enum SpvEvent {
         /// Transaction ID.
         txid: Txid,
         /// Raw transaction data.
-        transaction: Transaction,
+        transaction: Box<Transaction>,
         /// Net amount change (positive for received, negative for sent).
         amount: i64,
         /// Addresses affected by this transaction.

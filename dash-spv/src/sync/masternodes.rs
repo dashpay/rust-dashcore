@@ -265,12 +265,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             tracing::debug!("🔗 Feeding QRInfo block heights to masternode engine");
 
             // Collect all block hashes from QRInfo MnListDiffs
-            let mut block_hashes = Vec::new();
-            block_hashes.push(qr_info.mn_list_diff_tip.block_hash);
-            block_hashes.push(qr_info.mn_list_diff_h.block_hash);
-            block_hashes.push(qr_info.mn_list_diff_at_h_minus_c.block_hash);
-            block_hashes.push(qr_info.mn_list_diff_at_h_minus_2c.block_hash);
-            block_hashes.push(qr_info.mn_list_diff_at_h_minus_3c.block_hash);
+            let mut block_hashes = vec![
+                qr_info.mn_list_diff_tip.block_hash,
+                qr_info.mn_list_diff_h.block_hash,
+                qr_info.mn_list_diff_at_h_minus_c.block_hash,
+                qr_info.mn_list_diff_at_h_minus_2c.block_hash,
+                qr_info.mn_list_diff_at_h_minus_3c.block_hash,
+            ];
 
             if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
                 block_hashes.push(diff.block_hash);

@@ -108,15 +108,16 @@ impl ForkDetector {
         // Check if this connects to the main chain (creates new fork)
         if let Ok(Some(height)) = storage.get_header_height(&prev_hash) {
             // Check if this would create a fork from before our checkpoint
-            if chain_state.synced_from_checkpoint && chain_state.sync_base_height > 0 {
-                if height < chain_state.sync_base_height {
-                    tracing::warn!(
+            if chain_state.synced_from_checkpoint
+                && chain_state.sync_base_height > 0
+                && height < chain_state.sync_base_height
+            {
+                tracing::warn!(
                         "Rejecting header that would create fork from height {} (before checkpoint base {}). \
                         This likely indicates headers from genesis were received during checkpoint sync.",
                         height, chain_state.sync_base_height
                     );
-                    return ForkDetectionResult::Orphan;
-                }
+                return ForkDetectionResult::Orphan;
             }
 
             // Found connection point - this creates a new fork

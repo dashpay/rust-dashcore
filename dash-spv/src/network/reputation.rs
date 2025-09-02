@@ -139,7 +139,7 @@ impl Default for PeerReputation {
 impl PeerReputation {
     /// Check if the peer is currently banned
     pub fn is_banned(&self) -> bool {
-        self.banned_until.map_or(false, |until| Instant::now() < until)
+        self.banned_until.is_some_and(|until| Instant::now() < until)
     }
 
     /// Get remaining ban time
@@ -198,6 +198,12 @@ pub struct PeerReputationManager {
     max_events: usize,
 }
 
+impl Default for PeerReputationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PeerReputationManager {
     /// Create a new reputation manager
     pub fn new() -> Self {
@@ -224,7 +230,7 @@ impl PeerReputationManager {
         // Update score
         let old_score = reputation.score;
         reputation.score =
-            (reputation.score + score_change).max(MIN_SCORE).min(MAX_MISBEHAVIOR_SCORE);
+            (reputation.score + score_change).clamp(MIN_SCORE, MAX_MISBEHAVIOR_SCORE);
 
         // Track positive/negative actions
         if score_change > 0 {

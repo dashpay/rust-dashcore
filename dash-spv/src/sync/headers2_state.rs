@@ -76,15 +76,15 @@ impl Headers2StateManager {
 
     /// Get or create compression state for a peer
     pub fn get_state(&mut self, peer_id: PeerId) -> &mut CompressionState {
-        self.peer_states.entry(peer_id).or_insert_with(CompressionState::new)
+        self.peer_states.entry(peer_id).or_default()
     }
 
     /// Initialize compression state for a peer with a known header
     /// This is useful when starting sync from a specific point
     pub fn init_peer_state(&mut self, peer_id: PeerId, last_header: Header) {
-        let state = self.peer_states.entry(peer_id).or_insert_with(CompressionState::new);
+        let state = self.peer_states.entry(peer_id).or_default();
         // Set the previous header in the compression state
-        state.prev_header = Some(last_header.clone());
+        state.prev_header = Some(last_header);
         tracing::debug!(
             "Initialized compression state for peer {} with header at height implied by hash {}",
             peer_id,

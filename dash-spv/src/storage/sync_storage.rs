@@ -14,6 +14,12 @@ pub struct MemoryStorage {
     block_txs: RwLock<HashMap<BlockHash, Vec<Txid>>>,
 }
 
+impl Default for MemoryStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryStorage {
     pub fn new() -> Self {
         Self {

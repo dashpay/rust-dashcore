@@ -10,6 +10,12 @@ pub struct MessageHandler {
     stats: MessageStats,
 }
 
+impl Default for MessageHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageHandler {
     /// Create a new message handler.
     pub fn new() -> Self {

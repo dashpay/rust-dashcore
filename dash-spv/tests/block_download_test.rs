@@ -16,18 +16,15 @@ use dashcore::{
     network::message::NetworkMessage,
     network::message_blockdata::Inventory,
     pow::CompactTarget,
-    Address, BlockHash, Network,
+    BlockHash,
 };
 use dashcore_hashes::Hash;
 
 use dash_spv::{
-    client::ClientConfig,
-    network::NetworkManager,
-    storage::MemoryStorageManager,
-    sync::{sequential::SequentialSyncManager, FilterSyncManager},
-    types::FilterMatch,
+    client::ClientConfig, network::NetworkManager, storage::MemoryStorageManager,
+    sync::FilterSyncManager, types::FilterMatch,
 };
-use key_wallet::wallet::ManagedWalletInfo;
+// use key_wallet::wallet::ManagedWalletInfo;
 
 /// Mock network manager for testing
 struct MockNetworkManager {
@@ -45,16 +42,8 @@ impl MockNetworkManager {
         }
     }
 
-    async fn add_response(&self, message: NetworkMessage) {
-        self.received_messages.write().await.push(message);
-    }
-
     async fn get_sent_messages(&self) -> Vec<NetworkMessage> {
         self.sent_messages.read().await.clone()
-    }
-
-    async fn clear_sent_messages(&self) {
-        self.sent_messages.write().await.clear();
     }
 }
 
@@ -167,13 +156,13 @@ fn create_test_config() -> ClientConfig {
         .with_connection_timeout(std::time::Duration::from_secs(10))
 }
 
-fn create_test_address() -> Address {
-    use dashcore::{Address, PubkeyHash, ScriptBuf};
-    use dashcore_hashes::Hash;
-    let pubkey_hash = PubkeyHash::from_slice(&[1u8; 20]).unwrap();
-    let script = ScriptBuf::new_p2pkh(&pubkey_hash);
-    Address::from_script(&script, Network::Testnet).unwrap()
-}
+// fn create_test_address() -> Address {
+//     use dashcore::{Address, PubkeyHash, ScriptBuf};
+//     use dashcore_hashes::Hash;
+//     let pubkey_hash = PubkeyHash::from_slice(&[1u8; 20]).unwrap();
+//     let script = ScriptBuf::new_p2pkh(&pubkey_hash);
+//     Address::from_script(&script, Network::Testnet).unwrap()
+// }
 
 fn create_test_block() -> Block {
     let header = BlockHeader {
@@ -374,29 +363,7 @@ async fn test_process_multiple_filter_matches() {
 
 #[ignore = "mock implementation incomplete"]
 #[tokio::test]
-async fn test_sync_manager_integration() {
-    let config = create_test_config();
-    let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let wallet = Arc::new(RwLock::new(key_wallet_manager::wallet_manager::WalletManager::<
-        ManagedWalletInfo,
-    >::new()));
-    let mut sync_manager: SequentialSyncManager<MemoryStorageManager, MockNetworkManager, _> =
-        SequentialSyncManager::new(&config, received_heights, wallet)
-            .expect("Failed to create SequentialSyncManager for integration test");
-    let mut network = MockNetworkManager::new();
-
-    let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
-    let filter_matches = vec![create_test_filter_match(block_hash, 100)];
-
-    // Request block downloads through sync manager
-    // Note: request_block_downloads method doesn't exist in the current SequentialSyncManager API
-    // let result = sync_manager.request_block_downloads(filter_matches, &mut network).await;
-    // assert!(result.is_ok());
-
-    // Check state through sync manager
-    // Note: Methods for checking pending downloads and handling blocks
-    // may not exist in current API. This test may need significant refactoring.
-}
+async fn test_sync_manager_integration() {}
 
 #[ignore = "mock implementation incomplete"]
 #[tokio::test]
@@ -409,7 +376,7 @@ async fn test_filter_match_and_download_workflow() {
     let mut network = MockNetworkManager::new();
 
     // Create test address (WatchItem replaced with wallet-based tracking)
-    let address = create_test_address();
+    // let address = create_test_address();
 
     // This is a simplified test - in real usage, we'd need to:
     // 1. Store filter headers and filters

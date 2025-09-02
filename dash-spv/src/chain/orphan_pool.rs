@@ -101,7 +101,7 @@ impl OrphanPool {
                         if let Some(orphan) = self.orphans_by_hash.get_mut(&o.header.block_hash()) {
                             orphan.process_attempts += 1;
                         }
-                        o.header.clone()
+                        o.header
                     })
                     .collect()
             })

@@ -9,6 +9,12 @@ pub struct InstantLockValidator {
     // TODO: Add masternode list for signature verification
 }
 
+impl Default for InstantLockValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InstantLockValidator {
     /// Create a new InstantLock validator.
     pub fn new() -> Self {

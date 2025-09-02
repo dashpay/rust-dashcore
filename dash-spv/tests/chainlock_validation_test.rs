@@ -8,19 +8,16 @@
 //! Integration tests for ChainLock validation flow with masternode engine
 
 use dash_spv::client::{ClientConfig, DashSpvClient};
-use dash_spv::error::Result;
 use dash_spv::network::NetworkManager;
-use dash_spv::storage::{DiskStorageManager, StorageManager};
-use dash_spv::types::{ChainState, ValidationMode};
-use dashcore::block::Header;
+use dash_spv::storage::DiskStorageManager;
+use dash_spv::types::ValidationMode;
 use dashcore::blockdata::constants::genesis_block;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+// use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Network;
 use dashcore::{BlockHash, ChainLock};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
-use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 use tracing::{info, Level};
@@ -179,45 +176,7 @@ fn create_test_chainlock(height: u32, block_hash: BlockHash) -> ChainLock {
 async fn test_chainlock_validation_without_masternode_engine() {
     init_logging();
 
-    // Create temp directory for storage
-    let temp_dir = TempDir::new().unwrap();
-    let storage_path = temp_dir.path().to_path_buf();
-
-    // Create storage and network managers
-    let mut storage = DiskStorageManager::new(storage_path).await.unwrap();
-    let network = MockNetworkManager::new();
-
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
-    // Create client config
-    let config = ClientConfig {
-        network: Network::Dash,
-        enable_filters: false,
-        enable_masternodes: false,
-        validation_mode: ValidationMode::Basic,
-        ..Default::default()
-    };
-
-    // Create the SPV client
-    let mut client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
-
-    // Add a test header to storage
-    let genesis = genesis_block(Network::Dash).header;
-    // Note: storage_mut() is not available in current API
-    // let storage = client.storage_mut();
-    // storage.store_header(&genesis, 0).await.unwrap();
-
-    // Create a test ChainLock for genesis block
-    let chain_lock = create_test_chainlock(0, genesis.block_hash());
-
-    // Process the ChainLock (should queue it since no masternode engine)
-    let chainlock_manager = client.chainlock_manager();
-    let chain_state = ChainState::new();
-    // Note: In the current API, we need to access storage differently
-    // For now, skip this test as it needs to be rewritten for the new client API
-
-    // Skip the rest of this test for now
+    // Placeholder: test requires API updates; skip for now
     return;
 
     // Verify it was queued
@@ -237,7 +196,7 @@ async fn test_chainlock_validation_with_masternode_engine() {
     let storage_path = temp_dir.path().to_path_buf();
 
     // Create storage and network managers
-    let mut storage = DiskStorageManager::new(storage_path).await.unwrap();
+    let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let mut network = MockNetworkManager::new();
 
     // Add a test ChainLock to be received
@@ -258,7 +217,7 @@ async fn test_chainlock_validation_with_masternode_engine() {
     };
 
     // Create the SPV client
-    let mut client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
+    let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
 
     // Add genesis header
     // Note: storage_mut() is not available in current API
@@ -267,18 +226,18 @@ async fn test_chainlock_validation_with_masternode_engine() {
 
     // Simulate masternode sync completion by creating a mock engine
     // In a real scenario, this would be populated by the masternode sync
-    let mock_engine = MasternodeListEngine::default_for_network(Network::Dash);
+    // let mock_engine = MasternodeListEngine::default_for_network(Network::Dash);
 
     // Update the ChainLock manager with the engine
     let updated = client.update_chainlock_validation().unwrap();
     assert!(!updated); // Should be false since we don't have a real engine
 
     // For testing, directly set a mock engine
-    let engine_arc = Arc::new(mock_engine);
-    client.chainlock_manager().set_masternode_engine(engine_arc);
+    // let engine_arc = Arc::new(mock_engine);
+    // client.chainlock_manager().set_masternode_engine(engine_arc);
 
-    // Process pending ChainLocks
-    let chain_state = ChainState::new();
+    // Process pending ChainLocks (skipped for now due to API changes)
+    // let chain_state = ChainState::new();
     // Note: storage_mut() is not available in current API
     // let storage = client.storage_mut();
     // Skip this test section as it needs to be rewritten for the new client API
@@ -295,7 +254,7 @@ async fn test_chainlock_queue_and_process_flow() {
     let storage_path = temp_dir.path().to_path_buf();
 
     // Create storage
-    let mut storage = DiskStorageManager::new(storage_path).await.unwrap();
+    let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
     // Create wallet manager
@@ -333,8 +292,7 @@ async fn test_chainlock_queue_and_process_flow() {
         // assert_eq!(pending[2].block_height, 300);
     }
 
-    // Process pending (will fail validation but clear the queue)
-    let chain_state = ChainState::new();
+    // Process pending (skipped for now due to API changes)
     // Skip this test as it needs to be rewritten for the new client API
     return;
 }
@@ -349,7 +307,7 @@ async fn test_chainlock_manager_cache_operations() {
     let storage_path = temp_dir.path().to_path_buf();
 
     // Create storage
-    let mut storage = DiskStorageManager::new(storage_path).await.unwrap();
+    let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
     // Create wallet manager
@@ -370,12 +328,12 @@ async fn test_chainlock_manager_cache_operations() {
 
     // Add test headers
     let genesis = genesis_block(Network::Dash).header;
-    let storage = client.storage();
+    // let storage = client.storage();
     // storage.store_header(&genesis, 0).await.unwrap();
 
     // Create and process a ChainLock - skip for now as storage access pattern changed
-    let chain_lock = create_test_chainlock(0, genesis.block_hash());
-    let chain_state = ChainState::new();
+    // let chain_lock = create_test_chainlock(0, genesis.block_hash());
+    // let chain_state = ChainState::new();
     // Note: storage access pattern has changed in the new client API
     // let _ = chainlock_manager.process_chain_lock(chain_lock.clone(), &chain_state, storage).await;
 
@@ -407,7 +365,7 @@ async fn test_client_chainlock_update_flow() {
     let storage_path = temp_dir.path().to_path_buf();
 
     // Create storage and network
-    let mut storage = DiskStorageManager::new(storage_path).await.unwrap();
+    let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
     // Create wallet manager
@@ -423,7 +381,7 @@ async fn test_client_chainlock_update_flow() {
     };
 
     // Create the SPV client
-    let mut client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
+    let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
 
     // Initially, update should fail (no masternode engine)
     let updated = client.update_chainlock_validation().unwrap();
@@ -441,7 +399,7 @@ async fn test_client_chainlock_update_flow() {
     // });
 
     // Create a mock masternode list engine
-    let mock_engine = MasternodeListEngine::default_for_network(Network::Dash);
+    // let mock_engine = MasternodeListEngine::default_for_network(Network::Dash);
 
     // Manually inject the engine (in real usage, this would come from masternode sync)
     // Note: sync_manager is private, can't access directly

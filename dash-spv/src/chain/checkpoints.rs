@@ -60,7 +60,7 @@ impl Checkpoint {
 }
 
 /// Checkpoint override settings
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CheckpointOverride {
     /// Override checkpoint height for sync chain
     pub sync_override_height: Option<u32>,
@@ -68,16 +68,6 @@ pub struct CheckpointOverride {
     pub terminal_override_height: Option<u32>,
     /// Whether to sync from genesis
     pub sync_from_genesis: bool,
-}
-
-impl Default for CheckpointOverride {
-    fn default() -> Self {
-        Self {
-            sync_override_height: None,
-            terminal_override_height: None,
-            sync_from_genesis: false,
-        }
-    }
 }
 
 /// Manages checkpoints for a specific network
@@ -147,7 +137,7 @@ impl CheckpointManager {
 
     /// Check if we're past the last checkpoint
     pub fn is_past_last_checkpoint(&self, height: u32) -> bool {
-        self.sorted_heights.last().map_or(true, |&last| height > last)
+        self.sorted_heights.last().is_none_or(|&last| height > last)
     }
 
     /// Get the last checkpoint before a given timestamp

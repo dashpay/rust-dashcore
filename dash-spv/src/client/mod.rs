@@ -1166,7 +1166,7 @@ impl<
         // Send block to the background processor without waiting for completion
         let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
         let task = BlockProcessingTask::ProcessBlock {
-            block,
+            block: Box::new(block),
             response_tx,
         };
 

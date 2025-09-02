@@ -309,14 +309,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         for (index, header) in headers.iter().enumerate() {
             let prospective_height = current_height + (index as u32) + 1;
 
-            if self.reorg_config.enforce_checkpoints {
-                if !self.checkpoint_manager.validate_block(prospective_height, &header.block_hash())
-                {
-                    return Err(SyncError::Validation(format!(
-                        "Block at height {} does not match checkpoint",
-                        prospective_height
-                    )));
-                }
+            if self.reorg_config.enforce_checkpoints
+                && !self.checkpoint_manager.validate_block(prospective_height, &header.block_hash())
+            {
+                return Err(SyncError::Validation(format!(
+                    "Block at height {} does not match checkpoint",
+                    prospective_height
+                )));
             }
         }
 
@@ -542,7 +541,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             "Initializing headers2 compression state for peer {} with genesis header",
                             peer_id
                         );
-                            self.headers2_state.init_peer_state(peer_id, genesis_header.clone());
+                            self.headers2_state.init_peer_state(peer_id, *genesis_header);
                         }
                     } else if self.chain_state.tip_height() > 0 {
                         // Get our current tip to use as the base for compression
@@ -635,18 +634,19 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
         // If we're syncing from a checkpoint, we need to account for sync_base_height
-        let effective_tip_height = if self.chain_state.synced_from_checkpoint
-            && current_tip_height.is_some()
-        {
-            let stored_headers = current_tip_height.unwrap();
-            let actual_height = self.chain_state.sync_base_height + stored_headers;
-            tracing::info!(
-                "Syncing from checkpoint: sync_base_height={}, stored_headers={}, effective_height={}",
-                self.chain_state.sync_base_height,
-                stored_headers,
-                actual_height
-            );
-            Some(actual_height)
+        let effective_tip_height = if self.chain_state.synced_from_checkpoint {
+            if let Some(stored_headers) = current_tip_height {
+                let actual_height = self.chain_state.sync_base_height + stored_headers;
+                tracing::info!(
+                    "Syncing from checkpoint: sync_base_height={}, stored_headers={}, effective_height={}",
+                    self.chain_state.sync_base_height,
+                    stored_headers,
+                    actual_height
+                );
+                Some(actual_height)
+            } else {
+                None
+            }
         } else {
             tracing::info!(
                 "Not syncing from checkpoint or no tip height. synced_from_checkpoint={}, current_tip_height={:?}",
@@ -847,11 +847,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 }
                 Some(height) => {
                     // When syncing from checkpoint, adjust the storage height
-                    let storage_height = if self.chain_state.synced_from_checkpoint {
-                        height // height is already the storage index
-                    } else {
-                        height
-                    };
+                    let storage_height = height;
 
                     // Get the current tip hash
                     storage

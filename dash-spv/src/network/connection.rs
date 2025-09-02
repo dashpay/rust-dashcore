@@ -513,12 +513,9 @@ impl TcpConnection {
         drop(state);
 
         // Handle disconnection if needed
-        match &result {
-            Err(NetworkError::PeerDisconnected) => {
-                self.state = None;
-                self.connected_at = None;
-            }
-            _ => {}
+        if let Err(NetworkError::PeerDisconnected) = &result {
+            self.state = None;
+            self.connected_at = None;
         }
 
         result
