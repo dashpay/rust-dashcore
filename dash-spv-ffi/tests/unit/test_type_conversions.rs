@@ -129,10 +129,10 @@ mod tests {
         ];
 
         for (ffi_net, dash_net) in networks.iter() {
-            let converted: dashcore::Network = ffi_net.clone().into();
+            let converted: dashcore::Network = (*ffi_net).into();
             assert_eq!(converted, *dash_net);
 
-            let back: FFINetwork = dash_net.clone().into();
+            let back: FFINetwork = (*dash_net).into();
             assert_eq!(back as i32, *ffi_net as i32);
         }
     }

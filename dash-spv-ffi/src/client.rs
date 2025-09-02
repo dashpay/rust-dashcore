@@ -101,20 +101,17 @@ struct SyncCallbackData {
 }
 
 /// FFIDashSpvClient structure
-pub struct FFIDashSpvClient {
-    pub(crate) inner: Arc<
-        Mutex<
-            Option<
-                DashSpvClient<
-                    key_wallet_manager::wallet_manager::WalletManager<
-                        key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
-                    >,
-                    dash_spv::network::MultiPeerNetworkManager,
-                    dash_spv::storage::MemoryStorageManager,
-                >,
-            >,
-        >,
+type InnerClient = DashSpvClient<
+    key_wallet_manager::wallet_manager::WalletManager<
+        key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
     >,
+    dash_spv::network::MultiPeerNetworkManager,
+    dash_spv::storage::MemoryStorageManager,
+>;
+type SharedClient = Arc<Mutex<Option<InnerClient>>>;
+
+pub struct FFIDashSpvClient {
+    pub(crate) inner: SharedClient,
     pub(crate) runtime: Arc<Runtime>,
     event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
@@ -122,6 +119,11 @@ pub struct FFIDashSpvClient {
     shutdown_signal: Arc<AtomicBool>,
 }
 
+/// Create a new SPV client and return an opaque pointer.
+///
+/// # Safety
+/// - `config` must be a valid, non-null pointer for the duration of the call.
+/// - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_new(
     config: *const FFIClientConfig,
@@ -233,8 +235,8 @@ impl FFIDashSpvClient {
                                              txid, confirmed, amount, addresses, block_height);
                                 // Parse the txid string to a Txid type
                                 if let Ok(txid_parsed) = txid.parse::<dashcore::Txid>() {
-                                    // Call the general transaction callback
-                                    callbacks.call_transaction(&txid_parsed, confirmed, amount as i64, addresses, block_height);
+                            // Call the general transaction callback
+                            callbacks.call_transaction(&txid_parsed, confirmed, amount, addresses, block_height);
 
                                     // Also try to provide wallet-specific context
                                     // Note: For now, we provide basic wallet context.
@@ -250,7 +252,7 @@ impl FFIDashSpvClient {
                                         account_index,
                                         &txid_parsed,
                                         confirmed,
-                                        amount as i64,
+                                        amount,
                                         addresses,
                                         block_height,
                                         is_ours,
@@ -357,12 +359,23 @@ pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
     let new_config = (&*config).clone_inner();
 
     let result = client.runtime.block_on(async {
+        // Take client without holding the lock across await
+        let mut spv_client = {
+            let mut guard = client.inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+                }
+            }
+        };
+
+        let res = spv_client.update_config(new_config).await;
+
+        // Put client back
         let mut guard = client.inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            spv_client.update_config(new_config).await.map_err(|e| e)
-        } else {
-            Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-        }
+        *guard = Some(spv_client);
+        res
     });
 
     match result {
@@ -374,6 +387,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
     }
 }
 
+/// Start the SPV client.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer to a created client.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
@@ -382,14 +399,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
+        let mut spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
+                }
+            }
+        };
+        let res = spv_client.start().await;
         let mut guard = inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            spv_client.start().await
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
+        *guard = Some(spv_client);
+        res
     });
 
     match result {
@@ -405,6 +429,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
     }
 }
 
+/// Stop the SPV client.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer to a created client.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
@@ -413,14 +441,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
+        let mut spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
+                }
+            }
+        };
+        let res = spv_client.stop().await;
         let mut guard = inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            spv_client.stop().await
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
+        *guard = Some(spv_client);
+        res
     });
 
     match result {
@@ -474,64 +509,61 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
 
     // Execute sync in the runtime
     let result = runtime.block_on(async {
-        let mut guard = inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            match spv_client.sync_to_tip().await {
-                Ok(_sync_result) => {
-                    // sync_to_tip returns a SyncResult, not a stream
-                    // Progress callbacks removed as sync_to_tip doesn't provide real progress updates
-
-                    // Report completion and unregister callbacks
-                    {
-                        let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(CallbackInfo::Simple {
-                            completion_callback,
-                            user_data,
-                        }) = registry.unregister(callback_id)
-                        {
-                            if let Some(callback) = completion_callback {
-                                let msg = CString::new("Sync completed successfully")
-                                    .unwrap_or_else(|_| {
-                                        CString::new("Sync completed")
-                                            .expect("hardcoded string is safe")
-                                    });
-                                // SAFETY: The callback and user_data are safely managed through the registry
-                                // The registry ensures proper lifetime management and thread safety
-                                callback(true, msg.as_ptr(), user_data);
-                            }
-                        }
-                    }
-
-                    Ok(())
-                }
-                Err(e) => {
-                    // Report error and unregister callbacks
-                    {
-                        let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(CallbackInfo::Simple {
-                            completion_callback,
-                            user_data,
-                        }) = registry.unregister(callback_id)
-                        {
-                            if let Some(callback) = completion_callback {
-                                let msg = match CString::new(format!("Sync failed: {}", e)) {
-                                    Ok(s) => s,
-                                    Err(_) => CString::new("Sync failed")
-                                        .expect("hardcoded string is safe"),
-                                };
-                                // SAFETY: The callback and user_data are safely managed through the registry
-                                // The registry ensures proper lifetime management and thread safety
-                                callback(false, msg.as_ptr(), user_data);
-                            }
-                        }
-                    }
-                    Err(e)
+        let mut spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
                 }
             }
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
+        };
+        match spv_client.sync_to_tip().await {
+            Ok(_sync_result) => {
+                // sync_to_tip returns a SyncResult, not a stream
+                // Progress callbacks removed as sync_to_tip doesn't provide real progress updates
+
+                // Report completion and unregister callbacks
+                let mut registry = CALLBACK_REGISTRY.lock().unwrap();
+                if let Some(CallbackInfo::Simple {
+                    completion_callback: Some(callback),
+                    user_data,
+                }) = registry.unregister(callback_id)
+                {
+                    let msg = CString::new("Sync completed successfully").unwrap_or_else(|_| {
+                        CString::new("Sync completed").expect("hardcoded string is safe")
+                    });
+                    callback(true, msg.as_ptr(), user_data);
+                }
+
+                // Put client back
+                let mut guard = inner.lock().unwrap();
+                *guard = Some(spv_client);
+
+                Ok(())
+            }
+            Err(e) => {
+                // Report error and unregister callbacks
+                let mut registry = CALLBACK_REGISTRY.lock().unwrap();
+                if let Some(CallbackInfo::Simple {
+                    completion_callback: Some(callback),
+                    user_data,
+                }) = registry.unregister(callback_id)
+                {
+                    let msg = match CString::new(format!("Sync failed: {}", e)) {
+                        Ok(s) => s,
+                        Err(_) => CString::new("Sync failed").expect("hardcoded string is safe"),
+                    };
+                    callback(false, msg.as_ptr(), user_data);
+                }
+
+                // Put client back
+                let mut guard = inner.lock().unwrap();
+                *guard = Some(spv_client);
+                Err(e)
+            }
         }
     });
 
@@ -562,53 +594,67 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
 
     let client = &(*client);
     let result = client.runtime.block_on(async {
-        let mut guard = client.inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            tracing::info!("Starting test sync...");
-
-            // Get initial height
-            let start_height = match spv_client.sync_progress().await {
-                Ok(progress) => progress.header_height,
-                Err(e) => {
-                    tracing::error!("Failed to get initial height: {}", e);
-                    return Err(e);
-                }
-            };
-            tracing::info!("Initial height: {}", start_height);
-
-            // Start sync
-            match spv_client.sync_to_tip().await {
-                Ok(_) => tracing::info!("Sync started successfully"),
-                Err(e) => {
-                    tracing::error!("Failed to start sync: {}", e);
-                    return Err(e);
+        let mut spv_client = {
+            let mut guard = client.inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
                 }
             }
+        };
+        tracing::info!("Starting test sync...");
 
-            // Wait a bit for headers to download
-            tokio::time::sleep(Duration::from_secs(10)).await;
-
-            // Check if headers increased
-            let end_height = match spv_client.sync_progress().await {
-                Ok(progress) => progress.header_height,
-                Err(e) => {
-                    tracing::error!("Failed to get final height: {}", e);
-                    return Err(e);
-                }
-            };
-            tracing::info!("Final height: {}", end_height);
-
-            if end_height > start_height {
-                tracing::info!("✅ Sync working! Downloaded {} headers", end_height - start_height);
-                Ok(())
-            } else {
-                let msg = "No headers downloaded".to_string();
-                tracing::error!("❌ {}", msg);
-                Err(dash_spv::SpvError::Sync(dash_spv::SyncError::Network(msg)))
+        // Get initial height
+        let start_height = match spv_client.sync_progress().await {
+            Ok(progress) => progress.header_height,
+            Err(e) => {
+                tracing::error!("Failed to get initial height: {}", e);
+                return Err(e);
             }
-        } else {
-            Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+        };
+        tracing::info!("Initial height: {}", start_height);
+
+        // Start sync
+        match spv_client.sync_to_tip().await {
+            Ok(_) => tracing::info!("Sync started successfully"),
+            Err(e) => {
+                tracing::error!("Failed to start sync: {}", e);
+                // put back before returning
+                let mut guard = client.inner.lock().unwrap();
+                *guard = Some(spv_client);
+                return Err(e);
+            }
         }
+
+        // Wait a bit for headers to download
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        // Check if headers increased
+        let end_height = match spv_client.sync_progress().await {
+            Ok(progress) => progress.header_height,
+            Err(e) => {
+                tracing::error!("Failed to get final height: {}", e);
+                let mut guard = client.inner.lock().unwrap();
+                *guard = Some(spv_client);
+                return Err(e);
+            }
+        };
+        tracing::info!("Final height: {}", end_height);
+
+        let result = if end_height > start_height {
+            tracing::info!("✅ Sync working! Downloaded {} headers", end_height - start_height);
+            Ok(())
+        } else {
+            let msg = "No headers downloaded".to_string();
+            tracing::error!("❌ {}", msg);
+            Err(dash_spv::SpvError::Sync(dash_spv::SyncError::Network(msg)))
+        };
+
+        // put client back
+        let mut guard = client.inner.lock().unwrap();
+        *guard = Some(spv_client);
+        result
     });
 
     match result {
@@ -729,12 +775,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let sync_handle = std::thread::spawn(move || {
         // Run monitoring loop
         let monitor_result = runtime_handle.block_on(async move {
+            let mut spv_client = {
+                let mut guard = inner.lock().unwrap();
+                match guard.take() {
+                    Some(client) => client,
+                    None => {
+                        return Err(dash_spv::SpvError::Config(
+                            "Client not initialized".to_string(),
+                        ))
+                    }
+                }
+            };
+            let res = spv_client.monitor_network().await;
             let mut guard = inner.lock().unwrap();
-            if let Some(ref mut spv_client) = *guard {
-                spv_client.monitor_network().await
-            } else {
-                Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-            }
+            *guard = Some(spv_client);
+            res
         });
 
         // Send completion callback and cleanup
@@ -817,12 +872,19 @@ pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpv
     // Currently, this only stops the client, but the sync task may continue running in the background.
     let inner = client.inner.clone();
     let result = client.runtime.block_on(async {
+        let mut spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+                }
+            }
+        };
+        let res = spv_client.stop().await;
         let mut guard = inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            spv_client.stop().await
-        } else {
-            Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-        }
+        *guard = Some(spv_client);
+        res
     });
 
     match result {
@@ -834,6 +896,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpv
     }
 }
 
+/// Get the current sync progress snapshot.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
     client: *mut FFIDashSpvClient,
@@ -844,14 +910,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            spv_client.sync_progress().await
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(c) => c,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
+                }
+            }
+        };
+        let res = spv_client.sync_progress().await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        res
     });
 
     match result {
@@ -863,6 +936,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
     }
 }
 
+/// Get current runtime statistics for the SPV client.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_get_stats(
     client: *mut FFIDashSpvClient,
@@ -873,14 +950,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_stats(
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            spv_client.stats().await
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
+                }
+            }
+        };
+        let res = spv_client.stats().await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        res
     });
 
     match result {
@@ -892,6 +976,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_stats(
     }
 }
 
+/// Check if compact filter sync is currently available.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_is_filter_sync_available(
     client: *mut FFIDashSpvClient,
@@ -902,15 +990,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_is_filter_sync_available(
     let inner = client.inner.clone();
 
     client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            spv_client.is_filter_sync_available().await
-        } else {
-            false
-        }
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => return false,
+            }
+        };
+        let res = spv_client.is_filter_sync_available().await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        res
     })
 }
 
+/// Set event callbacks for the client.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     client: *mut FFIDashSpvClient,
@@ -942,6 +1039,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     FFIErrorCode::Success as i32
 }
 
+/// Destroy the client and free associated resources.
+///
+/// # Safety
+/// - `client` must be either null or a pointer obtained from `dash_spv_ffi_client_new`.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClient) {
     if !client.is_null() {
@@ -956,10 +1057,14 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
         }
 
         // Stop the SPV client
-        let _ = client.runtime.block_on(async {
-            let mut guard = client.inner.lock().unwrap();
-            if let Some(ref mut spv_client) = *guard {
+        client.runtime.block_on(async {
+            if let Some(mut spv_client) = {
+                let mut guard = client.inner.lock().unwrap();
+                guard.take()
+            } {
                 let _ = spv_client.stop().await;
+                let mut guard = client.inner.lock().unwrap();
+                *guard = Some(spv_client);
             }
         });
 
@@ -979,6 +1084,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
     }
 }
 
+/// Destroy a `FFISyncProgress` object returned by this crate.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_sync_progress_destroy(progress: *mut FFISyncProgress) {
     if !progress.is_null() {
@@ -986,6 +1095,10 @@ pub unsafe extern "C" fn dash_spv_ffi_sync_progress_destroy(progress: *mut FFISy
     }
 }
 
+/// Destroy an `FFISpvStats` object returned by this crate.
+///
+/// # Safety
+/// - `stats` must be a pointer returned from this crate, or null.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_spv_stats_destroy(stats: *mut FFISpvStats) {
     if !stats.is_null() {
@@ -995,6 +1108,10 @@ pub unsafe extern "C" fn dash_spv_ffi_spv_stats_destroy(stats: *mut FFISpvStats)
 
 // Wallet operations
 
+/// Request a rescan of the blockchain from a given height (not yet implemented).
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
     client: *mut FFIDashSpvClient,
@@ -1026,6 +1143,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
     }
 }
 
+/// Enable mempool tracking with a given strategy.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
     client: *mut FFIDashSpvClient,
@@ -1039,14 +1160,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
     let mempool_strategy = strategy.into();
 
     let result = client.runtime.block_on(async {
+        let mut spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
+                }
+            }
+        };
+        let res = spv_client.enable_mempool_tracking(mempool_strategy).await;
         let mut guard = inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            spv_client.enable_mempool_tracking(mempool_strategy).await
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
+        *guard = Some(spv_client);
+        res
     });
 
     match result {
@@ -1058,6 +1186,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
     }
 }
 
+/// Record that we attempted to send a transaction by its txid.
+///
+/// # Safety
+/// - `client` and `txid` must be valid, non-null pointers.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
     client: *mut FFIDashSpvClient,
@@ -1086,15 +1218,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            spv_client.record_transaction_send(txid).await;
-            Ok(())
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
+                }
+            }
+        };
+        spv_client.record_transaction_send(txid).await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        Ok(())
     });
 
     match result {
@@ -1121,6 +1259,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
 ///
 /// An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized.
 /// Swift should treat this as an OpaquePointer.
+/// Get a handle to the wallet manager owned by this client.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_get_wallet_manager(
     client: *mut FFIDashSpvClient,

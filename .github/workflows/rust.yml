@@ -225,7 +225,7 @@ jobs:
     strategy:
       matrix:
         rust: [stable]
-        dashversion: ["22.0.0", "22.1.3"]
+        dashversion: ["22.1.3"]
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4

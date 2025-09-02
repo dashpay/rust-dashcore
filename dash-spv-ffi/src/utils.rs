@@ -2,6 +2,11 @@ use crate::{set_last_error, FFIErrorCode};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+/// Initialize logging for the SPV library.
+///
+/// # Safety
+/// - `level` may be null or point to a valid, NUL-terminated C string.
+/// - If non-null, the pointer must remain valid for the duration of this call.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_init_logging(level: *const c_char) -> i32 {
     let level_str = if level.is_null() {

@@ -100,9 +100,9 @@ mod tests {
         assert_eq!(ffi_progress.filter_header_height, 90);
         assert_eq!(ffi_progress.masternode_height, 80);
         assert_eq!(ffi_progress.peer_count, 5);
-        assert_eq!(ffi_progress.headers_synced, true);
-        assert_eq!(ffi_progress.filter_headers_synced, false);
-        assert_eq!(ffi_progress.masternodes_synced, false);
+        assert!(ffi_progress.headers_synced);
+        assert!(!ffi_progress.filter_headers_synced);
+        assert!(!ffi_progress.masternodes_synced);
         assert_eq!(ffi_progress.filters_downloaded, 50);
         assert_eq!(ffi_progress.last_synced_filter_height, 45);
     }
