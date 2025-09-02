@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 233
+**Total Functions**: 232
 
 ## Table of Contents
 
@@ -266,7 +266,7 @@ Functions: 13
 
 ### Key Management
 
-Functions: 15
+Functions: 14
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -274,7 +274,6 @@ Functions: 15
 | `bip38_encrypt_private_key` | Encrypt a private key with BIP38  # Safety  This function is unsafe because i... | bip38 |
 | `derivation_derive_private_key_from_seed` | Derive private key for a specific path from seed  # Safety  - `seed` must be ... | derivation |
 | `derivation_new_master_key` | Create a new master extended private key from seed  # Safety  - `seed` must b... | derivation |
-| `dip9_derive_identity_key` | Derive key using DIP9 path constants for identity  # Safety  - `seed` must be... | derivation |
 | `extended_private_key_free` | Free an extended private key  # Safety  - `key` must be a valid pointer creat... | keys |
 | `extended_private_key_get_private_key` | Get the private key from an extended private key  Extracts the non-extended p... | keys |
 | `extended_private_key_to_string` | Get extended private key as string (xprv format)  Returns the extended privat... | keys |
@@ -3373,22 +3372,6 @@ derivation_new_master_key(seed: *const u8, seed_len: usize, network: FFINetwork,
 
 **Description:**
 Create a new master extended private key from seed  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure the seed pointer remains valid for the duration of this call
-
-**Safety:**
-- `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure the seed pointer remains valid for the duration of this call
-
-**Module:** `derivation`
-
----
-
-#### `dip9_derive_identity_key`
-
-```c
-dip9_derive_identity_key(seed: *const u8, seed_len: usize, network: FFINetwork, identity_index: c_uint, key_index: c_uint, key_type: FFIDerivationPathType, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
-```
-
-**Description:**
-Derive key using DIP9 path constants for identity  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure the seed pointer remains valid for the duration of this call
 
 **Safety:**
 - `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure the seed pointer remains valid for the duration of this call
