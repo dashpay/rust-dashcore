@@ -31,7 +31,7 @@ async fn test_memory_storage_basic_operations() {
     }
 
     // Test individual header retrieval
-    for i in 0..5 {
+    for (i, _) in test_headers.iter().enumerate().take(5) {
         let header = storage.get_header(i as u32).await.unwrap();
         assert!(header.is_some());
         assert_eq!(header.unwrap().block_hash(), test_headers[i].block_hash());
@@ -111,7 +111,7 @@ async fn test_memory_storage_filter_headers() {
     let retrieved = storage.load_filter_headers(0..5).await.unwrap();
     assert_eq!(retrieved.len(), 5);
 
-    for i in 0..5 {
+    for (i, _) in test_filter_headers.iter().enumerate().take(5) {
         let filter_header = storage.get_filter_header(i as u32).await.unwrap();
         assert!(filter_header.is_some());
         assert_eq!(filter_header.unwrap(), test_filter_headers[i]);
@@ -192,7 +192,7 @@ async fn test_memory_storage_clear() {
     let filter_headers = create_test_filter_headers(3);
     storage.store_filter_headers(&filter_headers).await.unwrap();
 
-    storage.store_filter(1, &vec![1, 2, 3]).await.unwrap();
+    storage.store_filter(1, &[1, 2, 3]).await.unwrap();
     storage.store_metadata("test", b"data").await.unwrap();
 
     // Verify data exists
@@ -229,8 +229,8 @@ async fn test_memory_storage_stats() {
     let filter_headers = create_test_filter_headers(5);
     storage.store_filter_headers(&filter_headers).await.unwrap();
 
-    storage.store_filter(1, &vec![1, 2, 3, 4, 5]).await.unwrap();
-    storage.store_filter(2, &vec![6, 7, 8]).await.unwrap();
+    storage.store_filter(1, &[1, 2, 3, 4, 5]).await.unwrap();
+    storage.store_filter(2, &[6, 7, 8]).await.unwrap();
 
     // Check updated stats
     let stats = storage.stats().await.expect("Failed to get stats");

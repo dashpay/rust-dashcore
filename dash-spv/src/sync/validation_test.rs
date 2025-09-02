@@ -17,11 +17,12 @@ mod tests {
 
     /// Create a test client config with validation enabled
     fn create_test_config() -> ClientConfig {
-        let mut config = ClientConfig::default();
-        config.network = Network::Testnet;
-        config.validation_mode = ValidationMode::Full;
-        config.enable_masternodes = true;
-        config
+        ClientConfig {
+            network: Network::Testnet,
+            validation_mode: ValidationMode::Full,
+            enable_masternodes: true,
+            ..Default::default()
+        }
     }
 
     /// Create a mock QRInfo for testing
@@ -181,9 +182,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_validation_with_retries() {
-        let mut config = ValidationConfig::default();
-        config.retry_failed_validations = true;
-        config.max_retries = 3;
+        let config = ValidationConfig {
+            retry_failed_validations: true,
+            max_retries: 3,
+            ..Default::default()
+        };
 
         let engine = ValidationEngine::new(config);
 
@@ -221,8 +224,10 @@ mod perf_tests {
     #[tokio::test]
     #[ignore]
     async fn test_cache_performance() {
-        let mut config = ChainLockValidationConfig::default();
-        config.cache_size = 10000;
+        let config = ChainLockValidationConfig {
+            cache_size: 10000,
+            ..Default::default()
+        };
 
         let validator = ChainLockValidator::new(config);
 

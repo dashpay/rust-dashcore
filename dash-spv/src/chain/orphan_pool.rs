@@ -254,7 +254,7 @@ mod tests {
         let header = create_test_header(genesis, 1);
         let block_hash = header.block_hash();
 
-        assert!(pool.add_orphan(header.clone()));
+        assert!(pool.add_orphan(header));
         assert!(pool.contains(&block_hash));
         assert_eq!(pool.len(), 1);
 
@@ -269,7 +269,7 @@ mod tests {
         let header = create_test_header(BlockHash::from([0u8; 32]), 1);
         let block_hash = header.block_hash();
 
-        pool.add_orphan(header.clone());
+        pool.add_orphan(header);
         assert!(pool.contains(&block_hash));
 
         let removed = pool.remove_orphan(&block_hash);
@@ -300,7 +300,7 @@ mod tests {
         let mut pool = OrphanPool::new();
         let header = create_test_header(BlockHash::from([0u8; 32]), 1);
 
-        assert!(pool.add_orphan(header.clone()));
+        assert!(pool.add_orphan(header));
         assert!(!pool.add_orphan(header)); // Should not add duplicate
         assert_eq!(pool.len(), 1);
     }
@@ -317,8 +317,8 @@ mod tests {
         let hash2 = header2.block_hash();
         let header3 = create_test_header(hash2, 3);
 
-        pool.add_orphan(header1.clone());
-        pool.add_orphan(header2.clone());
+        pool.add_orphan(header1);
+        pool.add_orphan(header2);
         pool.add_orphan(header3);
 
         assert_eq!(pool.len(), 3);

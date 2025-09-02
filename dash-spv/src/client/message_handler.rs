@@ -32,6 +32,7 @@ impl<
     > MessageHandler<'a, S, N, W>
 {
     /// Create a new message handler.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sync_manager: &'a mut SequentialSyncManager<S, N, W>,
         storage: &'a mut S,

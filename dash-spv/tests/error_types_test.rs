@@ -333,7 +333,7 @@ fn test_parse_error_variants() {
 #[test]
 fn test_error_context_preservation() {
     // Create a chain of errors to test context preservation
-    let io_err = io::Error::new(io::ErrorKind::Other, "Disk failure");
+    let io_err = io::Error::other("Disk failure");
     let storage_err: StorageError = io_err.into();
     let val_err: ValidationError = storage_err.into();
     let spv_err: SpvError = val_err.into();

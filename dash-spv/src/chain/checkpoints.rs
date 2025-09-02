@@ -424,6 +424,7 @@ fn parse_block_hash_safe(s: &str) -> BlockHash {
 }
 
 /// Helper to create a checkpoint with common defaults
+#[allow(clippy::too_many_arguments)]
 fn create_checkpoint(
     height: u32,
     hash: &str,

@@ -17,7 +17,7 @@ async fn test_smart_fetch_basic_dkg_windows() {
     assert!(!windows.is_empty());
 
     // Each window should be within our range
-    for (_height, window_list) in &windows {
+    for window_list in windows.values() {
         for window in window_list {
             // Mining window should overlap with our range
             assert!(window.mining_end >= 1000 || window.mining_start <= 1100);
@@ -138,7 +138,7 @@ async fn test_smart_fetch_efficiency_metrics() {
     let windows = network.get_all_dkg_windows(start, end);
     let mut blocks_with_smart_fetch = 0;
 
-    for (_, window_list) in &windows {
+    for window_list in windows.values() {
         for window in window_list {
             // Count blocks in each mining window
             let window_start = window.mining_start.max(start);
@@ -179,7 +179,7 @@ async fn test_smart_fetch_edge_cases() {
 
     // Test edge case: range starting at DKG boundary
     let windows = network.get_all_dkg_windows(120, 144);
-    for (_, window_list) in &windows {
+    for window_list in windows.values() {
         for window in window_list {
             // Verify window properties
             assert!(window.cycle_start <= 144);

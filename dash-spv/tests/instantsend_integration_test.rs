@@ -20,7 +20,7 @@
 // use tokio::sync::RwLock;
 
 use blsful::{Bls12381G2Impl, SecretKey};
-use dash_spv; // keep module path available for validator usage
+// keep module path available for validator usage
 use dashcore::{
     Address, InstantLock, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness,
 };
@@ -29,9 +29,8 @@ use dashcore_hashes::Hash;
 // use key_wallet_manager::wallet_manager::WalletManager;
 use rand::thread_rng;
 
-/// Helper to create a test wallet manager.
+// /// Helper to create a test wallet manager.
 // Removed unused helper create_test_wallet (test scaffolding simplified)
-
 /// Create a deterministic test address.
 fn create_test_address() -> Address {
     let pubkey_hash = dashcore::PubkeyHash::from_byte_array([1; 20]);
@@ -80,16 +79,14 @@ fn create_signed_instantlock(tx: &Transaction, _sk: &SecretKey<Bls12381G2Impl>) 
     sig_bytes[0] = 0x01; // Set first byte to make it non-zero
     sig_bytes[95] = 0x01; // Set last byte too for good measure
 
-    let is_lock = InstantLock {
+    // TODO: Implement proper signing when InstantLockValidator methods are available
+    InstantLock {
         version: 1,
         inputs,
         txid: tx.txid(),
         signature: dashcore::bls_sig_utils::BLSSignature::from(sig_bytes),
         cyclehash: dashcore::BlockHash::from_byte_array([0; 32]),
-    };
-
-    // TODO: Implement proper signing when InstantLockValidator methods are available
-    is_lock
+    }
 }
 
 #[tokio::test]

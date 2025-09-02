@@ -85,12 +85,12 @@ fn test_transaction_62364518_net_amount_calculation() {
     println!(
         "Expected net change: {} sat ({} BTC)",
         expected_net_change,
-        Amount::from_sat(expected_net_change.abs() as u64)
+        Amount::from_sat(expected_net_change.unsigned_abs())
     );
     println!(
         "Actual net change: {} sat ({} BTC)",
         actual_net_change,
-        Amount::from_sat(actual_net_change.abs() as u64)
+        Amount::from_sat(actual_net_change.unsigned_abs())
     );
 
     // The key assertion: net change should be negative (fee + amount sent to other address)

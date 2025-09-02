@@ -72,9 +72,9 @@ mod tests {
         let header_d = create_test_header(hash_c, 4);
 
         // Add them out of order (A is not an orphan since it connects to genesis)
-        pool.add_orphan(header_d.clone());
-        pool.add_orphan(header_b.clone());
-        pool.add_orphan(header_c.clone());
+        pool.add_orphan(header_d);
+        pool.add_orphan(header_b);
+        pool.add_orphan(header_c);
 
         assert_eq!(pool.len(), 3);
 
@@ -151,13 +151,13 @@ mod tests {
         assert_eq!(pool.len(), 5);
 
         // First 5 should have been evicted
-        for i in 0..5 {
-            assert!(!pool.contains(&all_hashes[i]));
+        for h in all_hashes.iter().take(5) {
+            assert!(!pool.contains(h));
         }
 
         // Last 5 should still be present
-        for i in 5..10 {
-            assert!(pool.contains(&all_hashes[i]));
+        for h in all_hashes.iter().skip(5).take(5) {
+            assert!(pool.contains(h));
         }
     }
 
@@ -170,7 +170,7 @@ mod tests {
         let mut headers = Vec::new();
         for i in 0..5 {
             let header = create_test_header(parent, i);
-            headers.push(header.clone());
+            headers.push(header);
             pool.add_orphan(header);
         }
 
@@ -349,7 +349,7 @@ mod tests {
         let hash = header.block_hash();
         let original_time = Instant::now();
 
-        pool.add_orphan(header.clone());
+        pool.add_orphan(header);
 
         // Process a few times to increment attempts
         for _ in 0..3 {
