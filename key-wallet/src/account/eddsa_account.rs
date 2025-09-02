@@ -226,9 +226,32 @@ impl fmt::Display for EdDSAAccount {
     }
 }
 
-impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, VerifyingKey>
-    for EdDSAAccount
+impl
+    AccountDerivation<
+        ExtendedEd25519PrivKey,
+        ExtendedEd25519PubKey,
+        VerifyingKey,
+        dashcore::ed25519_dalek::SigningKey,
+    > for EdDSAAccount
 {
+    fn defaults_to_hardened_derivation(&self) -> bool {
+        true
+    }
+
+    fn has_internal_and_external(&self) -> bool {
+        false
+    }
+
+    fn has_intermediate_derivation(&self) -> Option<ChildNumber> {
+        match self.account_type {
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => Some(ChildNumber::Hardened {
+                index: registration_index,
+            }),
+            _ => None,
+        }
+    }
     /// Derive an extended private key from the wallet's master Ed25519 private key
     /// using the EdDSA account's derivation path.
     ///
@@ -360,6 +383,33 @@ impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, VerifyingK
         ExtendedEd25519PubKey::from_priv(&derived_priv).map_err(|e| {
             Error::InvalidParameter(format!("Failed to get Ed25519 public key: {}", e))
         })
+    }
+
+    fn derive_from_master_xpriv_private_key_at(
+        &self,
+        master_xpriv: &ExtendedEd25519PrivKey,
+        index: u32,
+    ) -> Result<dashcore::ed25519_dalek::SigningKey> {
+        let xpriv = self.derive_from_master_xpriv_extended_xpriv_at(master_xpriv, index)?;
+        Ok(dashcore::ed25519_dalek::SigningKey::from_bytes(&xpriv.private_key))
+    }
+
+    fn derive_from_seed_extended_xpriv_at(
+        &self,
+        seed: &[u8],
+        index: u32,
+    ) -> Result<ExtendedEd25519PrivKey> {
+        let master = ExtendedEd25519PrivKey::new_master(self.network, seed)?;
+        self.derive_from_master_xpriv_extended_xpriv_at(&master, index)
+    }
+
+    fn derive_from_seed_private_key_at(
+        &self,
+        seed: &[u8],
+        index: u32,
+    ) -> Result<dashcore::ed25519_dalek::SigningKey> {
+        let xpriv = self.derive_from_seed_extended_xpriv_at(seed, index)?;
+        Ok(dashcore::ed25519_dalek::SigningKey::from_bytes(&xpriv.private_key))
     }
 }
 

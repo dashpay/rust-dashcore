@@ -26,6 +26,29 @@ pub struct FFIExtendedPublicKey {
     inner: key_wallet::bip32::ExtendedPubKey,
 }
 
+impl FFIExtendedPrivateKey {
+    #[inline]
+    pub(crate) fn inner(&self) -> &key_wallet::bip32::ExtendedPrivKey {
+        &self.inner
+    }
+
+    #[inline]
+    pub(crate) fn from_inner(inner: key_wallet::bip32::ExtendedPrivKey) -> Self {
+        FFIExtendedPrivateKey {
+            inner,
+        }
+    }
+}
+
+impl FFIPrivateKey {
+    #[inline]
+    pub(crate) fn from_secret(inner: secp256k1::SecretKey) -> Self {
+        FFIPrivateKey {
+            inner,
+        }
+    }
+}
+
 /// Get extended private key for account
 ///
 /// # Safety

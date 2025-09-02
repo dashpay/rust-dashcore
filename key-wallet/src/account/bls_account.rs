@@ -78,7 +78,7 @@ impl BLSAccount {
             network,
             depth: 0,
             parent_fingerprint: Fingerprint::default(),
-            child_number: ChildNumber::from_normal_idx(0).unwrap(),
+            child_number: ChildNumber::from_normal_idx(0).expect("Invalid child number"),
             public_key,
             chain_code: ChainCode::from([0u8; 32]),
         };
@@ -225,9 +225,33 @@ impl fmt::Display for BLSAccount {
     }
 }
 
-impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12381G2Impl>>
-    for BLSAccount
+impl
+    AccountDerivation<
+        ExtendedBLSPrivKey,
+        ExtendedBLSPubKey,
+        BLSPublicKey<Bls12381G2Impl>,
+        SecretKey<Bls12381G2Impl>,
+    > for BLSAccount
 {
+    fn defaults_to_hardened_derivation(&self) -> bool {
+        false
+    }
+
+    fn has_internal_and_external(&self) -> bool {
+        true
+    }
+
+    fn has_intermediate_derivation(&self) -> Option<ChildNumber> {
+        match self.account_type {
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => Some(ChildNumber::Hardened {
+                index: registration_index,
+            }),
+            _ => None,
+        }
+    }
+
     /// Derive an extended private key from the wallet's master BLS private key
     /// using the BLS account's derivation path.
     ///
@@ -362,6 +386,34 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12
             // Derive using public key (only non-hardened)
             self.derive_child_xpub(&derivation_path)
         }
+    }
+
+    fn derive_from_master_xpriv_private_key_at(
+        &self,
+        master_xpriv: &ExtendedBLSPrivKey,
+        index: u32,
+    ) -> Result<SecretKey<Bls12381G2Impl>> {
+        let xpriv = self.derive_from_master_xpriv_extended_xpriv_at(master_xpriv, index)?;
+        Ok(xpriv.private_key.clone())
+    }
+
+    fn derive_from_seed_extended_xpriv_at(
+        &self,
+        seed: &[u8],
+        index: u32,
+    ) -> Result<ExtendedBLSPrivKey> {
+        let master = ExtendedBLSPrivKey::new_master(self.network, seed)
+            .map_err(|e| Error::InvalidParameter(format!("BLS master from seed: {:?}", e)))?;
+        self.derive_from_master_xpriv_extended_xpriv_at(&master, index)
+    }
+
+    fn derive_from_seed_private_key_at(
+        &self,
+        seed: &[u8],
+        index: u32,
+    ) -> Result<SecretKey<Bls12381G2Impl>> {
+        let xpriv = self.derive_from_seed_extended_xpriv_at(seed, index)?;
+        Ok(xpriv.private_key.clone())
     }
 }
 

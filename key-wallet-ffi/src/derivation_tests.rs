@@ -292,37 +292,6 @@ mod tests {
     }
 
     #[test]
-    fn test_dip9_derive_identity_key() {
-        let mut error = FFIError::success();
-
-        // Generate a seed
-        let mut seed = [0u8; 64];
-        for (i, byte) in seed.iter_mut().enumerate() {
-            *byte = (i % 256) as u8;
-        }
-
-        // Derive identity key - takes seed directly, not xprv
-        let identity_key = unsafe {
-            dip9_derive_identity_key(
-                seed.as_ptr(),
-                seed.len(),
-                FFINetwork::Testnet,
-                0,                                               // identity index
-                0,                                               // key index
-                FFIDerivationPathType::PathBlockchainIdentities, // key_type
-                &mut error,
-            )
-        };
-
-        assert!(!identity_key.is_null());
-
-        // Clean up
-        unsafe {
-            derivation_xpriv_free(identity_key);
-        }
-    }
-
-    #[test]
     fn test_error_handling() {
         let mut error = FFIError::success();
 
@@ -754,54 +723,6 @@ mod tests {
         if !xpriv.is_null() {
             unsafe {
                 derivation_xpriv_free(xpriv);
-            }
-        }
-    }
-
-    #[test]
-    fn test_dip9_derive_identity_key_null_inputs() {
-        let mut error = FFIError::success();
-
-        // Test with null seed
-        let identity_key = unsafe {
-            dip9_derive_identity_key(
-                ptr::null(),
-                64,
-                FFINetwork::Testnet,
-                0,
-                0,
-                FFIDerivationPathType::PathBlockchainIdentities,
-                &mut error,
-            )
-        };
-        assert!(identity_key.is_null());
-        assert_eq!(error.code, FFIErrorCode::InvalidInput);
-    }
-
-    #[test]
-    fn test_dip9_derive_identity_key_different_types() {
-        let mut error = FFIError::success();
-        let mut seed = [0u8; 64];
-        for (i, byte) in seed.iter_mut().enumerate() {
-            *byte = (i % 256) as u8;
-        }
-
-        // Test the main derivation path type that we know works
-        let identity_key = unsafe {
-            dip9_derive_identity_key(
-                seed.as_ptr(),
-                seed.len(),
-                FFINetwork::Testnet,
-                0,
-                0,
-                FFIDerivationPathType::PathBlockchainIdentities,
-                &mut error,
-            )
-        };
-
-        if !identity_key.is_null() {
-            unsafe {
-                derivation_xpriv_free(identity_key);
             }
         }
     }

@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::bip32::{DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::dip9::DerivationPathReference;
 use crate::error::Result;
-use crate::{Error, Network};
+use crate::{ChildNumber, Error, Network};
 
 use crate::account::derivation::AccountDerivation;
 use crate::managed_account::address_pool::AddressPoolType;
@@ -163,7 +163,27 @@ impl AccountTrait for Account {
     }
 }
 
-impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> for Account {
+impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::PrivateKey>
+    for Account
+{
+    fn defaults_to_hardened_derivation(&self) -> bool {
+        false
+    }
+
+    fn has_intermediate_derivation(&self) -> Option<ChildNumber> {
+        match self.account_type {
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => Some(ChildNumber::Hardened {
+                index: registration_index,
+            }),
+            _ => None,
+        }
+    }
+
+    fn has_internal_and_external(&self) -> bool {
+        matches!(self.account_type, AccountType::Standard { .. })
+    }
     /// Derive an extended private key from a wallet's master private key
     ///
     /// This requires the wallet to have the master private key available.
@@ -293,10 +313,46 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> for Account {
             self.derive_child_xpub(&derivation_path)
         }
     }
+
+    fn derive_from_master_xpriv_private_key_at(
+        &self,
+        master_xpriv: &ExtendedPrivKey,
+        index: u32,
+    ) -> std::result::Result<dashcore::PrivateKey, Error> {
+        let xpriv = self.derive_from_master_xpriv_extended_xpriv_at(master_xpriv, index)?;
+        // Wrap into dashcore::PrivateKey with compressed=true
+        Ok(dashcore::PrivateKey {
+            compressed: true,
+            network: self.network,
+            inner: xpriv.private_key,
+        })
+    }
+
+    fn derive_from_seed_extended_xpriv_at(
+        &self,
+        seed: &[u8],
+        index: u32,
+    ) -> std::result::Result<ExtendedPrivKey, Error> {
+        let master = ExtendedPrivKey::new_master(self.network, seed).map_err(Error::Bip32)?;
+        self.derive_from_master_xpriv_extended_xpriv_at(&master, index)
+    }
+
+    fn derive_from_seed_private_key_at(
+        &self,
+        seed: &[u8],
+        index: u32,
+    ) -> std::result::Result<dashcore::PrivateKey, Error> {
+        let xpriv = self.derive_from_seed_extended_xpriv_at(seed, index)?;
+        Ok(dashcore::PrivateKey {
+            compressed: true,
+            network: self.network,
+            inner: xpriv.private_key,
+        })
+    }
 }
 
 pub trait ECDSAAddressDerivation:
-    AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey>
+    AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::PrivateKey>
 {
     /// Derive a receive (external) address at a specific index
     fn derive_receive_address(&self, index: u32) -> Result<Address> {
