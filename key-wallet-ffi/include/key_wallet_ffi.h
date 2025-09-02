@@ -127,29 +127,6 @@ typedef enum {
 } FFIAddressPoolType;
 
 /*
- Derivation path type for DIP9
- */
-typedef enum {
-    PATH_UNKNOWN = 0,
-    PATH_BIP32 = 1,
-    PATH_BIP44 = 2,
-    PATH_BLOCKCHAIN_IDENTITIES = 3,
-    PATH_PROVIDER_FUNDS = 4,
-    PATH_PROVIDER_VOTING_KEYS = 5,
-    PATH_PROVIDER_OPERATOR_KEYS = 6,
-    PATH_PROVIDER_OWNER_KEYS = 7,
-    PATH_CONTACT_BASED_FUNDS = 8,
-    PATH_CONTACT_BASED_FUNDS_ROOT = 9,
-    PATH_CONTACT_BASED_FUNDS_EXTERNAL = 10,
-    PATH_BLOCKCHAIN_IDENTITY_CREDIT_REGISTRATION_FUNDING = 11,
-    PATH_BLOCKCHAIN_IDENTITY_CREDIT_TOPUP_FUNDING = 12,
-    PATH_BLOCKCHAIN_IDENTITY_CREDIT_INVITATION_FUNDING = 13,
-    PATH_PROVIDER_PLATFORM_NODE_KEYS = 14,
-    PATH_COIN_JOIN = 15,
-    PATH_ROOT = 255,
-} FFIDerivationPathType;
-
-/*
  FFI Error code
  */
 typedef enum {
@@ -1607,6 +1584,224 @@ void address_info_array_free(FFIAddressInfo **infos,
 ;
 
 /*
+ Derive an extended private key from an account at a given index, using the provided master xpriv.
+
+ Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.
+
+ Notes:
+ - This is chain-agnostic. For accounts with internal/external chains, this returns an error.
+ - For hardened-only account types (e.g., EdDSA), a hardened index is used.
+
+ # Safety
+ - `account` and `master_xpriv` must be valid, non-null pointers allocated by this library.
+ - `error` must be a valid pointer to an FFIError or null.
+ - The caller must free the returned pointer with `extended_private_key_free`.
+ */
+
+FFIExtendedPrivateKey *account_derive_extended_private_key_at(const FFIAccount *account,
+                                                              const FFIExtendedPrivateKey *master_xpriv,
+                                                              unsigned int index,
+                                                              FFIError *error)
+;
+
+/*
+ Derive a BLS private key from a raw seed buffer at the given index.
+
+ Returns a newly allocated hex string of the 32-byte private key. The caller must free
+ it with `string_free`.
+
+ Notes:
+ - Uses the account's network for master key creation.
+ - Chain-agnostic; may return an error for accounts with internal/external chains.
+
+ # Safety
+ - `account` must be a valid, non-null pointer to an `FFIBLSAccount` (only when `bls` feature is enabled).
+ - `seed` must point to a readable buffer of length `seed_len` (1..=64 bytes expected).
+ - `error` must be a valid pointer to an FFIError or null.
+ - Returned string must be freed with `string_free`.
+ */
+
+char *bls_account_derive_private_key_from_seed(const FFIBLSAccount *account,
+                                               const uint8_t *seed,
+                                               size_t seed_len,
+                                               unsigned int index,
+                                               FFIError *error)
+;
+
+/*
+ Derive a BLS private key from a mnemonic + optional passphrase at the given index.
+
+ Returns a newly allocated hex string of the 32-byte private key. The caller must free
+ it with `string_free`.
+
+ Notes:
+ - Uses the English wordlist for parsing the mnemonic.
+ - Chain-agnostic; may return an error for accounts with internal/external chains.
+
+ # Safety
+ - `account` must be a valid, non-null pointer to an `FFIBLSAccount` (only when `bls` feature is enabled).
+ - `mnemonic` must be a valid, null-terminated UTF-8 C string.
+ - `passphrase` may be null; if not null, must be a valid UTF-8 C string.
+ - `error` must be a valid pointer to an FFIError or null.
+ - Returned string must be freed with `string_free`.
+ */
+
+char *bls_account_derive_private_key_from_mnemonic(const FFIBLSAccount *account,
+                                                   const char *mnemonic,
+                                                   const char *passphrase,
+                                                   unsigned int index,
+                                                   FFIError *error)
+;
+
+/*
+ Derive an EdDSA (ed25519) private key from a raw seed buffer at the given index.
+
+ Returns a newly allocated hex string of the 32-byte private key. The caller must free
+ it with `string_free`.
+
+ Notes:
+ - EdDSA only supports hardened derivation; the index will be used accordingly.
+ - Chain-agnostic; EdDSA accounts typically do not have internal/external split.
+
+ # Safety
+ - `account` must be a valid, non-null pointer to an `FFIEdDSAAccount` (only when `eddsa` feature is enabled).
+ - `seed` must point to a readable buffer of length `seed_len` (1..=64 bytes expected).
+ - `error` must be a valid pointer to an FFIError or null.
+ - Returned string must be freed with `string_free`.
+ */
+
+char *eddsa_account_derive_private_key_from_seed(const FFIEdDSAAccount *account,
+                                                 const uint8_t *seed,
+                                                 size_t seed_len,
+                                                 unsigned int index,
+                                                 FFIError *error)
+;
+
+/*
+ Derive an EdDSA (ed25519) private key from a mnemonic + optional passphrase at the given index.
+
+ Returns a newly allocated hex string of the 32-byte private key. The caller must free
+ it with `string_free`.
+
+ Notes:
+ - Uses the English wordlist for parsing the mnemonic.
+
+ # Safety
+ - `account` must be a valid, non-null pointer to an `FFIEdDSAAccount` (only when `eddsa` feature is enabled).
+ - `mnemonic` must be a valid, null-terminated UTF-8 C string.
+ - `passphrase` may be null; if not null, must be a valid UTF-8 C string.
+ - `error` must be a valid pointer to an FFIError or null.
+ - Returned string must be freed with `string_free`.
+ */
+
+char *eddsa_account_derive_private_key_from_mnemonic(const FFIEdDSAAccount *account,
+                                                     const char *mnemonic,
+                                                     const char *passphrase,
+                                                     unsigned int index,
+                                                     FFIError *error)
+;
+
+/*
+ Derive a private key (secp256k1) from an account at a given chain/index, using the provided master xpriv.
+ Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.
+
+ # Safety
+ - `account` and `master_xpriv` must be valid pointers allocated by this library
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+FFIPrivateKey *account_derive_private_key_at(const FFIAccount *account,
+                                             const FFIExtendedPrivateKey *master_xpriv,
+                                             unsigned int index,
+                                             FFIError *error)
+;
+
+/*
+ Derive a private key from an account at a given chain/index and return as WIF string.
+ Caller must free the returned string with `string_free`.
+
+ # Safety
+ - `account` and `master_xpriv` must be valid pointers allocated by this library
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+char *account_derive_private_key_as_wif_at(const FFIAccount *account,
+                                           const FFIExtendedPrivateKey *master_xpriv,
+                                           unsigned int index,
+                                           FFIError *error)
+;
+
+/*
+ Derive an extended private key from a raw seed buffer at the given index.
+ Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.
+
+ # Safety
+ - `account` must be a valid pointer to an FFIAccount
+ - `seed` must point to a valid buffer of length `seed_len`
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+FFIExtendedPrivateKey *account_derive_extended_private_key_from_seed(const FFIAccount *account,
+                                                                     const uint8_t *seed,
+                                                                     size_t seed_len,
+                                                                     unsigned int index,
+                                                                     FFIError *error)
+;
+
+/*
+ Derive a private key from a raw seed buffer at the given index.
+ Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.
+
+ # Safety
+ - `account` must be a valid pointer to an FFIAccount
+ - `seed` must point to a valid buffer of length `seed_len`
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+FFIPrivateKey *account_derive_private_key_from_seed(const FFIAccount *account,
+                                                    const uint8_t *seed,
+                                                    size_t seed_len,
+                                                    unsigned int index,
+                                                    FFIError *error)
+;
+
+/*
+ Derive an extended private key from a mnemonic + optional passphrase at the given index.
+ Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.
+
+ # Safety
+ - `account` must be a valid pointer to an FFIAccount
+ - `mnemonic` must be a valid, null-terminated C string
+ - `passphrase` may be null; if not null, must be a valid C string
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+FFIExtendedPrivateKey *account_derive_extended_private_key_from_mnemonic(const FFIAccount *account,
+                                                                         const char *mnemonic,
+                                                                         const char *passphrase,
+                                                                         unsigned int index,
+                                                                         FFIError *error)
+;
+
+/*
+ Derive a private key from a mnemonic + optional passphrase at the given index.
+ Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.
+
+ # Safety
+ - `account` must be a valid pointer to an FFIAccount
+ - `mnemonic` must be a valid, null-terminated C string
+ - `passphrase` may be null; if not null, must be a valid C string
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+FFIPrivateKey *account_derive_private_key_from_mnemonic(const FFIAccount *account,
+                                                        const char *mnemonic,
+                                                        const char *passphrase,
+                                                        unsigned int index,
+                                                        FFIError *error)
+;
+
+/*
  Create a new master extended private key from seed
 
  # Safety
@@ -1790,25 +1985,6 @@ bool derivation_xpub_fingerprint(const FFIExtendedPubKey *xpub,
  - This function must only be called once per allocation
  */
  void derivation_string_free(char *s) ;
-
-/*
- Derive key using DIP9 path constants for identity
-
- # Safety
-
- - `seed` must be a valid pointer to a byte array of `seed_len` length
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure the seed pointer remains valid for the duration of this call
- */
-
-FFIExtendedPrivKey *dip9_derive_identity_key(const uint8_t *seed,
-                                             size_t seed_len,
-                                             FFINetwork network,
-                                             unsigned int identity_index,
-                                             unsigned int key_index,
-                                             FFIDerivationPathType key_type,
-                                             FFIError *error)
-;
 
 /*
  Derive an address from a private key

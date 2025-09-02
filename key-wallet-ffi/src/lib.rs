@@ -6,6 +6,7 @@
 // Module declarations
 pub mod account;
 pub mod account_collection;
+pub mod account_derivation;
 pub mod address;
 pub mod address_pool;
 pub mod derivation;

@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 222
+**Total Functions**: 233
 
 ## Table of Contents
 
@@ -130,7 +130,7 @@ Functions: 57
 
 ### Account Management
 
-Functions: 81
+Functions: 92
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -161,17 +161,28 @@ Functions: 81
 | `account_collection_summary` | Get a human-readable summary of all accounts in the collection  Returns a for... | account_collection |
 | `account_collection_summary_data` | Get structured account collection summary data  Returns a struct containing a... | account_collection |
 | `account_collection_summary_free` | Free an account collection summary and all its allocated memory  # Safety  - ... | account_collection |
+| `account_derive_extended_private_key_at` | Derive an extended private key from an account at a given index, using the pr... | account_derivation |
+| `account_derive_extended_private_key_from_mnemonic` | Derive an extended private key from a mnemonic + optional passphrase at the g... | account_derivation |
+| `account_derive_extended_private_key_from_seed` | Derive an extended private key from a raw seed buffer at the given index | account_derivation |
+| `account_derive_private_key_as_wif_at` | Derive a private key from an account at a given chain/index and return as WIF... | account_derivation |
+| `account_derive_private_key_at` | Derive a private key (secp256k1) from an account at a given chain/index, usin... | account_derivation |
+| `account_derive_private_key_from_mnemonic` | Derive a private key from a mnemonic + optional passphrase at the given index | account_derivation |
+| `account_derive_private_key_from_seed` | Derive a private key from a raw seed buffer at the given index | account_derivation |
 | `account_free` | Free an account handle  # Safety  - `account` must be a valid pointer to an F... | account |
 | `account_get_account_type` | Get the account type of an account  # Safety  - `account` must be a valid poi... | account |
 | `account_get_extended_public_key_as_string` | Get the extended public key of an account as a string  # Safety  - `account` ... | account |
 | `account_get_is_watch_only` | Check if an account is watch-only  # Safety  - `account` must be a valid poin... | account |
 | `account_get_network` | Get the network of an account  # Safety  - `account` must be a valid pointer ... | account |
+| `bls_account_derive_private_key_from_mnemonic` | No description | account_derivation |
+| `bls_account_derive_private_key_from_seed` | No description | account_derivation |
 | `bls_account_free` | No description | account |
 | `bls_account_get_account_type` | No description | account |
 | `bls_account_get_extended_public_key_as_string` | No description | account |
 | `bls_account_get_is_watch_only` | No description | account |
 | `bls_account_get_network` | No description | account |
 | `derivation_bip44_account_path` | Derive a BIP44 account path (m/44'/5'/account') | derivation |
+| `eddsa_account_derive_private_key_from_mnemonic` | No description | account_derivation |
+| `eddsa_account_derive_private_key_from_seed` | No description | account_derivation |
 | `eddsa_account_free` | No description | account |
 | `eddsa_account_get_account_type` | No description | account |
 | `eddsa_account_get_extended_public_key_as_string` | No description | account |
@@ -1982,6 +1993,118 @@ Free an account collection summary and all its allocated memory  # Safety  - `su
 
 ---
 
+#### `account_derive_extended_private_key_at`
+
+```c
+account_derive_extended_private_key_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivateKey, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+```
+
+**Description:**
+Derive an extended private key from an account at a given index, using the provided master xpriv.  Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.  Notes: - This is chain-agnostic. For accounts with internal/external chains, this returns an error. - For hardened-only account types (e.g., EdDSA), a hardened index is used.  # Safety - `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError or null. - The caller must free the returned pointer with `extended_private_key_free`.
+
+**Safety:**
+- `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError or null. - The caller must free the returned pointer with `extended_private_key_free`.
+
+**Module:** `account_derivation`
+
+---
+
+#### `account_derive_extended_private_key_from_mnemonic`
+
+```c
+account_derive_extended_private_key_from_mnemonic(account: *const FFIAccount, mnemonic: *const c_char, passphrase: *const c_char, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+```
+
+**Description:**
+Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+
+**Safety:**
+- `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+
+**Module:** `account_derivation`
+
+---
+
+#### `account_derive_extended_private_key_from_seed`
+
+```c
+account_derive_extended_private_key_from_seed(account: *const FFIAccount, seed: *const u8, seed_len: usize, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+```
+
+**Description:**
+Derive an extended private key from a raw seed buffer at the given index. Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+
+**Safety:**
+- `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+
+**Module:** `account_derivation`
+
+---
+
+#### `account_derive_private_key_as_wif_at`
+
+```c
+account_derive_private_key_as_wif_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivateKey, index: c_uint, error: *mut FFIError,) -> *mut c_char
+```
+
+**Description:**
+Derive a private key from an account at a given chain/index and return as WIF string. Caller must free the returned string with `string_free`.  # Safety - `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError or null
+
+**Safety:**
+- `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError or null
+
+**Module:** `account_derivation`
+
+---
+
+#### `account_derive_private_key_at`
+
+```c
+account_derive_private_key_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivateKey, index: c_uint, error: *mut FFIError,) -> *mut FFIPrivateKey
+```
+
+**Description:**
+Derive a private key (secp256k1) from an account at a given chain/index, using the provided master xpriv. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError or null
+
+**Safety:**
+- `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError or null
+
+**Module:** `account_derivation`
+
+---
+
+#### `account_derive_private_key_from_mnemonic`
+
+```c
+account_derive_private_key_from_mnemonic(account: *const FFIAccount, mnemonic: *const c_char, passphrase: *const c_char, index: c_uint, error: *mut FFIError,) -> *mut FFIPrivateKey
+```
+
+**Description:**
+Derive a private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+
+**Safety:**
+- `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+
+**Module:** `account_derivation`
+
+---
+
+#### `account_derive_private_key_from_seed`
+
+```c
+account_derive_private_key_from_seed(account: *const FFIAccount, seed: *const u8, seed_len: usize, index: c_uint, error: *mut FFIError,) -> *mut FFIPrivateKey
+```
+
+**Description:**
+Derive a private key from a raw seed buffer at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+
+**Safety:**
+- `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+
+**Module:** `account_derivation`
+
+---
+
 #### `account_free`
 
 ```c
@@ -2062,6 +2185,26 @@ Get the network of an account  # Safety  - `account` must be a valid pointer to 
 
 ---
 
+#### `bls_account_derive_private_key_from_mnemonic`
+
+```c
+bls_account_derive_private_key_from_mnemonic(account: *const FFIBLSAccount, mnemonic: *const c_char, passphrase: *const c_char, index: c_uint, error: *mut FFIError,) -> *mut c_char
+```
+
+**Module:** `account_derivation`
+
+---
+
+#### `bls_account_derive_private_key_from_seed`
+
+```c
+bls_account_derive_private_key_from_seed(account: *const FFIBLSAccount, seed: *const u8, seed_len: usize, index: c_uint, error: *mut FFIError,) -> *mut c_char
+```
+
+**Module:** `account_derivation`
+
+---
+
 #### `bls_account_free`
 
 ```c
@@ -2122,6 +2265,26 @@ derivation_bip44_account_path(network: FFINetwork, account_index: c_uint, path_o
 Derive a BIP44 account path (m/44'/5'/account')
 
 **Module:** `derivation`
+
+---
+
+#### `eddsa_account_derive_private_key_from_mnemonic`
+
+```c
+eddsa_account_derive_private_key_from_mnemonic(account: *const FFIEdDSAAccount, mnemonic: *const c_char, passphrase: *const c_char, index: c_uint, error: *mut FFIError,) -> *mut c_char
+```
+
+**Module:** `account_derivation`
+
+---
+
+#### `eddsa_account_derive_private_key_from_seed`
+
+```c
+eddsa_account_derive_private_key_from_seed(account: *const FFIEdDSAAccount, seed: *const u8, seed_len: usize, index: c_uint, error: *mut FFIError,) -> *mut c_char
+```
+
+**Module:** `account_derivation`
 
 ---
 
