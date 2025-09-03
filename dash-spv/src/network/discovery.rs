@@ -1,10 +1,10 @@
 //! DNS-based peer discovery for Dash network
 
 use dashcore::Network;
-use std::net::{IpAddr, SocketAddr};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::TokioResolver;
+use std::net::{IpAddr, SocketAddr};
 
 use crate::error::SpvError as Error;
 use crate::network::constants::{MAINNET_DNS_SEEDS, TESTNET_DNS_SEEDS};
@@ -24,7 +24,9 @@ impl DnsDiscovery {
         .with_options(ResolverOpts::default())
         .build();
 
-        Ok(Self { resolver })
+        Ok(Self {
+            resolver,
+        })
     }
 
     /// Discover peers for the given network
