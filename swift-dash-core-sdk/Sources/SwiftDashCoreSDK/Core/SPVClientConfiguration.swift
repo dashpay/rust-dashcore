@@ -84,11 +84,11 @@ public final class SPVClientConfiguration {
         result = dash_spv_ffi_config_set_max_peers(config, maxPeers)
         try FFIBridge.checkError(result)
         
-        // User agent setting is not supported in current implementation
-        // result = FFIBridge.withCString(userAgent) { agent in
-        //     dash_spv_ffi_config_set_user_agent(config, agent)
-        // }
-        // try FFIBridge.checkError(result)
+        // Configure user agent advertised during P2P handshake
+        result = FFIBridge.withCString(userAgent) { agent in
+            dash_spv_ffi_config_set_user_agent(config, agent)
+        }
+        try FFIBridge.checkError(result)
         
         result = dash_spv_ffi_config_set_filter_load(config, enableFilterLoad)
         try FFIBridge.checkError(result)

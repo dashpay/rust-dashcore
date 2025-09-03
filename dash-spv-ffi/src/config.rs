@@ -146,7 +146,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     }
 }
 
-/// Sets the user agent string (currently not supported)
+/// Sets the user agent string to advertise in the P2P handshake
 ///
 /// # Safety
 /// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
@@ -162,10 +162,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_user_agent(
 
     // Validate the user_agent string
     match CStr::from_ptr(user_agent).to_str() {
-        Ok(_agent_str) => {
-            // user_agent is not directly settable in current ClientConfig
-            set_last_error("Setting user agent is not supported in current implementation");
-            FFIErrorCode::ConfigError as i32
+        Ok(agent_str) => {
+            // Store as-is; normalization/length capping is applied at handshake build time
+            let cfg = &mut (*config).inner;
+            cfg.user_agent = Some(agent_str.to_string());
+            FFIErrorCode::Success as i32
         }
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in user agent: {}", e));

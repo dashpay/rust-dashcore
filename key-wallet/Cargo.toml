@@ -1,6 +1,6 @@
 [package]
 name = "key-wallet"
-version = "0.40.0-dev"
+version = { workspace = true }
 authors = ["The Dash Core Developers"]
 edition = "2021"
 description = "Key derivation and wallet functionality for Dash"

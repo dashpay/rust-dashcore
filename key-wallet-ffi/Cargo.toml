@@ -1,6 +1,6 @@
 [package]
 name = "key-wallet-ffi"
-version = "0.39.6"
+version = { workspace = true }
 authors = ["The Dash Core Developers"]
 edition = "2021"
 description = "FFI bindings for key-wallet library"

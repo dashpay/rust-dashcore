@@ -168,7 +168,11 @@ impl TcpNetworkManager {
         Ok(Self {
             config: config.clone(),
             connection: None,
-            handshake: HandshakeManager::new(config.network, config.mempool_strategy),
+            handshake: HandshakeManager::new(
+                config.network,
+                config.mempool_strategy,
+                config.user_agent.clone(),
+            ),
             _message_handler: MessageHandler::new(),
             message_sender,
             dsq_preference: false,

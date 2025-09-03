@@ -1376,214 +1376,6 @@ void account_collection_summary_free(FFIAccountCollectionSummary *summary)
 ;
 
 /*
- Free address string
-
- # Safety
-
- - `address` must be a valid pointer created by address functions or null
- - After calling this function, the pointer becomes invalid
- */
- void address_free(char *address) ;
-
-/*
- Free address array
-
- # Safety
-
- - `addresses` must be a valid pointer to an array of address strings or null
- - Each address in the array must be a valid C string pointer
- - `count` must be the correct number of addresses in the array
- - After calling this function, all pointers become invalid
- */
- void address_array_free(char **addresses, size_t count) ;
-
-/*
- Validate an address
-
- # Safety
-
- - `address` must be a valid null-terminated C string
- - `error` must be a valid pointer to an FFIError
- */
- bool address_validate(const char *address, FFINetwork network, FFIError *error) ;
-
-/*
- Get address type
-
- Returns:
- - 0: P2PKH address
- - 1: P2SH address
- - 2: Other address type
- - u8::MAX (255): Error occurred
-
- # Safety
-
- - `address` must be a valid null-terminated C string
- - `error` must be a valid pointer to an FFIError
- */
- unsigned char address_get_type(const char *address, FFINetwork network, FFIError *error) ;
-
-/*
- Free an address pool handle
-
- # Safety
-
- - `pool` must be a valid pointer to an FFIAddressPool that was allocated by this library
- - The pointer must not be used after calling this function
- - This function must only be called once per allocation
- */
- void address_pool_free(FFIAddressPool *pool) ;
-
-/*
- Get address pool information for an account
-
- # Safety
-
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
- - `info_out` must be a valid pointer to store the pool info
- - `error` must be a valid pointer to an FFIError or null
- */
-
-bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet,
-                                          FFINetwork network,
-                                          FFIAccountType account_type,
-                                          unsigned int account_index,
-                                          FFIAddressPoolType pool_type,
-                                          FFIAddressPoolInfo *info_out,
-                                          FFIError *error)
-;
-
-/*
- Set the gap limit for an address pool
-
- The gap limit determines how many unused addresses to maintain at the end
- of the pool. This is important for wallet recovery and address discovery.
-
- # Safety
-
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
- - `error` must be a valid pointer to an FFIError or null
- */
-
-bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
-                                  FFINetwork network,
-                                  FFIAccountType account_type,
-                                  unsigned int account_index,
-                                  FFIAddressPoolType pool_type,
-                                  unsigned int gap_limit,
-                                  FFIError *error)
-;
-
-/*
- Generate addresses up to a specific index in a pool
-
- This ensures that addresses up to and including the specified index exist
- in the pool. This is useful for wallet recovery or when specific indices
- are needed.
-
- # Safety
-
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
- - `wallet` must be a valid pointer to an FFIWallet (for key derivation)
- - `error` must be a valid pointer to an FFIError or null
- */
-
-bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet,
-                                                const FFIWallet *wallet,
-                                                FFINetwork network,
-                                                FFIAccountType account_type,
-                                                unsigned int account_index,
-                                                FFIAddressPoolType pool_type,
-                                                unsigned int target_index,
-                                                FFIError *error)
-;
-
-/*
- Mark an address as used in the pool
-
- This updates the pool's tracking of which addresses have been used,
- which is important for gap limit management and wallet recovery.
-
- # Safety
-
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
- - `address` must be a valid C string
- - `error` must be a valid pointer to an FFIError or null
- */
-
-bool managed_wallet_mark_address_used(FFIManagedWallet *managed_wallet,
-                                      FFINetwork network,
-                                      const char *address,
-                                      FFIError *error)
-;
-
-/*
- Get a single address info at a specific index from the pool
-
- Returns detailed information about the address at the given index, or NULL
- if the index is out of bounds or not generated yet.
-
- # Safety
-
- - `pool` must be a valid pointer to an FFIAddressPool
- - `error` must be a valid pointer to an FFIError or null
- - The returned FFIAddressInfo must be freed using `address_info_free`
- */
-
-FFIAddressInfo *address_pool_get_address_at_index(const FFIAddressPool *pool,
-                                                  uint32_t index,
-                                                  FFIError *error)
-;
-
-/*
- Get a range of addresses from the pool
-
- Returns an array of FFIAddressInfo structures for addresses in the range [start_index, end_index).
- The count_out parameter will be set to the actual number of addresses returned.
-
- Note: This function only reads existing addresses from the pool. It does not generate new addresses.
- Use managed_wallet_generate_addresses_to_index if you need to generate addresses first.
-
- # Safety
-
- - `pool` must be a valid pointer to an FFIAddressPool
- - `count_out` must be a valid pointer to store the count
- - `error` must be a valid pointer to an FFIError or null
- - The returned array must be freed using `address_info_array_free`
- */
-
-FFIAddressInfo **address_pool_get_addresses_in_range(const FFIAddressPool *pool,
-                                                     uint32_t start_index,
-                                                     uint32_t end_index,
-                                                     size_t *count_out,
-                                                     FFIError *error)
-;
-
-/*
- Free a single FFIAddressInfo structure
-
- # Safety
-
- - `info` must be a valid pointer to an FFIAddressInfo allocated by this library or null
- - The pointer must not be used after calling this function
- */
- void address_info_free(FFIAddressInfo *info) ;
-
-/*
- Free an array of FFIAddressInfo structures
-
- # Safety
-
- - `infos` must be a valid pointer to an array of FFIAddressInfo pointers allocated by this library or null
- - `count` must be the exact number of elements in the array
- - The pointers must not be used after calling this function
- */
-
-void address_info_array_free(FFIAddressInfo **infos,
-                             size_t count)
-;
-
-/*
  Derive an extended private key from an account at a given index, using the provided master xpriv.
 
  Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.
@@ -1799,6 +1591,214 @@ FFIPrivateKey *account_derive_private_key_from_mnemonic(const FFIAccount *accoun
                                                         const char *passphrase,
                                                         unsigned int index,
                                                         FFIError *error)
+;
+
+/*
+ Free address string
+
+ # Safety
+
+ - `address` must be a valid pointer created by address functions or null
+ - After calling this function, the pointer becomes invalid
+ */
+ void address_free(char *address) ;
+
+/*
+ Free address array
+
+ # Safety
+
+ - `addresses` must be a valid pointer to an array of address strings or null
+ - Each address in the array must be a valid C string pointer
+ - `count` must be the correct number of addresses in the array
+ - After calling this function, all pointers become invalid
+ */
+ void address_array_free(char **addresses, size_t count) ;
+
+/*
+ Validate an address
+
+ # Safety
+
+ - `address` must be a valid null-terminated C string
+ - `error` must be a valid pointer to an FFIError
+ */
+ bool address_validate(const char *address, FFINetwork network, FFIError *error) ;
+
+/*
+ Get address type
+
+ Returns:
+ - 0: P2PKH address
+ - 1: P2SH address
+ - 2: Other address type
+ - u8::MAX (255): Error occurred
+
+ # Safety
+
+ - `address` must be a valid null-terminated C string
+ - `error` must be a valid pointer to an FFIError
+ */
+ unsigned char address_get_type(const char *address, FFINetwork network, FFIError *error) ;
+
+/*
+ Free an address pool handle
+
+ # Safety
+
+ - `pool` must be a valid pointer to an FFIAddressPool that was allocated by this library
+ - The pointer must not be used after calling this function
+ - This function must only be called once per allocation
+ */
+ void address_pool_free(FFIAddressPool *pool) ;
+
+/*
+ Get address pool information for an account
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `info_out` must be a valid pointer to store the pool info
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet,
+                                          FFINetwork network,
+                                          FFIAccountType account_type,
+                                          unsigned int account_index,
+                                          FFIAddressPoolType pool_type,
+                                          FFIAddressPoolInfo *info_out,
+                                          FFIError *error)
+;
+
+/*
+ Set the gap limit for an address pool
+
+ The gap limit determines how many unused addresses to maintain at the end
+ of the pool. This is important for wallet recovery and address discovery.
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
+                                  FFINetwork network,
+                                  FFIAccountType account_type,
+                                  unsigned int account_index,
+                                  FFIAddressPoolType pool_type,
+                                  unsigned int gap_limit,
+                                  FFIError *error)
+;
+
+/*
+ Generate addresses up to a specific index in a pool
+
+ This ensures that addresses up to and including the specified index exist
+ in the pool. This is useful for wallet recovery or when specific indices
+ are needed.
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `wallet` must be a valid pointer to an FFIWallet (for key derivation)
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet,
+                                                const FFIWallet *wallet,
+                                                FFINetwork network,
+                                                FFIAccountType account_type,
+                                                unsigned int account_index,
+                                                FFIAddressPoolType pool_type,
+                                                unsigned int target_index,
+                                                FFIError *error)
+;
+
+/*
+ Mark an address as used in the pool
+
+ This updates the pool's tracking of which addresses have been used,
+ which is important for gap limit management and wallet recovery.
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `address` must be a valid C string
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+bool managed_wallet_mark_address_used(FFIManagedWallet *managed_wallet,
+                                      FFINetwork network,
+                                      const char *address,
+                                      FFIError *error)
+;
+
+/*
+ Get a single address info at a specific index from the pool
+
+ Returns detailed information about the address at the given index, or NULL
+ if the index is out of bounds or not generated yet.
+
+ # Safety
+
+ - `pool` must be a valid pointer to an FFIAddressPool
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned FFIAddressInfo must be freed using `address_info_free`
+ */
+
+FFIAddressInfo *address_pool_get_address_at_index(const FFIAddressPool *pool,
+                                                  uint32_t index,
+                                                  FFIError *error)
+;
+
+/*
+ Get a range of addresses from the pool
+
+ Returns an array of FFIAddressInfo structures for addresses in the range [start_index, end_index).
+ The count_out parameter will be set to the actual number of addresses returned.
+
+ Note: This function only reads existing addresses from the pool. It does not generate new addresses.
+ Use managed_wallet_generate_addresses_to_index if you need to generate addresses first.
+
+ # Safety
+
+ - `pool` must be a valid pointer to an FFIAddressPool
+ - `count_out` must be a valid pointer to store the count
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned array must be freed using `address_info_array_free`
+ */
+
+FFIAddressInfo **address_pool_get_addresses_in_range(const FFIAddressPool *pool,
+                                                     uint32_t start_index,
+                                                     uint32_t end_index,
+                                                     size_t *count_out,
+                                                     FFIError *error)
+;
+
+/*
+ Free a single FFIAddressInfo structure
+
+ # Safety
+
+ - `info` must be a valid pointer to an FFIAddressInfo allocated by this library or null
+ - The pointer must not be used after calling this function
+ */
+ void address_info_free(FFIAddressInfo *info) ;
+
+/*
+ Free an array of FFIAddressInfo structures
+
+ # Safety
+
+ - `infos` must be a valid pointer to an array of FFIAddressInfo pointers allocated by this library or null
+ - `count` must be the exact number of elements in the array
+ - The pointers must not be used after calling this function
+ */
+
+void address_info_array_free(FFIAddressInfo **infos,
+                             size_t count)
 ;
 
 /*

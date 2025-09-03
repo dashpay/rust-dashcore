@@ -69,6 +69,10 @@ pub struct ClientConfig {
     /// Log level for tracing.
     pub log_level: String,
 
+    /// Optional user agent string to advertise in the P2P version message.
+    /// If not set, a sensible default is used (includes crate version).
+    pub user_agent: Option<String>,
+
     /// Maximum concurrent filter requests (default: 8).
     pub max_concurrent_filter_requests: usize,
 
@@ -192,6 +196,7 @@ impl Default for ClientConfig {
             max_peers: 8,
             enable_persistence: true,
             log_level: "info".to_string(),
+            user_agent: None,
             max_concurrent_filter_requests: 16,
             enable_filter_flow_control: true,
             filter_request_delay_ms: 0,
@@ -303,6 +308,13 @@ impl ClientConfig {
     /// Set log level.
     pub fn with_log_level(mut self, level: &str) -> Self {
         self.log_level = level.to_string();
+        self
+    }
+
+    /// Set custom user agent string for the P2P handshake.
+    /// The library will lightly validate and normalize it during handshake.
+    pub fn with_user_agent(mut self, agent: impl Into<String>) -> Self {
+        self.user_agent = Some(agent.into());
         self
     }
 

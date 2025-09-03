@@ -1,6 +1,6 @@
 [package]
 name = "key-wallet-manager"
-version = "0.1.0"
+version = { workspace = true }
 authors = ["The Dash Core Developers"]
 edition = "2021"
 description = "High-level wallet management for Dash using key-wallet primitives"

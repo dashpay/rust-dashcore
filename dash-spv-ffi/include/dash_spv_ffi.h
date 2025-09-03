@@ -518,7 +518,7 @@ int32_t dash_spv_ffi_config_add_peer(FFIClientConfig *config,
                                      const char *addr);
 
 /**
- * Sets the user agent string (currently not supported)
+ * Sets the user agent string to advertise in the P2P handshake
  *
  * # Safety
  * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
