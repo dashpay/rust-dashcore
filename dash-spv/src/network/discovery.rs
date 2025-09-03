@@ -2,26 +2,29 @@
 
 use dashcore::Network;
 use std::net::{IpAddr, SocketAddr};
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::TokioResolver;
 
 use crate::error::SpvError as Error;
 use crate::network::constants::{MAINNET_DNS_SEEDS, TESTNET_DNS_SEEDS};
 
 /// DNS discovery for finding initial peers
 pub struct DnsDiscovery {
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
 }
 
 impl DnsDiscovery {
     /// Create a new DNS discovery instance
     pub async fn new() -> Result<Self, Error> {
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let resolver = hickory_resolver::Resolver::builder_with_config(
+            ResolverConfig::default(),
+            TokioConnectionProvider::default(),
+        )
+        .with_options(ResolverOpts::default())
+        .build();
 
-        Ok(Self {
-            resolver,
-        })
+        Ok(Self { resolver })
     }
 
     /// Discover peers for the given network
