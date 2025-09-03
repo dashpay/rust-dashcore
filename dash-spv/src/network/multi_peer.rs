@@ -66,6 +66,8 @@ pub struct MultiPeerNetworkManager {
     read_timeout: Duration,
     /// Track which peers have sent us Headers2 messages
     peers_sent_headers2: Arc<Mutex<HashSet<SocketAddr>>>,
+    /// Optional user agent to advertise
+    user_agent: Option<String>,
 }
 
 impl MultiPeerNetworkManager {
@@ -114,6 +116,7 @@ impl MultiPeerNetworkManager {
             last_message_peer: Arc::new(Mutex::new(None)),
             read_timeout: config.read_timeout,
             peers_sent_headers2: Arc::new(Mutex::new(HashSet::new())),
+            user_agent: config.user_agent.clone(),
         })
     }
 
@@ -202,6 +205,7 @@ impl MultiPeerNetworkManager {
         let reputation_manager = self.reputation_manager.clone();
         let mempool_strategy = self.mempool_strategy;
         let read_timeout = self.read_timeout;
+        let user_agent = self.user_agent.clone();
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -213,7 +217,8 @@ impl MultiPeerNetworkManager {
             {
                 Ok(mut conn) => {
                     // Perform handshake
-                    let mut handshake_manager = HandshakeManager::new(network, mempool_strategy);
+                    let mut handshake_manager =
+                        HandshakeManager::new(network, mempool_strategy, user_agent);
                     match handshake_manager.perform_handshake(&mut conn).await {
                         Ok(_) => {
                             log::info!("Successfully connected to {}", addr);
@@ -971,6 +976,7 @@ impl Clone for MultiPeerNetworkManager {
             last_message_peer: self.last_message_peer.clone(),
             read_timeout: self.read_timeout,
             peers_sent_headers2: self.peers_sent_headers2.clone(),
+            user_agent: self.user_agent.clone(),
         }
     }
 }

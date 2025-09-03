@@ -127,7 +127,7 @@ mod tests {
 
             let agent = CString::new("TestAgent/1.0").unwrap();
             let result = dash_spv_ffi_config_set_user_agent(config, agent.as_ptr());
-            assert_eq!(result, FFIErrorCode::ConfigError as i32);
+            assert_eq!(result, FFIErrorCode::Success as i32);
 
             dash_spv_ffi_config_destroy(config);
         }

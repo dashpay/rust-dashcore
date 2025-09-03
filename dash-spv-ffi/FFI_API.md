@@ -59,7 +59,7 @@ Functions: 25
 | `dash_spv_ffi_config_set_persist_mempool` | Sets whether to persist mempool state to disk  # Safety - `config` must be a ... | config |
 | `dash_spv_ffi_config_set_relay_transactions` | Sets whether to relay transactions (currently a no-op)  # Safety - `config` m... | config |
 | `dash_spv_ffi_config_set_start_from_height` | Sets the starting block height for synchronization  # Safety - `config` must ... | config |
-| `dash_spv_ffi_config_set_user_agent` | Sets the user agent string (currently not supported)  # Safety - `config` mus... | config |
+| `dash_spv_ffi_config_set_user_agent` | Sets the user agent string to advertise in the P2P handshake  # Safety - `con... | config |
 | `dash_spv_ffi_config_set_validation_mode` | Sets the validation mode for the SPV client  # Safety - `config` must be a va... | config |
 | `dash_spv_ffi_config_set_wallet_creation_time` | Sets the wallet creation timestamp for synchronization optimization  # Safety... | config |
 | `dash_spv_ffi_config_testnet` | No description | config |
@@ -555,7 +555,7 @@ dash_spv_ffi_config_set_user_agent(config: *mut FFIClientConfig, user_agent: *co
 ```
 
 **Description:**
-Sets the user agent string (currently not supported)  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `user_agent` must be a valid null-terminated C string - The caller must ensure both pointers remain valid for the duration of this call
+Sets the user agent string to advertise in the P2P handshake  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `user_agent` must be a valid null-terminated C string - The caller must ensure both pointers remain valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `user_agent` must be a valid null-terminated C string - The caller must ensure both pointers remain valid for the duration of this call

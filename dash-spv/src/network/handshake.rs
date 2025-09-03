@@ -40,11 +40,16 @@ pub struct HandshakeManager {
     verack_received: bool,
     version_sent: bool,
     mempool_strategy: MempoolStrategy,
+    user_agent: Option<String>,
 }
 
 impl HandshakeManager {
     /// Create a new handshake manager.
-    pub fn new(network: Network, mempool_strategy: MempoolStrategy) -> Self {
+    pub fn new(
+        network: Network,
+        mempool_strategy: MempoolStrategy,
+        user_agent: Option<String>,
+    ) -> Self {
         Self {
             _network: network,
             state: HandshakeState::Init,
@@ -55,6 +60,7 @@ impl HandshakeManager {
             verack_received: false,
             version_sent: false,
             mempool_strategy,
+            user_agent,
         }
     }
 
@@ -254,6 +260,21 @@ impl HandshakeManager {
             .parse()
             .map_err(|_| NetworkError::AddressParse("Failed to parse local address".to_string()))?;
 
+        // Determine user agent: prefer configured value, else default to crate/version.
+        let default_agent = format!("/rust-dash-spv:{}/", env!("CARGO_PKG_VERSION"));
+        let mut ua = self.user_agent.clone().unwrap_or(default_agent);
+        // Normalize: ensure it starts and ends with '/'; trim if excessively long.
+        if !ua.starts_with('/') {
+            ua.insert(0, '/');
+        }
+        if !ua.ends_with('/') {
+            ua.push('/');
+        }
+        // Keep within a reasonable bound (match peer validation bound of 256)
+        if ua.len() > 256 {
+            ua.truncate(256);
+        }
+
         Ok(VersionMessage {
             version: self.our_version,
             services,
@@ -261,7 +282,7 @@ impl HandshakeManager {
             receiver: dashcore::network::address::Address::new(&address, ServiceFlags::NETWORK),
             sender: dashcore::network::address::Address::new(&local_addr, services),
             nonce: rand::random(),
-            user_agent: "/rust-dash-spv:0.1.0/".to_string(),
+            user_agent: ua,
             start_height: 0, // SPV client starts at 0
             relay: match self.mempool_strategy {
                 MempoolStrategy::FetchAll => true, // Want all transactions for FetchAll strategy

@@ -178,6 +178,7 @@ mod multi_peer_tests {
             // QRInfo fields
             qr_info_extra_share: true,
             qr_info_timeout: Duration::from_secs(30),
+            user_agent: None,
         }
     }
 
