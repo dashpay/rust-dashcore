@@ -20,7 +20,7 @@ targetFileToHFuzzInputArg() {
   baseName=$(basename "$1")
   dirName="${baseName%.*}"
   if [ -d "hfuzz_input/$dirName" ]; then
-    echo "HFUZZ_INPUT_ARGS=\"-f hfuzz_input/$FILE/input\""
+    echo "HFUZZ_INPUT_ARGS=\"-f hfuzz_input/$dirName/input\""
   fi
 }
 

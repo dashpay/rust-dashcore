@@ -12,7 +12,19 @@ checkWindowsFiles
 if [ "$1" == "" ]; then
   targetFiles="$(listTargetFiles)"
 else
-  targetFiles=fuzz_targets/"$1".rs
+  # Accept either a direct path-like arg (e.g., hashes/cbor) or underscore form (hashes_cbor)
+  if [ -f "fuzz_targets/$1.rs" ]; then
+    targetFiles="fuzz_targets/$1.rs"
+  else
+    # Convert underscores to directory separators to match our layout
+    converted="${1//_//}"
+    if [ -f "fuzz_targets/$converted.rs" ]; then
+      targetFiles="fuzz_targets/$converted.rs"
+    else
+      # Fallback to original behavior
+      targetFiles="fuzz_targets/$1.rs"
+    fi
+  fi
 fi
 
 cargo --version
@@ -24,7 +36,7 @@ for targetFile in $targetFiles; do
   targetName=$(targetFileToName "$targetFile")
   echo "Fuzzing target $targetName ($targetFile)"
   if [ -d "hfuzz_input/$targetName" ]; then
-    HFUZZ_INPUT_ARGS="-f hfuzz_input/$targetName/input\""
+    HFUZZ_INPUT_ARGS="-f hfuzz_input/$targetName/input"
   else
     HFUZZ_INPUT_ARGS=""
   fi
