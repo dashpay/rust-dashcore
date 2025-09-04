@@ -12,13 +12,13 @@ elliptic-curve-tools = { git = "https://github.com/mikelodder7/elliptic-curve-to
 
 [profile.release]
 # Default to unwinding for most crates
+panic = "unwind"
 
 [profile.release.package.dash-fuzz]
 # Disable LTO and keep debuginfo for honggfuzz to avoid link GC issues
 lto = false
 codegen-units = 16
 debug = 1
-panic = "unwind"
 
 [profile.dev]
 # Default to unwinding for most crates
