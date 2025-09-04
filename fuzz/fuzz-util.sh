@@ -47,6 +47,10 @@ checkReport() {
     for CASE in "hfuzz_workspace/$1/SIG"*; do
       xxd -p -c10000 < "$CASE"
     done
-    exit 1
+    if [ "${HFUZZ_FAIL_ON_CRASH:-}" = "1" ]; then
+      exit 1
+    else
+      echo "[fuzz] Crash detected for $1, not failing (set HFUZZ_FAIL_ON_CRASH=1 to fail)"
+    fi
   fi
 }

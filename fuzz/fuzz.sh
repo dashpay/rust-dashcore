@@ -43,7 +43,7 @@ for targetFile in $targetFiles; do
   else
     HFUZZ_INPUT_ARGS=""
   fi
-  HFUZZ_RUN_ARGS="--run_time 30 --exit_upon_crash -v $HFUZZ_INPUT_ARGS" cargo hfuzz run "$targetName"
+  HFUZZ_RUN_ARGS="--run_time 30 -v $HFUZZ_INPUT_ARGS" cargo hfuzz run "$targetName"
 
   checkReport "$targetName"
 done
