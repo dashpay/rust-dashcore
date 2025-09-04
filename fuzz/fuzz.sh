@@ -30,6 +30,9 @@ fi
 cargo --version
 rustc --version
 
+# Ensure we don't trigger ThinLTO/internalization issues with honggfuzz's link flags
+export RUSTFLAGS="${RUSTFLAGS:-} -C lto=no"
+
 # Testing
 cargo install --force honggfuzz --no-default-features
 for targetFile in $targetFiles; do
