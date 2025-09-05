@@ -785,15 +785,44 @@ fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
         ..Default::default()
     };
     // Ensure we have a confirmed, sufficiently large UTXO owned by this wallet.
-    // 1) Create a fresh funding output of 3 DASH to a new wallet address.
+    // 1) Create a fresh funding output to a new wallet address, with fallbacks if balance is tight.
     let fund_addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
-    let _ = cl
-        .send_to_address(&fund_addr, btc(3), None, None, None, None, None, None, None, None)
-        .unwrap();
+    let mut funded_amount_btc: Option<f64> = None;
+    for amt in [3.0_f64, 1.0_f64, 0.5_f64] {
+        match cl.send_to_address(
+            &fund_addr,
+            btc(amt),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) {
+            Ok(_) => {
+                funded_amount_btc = Some(amt);
+                break;
+            }
+            Err(dashcore_rpc::Error::JsonRpc(dashcore_rpc::jsonrpc::error::Error::Rpc(e)))
+                if e.code == -6 && e.message.contains("Insufficient funds") =>
+            {
+                continue;
+            }
+            Err(e) => panic!("Unexpected error funding test UTXO: {:?}", e),
+        }
+    }
+    let funded_amount_btc =
+        funded_amount_btc.expect("wallet has insufficient balance even for 0.5 DASH");
     // 2) Mine 6 blocks to confirm all pending transactions (not coinbases).
     let mine_addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
     let _ = cl.generate_to_address(6, &mine_addr).unwrap();
-    // 3) Select a confirmed UTXO >= 2 DASH, preferably the one we just created.
+    // 3) Select a confirmed UTXO with at least the funded amount (the vout to fund_addr equals the send amount).
+    let options = json::ListUnspentQueryOptions {
+        minimum_amount: Some(btc(funded_amount_btc)),
+        ..Default::default()
+    };
     let unspent = cl.list_unspent(Some(6), None, Some(&[&fund_addr]), None, Some(options)).unwrap();
     let unspent = unspent.into_iter().next().unwrap();
 
