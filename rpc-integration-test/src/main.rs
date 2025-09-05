@@ -784,6 +784,9 @@ fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
         minimum_amount: Some(btc(2)),
         ..Default::default()
     };
+    // Ensure we have confirmed spendable UTXOs; mine 6 blocks to confirm mempool sends
+    let mine_addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let _ = cl.generate_to_address(6, &mine_addr).unwrap();
     let unspent = cl.list_unspent(Some(6), None, None, None, Some(options)).unwrap();
     let unspent = unspent.into_iter().next().unwrap();
 
