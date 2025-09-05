@@ -784,10 +784,17 @@ fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
         minimum_amount: Some(btc(2)),
         ..Default::default()
     };
-    // Ensure we have confirmed spendable UTXOs; mine 6 blocks to confirm mempool sends
+    // Ensure we have a confirmed, sufficiently large UTXO owned by this wallet.
+    // 1) Create a fresh funding output of 3 DASH to a new wallet address.
+    let fund_addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let _ = cl
+        .send_to_address(&fund_addr, btc(3), None, None, None, None, None, None, None, None)
+        .unwrap();
+    // 2) Mine 6 blocks to confirm all pending transactions (not coinbases).
     let mine_addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
     let _ = cl.generate_to_address(6, &mine_addr).unwrap();
-    let unspent = cl.list_unspent(Some(6), None, None, None, Some(options)).unwrap();
+    // 3) Select a confirmed UTXO >= 2 DASH, preferably the one we just created.
+    let unspent = cl.list_unspent(Some(6), None, Some(&[&fund_addr]), None, Some(options)).unwrap();
     let unspent = unspent.into_iter().next().unwrap();
 
     let tx = Transaction {
