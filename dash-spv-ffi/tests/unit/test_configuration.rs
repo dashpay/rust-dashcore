@@ -96,9 +96,6 @@ mod tests {
 
     #[test]
     #[serial]
-    // removed: host_port API tests (consolidated into add_peer behavior)
-    #[test]
-    #[serial]
     fn test_adding_maximum_peers() {
         unsafe {
             let config = dash_spv_ffi_config_testnet();
