@@ -16,7 +16,7 @@ public enum DashNetwork: String, Codable, CaseIterable, Sendable {
         case .regtest:
             return 19899
         case .devnet:
-            return 19799
+            return 29999
         }
     }
     

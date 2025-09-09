@@ -68,6 +68,8 @@ pub struct MultiPeerNetworkManager {
     peers_sent_headers2: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Optional user agent to advertise
     user_agent: Option<String>,
+    /// Exclusive mode: restrict to configured peers only (no DNS or peer store)
+    exclusive_mode: bool,
 }
 
 impl MultiPeerNetworkManager {
@@ -97,6 +99,9 @@ impl MultiPeerNetworkManager {
             log::warn!("Failed to load peer reputation data: {}", e);
         }
 
+        // Determine exclusive mode: either explicitly requested or peers were provided
+        let exclusive_mode = config.restrict_to_configured_peers || !config.peers.is_empty();
+
         Ok(Self {
             pool: Arc::new(ConnectionPool::new()),
             discovery: Arc::new(discovery),
@@ -117,6 +122,7 @@ impl MultiPeerNetworkManager {
             read_timeout: config.read_timeout,
             peers_sent_headers2: Arc::new(Mutex::new(HashSet::new())),
             user_agent: config.user_agent.clone(),
+            exclusive_mode,
         })
     }
 
@@ -126,10 +132,7 @@ impl MultiPeerNetworkManager {
 
         let mut peer_addresses = self.initial_peers.clone();
 
-        // If specific peers were configured via -p flag, use ONLY those (exclusive mode)
-        let exclusive_mode = !self.initial_peers.is_empty();
-
-        if exclusive_mode {
+        if self.exclusive_mode {
             log::info!(
                 "Exclusive peer mode: connecting ONLY to {} specified peer(s)",
                 self.initial_peers.len()
@@ -161,7 +164,7 @@ impl MultiPeerNetworkManager {
         }
 
         // Connect to peers (all in exclusive mode, or up to TARGET_PEERS in normal mode)
-        let max_connections = if exclusive_mode {
+        let max_connections = if self.exclusive_mode {
             peer_addresses.len()
         } else {
             TARGET_PEERS
@@ -574,8 +577,8 @@ impl MultiPeerNetworkManager {
         let initial_peers = self.initial_peers.clone();
         let data_dir = self.data_dir.clone();
 
-        // Check if we're in exclusive mode (specific peers configured via -p)
-        let exclusive_mode = !initial_peers.is_empty();
+        // Check if we're in exclusive mode (explicit flag or peers configured)
+        let exclusive_mode = self.exclusive_mode;
 
         // Clone self for connection callback
         let connect_fn = {
@@ -977,6 +980,7 @@ impl Clone for MultiPeerNetworkManager {
             read_timeout: self.read_timeout,
             peers_sent_headers2: self.peers_sent_headers2.clone(),
             user_agent: self.user_agent.clone(),
+            exclusive_mode: self.exclusive_mode,
         }
     }
 }

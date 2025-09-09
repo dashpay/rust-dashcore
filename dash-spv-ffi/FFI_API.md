@@ -256,6 +256,8 @@ Adds a peer address to the configuration  # Safety - `config` must be a valid po
 
 ---
 
+Note: `dash_spv_ffi_config_add_peer` also accepts IP-only strings (e.g., `"127.0.0.1"` or `"2001:db8::1"`). When given, the default P2P port for the selected network is used.
+
 #### `dash_spv_ffi_config_destroy`
 
 ```c

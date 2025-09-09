@@ -3,6 +3,7 @@ use dash_spv::{ClientConfig, ValidationMode};
 use key_wallet_ffi::FFINetwork;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 #[repr(C)]
 pub enum FFIValidationMode {
@@ -115,9 +116,13 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
 
 /// Adds a peer address to the configuration
 ///
+/// Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999")
+/// or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only
+/// string is given, the default P2P port for the configured network is used.
+///
 /// # Safety
 /// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - `addr` must be a valid null-terminated C string containing a socket address (e.g., "192.168.1.1:9999")
+/// - `addr` must be a valid null-terminated C string containing a socket address or IP-only string
 /// - The caller must ensure both pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
@@ -127,20 +132,55 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     null_check!(config);
     null_check!(addr);
 
-    let config = &mut (*config).inner;
-    match CStr::from_ptr(addr).to_str() {
-        Ok(addr_str) => match addr_str.parse() {
-            Ok(socket_addr) => {
-                config.peers.push(socket_addr);
+    let cfg = &mut (*config).inner;
+    let default_port = match cfg.network {
+        dashcore::Network::Dash => 9999,
+        dashcore::Network::Testnet => 19999,
+        dashcore::Network::Regtest => 19899,
+        dashcore::Network::Devnet => 29999,
+        _ => 9999,
+    };
+
+    let addr_str = match CStr::from_ptr(addr).to_str() {
+        Ok(s) => s.trim(),
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
+            return FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    // 1) Try parsing as full SocketAddr first (handles IPv6 [::1]:port forms)
+    if let Ok(sock) = addr_str.parse::<SocketAddr>() {
+        cfg.peers.push(sock);
+        return FFIErrorCode::Success as i32;
+    }
+
+    // 2) If that fails, try parsing as bare IP address and apply default port
+    if let Ok(ip) = addr_str.parse::<IpAddr>() {
+        let sock = SocketAddr::new(ip, default_port);
+        cfg.peers.push(sock);
+        return FFIErrorCode::Success as i32;
+    }
+
+    // 3) Optionally attempt DNS name with explicit port only; if no port, reject
+    if !addr_str.contains(':') {
+        set_last_error("Missing port for hostname; supply 'host:port' or IP only");
+        return FFIErrorCode::InvalidArgument as i32;
+    }
+
+    match addr_str.to_socket_addrs() {
+        Ok(mut iter) => match iter.next() {
+            Some(sock) => {
+                cfg.peers.push(sock);
                 FFIErrorCode::Success as i32
             }
-            Err(e) => {
-                set_last_error(&format!("Invalid socket address: {}", e));
+            None => {
+                set_last_error(&format!("Failed to resolve address: {}", addr_str));
                 FFIErrorCode::InvalidArgument as i32
             }
         },
         Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
+            set_last_error(&format!("Invalid address {} ({})", addr_str, e));
             FFIErrorCode::InvalidArgument as i32
         }
     }
@@ -206,6 +246,22 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_filter_load(
 
     let config = &mut (*config).inner;
     config.enable_filters = load_filters;
+    FFIErrorCode::Success as i32
+}
+
+/// Restrict connections strictly to configured peers (disable DNS discovery and peer store)
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_restrict_to_configured_peers(
+    config: *mut FFIClientConfig,
+    restrict: bool,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.restrict_to_configured_peers = restrict;
     FFIErrorCode::Success as i32
 }
 

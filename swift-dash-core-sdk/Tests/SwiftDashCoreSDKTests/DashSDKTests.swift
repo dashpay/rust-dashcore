@@ -49,7 +49,7 @@ final class DashSDKTests: XCTestCase {
         XCTAssertEqual(DashNetwork.mainnet.defaultPort, 9999)
         XCTAssertEqual(DashNetwork.testnet.defaultPort, 19999)
         XCTAssertEqual(DashNetwork.regtest.defaultPort, 19899)
-        XCTAssertEqual(DashNetwork.devnet.defaultPort, 19799)
+        XCTAssertEqual(DashNetwork.devnet.defaultPort, 29999)
     }
     
     func testBalanceCalculations() {

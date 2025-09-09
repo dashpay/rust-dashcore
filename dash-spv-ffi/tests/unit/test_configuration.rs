@@ -58,7 +58,7 @@ mod tests {
                 "256.256.256.256:9999",
                 "127.0.0.1:99999", // port too high
                 "127.0.0.1:-1",    // negative port
-                "127.0.0.1",       // missing port
+                "localhost",       // hostname without port should be rejected
                 ":9999",           // missing IP
                 ":::",             // invalid IPv6
                 "localhost:abc",   // non-numeric port
@@ -74,9 +74,15 @@ mod tests {
                 assert!(!error_ptr.is_null());
             }
 
-            // Test valid addresses
-            let valid_addrs =
-                ["127.0.0.1:9999", "192.168.1.1:8333", "[::1]:9999", "[2001:db8::1]:8333"];
+            // Test valid addresses including IP-only forms (port inferred from network)
+            let valid_addrs = [
+                "127.0.0.1:9999",
+                "192.168.1.1:8333",
+                "[::1]:9999",
+                "[2001:db8::1]:8333",
+                "127.0.0.1",        // IP-only v4
+                "2001:db8::1",      // IP-only v6
+            ];
 
             for addr in &valid_addrs {
                 let c_addr = CString::new(*addr).unwrap();
@@ -87,6 +93,10 @@ mod tests {
             dash_spv_ffi_config_destroy(config);
         }
     }
+
+    #[test]
+    #[serial]
+    // removed: host_port API tests (consolidated into add_peer behavior)
 
     #[test]
     #[serial]
@@ -195,6 +205,11 @@ mod tests {
 
             assert_eq!(
                 dash_spv_ffi_config_set_filter_load(config, true),
+                FFIErrorCode::Success as i32
+            );
+
+            assert_eq!(
+                dash_spv_ffi_config_set_restrict_to_configured_peers(config, true),
                 FFIErrorCode::Success as i32
             );
 
