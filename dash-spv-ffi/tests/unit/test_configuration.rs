@@ -80,8 +80,8 @@ mod tests {
                 "192.168.1.1:8333",
                 "[::1]:9999",
                 "[2001:db8::1]:8333",
-                "127.0.0.1",        // IP-only v4
-                "2001:db8::1",      // IP-only v6
+                "127.0.0.1",   // IP-only v4
+                "2001:db8::1", // IP-only v6
             ];
 
             for addr in &valid_addrs {
@@ -97,7 +97,6 @@ mod tests {
     #[test]
     #[serial]
     // removed: host_port API tests (consolidated into add_peer behavior)
-
     #[test]
     #[serial]
     fn test_adding_maximum_peers() {
