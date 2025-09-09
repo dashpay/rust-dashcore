@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 63
+**Total Functions**: 64
 
 ## Table of Contents
 
@@ -34,12 +34,12 @@ Functions: 4
 
 ### Configuration
 
-Functions: 25
+Functions: 26
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_update_config` | Update the running client's configuration | client |
-| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  # Safety - `config` must be a valid... | config |
+| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts either a full socket addres... | config |
 | `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must be... | config |
 | `dash_spv_ffi_config_get_data_dir` | Gets the data directory path from the configuration  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_get_mempool_strategy` | Gets the mempool synchronization strategy  # Safety - `config` must be a vali... | config |
@@ -58,6 +58,7 @@ Functions: 25
 | `dash_spv_ffi_config_set_mempool_tracking` | Enables or disables mempool tracking  # Safety - `config` must be a valid poi... | config |
 | `dash_spv_ffi_config_set_persist_mempool` | Sets whether to persist mempool state to disk  # Safety - `config` must be a ... | config |
 | `dash_spv_ffi_config_set_relay_transactions` | Sets whether to relay transactions (currently a no-op)  # Safety - `config` m... | config |
+| `dash_spv_ffi_config_set_restrict_to_configured_peers` | Restrict connections strictly to configured peers (disable DNS discovery and ... | config |
 | `dash_spv_ffi_config_set_start_from_height` | Sets the starting block height for synchronization  # Safety - `config` must ... | config |
 | `dash_spv_ffi_config_set_user_agent` | Sets the user agent string to advertise in the P2P handshake  # Safety - `con... | config |
 | `dash_spv_ffi_config_set_validation_mode` | Sets the validation mode for the SPV client  # Safety - `config` must be a va... | config |
@@ -247,16 +248,14 @@ dash_spv_ffi_config_add_peer(config: *mut FFIClientConfig, addr: *const c_char,)
 ```
 
 **Description:**
-Adds a peer address to the configuration  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address (e.g., "192.168.1.1:9999") - The caller must ensure both pointers remain valid for the duration of this call
+Adds a peer address to the configuration  Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999") or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
 
 **Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address (e.g., "192.168.1.1:9999") - The caller must ensure both pointers remain valid for the duration of this call
+- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
 
 **Module:** `config`
 
 ---
-
-Note: `dash_spv_ffi_config_add_peer` also accepts IP-only strings (e.g., `"127.0.0.1"` or `"2001:db8::1"`). When given, the default P2P port for the selected network is used.
 
 #### `dash_spv_ffi_config_destroy`
 
@@ -529,6 +528,22 @@ Sets whether to relay transactions (currently a no-op)  # Safety - `config` must
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Module:** `config`
+
+---
+
+#### `dash_spv_ffi_config_set_restrict_to_configured_peers`
+
+```c
+dash_spv_ffi_config_set_restrict_to_configured_peers(config: *mut FFIClientConfig, restrict: bool,) -> i32
+```
+
+**Description:**
+Restrict connections strictly to configured peers (disable DNS discovery and peer store)  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+
+**Safety:**
+- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
 
 **Module:** `config`
 
