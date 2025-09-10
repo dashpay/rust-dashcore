@@ -132,6 +132,80 @@ fn create_sentinel_header() -> BlockHeader {
 }
 
 impl DiskStorageManager {
+    /// Start the background worker and notification channel.
+    async fn start_worker(&mut self) {
+        let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerCommand>(100);
+        let (notification_tx, notification_rx) = mpsc::channel::<WorkerNotification>(100);
+
+        let worker_base_path = self.base_path.clone();
+        let worker_notification_tx = notification_tx.clone();
+        let worker_handle = tokio::spawn(async move {
+            while let Some(cmd) = worker_rx.recv().await {
+                match cmd {
+                    WorkerCommand::SaveHeaderSegment {
+                        segment_id,
+                        headers,
+                    } => {
+                        let path =
+                            worker_base_path.join(format!("headers/segment_{:04}.dat", segment_id));
+                        if let Err(e) = save_segment_to_disk(&path, &headers).await {
+                            eprintln!("Failed to save segment {}: {}", segment_id, e);
+                        } else {
+                            let _ = worker_notification_tx
+                                .send(WorkerNotification::HeaderSegmentSaved {
+                                    segment_id,
+                                })
+                                .await;
+                        }
+                    }
+                    WorkerCommand::SaveFilterSegment {
+                        segment_id,
+                        filter_headers,
+                    } => {
+                        let path = worker_base_path
+                            .join(format!("filters/filter_segment_{:04}.dat", segment_id));
+                        if let Err(e) = save_filter_segment_to_disk(&path, &filter_headers).await {
+                            eprintln!("Failed to save filter segment {}: {}", segment_id, e);
+                        } else {
+                            let _ = worker_notification_tx
+                                .send(WorkerNotification::FilterSegmentSaved {
+                                    segment_id,
+                                })
+                                .await;
+                        }
+                    }
+                    WorkerCommand::SaveIndex {
+                        index,
+                    } => {
+                        let path = worker_base_path.join("headers/index.dat");
+                        if let Err(e) = save_index_to_disk(&path, &index).await {
+                            eprintln!("Failed to save index: {}", e);
+                        } else {
+                            let _ =
+                                worker_notification_tx.send(WorkerNotification::IndexSaved).await;
+                        }
+                    }
+                    WorkerCommand::Shutdown => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        self.worker_tx = Some(worker_tx);
+        self.worker_handle = Some(worker_handle);
+        self.notification_rx = Arc::new(RwLock::new(notification_rx));
+    }
+
+    /// Stop the background worker without forcing a save.
+    async fn stop_worker(&mut self) {
+        if let Some(tx) = self.worker_tx.take() {
+            let _ = tx.send(WorkerCommand::Shutdown).await;
+        }
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.await;
+        }
+    }
     /// Create a new disk storage manager with segmented storage.
     pub async fn new(base_path: PathBuf) -> StorageResult<Self> {
         // Create directories if they don't exist
@@ -1472,24 +1546,45 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn clear(&mut self) -> StorageResult<()> {
-        // Clear in-memory data
+        // First, stop the background worker to avoid races with file deletion
+        self.stop_worker().await;
+
+        // Clear in-memory state
         self.active_segments.write().await.clear();
         self.active_filter_segments.write().await.clear();
         self.header_hash_index.write().await.clear();
         *self.cached_tip_height.write().await = None;
         *self.cached_filter_tip_height.write().await = None;
-
-        // UTXO cache removed - UTXO management is now handled externally
-
-        // Clear mempool
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
 
-        // Remove all files
+        // Remove all files and directories under base_path
         if self.base_path.exists() {
-            tokio::fs::remove_dir_all(&self.base_path).await?;
+            // Best-effort removal; if concurrent files appear, retry once
+            match tokio::fs::remove_dir_all(&self.base_path).await {
+                Ok(_) => {}
+                Err(e) => {
+                    // Retry once after a short delay to handle transient races
+                    if e.kind() == std::io::ErrorKind::Other
+                        || e.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        tokio::fs::remove_dir_all(&self.base_path).await?;
+                    } else {
+                        return Err(StorageError::Io(e).into());
+                    }
+                }
+            }
             tokio::fs::create_dir_all(&self.base_path).await?;
         }
+
+        // Recreate expected subdirectories
+        tokio::fs::create_dir_all(self.base_path.join("headers")).await?;
+        tokio::fs::create_dir_all(self.base_path.join("filters")).await?;
+        tokio::fs::create_dir_all(self.base_path.join("state")).await?;
+
+        // Restart the background worker for future operations
+        self.start_worker().await;
 
         Ok(())
     }
