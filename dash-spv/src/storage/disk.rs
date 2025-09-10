@@ -1571,7 +1571,7 @@ impl StorageManager for DiskStorageManager {
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         tokio::fs::remove_dir_all(&self.base_path).await?;
                     } else {
-                        return Err(StorageError::Io(e).into());
+                        return Err(StorageError::Io(e));
                     }
                 }
             }
