@@ -30,6 +30,13 @@ pub struct ClientConfig {
     /// List of peer addresses to connect to.
     pub peers: Vec<SocketAddr>,
 
+    /// Restrict connections strictly to the configured peers.
+    ///
+    /// When true, the client will not use DNS discovery or peer persistence and
+    /// will only attempt to connect to addresses provided in `peers`.
+    /// If no peers are configured, no outbound connections will be made.
+    pub restrict_to_configured_peers: bool,
+
     /// Optional path for persistent storage.
     pub storage_path: Option<PathBuf>,
 
@@ -183,6 +190,7 @@ impl Default for ClientConfig {
         Self {
             network: Network::Dash,
             peers: vec![],
+            restrict_to_configured_peers: false,
             storage_path: None,
             validation_mode: ValidationMode::Full,
             filter_checkpoint_interval: 1000,
@@ -243,6 +251,7 @@ impl ClientConfig {
         Self {
             network,
             peers: Self::default_peers_for_network(network),
+            restrict_to_configured_peers: false,
             ..Self::default()
         }
     }
@@ -265,6 +274,12 @@ impl ClientConfig {
     /// Add a peer address.
     pub fn add_peer(&mut self, address: SocketAddr) -> &mut Self {
         self.peers.push(address);
+        self
+    }
+
+    /// Restrict connections to the configured peers only.
+    pub fn with_restrict_to_configured_peers(mut self, restrict: bool) -> Self {
+        self.restrict_to_configured_peers = restrict;
         self
     }
 

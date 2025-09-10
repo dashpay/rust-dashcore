@@ -509,9 +509,13 @@ int32_t dash_spv_ffi_config_set_max_peers(FFIClientConfig *config,
 /**
  * Adds a peer address to the configuration
  *
+ * Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999")
+ * or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only
+ * string is given, the default P2P port for the configured network is used.
+ *
  * # Safety
  * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - `addr` must be a valid null-terminated C string containing a socket address (e.g., "192.168.1.1:9999")
+ * - `addr` must be a valid null-terminated C string containing a socket address or IP-only string
  * - The caller must ensure both pointers remain valid for the duration of this call
  */
 int32_t dash_spv_ffi_config_add_peer(FFIClientConfig *config,
@@ -547,6 +551,15 @@ int32_t dash_spv_ffi_config_set_relay_transactions(FFIClientConfig *config,
  */
 int32_t dash_spv_ffi_config_set_filter_load(FFIClientConfig *config,
                                             bool load_filters);
+
+/**
+ * Restrict connections strictly to configured peers (disable DNS discovery and peer store)
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ */
+int32_t dash_spv_ffi_config_set_restrict_to_configured_peers(FFIClientConfig *config,
+                                                             bool restrict);
 
 /**
  * Enables or disables masternode synchronization

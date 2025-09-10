@@ -129,6 +129,7 @@ mod multi_peer_tests {
         ClientConfig {
             network: Network::Regtest,
             peers: vec!["127.0.0.1:19899".parse().unwrap()],
+            restrict_to_configured_peers: false,
             storage_path: Some(temp_dir.path().to_path_buf()),
             validation_mode: crate::types::ValidationMode::Basic,
             filter_checkpoint_interval: 1000,
