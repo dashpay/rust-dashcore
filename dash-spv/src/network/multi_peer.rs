@@ -899,6 +899,12 @@ impl MultiPeerNetworkManager {
         }
     }
 
+    /// Get the socket address of the last peer that sent a message
+    pub async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
+        let last_peer = self.last_message_peer.lock().await;
+        *last_peer
+    }
+
     /// Ban a specific peer manually
     pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Manually banning peer {} - reason: {}", addr, reason);

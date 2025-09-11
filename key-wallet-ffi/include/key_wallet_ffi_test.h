@@ -427,7 +427,7 @@ typedef struct {
  FFI wrapper for ManagedWalletInfo that includes transaction checking capabilities
  */
 typedef struct {
-    ManagedWalletInfo *inner;
+    void *inner;
 
 } FFIManagedWallet;
 
@@ -3449,4 +3449,3 @@ bool wallet_manager_add_wallet_from_mnemonic(FFIWalletManager *manager,
                                              FFINetworks network,
                                              FFIError *error)
 ;
-

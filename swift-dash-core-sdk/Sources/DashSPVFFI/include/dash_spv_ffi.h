@@ -559,7 +559,7 @@ int32_t dash_spv_ffi_config_set_filter_load(FFIClientConfig *config,
  * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
  */
 int32_t dash_spv_ffi_config_set_restrict_to_configured_peers(FFIClientConfig *config,
-                                                             bool restrict);
+                                                             bool restrict_peers);
 
 /**
  * Enables or disables masternode synchronization

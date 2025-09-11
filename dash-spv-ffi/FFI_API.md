@@ -536,7 +536,7 @@ Sets whether to relay transactions (currently a no-op)  # Safety - `config` must
 #### `dash_spv_ffi_config_set_restrict_to_configured_peers`
 
 ```c
-dash_spv_ffi_config_set_restrict_to_configured_peers(config: *mut FFIClientConfig, restrict: bool,) -> i32
+dash_spv_ffi_config_set_restrict_to_configured_peers(config: *mut FFIClientConfig, restrict_peers: bool,) -> i32
 ```
 
 **Description:**

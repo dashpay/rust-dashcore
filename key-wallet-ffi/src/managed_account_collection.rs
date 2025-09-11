@@ -121,6 +121,8 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
             Box::into_raw(Box::new(ffi_collection))
         }
         None => {
+            // Capture networks before freeing the pointer to avoid use-after-free
+            let networks = managed_wallet.inner().networks_supported();
             // Clean up the managed wallet pointer
             crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
 
@@ -129,8 +131,7 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
                 FFIErrorCode::NotFound,
                 format!(
                     "No accounts found for network {:?}, wallet has networks {:?}",
-                    network_rust,
-                    managed_wallet.inner().networks_supported()
+                    network_rust, networks
                 ),
             );
             ptr::null_mut()
