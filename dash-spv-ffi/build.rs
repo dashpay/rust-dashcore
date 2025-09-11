@@ -7,6 +7,10 @@ fn main() {
 
     std::fs::create_dir_all(&output_path).unwrap();
 
+    // Ensure the build script reruns when header-relevant files change
+    println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=src");
+
     let config = cbindgen::Config::from_file("cbindgen.toml").unwrap_or_default();
 
     match cbindgen::Builder::new().with_crate(&crate_dir).with_config(config).generate() {
@@ -15,7 +19,8 @@ fn main() {
             println!("cargo:warning=Generated C header at {:?}", output_path);
         }
         Err(e) => {
-            println!("cargo:warning=Failed to generate C header: {}", e);
+            // Fail the build to avoid shipping stale headers
+            panic!("Failed to generate C header via cbindgen: {}", e);
         }
     }
 }
