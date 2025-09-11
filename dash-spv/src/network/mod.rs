@@ -102,6 +102,12 @@ pub trait NetworkManager: Send + Sync {
         crate::types::PeerId(0) // Default implementation
     }
 
+    /// Get the socket address of the last peer that sent us a message.
+    /// Default implementation returns None; implementations with peer tracking can override.
+    async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
+        None
+    }
+
     /// Update the DSQ (CoinJoin queue) message preference for the current peer.
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()>;
 
@@ -362,6 +368,10 @@ impl NetworkManager for TcpNetworkManager {
         } else {
             crate::types::PeerId(0)
         }
+    }
+
+    async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
+        self.connection.as_ref().map(|connection| connection.address())
     }
 
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {

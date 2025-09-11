@@ -132,6 +132,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             })?;
 
         let start_height = Self::calculate_batch_start_height(cf_headers, stop_height);
+        tracing::debug!(
+            "CFHeaders batch analysis: stop_hash={}, stop_height={}, start_height={}, count={}, header_tip_height={}",
+            cf_headers.stop_hash,
+            stop_height,
+            start_height,
+            cf_headers.filter_hashes.len(),
+            header_tip_height
+        );
         Ok((start_height, stop_height, header_tip_height))
     }
 
@@ -247,11 +255,25 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Check if this is the expected batch or if there's overlap
         if batch_start_height < self.current_sync_height {
-            tracing::warn!(
-                "📋 Received overlapping filter headers: expected start={}, received start={} (likely from recovery/retry)",
-                self.current_sync_height,
-                batch_start_height
-            );
+            // Try to include the peer address for diagnostics
+            let peer_addr = network.get_last_message_peer_addr().await;
+            match peer_addr {
+                Some(addr) => {
+                    tracing::warn!(
+                        "📋 Received overlapping filter headers from {}: expected start={}, received start={} (likely from recovery/retry)",
+                        addr,
+                        self.current_sync_height,
+                        batch_start_height
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        "📋 Received overlapping filter headers: expected start={}, received start={} (likely from recovery/retry)",
+                        self.current_sync_height,
+                        batch_start_height
+                    );
+                }
+            }
 
             // Handle overlapping headers using the helper method
             let (new_headers_stored, new_current_height) = self
@@ -699,6 +721,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         tracing::info!("🚀 Starting filter header synchronization");
+        tracing::debug!("FilterSync start: sync_base_height={}", self.sync_base_height);
 
         // Get current filter tip
         let current_filter_height = storage
@@ -716,6 +739,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Convert storage height to blockchain height for comparisons
         let header_tip_height = self.storage_to_blockchain_height(storage_tip_height);
+        tracing::debug!(
+            "FilterSync context: storage_tip_height={}, header_tip_height={} (base={})",
+            storage_tip_height,
+            header_tip_height,
+            self.sync_base_height
+        );
 
         if current_filter_height >= header_tip_height {
             tracing::info!("Filter headers already synced to header tip");
@@ -736,6 +765,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             } else {
                 current_filter_height + 1
             };
+        tracing::debug!(
+            "FilterSync plan: next_height={}, current_filter_height={}, header_tip_height={}",
+            next_height,
+            current_filter_height,
+            header_tip_height
+        );
 
         if next_height > header_tip_height {
             tracing::warn!(
@@ -779,10 +814,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             (self.current_sync_height + FILTER_BATCH_SIZE - 1).min(header_tip_height);
 
         tracing::debug!(
-            "Requesting filter headers batch: start={}, end={}, count={}",
+            "Requesting filter headers batch: start={}, end={}, count={} (base={})",
             self.current_sync_height,
             batch_end_height,
-            batch_end_height - self.current_sync_height + 1
+            batch_end_height - self.current_sync_height + 1,
+            self.sync_base_height
         );
 
         // Get the hash at batch_end_height for the stop_hash
@@ -797,7 +833,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             );
             match storage.get_header(storage_height).await {
                 Ok(Some(header)) => {
-                    tracing::debug!("Found header at storage height {}", storage_height);
+                    tracing::debug!(
+                        "Found header for batch stop at blockchain height {} (storage height {}), hash={}",
+                        batch_end_height,
+                        storage_height,
+                        header.block_hash()
+                    );
                     header.block_hash()
                 }
                 Ok(None) => {
@@ -892,6 +933,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 "Invalid start_height 0 for filter headers".to_string(),
             ));
         }
+
+        tracing::debug!(
+            "Sending GetCFHeaders: start_height={}, stop_hash={}, base_height={} (storage start={})",
+            start_height,
+            stop_hash,
+            self.sync_base_height,
+            self.blockchain_to_storage_height(start_height)
+        );
 
         let get_cf_headers = GetCFHeaders {
             filter_type: 0, // Basic filter type
@@ -1427,12 +1476,27 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Also record in the existing tracking system
         self.record_filter_request(request.start_height, request.end_height);
 
-        tracing::debug!(
-            "📡 Sent filter request for range {}-{} (now {} active)",
-            request.start_height,
-            request.end_height,
-            self.active_filter_requests.len()
-        );
+        // Include peer info when available
+        let peer_addr = network.get_last_message_peer_addr().await;
+        match peer_addr {
+            Some(addr) => {
+                tracing::debug!(
+                    "📡 Sent filter request for range {}-{} to {} (now {} active)",
+                    request.start_height,
+                    request.end_height,
+                    addr,
+                    self.active_filter_requests.len()
+                );
+            }
+            None => {
+                tracing::debug!(
+                    "📡 Sent filter request for range {}-{} (now {} active)",
+                    request.start_height,
+                    request.end_height,
+                    self.active_filter_requests.len()
+                );
+            }
+        }
 
         // Apply delay only for retry requests to avoid hammering peers
         if request.is_retry && FILTER_RETRY_DELAY_MS > 0 {
@@ -1710,12 +1774,28 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             stop_hash,
         };
 
+        // Log with peer if available
+        let peer_addr = network.get_last_message_peer_addr().await;
+        match peer_addr {
+            Some(addr) => tracing::debug!(
+                "Sending GetCFilters: start_height={}, stop_hash={}, to {}",
+                start_height,
+                stop_hash,
+                addr
+            ),
+            None => tracing::debug!(
+                "Sending GetCFilters: start_height={}, stop_hash={}",
+                start_height,
+                stop_hash
+            ),
+        }
+
         network
             .send_message(NetworkMessage::GetCFilters(get_cfilters))
             .await
             .map_err(|e| SyncError::Network(format!("Failed to send GetCFilters: {}", e)))?;
 
-        tracing::debug!("Requested filters from height {} to {}", start_height, stop_hash);
+        tracing::trace!("Requested filters from height {} to {}", start_height, stop_hash);
 
         Ok(())
     }

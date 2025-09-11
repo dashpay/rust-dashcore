@@ -7,7 +7,7 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_uint};
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::transaction_checking::FFIManagedWallet;
+use crate::managed_wallet::FFIManagedWalletInfo;
 use crate::types::{FFIAccountType, FFIWallet};
 use crate::utils::rust_string_to_c;
 use crate::FFINetwork;
@@ -241,12 +241,12 @@ pub struct FFIAddressPoolInfo {
 ///
 /// # Safety
 ///
-/// - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `info_out` must be a valid pointer to store the pool info
 /// - `error` must be a valid pointer to an FFIError or null
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
-    managed_wallet: *const FFIManagedWallet,
+    managed_wallet: *const FFIManagedWalletInfo,
     network: FFINetwork,
     account_type: FFIAccountType,
     account_index: c_uint,
@@ -259,7 +259,8 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
         return false;
     }
 
-    let managed_wallet = &*(*managed_wallet).inner;
+    let wrapper = &*managed_wallet;
+    let managed_wallet = wrapper.inner();
     let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
@@ -362,11 +363,11 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
 ///
 /// # Safety
 ///
-/// - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `error` must be a valid pointer to an FFIError or null
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_set_gap_limit(
-    managed_wallet: *mut FFIManagedWallet,
+    managed_wallet: *mut FFIManagedWalletInfo,
     network: FFINetwork,
     account_type: FFIAccountType,
     account_index: c_uint,
@@ -379,7 +380,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
         return false;
     }
 
-    let managed_wallet = &mut *(*managed_wallet).inner;
+    let managed_wallet = (&mut *managed_wallet).inner_mut();
     let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
@@ -470,12 +471,12 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
 ///
 /// # Safety
 ///
-/// - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `wallet` must be a valid pointer to an FFIWallet (for key derivation)
 /// - `error` must be a valid pointer to an FFIError or null
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
-    managed_wallet: *mut FFIManagedWallet,
+    managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_type: FFIAccountType,
@@ -489,7 +490,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
         return false;
     }
 
-    let managed_wallet = &mut *(*managed_wallet).inner;
+    let managed_wallet = (&mut *managed_wallet).inner_mut();
     let wallet = &*wallet;
     let network_rust: key_wallet::Network = network.into();
 
@@ -636,12 +637,12 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 ///
 /// # Safety
 ///
-/// - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `address` must be a valid C string
 /// - `error` must be a valid pointer to an FFIError or null
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_mark_address_used(
-    managed_wallet: *mut FFIManagedWallet,
+    managed_wallet: *mut FFIManagedWalletInfo,
     network: FFINetwork,
     address: *const c_char,
     error: *mut FFIError,
@@ -651,7 +652,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         return false;
     }
 
-    let managed_wallet = &mut *(*managed_wallet).inner;
+    let managed_wallet = (&mut *managed_wallet).inner_mut();
     let network_rust: key_wallet::Network = network.into();
 
     // Parse the address string

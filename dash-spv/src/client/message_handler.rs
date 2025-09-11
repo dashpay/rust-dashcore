@@ -106,10 +106,23 @@ impl<
                     });
             }
             NetworkMessage::CFHeaders(ref cf_headers) => {
-                tracing::info!(
-                    "📨 Client received CFHeaders message with {} filter headers",
-                    cf_headers.filter_hashes.len()
-                );
+                // Try to include the peer address for better diagnostics
+                let peer_addr = self.network.get_last_message_peer_addr().await;
+                match peer_addr {
+                    Some(addr) => {
+                        tracing::info!(
+                            "📨 Client received CFHeaders message with {} filter headers from {}",
+                            cf_headers.filter_hashes.len(),
+                            addr
+                        );
+                    }
+                    None => {
+                        tracing::info!(
+                            "📨 Client received CFHeaders message with {} filter headers (peer unknown)",
+                            cf_headers.filter_hashes.len()
+                        );
+                    }
+                }
                 // Move to sync manager without cloning
                 return self
                     .sync_manager
@@ -182,9 +195,19 @@ impl<
             NetworkMessage::Headers(headers) => {
                 // For post-sync headers, we need special handling
                 if self.sync_manager.is_synced() && !headers.is_empty() {
-                    tracing::info!(
-                        "📋 Post-sync headers received, additional processing may be needed"
-                    );
+                    let peer_addr = self.network.get_last_message_peer_addr().await;
+                    if let Some(addr) = peer_addr {
+                        tracing::info!(
+                            "📋 Post-sync headers received from {} ({} headers), additional processing may be needed",
+                            addr,
+                            headers.len()
+                        );
+                    } else {
+                        tracing::info!(
+                            "📋 Post-sync headers received ({} headers), additional processing may be needed",
+                            headers.len()
+                        );
+                    }
                 }
             }
             NetworkMessage::Block(block) => {

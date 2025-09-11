@@ -1253,6 +1253,15 @@ impl<
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
+        // Log source peer for CFHeaders batches when possible
+        if let Some(addr) = network.get_last_message_peer_addr().await {
+            tracing::debug!(
+                "📨 Received CFHeaders ({} headers) from {} (stop_hash={})",
+                cfheaders.filter_hashes.len(),
+                addr,
+                cfheaders.stop_hash
+            );
+        }
         let continue_sync =
             self.filter_sync.handle_cfheaders_message(cfheaders.clone(), storage, network).await?;
 
@@ -1298,7 +1307,20 @@ impl<
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        tracing::debug!("📨 Received CFilter for block {}", cfilter.block_hash);
+        // Include peer address when available for diagnostics
+        let peer_addr = network.get_last_message_peer_addr().await;
+        match peer_addr {
+            Some(addr) => {
+                tracing::debug!(
+                    "📨 Received CFilter for block {} from {}",
+                    cfilter.block_hash,
+                    addr
+                );
+            }
+            None => {
+                tracing::debug!("📨 Received CFilter for block {}", cfilter.block_hash);
+            }
+        }
 
         let mut wallet = self.wallet.write().await;
 

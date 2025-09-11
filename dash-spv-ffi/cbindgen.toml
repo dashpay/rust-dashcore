@@ -11,7 +11,11 @@ cpp_compat = true
 [export]
 include = ["FFI"]
 exclude = ["Option_BlockCallback", "Option_TransactionCallback", "Option_BalanceCallback"]
-prefix = "dash_spv_ffi_"
+prefix = ""
+
+[export.body]
+# Forward-declare FFIClientConfig to avoid aliasing to internal ClientConfig in C headers
+"FFIClientConfig" = ""
 
 [export.rename]
 "FFIValidationMode" = "DashSpvValidationMode"

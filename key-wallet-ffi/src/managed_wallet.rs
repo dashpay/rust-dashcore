@@ -13,26 +13,29 @@ use crate::types::FFIWallet;
 use crate::FFINetwork;
 use key_wallet::managed_account::address_pool::KeySource;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use std::ffi::c_void;
 
-/// FFI wrapper for ManagedWalletInfo
+/// FFI wrapper for ManagedWalletInfo (single canonical type)
+#[repr(C)]
 pub struct FFIManagedWalletInfo {
-    inner: ManagedWalletInfo,
+    // Opaque pointer to avoid leaking ManagedWalletInfo into C headers
+    inner: *mut c_void,
 }
 
 impl FFIManagedWalletInfo {
     /// Create a new FFIManagedWalletInfo from a ManagedWalletInfo
     pub fn new(inner: ManagedWalletInfo) -> Self {
         Self {
-            inner,
+            inner: Box::into_raw(Box::new(inner)) as *mut c_void,
         }
     }
 
     pub fn inner(&self) -> &ManagedWalletInfo {
-        &self.inner
+        unsafe { &*(self.inner as *const ManagedWalletInfo) }
     }
 
     pub fn inner_mut(&mut self) -> &mut ManagedWalletInfo {
-        &mut self.inner
+        unsafe { &mut *(self.inner as *mut ManagedWalletInfo) }
     }
 }
 
@@ -74,7 +77,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
     let network = network.into();
 
     // Get the account collection for the network
-    let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
+    let account_collection = match managed_wallet.inner_mut().accounts.get_mut(&network) {
         Some(collection) => collection,
         None => {
             FFIError::set_error(
@@ -198,7 +201,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
     let network = network.into();
 
     // Get the account collection for the network
-    let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
+    let account_collection = match managed_wallet.inner_mut().accounts.get_mut(&network) {
         Some(collection) => collection,
         None => {
             FFIError::set_error(
@@ -341,7 +344,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     let network = network.into();
 
     // Get the account collection for the network
-    let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
+    let account_collection = match managed_wallet.inner_mut().accounts.get_mut(&network) {
         Some(collection) => collection,
         None => {
             FFIError::set_error(
@@ -527,7 +530,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     let network = network.into();
 
     // Get the account collection for the network
-    let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
+    let account_collection = match managed_wallet.inner_mut().accounts.get_mut(&network) {
         Some(collection) => collection,
         None => {
             FFIError::set_error(
@@ -700,7 +703,7 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
     }
 
     let managed_wallet = unsafe { &*managed_wallet };
-    let balance = &managed_wallet.inner.balance;
+    let balance = &managed_wallet.inner().balance;
 
     unsafe {
         *confirmed_out = balance.confirmed;
@@ -722,8 +725,10 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_free(managed_wallet: *mut FFIManagedWalletInfo) {
     if !managed_wallet.is_null() {
-        unsafe {
-            let _ = Box::from_raw(managed_wallet);
+        // Reclaim outer struct, then free inner if present
+        let wrapper = Box::from_raw(managed_wallet);
+        if !wrapper.inner.is_null() {
+            let _ = Box::from_raw(wrapper.inner as *mut ManagedWalletInfo);
         }
     }
 }
@@ -737,8 +742,9 @@ pub unsafe extern "C" fn managed_wallet_free(managed_wallet: *mut FFIManagedWall
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_info_free(wallet_info: *mut FFIManagedWalletInfo) {
     if !wallet_info.is_null() {
-        unsafe {
-            let _ = Box::from_raw(wallet_info);
+        let wrapper = Box::from_raw(wallet_info);
+        if !wrapper.inner.is_null() {
+            let _ = Box::from_raw(wrapper.inner as *mut ManagedWalletInfo);
         }
     }
 }

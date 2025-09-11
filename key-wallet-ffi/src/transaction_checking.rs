@@ -9,6 +9,7 @@ use std::os::raw::{c_char, c_uint};
 use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
+use crate::managed_wallet::{managed_wallet_info_free, FFIManagedWalletInfo};
 use crate::types::{FFINetwork, FFITransactionContext, FFIWallet};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
@@ -16,12 +17,6 @@ use key_wallet::transaction_checking::{
     account_checker::AccountTypeMatch, TransactionContext, WalletTransactionChecker,
 };
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-
-/// FFI wrapper for ManagedWalletInfo that includes transaction checking capabilities
-#[repr(C)]
-pub struct FFIManagedWallet {
-    pub(crate) inner: *mut ManagedWalletInfo,
-}
 
 // Transaction context for checking
 // FFITransactionContext is imported from types module at the top
@@ -74,12 +69,12 @@ pub struct FFITransactionCheckResult {
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet
 /// - `error` must be a valid pointer to an FFIError or null
-/// - The returned pointer must be freed with `ffi_managed_wallet_free`
+/// - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_managed_wallet(
     wallet: *const FFIWallet,
     error: *mut FFIError,
-) -> *mut FFIManagedWallet {
+) -> *mut FFIManagedWalletInfo {
     if wallet.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
         return std::ptr::null_mut();
@@ -91,9 +86,7 @@ pub unsafe extern "C" fn wallet_create_managed_wallet(
     let managed_info = ManagedWalletInfo::from_wallet(wallet.inner());
 
     // Box it and return raw pointer
-    let managed_wallet = Box::new(FFIManagedWallet {
-        inner: Box::into_raw(Box::new(managed_info)),
-    });
+    let managed_wallet = Box::new(FFIManagedWalletInfo::new(managed_info));
 
     FFIError::set_success(error);
     Box::into_raw(managed_wallet)
@@ -106,7 +99,7 @@ pub unsafe extern "C" fn wallet_create_managed_wallet(
 ///
 /// # Safety
 ///
-/// - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `wallet` must be a valid pointer to an FFIWallet (needed for address generation)
 /// - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
 /// - `result_out` must be a valid pointer to store the result
@@ -114,7 +107,7 @@ pub unsafe extern "C" fn wallet_create_managed_wallet(
 /// - The affected_accounts array in the result must be freed with `transaction_check_result_free`
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_check_transaction(
-    managed_wallet: *mut FFIManagedWallet,
+    managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
     network: FFINetwork,
     tx_bytes: *const u8,
@@ -132,7 +125,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
         return false;
     }
 
-    let managed_wallet = &mut *(*managed_wallet).inner;
+    let managed_wallet: &mut ManagedWalletInfo = (*managed_wallet).inner_mut();
     let network_rust: key_wallet::Network = network.into();
     let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
@@ -456,20 +449,16 @@ pub unsafe extern "C" fn transaction_check_result_free(result: *mut FFITransacti
     }
 }
 
-/// Free a managed wallet (FFIManagedWallet type)
+/// Free a managed wallet (FFIManagedWalletInfo type)
 ///
 /// # Safety
 ///
-/// - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - This function must only be called once per managed wallet
 #[no_mangle]
-pub unsafe extern "C" fn ffi_managed_wallet_free(managed_wallet: *mut FFIManagedWallet) {
-    if !managed_wallet.is_null() {
-        let wallet = Box::from_raw(managed_wallet);
-        if !wallet.inner.is_null() {
-            let _ = Box::from_raw(wallet.inner);
-        }
-    }
+pub unsafe extern "C" fn ffi_managed_wallet_free(managed_wallet: *mut FFIManagedWalletInfo) {
+    // For compatibility, forward to canonical free
+    managed_wallet_info_free(managed_wallet);
 }
 
 /// Get the transaction classification for routing

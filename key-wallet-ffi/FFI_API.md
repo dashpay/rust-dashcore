@@ -73,7 +73,7 @@ Functions: 57
 | `account_get_parent_wallet_id` | Get the parent wallet ID of an account  # Safety  - `account` must be a valid... | account |
 | `bls_account_get_parent_wallet_id` | No description | account |
 | `eddsa_account_get_parent_wallet_id` | No description | account |
-| `ffi_managed_wallet_free` | Free a managed wallet (FFIManagedWallet type)  # Safety  - `managed_wallet` m... | transaction_checking |
+| `ffi_managed_wallet_free` | Free a managed wallet (FFIManagedWalletInfo type)  # Safety  - `managed_walle... | transaction_checking |
 | `key_wallet_derive_address_from_key` | Derive an address from a private key  # Safety - `private_key` must be a vali... | derivation |
 | `key_wallet_derive_address_from_seed` | Derive an address from a seed at a specific derivation path  # Safety - `seed... | derivation |
 | `key_wallet_derive_private_key_from_seed` | Derive a private key from a seed at a specific derivation path  # Safety - `s... | derivation |
@@ -697,14 +697,14 @@ eddsa_account_get_parent_wallet_id(account: *const FFIEdDSAAccount,) -> *const u
 #### `ffi_managed_wallet_free`
 
 ```c
-ffi_managed_wallet_free(managed_wallet: *mut FFIManagedWallet) -> ()
+ffi_managed_wallet_free(managed_wallet: *mut FFIManagedWalletInfo) -> ()
 ```
 
 **Description:**
-Free a managed wallet (FFIManagedWallet type)  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWallet - This function must only be called once per managed wallet
+Free a managed wallet (FFIManagedWalletInfo type)  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - This function must only be called once per managed wallet
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWallet - This function must only be called once per managed wallet
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - This function must only be called once per managed wallet
 
 **Module:** `transaction_checking`
 
@@ -777,14 +777,14 @@ Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't stor
 #### `managed_wallet_check_transaction`
 
 ```c
-managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWallet, wallet: *const FFIWallet, network: FFINetwork, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
+managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Check if a transaction belongs to the wallet  This function checks a transaction against all relevant account types in the wallet and returns detailed information about which accounts are affected.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWallet - `wallet` must be a valid pointer to an FFIWallet (needed for address generation) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
+Check if a transaction belongs to the wallet  This function checks a transaction against all relevant account types in the wallet and returns detailed information about which accounts are affected.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWallet - `wallet` must be a valid pointer to an FFIWallet (needed for address generation) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
 
 **Module:** `transaction_checking`
 
@@ -809,14 +809,14 @@ Free managed wallet info  # Safety  - `managed_wallet` must be a valid pointer t
 #### `managed_wallet_generate_addresses_to_index`
 
 ```c
-managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWallet, wallet: *const FFIWallet, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, target_index: c_uint, error: *mut FFIError,) -> bool
+managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, target_index: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Generate addresses up to a specific index in a pool  This ensures that addresses up to and including the specified index exist in the pool. This is useful for wallet recovery or when specific indices are needed.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWallet - `wallet` must be a valid pointer to an FFIWallet (for key derivation) - `error` must be a valid pointer to an FFIError or null
+Generate addresses up to a specific index in a pool  This ensures that addresses up to and including the specified index exist in the pool. This is useful for wallet recovery or when specific indices are needed.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (for key derivation) - `error` must be a valid pointer to an FFIError or null
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWallet - `wallet` must be a valid pointer to an FFIWallet (for key derivation) - `error` must be a valid pointer to an FFIError or null
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (for key derivation) - `error` must be a valid pointer to an FFIError or null
 
 **Module:** `address_pool`
 
@@ -873,14 +873,14 @@ Get number of accounts in a managed wallet  # Safety  - `manager` must be a vali
 #### `managed_wallet_get_address_pool_info`
 
 ```c
-managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWallet, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, info_out: *mut FFIAddressPoolInfo, error: *mut FFIError,) -> bool
+managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWalletInfo, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, info_out: *mut FFIAddressPoolInfo, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Get address pool information for an account  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWallet - `info_out` must be a valid pointer to store the pool info - `error` must be a valid pointer to an FFIError or null
+Get address pool information for an account  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `info_out` must be a valid pointer to store the pool info - `error` must be a valid pointer to an FFIError or null
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWallet - `info_out` must be a valid pointer to store the pool info - `error` must be a valid pointer to an FFIError or null
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `info_out` must be a valid pointer to store the pool info - `error` must be a valid pointer to an FFIError or null
 
 **Module:** `address_pool`
 
@@ -1017,14 +1017,14 @@ Free managed wallet info returned by wallet_manager_get_managed_wallet_info  # S
 #### `managed_wallet_mark_address_used`
 
 ```c
-managed_wallet_mark_address_used(managed_wallet: *mut FFIManagedWallet, network: FFINetwork, address: *const c_char, error: *mut FFIError,) -> bool
+managed_wallet_mark_address_used(managed_wallet: *mut FFIManagedWalletInfo, network: FFINetwork, address: *const c_char, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Mark an address as used in the pool  This updates the pool's tracking of which addresses have been used, which is important for gap limit management and wallet recovery.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWallet - `address` must be a valid C string - `error` must be a valid pointer to an FFIError or null
+Mark an address as used in the pool  This updates the pool's tracking of which addresses have been used, which is important for gap limit management and wallet recovery.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `address` must be a valid C string - `error` must be a valid pointer to an FFIError or null
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWallet - `address` must be a valid C string - `error` must be a valid pointer to an FFIError or null
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `address` must be a valid C string - `error` must be a valid pointer to an FFIError or null
 
 **Module:** `address_pool`
 
@@ -1033,14 +1033,14 @@ Mark an address as used in the pool  This updates the pool's tracking of which a
 #### `managed_wallet_set_gap_limit`
 
 ```c
-managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWallet, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, gap_limit: c_uint, error: *mut FFIError,) -> bool
+managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWalletInfo, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, gap_limit: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Set the gap limit for an address pool  The gap limit determines how many unused addresses to maintain at the end of the pool. This is important for wallet recovery and address discovery.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWallet - `error` must be a valid pointer to an FFIError or null
+Set the gap limit for an address pool  The gap limit determines how many unused addresses to maintain at the end of the pool. This is important for wallet recovery and address discovery.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError or null
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWallet - `error` must be a valid pointer to an FFIError or null
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError or null
 
 **Module:** `address_pool`
 
@@ -1193,14 +1193,14 @@ Create a new wallet from seed with options  # Safety  - `seed` must be a valid p
 #### `wallet_create_managed_wallet`
 
 ```c
-wallet_create_managed_wallet(wallet: *const FFIWallet, error: *mut FFIError,) -> *mut FFIManagedWallet
+wallet_create_managed_wallet(wallet: *const FFIWallet, error: *mut FFIError,) -> *mut FFIManagedWalletInfo
 ```
 
 **Description:**
-Create a managed wallet from a regular wallet  This creates a ManagedWalletInfo instance from a Wallet, which includes address pools and transaction checking capabilities.  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError or null - The returned pointer must be freed with `ffi_managed_wallet_free`
+Create a managed wallet from a regular wallet  This creates a ManagedWalletInfo instance from a Wallet, which includes address pools and transaction checking capabilities.  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError or null - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
 
 **Safety:**
-- `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError or null - The returned pointer must be freed with `ffi_managed_wallet_free`
+- `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError or null - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
 
 **Module:** `transaction_checking`
 

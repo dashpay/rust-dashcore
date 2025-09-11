@@ -264,11 +264,6 @@ typedef struct FFIManagedAccount FFIManagedAccount;
 typedef struct FFIManagedAccountCollection FFIManagedAccountCollection;
 
 /*
- FFI wrapper for ManagedWalletInfo
- */
-typedef struct FFIManagedWalletInfo FFIManagedWalletInfo;
-
-/*
  Opaque type for a private key (SecretKey)
  */
 typedef struct FFIPrivateKey FFIPrivateKey;
@@ -394,12 +389,11 @@ typedef struct {
 } FFIAccountCollectionSummary;
 
 /*
- FFI wrapper for ManagedWalletInfo that includes transaction checking capabilities
+ FFI wrapper for ManagedWalletInfo (single canonical type)
  */
 typedef struct {
-    ManagedWalletInfo *inner;
-
-} FFIManagedWallet;
+    void *inner;
+} FFIManagedWalletInfo;
 
 /*
  Address pool info
@@ -1657,12 +1651,12 @@ FFIPrivateKey *account_derive_private_key_from_mnemonic(const FFIAccount *accoun
 
  # Safety
 
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
  - `info_out` must be a valid pointer to store the pool info
  - `error` must be a valid pointer to an FFIError or null
  */
 
-bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet,
+bool managed_wallet_get_address_pool_info(const FFIManagedWalletInfo *managed_wallet,
                                           FFINetwork network,
                                           FFIAccountType account_type,
                                           unsigned int account_index,
@@ -1679,11 +1673,11 @@ bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet
 
  # Safety
 
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
  - `error` must be a valid pointer to an FFIError or null
  */
 
-bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
+bool managed_wallet_set_gap_limit(FFIManagedWalletInfo *managed_wallet,
                                   FFINetwork network,
                                   FFIAccountType account_type,
                                   unsigned int account_index,
@@ -1701,12 +1695,12 @@ bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
 
  # Safety
 
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
  - `wallet` must be a valid pointer to an FFIWallet (for key derivation)
  - `error` must be a valid pointer to an FFIError or null
  */
 
-bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet,
+bool managed_wallet_generate_addresses_to_index(FFIManagedWalletInfo *managed_wallet,
                                                 const FFIWallet *wallet,
                                                 FFINetwork network,
                                                 FFIAccountType account_type,
@@ -1724,12 +1718,12 @@ bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet
 
  # Safety
 
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
  - `address` must be a valid C string
  - `error` must be a valid pointer to an FFIError or null
  */
 
-bool managed_wallet_mark_address_used(FFIManagedWallet *managed_wallet,
+bool managed_wallet_mark_address_used(FFIManagedWalletInfo *managed_wallet,
                                       FFINetwork network,
                                       const char *address,
                                       FFIError *error)
@@ -3371,9 +3365,12 @@ int32_t transaction_sign_input(FFITransaction *tx,
 
  - `wallet` must be a valid pointer to an FFIWallet
  - `error` must be a valid pointer to an FFIError or null
- - The returned pointer must be freed with `ffi_managed_wallet_free`
+ - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
  */
- FFIManagedWallet *wallet_create_managed_wallet(const FFIWallet *wallet, FFIError *error) ;
+
+FFIManagedWalletInfo *wallet_create_managed_wallet(const FFIWallet *wallet,
+                                                   FFIError *error)
+;
 
 /*
  Check if a transaction belongs to the wallet
@@ -3383,7 +3380,7 @@ int32_t transaction_sign_input(FFITransaction *tx,
 
  # Safety
 
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
  - `wallet` must be a valid pointer to an FFIWallet (needed for address generation)
  - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
  - `result_out` must be a valid pointer to store the result
@@ -3391,7 +3388,7 @@ int32_t transaction_sign_input(FFITransaction *tx,
  - The affected_accounts array in the result must be freed with `transaction_check_result_free`
  */
 
-bool managed_wallet_check_transaction(FFIManagedWallet *managed_wallet,
+bool managed_wallet_check_transaction(FFIManagedWalletInfo *managed_wallet,
                                       const FFIWallet *wallet,
                                       FFINetwork network,
                                       const uint8_t *tx_bytes,
@@ -3416,14 +3413,14 @@ bool managed_wallet_check_transaction(FFIManagedWallet *managed_wallet,
  void transaction_check_result_free(FFITransactionCheckResult *result) ;
 
 /*
- Free a managed wallet (FFIManagedWallet type)
+ Free a managed wallet (FFIManagedWalletInfo type)
 
  # Safety
 
- - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
  - This function must only be called once per managed wallet
  */
- void ffi_managed_wallet_free(FFIManagedWallet *managed_wallet) ;
+ void ffi_managed_wallet_free(FFIManagedWalletInfo *managed_wallet) ;
 
 /*
  Get the transaction classification for routing

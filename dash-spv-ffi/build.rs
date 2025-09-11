@@ -7,13 +7,21 @@ fn main() {
 
     std::fs::create_dir_all(&output_path).unwrap();
 
-    let config = cbindgen::Config::default();
+    // Ensure the build script reruns when header-relevant files change
+    println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=src");
 
-    cbindgen::Builder::new()
-        .with_crate(crate_dir)
-        .with_config(config)
-        .with_language(cbindgen::Language::C)
-        .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file(output_path.join("dash_spv_ffi.h"));
+    let config = cbindgen::Config::from_file("cbindgen.toml")
+        .expect("cbindgen config missing or invalid: cbindgen.toml");
+
+    match cbindgen::Builder::new().with_crate(&crate_dir).with_config(config).generate() {
+        Ok(bindings) => {
+            bindings.write_to_file(output_path.join("dash_spv_ffi.h"));
+            println!("cargo:warning=Generated C header at {:?}", output_path);
+        }
+        Err(e) => {
+            // Fail the build to avoid shipping stale headers
+            panic!("Failed to generate C header via cbindgen: {}", e);
+        }
+    }
 }

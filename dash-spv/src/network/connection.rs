@@ -47,6 +47,10 @@ pub struct TcpConnection {
 }
 
 impl TcpConnection {
+    /// Get the remote peer socket address.
+    pub fn address(&self) -> SocketAddr {
+        self.address
+    }
     /// Create a new TCP connection to the given address.
     pub fn new(
         address: SocketAddr,
