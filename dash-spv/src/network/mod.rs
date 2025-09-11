@@ -371,11 +371,7 @@ impl NetworkManager for TcpNetworkManager {
     }
 
     async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
-        if let Some(connection) = &self.connection {
-            Some(connection.address())
-        } else {
-            None
-        }
+        self.connection.as_ref().map(|connection| connection.address())
     }
 
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
