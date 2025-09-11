@@ -11,7 +11,8 @@ fn main() {
     println!("cargo:rerun-if-changed=cbindgen.toml");
     println!("cargo:rerun-if-changed=src");
 
-    let config = cbindgen::Config::from_file("cbindgen.toml").unwrap_or_default();
+    let config = cbindgen::Config::from_file("cbindgen.toml")
+        .expect("cbindgen config missing or invalid: cbindgen.toml");
 
     match cbindgen::Builder::new().with_crate(&crate_dir).with_config(config).generate() {
         Ok(bindings) => {
