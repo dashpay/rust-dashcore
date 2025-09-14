@@ -102,6 +102,64 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
     FilterSyncManager<S, N>
 {
+    /// Scan backward from `abs_height` down to `min_abs_height` (inclusive)
+    /// to find the nearest available block header stored in `storage`.
+    /// Returns the found `(BlockHash, height)` or `None` if none available.
+    async fn find_available_header_at_or_before(
+        &self,
+        abs_height: u32,
+        min_abs_height: u32,
+        storage: &S,
+    ) -> Option<(BlockHash, u32)> {
+        if abs_height < min_abs_height {
+            return None;
+        }
+
+        let mut scan_height = abs_height;
+        loop {
+            let Some(scan_storage_height) = self.header_abs_to_storage_index(scan_height) else {
+                tracing::debug!(
+                    "Storage index not available for blockchain height {} while scanning (min={})",
+                    scan_height,
+                    min_abs_height
+                );
+                break;
+            };
+
+            match storage.get_header(scan_storage_height).await {
+                Ok(Some(header)) => {
+                    tracing::info!(
+                        "Found available header at blockchain height {} / storage height {}",
+                        scan_height,
+                        scan_storage_height
+                    );
+                    return Some((header.block_hash(), scan_height));
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        "Header missing at blockchain height {} / storage height {}, scanning back",
+                        scan_height,
+                        scan_storage_height
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Error reading header at blockchain height {} / storage height {}: {}",
+                        scan_height,
+                        scan_storage_height,
+                        e
+                    );
+                }
+            }
+
+            if scan_height == min_abs_height {
+                break;
+            }
+            scan_height = scan_height.saturating_sub(1);
+        }
+
+        None
+    }
     /// Calculate the start height of a CFHeaders batch.
     fn calculate_batch_start_height(cf_headers: &CFHeaders, stop_height: u32) -> u32 {
         stop_height.saturating_sub(cf_headers.filter_hashes.len() as u32 - 1)
@@ -515,58 +573,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                     next_batch_end_height
                                 );
 
-                                // Scan backwards to find the highest available header
-                                let mut scan_height = next_batch_end_height.saturating_sub(1);
                                 let min_height = self.current_sync_height; // Don't go below where we are
-                                let mut found_header_info = None;
-
-                                while scan_height >= min_height && found_header_info.is_none() {
-                                    let Some(scan_storage_height) =
-                                        self.header_abs_to_storage_index(scan_height)
-                                    else {
-                                        break;
-                                    };
-                                    match storage.get_header(scan_storage_height).await {
-                                        Ok(Some(header)) => {
-                                            tracing::info!(
-                                                "Found available header at blockchain height {} / storage height {} (originally tried {})",
-                                                scan_height,
-                                                scan_storage_height,
-                                                next_batch_end_height
-                                            );
-                                            found_header_info =
-                                                Some((header.block_hash(), scan_height));
-                                            break;
-                                        }
-                                        Ok(None) => {
-                                            tracing::debug!(
-                                                "Header not found at blockchain height {} / storage height {}, trying {}",
-                                                scan_height,
-                                                scan_storage_height,
-                                                scan_height.saturating_sub(1)
-                                            );
-                                            if scan_height == 0 {
-                                                break;
-                                            }
-                                            scan_height = scan_height.saturating_sub(1);
-                                        }
-                                        Err(e) => {
-                                            tracing::error!(
-                                                "Error checking header at height {}: {}",
-                                                scan_height,
-                                                e
-                                            );
-                                            if scan_height == 0 {
-                                                break;
-                                            }
-                                            scan_height = scan_height.saturating_sub(1);
-                                        }
-                                    }
-                                }
-
-                                match found_header_info {
+                                match self
+                                    .find_available_header_at_or_before(
+                                        next_batch_end_height.saturating_sub(1),
+                                        min_height,
+                                        storage,
+                                    )
+                                    .await
+                                {
                                     Some((hash, height)) => {
-                                        // Check if we found a header at a height less than our current sync height
                                         if height < self.current_sync_height {
                                             tracing::warn!(
                                                 "Found header at height {} which is less than current sync height {}. This means we already have filter headers up to {}. Marking sync as complete.",
@@ -574,8 +590,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                                 self.current_sync_height,
                                                 self.current_sync_height - 1
                                             );
-                                            // We already have filter headers up to current_sync_height - 1
-                                            // No need to request more, mark sync as complete
                                             self.syncing_filter_headers = false;
                                             return Ok(false);
                                         }
@@ -590,10 +604,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                         tracing::error!(
                                             "This indicates a serious storage inconsistency. Stopping filter header sync."
                                         );
-
-                                        // Mark sync as complete since we can't find any valid headers to request
                                         self.syncing_filter_headers = false;
-                                        return Ok(false); // Signal sync completion
+                                        return Ok(false);
                                     }
                                 }
                             }
@@ -734,38 +746,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             recovery_batch_end_height
                         );
 
-                        // Scan backwards to find available header
-                        let mut scan_height = recovery_batch_end_height.saturating_sub(1);
                         let min_height = self.current_sync_height;
-
-                        let mut found_recovery_info = None;
-                        while scan_height >= min_height && found_recovery_info.is_none() {
-                            let scan_storage_height =
-                                match self.header_abs_to_storage_index(scan_height) {
-                                    Some(v) => v,
-                                    None => break,
-                                };
-                            if let Ok(Some(header)) = storage.get_header(scan_storage_height).await
-                            {
-                                tracing::info!(
-                                    "Found recovery header at blockchain height {} / storage height {} (originally tried {})",
-                                    scan_height,
-                                    scan_storage_height,
-                                    recovery_batch_end_height
-                                );
-                                found_recovery_info = Some((header.block_hash(), scan_height));
-                                break;
-                            } else {
-                                if scan_height == 0 {
-                                    break;
-                                }
-                                scan_height = scan_height.saturating_sub(1);
-                            }
-                        }
-
-                        match found_recovery_info {
+                        match self
+                            .find_available_header_at_or_before(
+                                recovery_batch_end_height.saturating_sub(1),
+                                min_height,
+                                storage,
+                            )
+                            .await
+                        {
                             Some((hash, height)) => {
-                                // Check if we found a header at a height less than our current sync height
                                 if height < self.current_sync_height {
                                     tracing::warn!(
                                         "Recovery: Found header at height {} which is less than current sync height {}. This indicates we already have filter headers up to {}. Marking sync as complete.",
@@ -773,8 +763,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                         self.current_sync_height,
                                         self.current_sync_height - 1
                                     );
-                                    // We already have filter headers up to current_sync_height - 1
-                                    // No point in trying to recover, mark sync as complete
                                     self.syncing_filter_headers = false;
                                     return Ok(false);
                                 }
@@ -1014,50 +1002,15 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         batch_end_height
                     );
 
-                    // Scan backwards to find the highest available header within the batch
-                    let mut scan_height = batch_end_height;
-                    let min_height = self.current_sync_height;
-                    let mut found_header = None;
-
-                    while scan_height >= min_height && found_header.is_none() {
-                        let Some(scan_storage_height) =
-                            self.header_abs_to_storage_index(scan_height)
-                        else {
-                            break;
-                        };
-                        match storage.get_header(scan_storage_height).await {
-                            Ok(Some(header)) => {
-                                tracing::info!(
-                                    "Found available header at blockchain height {} / storage height {} (originally tried {})",
-                                    scan_height,
-                                    scan_storage_height,
-                                    batch_end_height
-                                );
-                                found_header = Some(header.block_hash());
-                                break;
-                            }
-                            Ok(None) => {
-                                if scan_height == min_height {
-                                    break;
-                                }
-                                scan_height = scan_height.saturating_sub(1);
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Error getting header at height {}: {}",
-                                    scan_height,
-                                    e
-                                );
-                                if scan_height == min_height {
-                                    break;
-                                }
-                                scan_height = scan_height.saturating_sub(1);
-                            }
-                        }
-                    }
-
-                    match found_header {
-                        Some(hash) => hash,
+                    match self
+                        .find_available_header_at_or_before(
+                            batch_end_height,
+                            self.current_sync_height,
+                            storage,
+                        )
+                        .await
+                    {
+                        Some((hash, _height)) => hash,
                         None => {
                             // If we can't find any headers in the batch range, something is wrong
                             // Don't fall back to tip as that would create an oversized request
