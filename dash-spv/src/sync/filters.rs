@@ -602,7 +602,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                             "This indicates a serious storage inconsistency. Stopping filter header sync."
                                         );
                                         self.syncing_filter_headers = false;
-                                        return Ok(false);
+                                        return Err(SyncError::Storage(format!(
+                                            "No available headers found between {} and {} while selecting next batch stop hash",
+                                            min_height,
+                                            next_batch_end_height
+                                        )));
                                     }
                                 }
                             }
