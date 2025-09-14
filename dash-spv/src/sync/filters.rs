@@ -500,16 +500,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         // Convert blockchain height to storage height
                         let storage_height = self
                             .header_abs_to_storage_index(next_batch_end_height)
-                            .unwrap_or_else(|| {
-                                tracing::warn!(
+                            .ok_or_else(|| {
+                                SyncError::Validation(format!(
                                     "next_batch_end_height {} is at or before checkpoint base {}",
-                                    next_batch_end_height,
-                                    self.sync_base_height
-                                );
-                                // Fallback to current_sync_height
-                                self.header_abs_to_storage_index(self.current_sync_height)
-                                    .unwrap_or_default()
-                            });
+                                    next_batch_end_height, self.sync_base_height
+                                ))
+                            })?;
                         match storage.get_header(storage_height).await {
                             Ok(Some(header)) => header.block_hash(),
                             Ok(None) => {
@@ -611,8 +607,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     } else {
                         // Special handling for chain tip: if we can't find the exact tip header,
                         // try the previous header as we might be at the actual chain tip
-                        let tip_storage_height =
-                            self.header_abs_to_storage_index(header_tip_height).unwrap_or_default();
+                        let tip_storage_height = self
+                            .header_abs_to_storage_index(header_tip_height)
+                            .ok_or_else(|| {
+                                SyncError::Validation(format!(
+                                    "header_tip_height {} below checkpoint base {}",
+                                    header_tip_height, self.sync_base_height
+                                ))
+                            })?;
                         match storage.get_header(tip_storage_height).await {
                             Ok(Some(header)) => header.block_hash(),
                             Ok(None) if header_tip_height > 0 => {
@@ -624,7 +626,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                 // Try previous header when at chain tip
                                 let prev_storage_height = self
                                     .header_abs_to_storage_index(header_tip_height - 1)
-                                    .unwrap_or_default();
+                                    .ok_or_else(|| {
+                                        SyncError::Validation(format!(
+                                            "prev header height {} below checkpoint base {}",
+                                            header_tip_height - 1,
+                                            self.sync_base_height
+                                        ))
+                                    })?;
                                 storage
                                     .get_header(prev_storage_height)
                                     .await
@@ -1567,7 +1575,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             let batch_end = (current_height + batch_size - 1).min(end);
 
             // Get stop hash for this batch - convert blockchain height to storage index
-            let storage_height = self.header_abs_to_storage_index(batch_end).unwrap_or_default();
+            let storage_height = self.header_abs_to_storage_index(batch_end).ok_or_else(|| {
+                SyncError::Validation(format!(
+                    "batch_end {} is at or before checkpoint base {}",
+                    batch_end, self.sync_base_height
+                ))
+            })?;
             let stop_hash = storage
                 .get_header(storage_height)
                 .await
@@ -1894,7 +1907,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         // Calculate stop hash for retry - convert blockchain height to storage index
-        let storage_height = self.header_abs_to_storage_index(end).unwrap_or_default();
+        let storage_height = self.header_abs_to_storage_index(end).ok_or_else(|| {
+            SyncError::Validation(format!(
+                "retry end {} is at or before checkpoint base {}",
+                end, self.sync_base_height
+            ))
+        })?;
         match storage.get_header(storage_height).await {
             Ok(Some(header)) => {
                 let stop_hash = header.block_hash();
@@ -3333,7 +3351,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
 
             // Calculate stop hash for this range - convert blockchain height to storage index
-            let storage_height = self.header_abs_to_storage_index(end).unwrap_or_default();
+            let storage_height = self.header_abs_to_storage_index(end).ok_or_else(|| {
+                SyncError::Validation(format!(
+                    "retry range end {} is at or before checkpoint base {}",
+                    end, self.sync_base_height
+                ))
+            })?;
             match storage.get_header(storage_height).await {
                 Ok(Some(header)) => {
                     let stop_hash = header.block_hash();
@@ -3370,7 +3393,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                             // Get stop hash for this batch - convert blockchain height to storage index
                             let batch_storage_height =
-                                self.header_abs_to_storage_index(batch_end).unwrap_or_default();
+                                self.header_abs_to_storage_index(batch_end).ok_or_else(|| {
+                                    SyncError::Validation(format!(
+                                        "retry batch_end {} is at or before checkpoint base {}",
+                                        batch_end, self.sync_base_height
+                                    ))
+                                })?;
                             match storage.get_header(batch_storage_height).await {
                                 Ok(Some(batch_header)) => {
                                     let batch_stop_hash = batch_header.block_hash();
