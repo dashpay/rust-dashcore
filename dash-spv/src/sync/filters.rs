@@ -2616,7 +2616,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     pub fn spawn_filter_processor(
         _network_message_sender: mpsc::Sender<NetworkMessage>,
         _processing_thread_requests: std::sync::Arc<
-            std::sync::Mutex<std::collections::HashSet<BlockHash>>,
+            tokio::sync::Mutex<std::collections::HashSet<BlockHash>>,
         >,
         stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> FilterNotificationSender {
@@ -2654,7 +2654,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         cfilter: dashcore::network::message_filter::CFilter,
         network_message_sender: &mpsc::Sender<NetworkMessage>,
         processing_thread_requests: &std::sync::Arc<
-            std::sync::Mutex<std::collections::HashSet<BlockHash>>,
+            tokio::sync::Mutex<std::collections::HashSet<BlockHash>>,
         >,
         stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> SyncResult<()> {
@@ -2705,19 +2705,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
             // Register this request in the processing thread tracking
             {
-                match processing_thread_requests.lock() {
-                    Ok(mut requests) => {
-                        requests.insert(cfilter.block_hash);
-                        tracing::debug!(
-                            "Registered block {} in processing thread requests",
-                            cfilter.block_hash
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to lock processing thread requests: {}", e);
-                        return Ok(());
-                    }
-                }
+                let mut requests = processing_thread_requests.lock().await;
+                requests.insert(cfilter.block_hash);
+                tracing::debug!(
+                    "Registered block {} in processing thread requests",
+                    cfilter.block_hash
+                );
             }
 
             // Request the full block download
@@ -2727,7 +2720,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             if let Err(e) = network_message_sender.send(getdata).await {
                 tracing::error!("Failed to request block download for match: {}", e);
                 // Remove from tracking if request failed
-                if let Ok(mut requests) = processing_thread_requests.lock() {
+                {
+                    let mut requests = processing_thread_requests.lock().await;
                     requests.remove(&cfilter.block_hash);
                 }
             } else {
