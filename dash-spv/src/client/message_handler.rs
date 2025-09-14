@@ -164,6 +164,25 @@ impl<
                 {
                     tracing::error!("Sequential sync manager error handling message: {}", e);
                 }
+
+                // Additionally forward compact filters to the block processor so it can
+                // perform wallet matching and emit CompactFilterMatched events.
+                if let NetworkMessage::CFilter(ref cfilter_msg) = message {
+                    let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
+                    let task = crate::client::BlockProcessingTask::ProcessCompactFilter {
+                        filter: dashcore::bip158::BlockFilter {
+                            content: cfilter_msg.filter.clone(),
+                        },
+                        block_hash: cfilter_msg.block_hash,
+                        response_tx,
+                    };
+                    if let Err(e) = self.block_processor_tx.send(task) {
+                        tracing::warn!(
+                            "Failed to forward CFilter to block processor for event emission: {}",
+                            e
+                        );
+                    }
+                }
             }
             NetworkMessage::Block(_) => {
                 // Blocks can be large - avoid cloning unless necessary

@@ -230,6 +230,16 @@ impl FFIDashSpvClient {
                                              confirmed, unconfirmed, total);
                                 callbacks.call_balance_update(confirmed, unconfirmed);
                             }
+                            dash_spv::types::SpvEvent::FilterHeadersProgress { filter_header_height, header_height, percentage } => {
+                                tracing::info!("📊 Filter headers progress event: filter={}, header={}, pct={:.2}",
+                                               filter_header_height, header_height, percentage);
+                                callbacks
+                                    .call_filter_headers_progress(
+                                        filter_header_height,
+                                        header_height,
+                                        percentage,
+                                    );
+                            }
                             dash_spv::types::SpvEvent::TransactionDetected { ref txid, confirmed, ref addresses, amount, block_height, .. } => {
                                 tracing::info!("💸 Transaction detected: txid={}, confirmed={}, amount={}, addresses={:?}, height={:?}",
                                              txid, confirmed, amount, addresses, block_height);
@@ -717,6 +727,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let inner = client.inner.clone();
     let runtime = client.runtime.clone();
     let sync_callbacks = client.sync_callbacks.clone();
+    // Shared flag to coordinate internal threads during sync
+    let sync_running = Arc::new(AtomicBool::new(true));
 
     // Take progress receiver from client
     let progress_receiver = {
@@ -772,6 +784,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     // Spawn sync task in a separate thread with safe callback access
     let runtime_handle = runtime.handle().clone();
     let sync_callbacks_clone = sync_callbacks.clone();
+    let sync_running_for_join = sync_running.clone();
     let sync_handle = std::thread::spawn(move || {
         // Run monitoring loop
         let monitor_result = runtime_handle.block_on(async move {
@@ -791,6 +804,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
             *guard = Some(spv_client);
             res
         });
+
+        // Signal background handlers to stop
+        sync_running_for_join.store(false, Ordering::Relaxed);
 
         // Send completion callback and cleanup
         {
@@ -842,6 +858,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
 
     FFIErrorCode::Success as i32
 }
+
+// Note: filter headers progress is forwarded via FFIEventCallbacks.on_filter_headers_progress
 
 /// Cancels the sync operation.
 ///
@@ -1021,6 +1039,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     tracing::info!("   Block callback: {}", callbacks.on_block.is_some());
     tracing::info!("   Transaction callback: {}", callbacks.on_transaction.is_some());
     tracing::info!("   Balance update callback: {}", callbacks.on_balance_update.is_some());
+    tracing::info!(
+        "   Filter headers progress callback: {}",
+        callbacks.on_filter_headers_progress.is_some()
+    );
 
     let mut event_callbacks = client.event_callbacks.lock().unwrap();
     *event_callbacks = callbacks;
