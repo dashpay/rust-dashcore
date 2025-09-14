@@ -73,11 +73,15 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> Result<SyncProgress> {
         let state = self.state.read().await;
-        let stats = self.stats.read().await;
+        // Clone the inner heights handle and copy needed counters without awaiting while holding the RwLock
+        let (filters_received, received_heights) = {
+            let stats = self.stats.read().await;
+            (stats.filters_received, std::sync::Arc::clone(&stats.received_filter_heights))
+        };
 
-        // Calculate last synced filter height from received filter heights
+        // Calculate last synced filter height from received filter heights without holding the RwLock guard
         let last_synced_filter_height = {
-            let heights = stats.received_filter_heights.lock().await;
+            let heights = received_heights.lock().await;
             heights.iter().max().copied()
         };
 
@@ -99,7 +103,7 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
             filter_headers_synced: false, // TODO: Implement
             masternodes_synced: false,    // TODO: Implement
             filter_sync_available: false, // TODO: Get from network manager
-            filters_downloaded: stats.filters_received,
+            filters_downloaded: filters_received,
             last_synced_filter_height,
             sync_start: std::time::SystemTime::now(), // TODO: Track properly
             last_update: std::time::SystemTime::now(),
