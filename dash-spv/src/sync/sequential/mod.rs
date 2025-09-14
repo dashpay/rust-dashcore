@@ -24,7 +24,7 @@ use crate::storage::StorageManager;
 use crate::sync::{
     FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
 };
-use crate::types::{ChainState, SyncProgress};
+use crate::types::{ChainState, SharedFilterHeights, SyncProgress};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use phases::{PhaseTransition, SyncPhase};
@@ -85,7 +85,7 @@ impl<
     /// Create a new sequential sync manager
     pub fn new(
         config: &ClientConfig,
-        received_filter_heights: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>,
+        received_filter_heights: SharedFilterHeights,
         wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
     ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults

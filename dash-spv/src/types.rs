@@ -9,6 +9,9 @@ use dashcore::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Shared, mutex-protected set of filter heights used across components.
+pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>;
+
 /// Unique identifier for a peer connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub u64);
@@ -550,7 +553,7 @@ pub struct SpvStats {
 
     /// Received filter heights for gap tracking (shared with FilterSyncManager).
     #[serde(skip)]
-    pub received_filter_heights: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>,
+    pub received_filter_heights: SharedFilterHeights,
 
     /// Number of filter requests currently active.
     pub active_filter_requests: u32,

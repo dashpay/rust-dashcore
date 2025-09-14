@@ -16,7 +16,7 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::types::SyncProgress;
+use crate::types::{SharedFilterHeights, SyncProgress};
 
 // Constants for filter synchronization
 // Stay under Dash Core's 2000 limit (for CFHeaders). Using 1999 helps reduce accidental overlaps.
@@ -78,7 +78,7 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     /// Track requested filter ranges: (start_height, end_height) -> request_time
     requested_filter_ranges: HashMap<(u32, u32), std::time::Instant>,
     /// Track individual filter heights that have been received (shared with stats)
-    received_filter_heights: std::sync::Arc<tokio::sync::Mutex<HashSet<u32>>>,
+    received_filter_heights: SharedFilterHeights,
     /// Maximum retries for a filter range
     max_filter_retries: u32,
     /// Retry attempts per range
@@ -234,10 +234,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Create a new filter sync manager.
-    pub fn new(
-        config: &ClientConfig,
-        received_filter_heights: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>,
-    ) -> Self {
+    pub fn new(config: &ClientConfig, received_filter_heights: SharedFilterHeights) -> Self {
         Self {
             _config: config.clone(),
             syncing_filter_headers: false,
