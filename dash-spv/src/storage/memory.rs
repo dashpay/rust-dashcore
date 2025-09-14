@@ -58,13 +58,13 @@ impl StorageManager for MemoryStorageManager {
 
         // Determine absolute height offset (for checkpoint-based sync) once per batch
         // If syncing from a checkpoint, storage index 0 corresponds to absolute height
-        // sync_base_height + 1. Otherwise, absolute height equals storage index.
+        // sync_base_height (base-inclusive). Otherwise, absolute height equals storage index.
         let (sync_base_height, synced_from_checkpoint) = match self.load_sync_state().await {
             Ok(Some(state)) => (state.sync_base_height, state.synced_from_checkpoint),
             _ => (0u32, false),
         };
         let abs_offset: u32 = if synced_from_checkpoint && sync_base_height > 0 {
-            sync_base_height + 1
+            sync_base_height
         } else {
             0
         };
@@ -323,7 +323,21 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
-        Ok(self.header_hash_index.get(hash).copied())
+        // Return ABSOLUTE blockchain height for consistency with DiskStorage.
+        // memory.header_hash_index stores storage index; convert to absolute height using base.
+        let storage_index = match self.header_hash_index.get(hash).copied() {
+            Some(idx) => idx,
+            None => return Ok(None),
+        };
+
+        let base = match self.load_sync_state().await {
+            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
+                state.sync_base_height
+            }
+            _ => 0u32,
+        };
+
+        Ok(Some(base + storage_index))
     }
 
     async fn get_headers_batch(

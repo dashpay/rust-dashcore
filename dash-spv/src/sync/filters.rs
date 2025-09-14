@@ -218,26 +218,27 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Convert absolute blockchain height to block header storage index.
-    /// In checkpoint sync, headers storage starts at (base + 1).
+    /// Storage indexing is base-inclusive: at checkpoint base B, storage index 0 == absolute height B.
     fn header_abs_to_storage_index(&self, height: u32) -> Option<u32> {
         if self.sync_base_height > 0 {
-            height.checked_sub(self.sync_base_height + 1)
+            height.checked_sub(self.sync_base_height)
         } else {
             Some(height)
         }
     }
 
     /// Convert block header storage index to absolute blockchain height.
+    /// Storage indexing is base-inclusive: at checkpoint base B, absolute height == B + index.
     fn header_storage_to_abs_height(&self, index: u32) -> u32 {
         if self.sync_base_height > 0 {
-            self.sync_base_height + 1 + index
+            self.sync_base_height + index
         } else {
             index
         }
     }
 
     /// Convert absolute blockchain height to filter header storage index.
-    /// In checkpoint sync, filter headers storage starts at base (checkpoint height).
+    /// Storage indexing is base-inclusive for filter headers as well.
     fn filter_abs_to_storage_index(&self, height: u32) -> Option<u32> {
         if self.sync_base_height > 0 {
             height.checked_sub(self.sync_base_height)
@@ -2062,18 +2063,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         start_height: u32,
         end_height: u32,
     ) -> SyncResult<Option<u32>> {
-        // Use the efficient reverse index first. Note: storage returns STORAGE height (index),
-        // we must convert it to BLOCKCHAIN (absolute) height when comparing with [start,end].
-        if let Some(storage_height) =
+        // Use the efficient reverse index first.
+        // Contract: StorageManager::get_header_height_by_hash returns ABSOLUTE blockchain height.
+        if let Some(abs_height) =
             storage.get_header_height_by_hash(block_hash).await.map_err(|e| {
                 SyncError::Storage(format!("Failed to get header height by hash: {}", e))
             })?
         {
-            // Convert storage-relative height to blockchain height (accounts for checkpoint base)
-            let absolute_height = self.header_storage_to_abs_height(storage_height);
             // Check if the absolute height is within the requested range
-            if absolute_height >= start_height && absolute_height <= end_height {
-                return Ok(Some(absolute_height));
+            if abs_height >= start_height && abs_height <= end_height {
+                return Ok(Some(abs_height));
             }
         }
         Ok(None)
