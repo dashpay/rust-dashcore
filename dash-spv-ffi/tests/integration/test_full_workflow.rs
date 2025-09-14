@@ -191,6 +191,12 @@ mod tests {
                 on_block: Some(on_block),
                 on_transaction: Some(on_transaction),
                 on_balance_update: Some(on_balance),
+                on_mempool_transaction_added: None,
+                on_mempool_transaction_confirmed: None,
+                on_mempool_transaction_removed: None,
+                on_compact_filter_matched: None,
+                on_wallet_transaction: None,
+                on_filter_headers_progress: None,
                 user_data: &ctx as *const _ as *mut c_void,
             };
             

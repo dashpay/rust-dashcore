@@ -149,6 +149,11 @@ typedef void (*WalletTransactionCallback)(const char *wallet_id,
                                           bool is_ours,
                                           void *user_data);
 
+typedef void (*FilterHeadersProgressCallback)(uint32_t filter_height,
+                                              uint32_t header_height,
+                                              double percentage,
+                                              void *user_data);
+
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
   TransactionCallback on_transaction;
@@ -158,6 +163,7 @@ typedef struct FFIEventCallbacks {
   MempoolRemovedCallback on_mempool_transaction_removed;
   CompactFilterMatchedCallback on_compact_filter_matched;
   WalletTransactionCallback on_wallet_transaction;
+  FilterHeadersProgressCallback on_filter_headers_progress;
   void *user_data;
 } FFIEventCallbacks;
 

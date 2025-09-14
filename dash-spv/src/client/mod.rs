@@ -728,6 +728,10 @@ impl<
         // Track masternode sync completion for ChainLock validation
         let mut masternode_engine_updated = false;
 
+        // Last emitted heights for filter headers progress to avoid duplicate events
+        let mut last_emitted_header_height: u32 = 0;
+        let mut last_emitted_filter_header_height: u32 = 0;
+
         loop {
             // Check if we should stop
             let running = self.running.read().await;
@@ -862,10 +866,14 @@ impl<
 
                 // Emit detailed progress update
                 if last_rate_calc.elapsed() >= Duration::from_secs(1) {
-                    let current_height = {
+                    // Storage tip is the headers vector index (0-based).
+                    let current_storage_tip = {
                         let storage = self.storage.lock().await;
                         storage.get_tip_height().await.ok().flatten().unwrap_or(0)
                     };
+                    // Convert to absolute blockchain height: base + storage_tip
+                    let sync_base_height = { self.state.read().await.sync_base_height };
+                    let current_height = sync_base_height + current_storage_tip;
                     let peer_best = self
                         .network
                         .get_peer_best_height()
@@ -875,9 +883,9 @@ impl<
                         .unwrap_or(current_height);
 
                     // Calculate headers downloaded this second
-                    if current_height > last_height {
-                        headers_this_second = current_height - last_height;
-                        last_height = current_height;
+                    if current_storage_tip > last_height {
+                        headers_this_second = current_storage_tip - last_height;
+                        last_height = current_storage_tip;
                     }
 
                     let headers_per_second = headers_this_second as f64;
@@ -926,6 +934,34 @@ impl<
 
                     headers_this_second = 0;
                     last_rate_calc = Instant::now();
+                }
+
+                // Emit filter headers progress only when heights change
+                let (abs_header_height, filter_header_height) = {
+                    let storage = self.storage.lock().await;
+                    let storage_tip = storage.get_tip_height().await.ok().flatten().unwrap_or(0);
+                    let filter_tip =
+                        storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
+                    (self.state.read().await.sync_base_height + storage_tip, filter_tip)
+                };
+                if abs_header_height != last_emitted_header_height
+                    || filter_header_height != last_emitted_filter_header_height
+                {
+                    if abs_header_height > 0 {
+                        let pct = if filter_header_height <= abs_header_height {
+                            (filter_header_height as f64 / abs_header_height as f64 * 100.0)
+                                .min(100.0)
+                        } else {
+                            0.0
+                        };
+                        self.emit_event(SpvEvent::FilterHeadersProgress {
+                            filter_header_height,
+                            header_height: abs_header_height,
+                            percentage: pct,
+                        });
+                    }
+                    last_emitted_header_height = abs_header_height;
+                    last_emitted_filter_header_height = filter_header_height;
                 }
 
                 last_status_update = Instant::now();
@@ -2373,6 +2409,13 @@ impl<
                 stats.filter_height = filter_height;
             }
         }
+
+        tracing::debug!(
+            "get_stats: header_height={}, filter_height={}, peers={}",
+            stats.header_height,
+            stats.filter_height,
+            stats.connected_peers
+        );
 
         Ok(stats)
     }
