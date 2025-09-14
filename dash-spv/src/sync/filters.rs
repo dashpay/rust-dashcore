@@ -74,11 +74,11 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     /// Blocks currently being downloaded (map for quick lookup)
     downloading_blocks: HashMap<BlockHash, u32>,
     /// Blocks requested by the filter processing thread
-    pub processing_thread_requests: std::sync::Arc<std::sync::Mutex<HashSet<BlockHash>>>,
+    pub processing_thread_requests: std::sync::Arc<tokio::sync::Mutex<HashSet<BlockHash>>>,
     /// Track requested filter ranges: (start_height, end_height) -> request_time
     requested_filter_ranges: HashMap<(u32, u32), std::time::Instant>,
     /// Track individual filter heights that have been received (shared with stats)
-    received_filter_heights: std::sync::Arc<std::sync::Mutex<HashSet<u32>>>,
+    received_filter_heights: std::sync::Arc<tokio::sync::Mutex<HashSet<u32>>>,
     /// Maximum retries for a filter range
     max_filter_retries: u32,
     /// Retry attempts per range
@@ -236,7 +236,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Create a new filter sync manager.
     pub fn new(
         config: &ClientConfig,
-        received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+        received_filter_heights: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>,
     ) -> Self {
         Self {
             _config: config.clone(),
@@ -249,7 +249,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             syncing_filters: false,
             pending_block_downloads: VecDeque::new(),
             downloading_blocks: HashMap::new(),
-            processing_thread_requests: std::sync::Arc::new(std::sync::Mutex::new(
+            processing_thread_requests: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
             requested_filter_ranges: HashMap::new(),
@@ -1698,7 +1698,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         // Log current state periodically
-        if let Ok(guard) = self.received_filter_heights.lock() {
+        {
+            let guard = self.received_filter_heights.lock().await;
             if guard.len() % 1000 == 0 {
                 tracing::info!(
                     "Filter sync state: {} filters received, {} active requests, {} pending requests",
@@ -1725,16 +1726,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Check if a filter request range is complete (all filters received).
     async fn is_request_complete(&self, start: u32, end: u32) -> SyncResult<bool> {
-        if let Ok(received_heights) = self.received_filter_heights.lock() {
-            for height in start..=end {
-                if !received_heights.contains(&height) {
-                    return Ok(false);
-                }
+        let received_heights = self.received_filter_heights.lock().await;
+        for height in start..=end {
+            if !received_heights.contains(&height) {
+                return Ok(false);
             }
-            Ok(true)
-        } else {
-            Err(SyncError::Storage("Failed to lock received filter heights".to_string()))
         }
+        Ok(true)
     }
 
     /// Record that a filter was received at a specific height.
@@ -1748,14 +1746,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             SyncError::Storage(format!("Failed to get header height by hash: {}", e))
         })? {
             // Record in received filter heights
-            if let Ok(mut heights) = self.received_filter_heights.lock() {
-                heights.insert(height);
-                tracing::trace!(
-                    "📊 Recorded filter received at height {} for block {}",
-                    height,
-                    block_hash
-                );
-            }
+            let mut heights = self.received_filter_heights.lock().await;
+            heights.insert(height);
+            tracing::trace!(
+                "📊 Recorded filter received at height {} for block {}",
+                height,
+                block_hash
+            );
         } else {
             tracing::warn!("Could not find height for filter block hash {}", block_hash);
         }
@@ -2429,9 +2426,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Check if this block was requested by the filter processing thread
         {
-            let mut processing_requests = self.processing_thread_requests.lock().map_err(|e| {
-                SyncError::InvalidState(format!("processing thread requests lock poisoned: {}", e))
-            })?;
+            let mut processing_requests = self.processing_thread_requests.lock().await;
             if processing_requests.remove(&block_hash) {
                 tracing::info!(
                     "📦 Received block {} requested by filter processing thread",
@@ -2607,10 +2602,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Get the number of filters that have been received.
     pub fn get_received_filter_count(&self) -> u32 {
-        if let Ok(heights) = self.received_filter_heights.lock() {
-            heights.len() as u32
-        } else {
-            0
+        match self.received_filter_heights.try_lock() {
+            Ok(heights) => heights.len() as u32,
+            Err(_) => 0,
         }
     }
 
@@ -2853,9 +2847,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             stats_lock.filter_sync_start_time = Some(std::time::Instant::now());
             stats_lock.last_filter_received_time = None;
             // Clear the received heights tracking for a fresh start
-            if let Ok(mut heights) = stats_lock.received_filter_heights.lock() {
-                heights.clear();
-            }
+            let mut heights = stats_lock.received_filter_heights.lock().await;
+            heights.clear();
             tracing::info!(
                 "📊 Started new filter sync tracking: {} filters requested",
                 total_filters_requested
@@ -2895,14 +2888,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             drop(stats_lock); // Release the stats lock before acquiring the mutex
 
             // Now lock the heights and insert
-            if let Ok(mut heights) = received_filter_heights.lock() {
-                heights.insert(height);
-                tracing::trace!(
-                    "📊 Recorded filter received at height {} for block {}",
-                    height,
-                    block_hash
-                );
-            };
+            let mut heights = received_filter_heights.lock().await;
+            heights.insert(height);
+            tracing::trace!(
+                "📊 Recorded filter received at height {} for block {}",
+                height,
+                block_hash
+            );
         } else {
             tracing::warn!("Could not find height for filter block hash {}", block_hash);
         }
@@ -3030,7 +3022,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Record receipt of a filter at a specific height.
     pub fn record_filter_received(&mut self, height: u32) {
-        if let Ok(mut heights) = self.received_filter_heights.lock() {
+        if let Ok(mut heights) = self.received_filter_heights.try_lock() {
             heights.insert(height);
             tracing::trace!("📊 Recorded filter received at height {}", height);
         }
@@ -3040,9 +3032,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     pub fn find_missing_ranges(&self) -> Vec<(u32, u32)> {
         let mut missing_ranges = Vec::new();
 
-        let heights = match self.received_filter_heights.lock() {
+        let heights = match self.received_filter_heights.try_lock() {
             Ok(heights) => heights.clone(),
-            Err(_) => return missing_ranges, // Return empty if lock fails
+            Err(_) => return missing_ranges,
         };
 
         // For each requested range
@@ -3077,9 +3069,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         let now = std::time::Instant::now();
         let mut timed_out = Vec::new();
 
-        let heights = match self.received_filter_heights.lock() {
+        let heights = match self.received_filter_heights.try_lock() {
             Ok(heights) => heights.clone(),
-            Err(_) => return timed_out, // Return empty if lock fails
+            Err(_) => return timed_out,
         };
 
         for ((start, end), request_time) in &self.requested_filter_ranges {
@@ -3104,9 +3096,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Check if a filter range is complete (all heights received).
     pub fn is_range_complete(&self, start_height: u32, end_height: u32) -> bool {
-        let heights = match self.received_filter_heights.lock() {
+        let heights = match self.received_filter_heights.try_lock() {
             Ok(heights) => heights,
-            Err(_) => return false, // Return false if lock fails
+            Err(_) => return false,
         };
 
         for height in start_height..=end_height {
@@ -3453,7 +3445,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Reset filter range tracking (useful for testing or restart scenarios).
     pub fn reset_filter_tracking(&mut self) {
         self.requested_filter_ranges.clear();
-        if let Ok(mut heights) = self.received_filter_heights.lock() {
+        if let Ok(mut heights) = self.received_filter_heights.try_lock() {
             heights.clear();
         }
         self.filter_retry_counts.clear();

@@ -32,7 +32,8 @@ use dashcore::{
 };
 use dashcore_hashes::{sha256d, Hash};
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Mock network manager for testing filter sync
 #[derive(Debug)]

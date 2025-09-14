@@ -76,10 +76,9 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
         let stats = self.stats.read().await;
 
         // Calculate last synced filter height from received filter heights
-        let last_synced_filter_height = if let Ok(heights) = stats.received_filter_heights.lock() {
+        let last_synced_filter_height = {
+            let heights = stats.received_filter_heights.lock().await;
             heights.iter().max().copied()
-        } else {
-            None
         };
 
         // Calculate the actual header height considering checkpoint sync

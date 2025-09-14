@@ -209,7 +209,7 @@ mod tests {
             filters_received: u64::MAX,
             filter_sync_start_time: None,
             last_filter_received_time: None,
-            received_filter_heights: std::sync::Arc::new(std::sync::Mutex::new(
+            received_filter_heights: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
             active_filter_requests: 0,

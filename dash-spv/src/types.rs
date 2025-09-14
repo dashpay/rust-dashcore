@@ -550,7 +550,7 @@ pub struct SpvStats {
 
     /// Received filter heights for gap tracking (shared with FilterSyncManager).
     #[serde(skip)]
-    pub received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+    pub received_filter_heights: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>,
 
     /// Number of filter requests currently active.
     pub active_filter_requests: u32,
@@ -587,7 +587,7 @@ impl Default for SpvStats {
             filters_received: 0,
             filter_sync_start_time: None,
             last_filter_received_time: None,
-            received_filter_heights: std::sync::Arc::new(std::sync::Mutex::new(
+            received_filter_heights: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
             active_filter_requests: 0,

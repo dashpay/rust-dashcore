@@ -8,7 +8,8 @@
 //! Tests for block downloading on filter match functionality.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 
 use dashcore::{

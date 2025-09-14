@@ -8,7 +8,8 @@
 //! Tests for edge case handling in filter header sync, particularly at the tip.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use dash_spv::{
     client::ClientConfig,
@@ -52,8 +53,8 @@ impl MockNetworkManager {
         }
     }
 
-    fn get_sent_messages(&self) -> Vec<NetworkMessage> {
-        self.sent_messages.lock().unwrap().clone()
+    async fn get_sent_messages(&self) -> Vec<NetworkMessage> {
+        self.sent_messages.lock().await.clone()
     }
 }
 
@@ -72,7 +73,7 @@ impl NetworkManager for MockNetworkManager {
     }
 
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
-        self.sent_messages.lock().unwrap().push(message);
+        self.sent_messages.lock().await.push(message);
         Ok(())
     }
 
@@ -181,7 +182,7 @@ async fn test_filter_sync_at_tip_edge_case() {
     assert!(!result.unwrap(), "Should not start sync when already at tip");
 
     // Verify no messages were sent
-    let sent_messages = network.get_sent_messages();
+    let sent_messages = network.get_sent_messages().await;
     assert_eq!(sent_messages.len(), 0, "Should not send any messages when at tip");
 }
 
@@ -285,7 +286,7 @@ async fn test_no_invalid_getcfheaders_at_tip() {
     assert!(result.unwrap(), "Should start sync when behind by 1 block");
 
     // Check the sent message
-    let sent_messages = network.get_sent_messages();
+    let sent_messages = network.get_sent_messages().await;
     assert_eq!(sent_messages.len(), 1, "Should send exactly one message");
 
     match &sent_messages[0] {

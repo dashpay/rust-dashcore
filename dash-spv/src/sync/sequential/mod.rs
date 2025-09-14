@@ -85,7 +85,7 @@ impl<
     /// Create a new sequential sync manager
     pub fn new(
         config: &ClientConfig,
-        received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+        received_filter_heights: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>,
         wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
     ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults
