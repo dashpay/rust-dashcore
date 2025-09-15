@@ -24,8 +24,11 @@ use crate::storage::StorageManager;
 use crate::sync::{
     FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
 };
-use crate::types::{ChainState, SharedFilterHeights, SyncProgress};
+use crate::types::ChainState;
+use crate::types::{SharedFilterHeights, SyncProgress};
 use key_wallet_manager::wallet_interface::WalletInterface;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use phases::{PhaseTransition, SyncPhase};
 use request_control::RequestController;
@@ -87,6 +90,7 @@ impl<
         config: &ClientConfig,
         received_filter_heights: SharedFilterHeights,
         wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
+        chain_state: Arc<RwLock<ChainState>>,
     ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
@@ -95,9 +99,10 @@ impl<
             current_phase: SyncPhase::Idle,
             transition_manager: TransitionManager::new(config),
             request_controller: RequestController::new(config),
-            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config).map_err(|e| {
-                SyncError::InvalidState(format!("Failed to create header sync manager: {}", e))
-            })?,
+            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config, chain_state)
+                .map_err(|e| {
+                    SyncError::InvalidState(format!("Failed to create header sync manager: {}", e))
+                })?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             config: config.clone(),
@@ -797,8 +802,17 @@ impl<
     }
 
     /// Update the chain state (used for checkpoint sync initialization)
-    pub fn set_chain_state(&mut self, chain_state: ChainState) {
-        self.header_sync.set_chain_state(chain_state);
+    pub fn update_chain_state_cache(
+        &mut self,
+        synced_from_checkpoint: bool,
+        sync_base_height: u32,
+        headers_len: u32,
+    ) {
+        self.header_sync.update_cached_from_state_snapshot(
+            synced_from_checkpoint,
+            sync_base_height,
+            headers_len,
+        );
     }
 
     // Private helper methods
@@ -1952,8 +1966,9 @@ impl<
         let target_blockchain_height =
             storage.get_header_height_by_hash(&diff.block_hash).await.ok().flatten();
 
-        // Get chain state for masternode height conversion (used later)
-        let chain_state = self.header_sync.get_chain_state();
+        // Determine if we're syncing from a checkpoint for height conversion
+        let is_ckpt = self.header_sync.is_synced_from_checkpoint();
+        let sync_base = self.header_sync.get_sync_base_height();
 
         tracing::info!(
             "📥 Processing post-sync masternode diff for block {} at height {:?} (base: {} at height {:?})",
@@ -1970,12 +1985,11 @@ impl<
         // Log the current masternode state after update
         if let Ok(Some(mn_state)) = storage.load_masternode_state().await {
             // Convert masternode storage height to blockchain height
-            let mn_blockchain_height =
-                if chain_state.synced_from_checkpoint && chain_state.sync_base_height > 0 {
-                    chain_state.sync_base_height + mn_state.last_height
-                } else {
-                    mn_state.last_height
-                };
+            let mn_blockchain_height = if is_ckpt && sync_base > 0 {
+                sync_base + mn_state.last_height
+            } else {
+                mn_state.last_height
+            };
 
             tracing::debug!(
                 "📊 Masternode state after update: last height = {}, can validate ChainLocks up to height {}",
@@ -2073,10 +2087,11 @@ impl<
             .unwrap_or(0);
 
         // Check if we're syncing from a checkpoint
-        let chain_state = self.header_sync.get_chain_state();
-        if chain_state.synced_from_checkpoint && chain_state.sync_base_height > 0 {
+        if self.header_sync.is_synced_from_checkpoint()
+            && self.header_sync.get_sync_base_height() > 0
+        {
             // For checkpoint sync, blockchain height = sync_base_height + storage_height
-            Ok(chain_state.sync_base_height + storage_height)
+            Ok(self.header_sync.get_sync_base_height() + storage_height)
         } else {
             // Normal sync: storage height IS the blockchain height
             Ok(storage_height)
