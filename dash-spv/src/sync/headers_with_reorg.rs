@@ -1122,10 +1122,15 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     ) {
         self.cached_synced_from_checkpoint = synced_from_checkpoint;
         self.cached_sync_base_height = sync_base_height;
-        if synced_from_checkpoint && sync_base_height > 0 {
-            self.total_headers_synced = sync_base_height + headers_len;
+        // Absolute blockchain tip height = base + headers_len - 1 (if any headers exist)
+        self.total_headers_synced = if headers_len == 0 {
+            if synced_from_checkpoint {
+                sync_base_height
+            } else {
+                0
+            }
         } else {
-            self.total_headers_synced = headers_len;
-        }
+            sync_base_height.saturating_add(headers_len).saturating_sub(1)
+        };
     }
 }
