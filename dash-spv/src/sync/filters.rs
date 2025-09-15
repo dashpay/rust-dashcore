@@ -16,7 +16,7 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::types::SyncProgress;
+use crate::types::{SharedFilterHeights, SyncProgress};
 
 // Constants for filter synchronization
 // Stay under Dash Core's 2000 limit (for CFHeaders). Using 1999 helps reduce accidental overlaps.
@@ -74,11 +74,11 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     /// Blocks currently being downloaded (map for quick lookup)
     downloading_blocks: HashMap<BlockHash, u32>,
     /// Blocks requested by the filter processing thread
-    pub processing_thread_requests: std::sync::Arc<std::sync::Mutex<HashSet<BlockHash>>>,
+    pub processing_thread_requests: std::sync::Arc<tokio::sync::Mutex<HashSet<BlockHash>>>,
     /// Track requested filter ranges: (start_height, end_height) -> request_time
     requested_filter_ranges: HashMap<(u32, u32), std::time::Instant>,
     /// Track individual filter heights that have been received (shared with stats)
-    received_filter_heights: std::sync::Arc<std::sync::Mutex<HashSet<u32>>>,
+    received_filter_heights: SharedFilterHeights,
     /// Maximum retries for a filter range
     max_filter_retries: u32,
     /// Retry attempts per range
@@ -102,6 +102,64 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
     FilterSyncManager<S, N>
 {
+    /// Scan backward from `abs_height` down to `min_abs_height` (inclusive)
+    /// to find the nearest available block header stored in `storage`.
+    /// Returns the found `(BlockHash, height)` or `None` if none available.
+    async fn find_available_header_at_or_before(
+        &self,
+        abs_height: u32,
+        min_abs_height: u32,
+        storage: &S,
+    ) -> Option<(BlockHash, u32)> {
+        if abs_height < min_abs_height {
+            return None;
+        }
+
+        let mut scan_height = abs_height;
+        loop {
+            let Some(scan_storage_height) = self.header_abs_to_storage_index(scan_height) else {
+                tracing::debug!(
+                    "Storage index not available for blockchain height {} while scanning (min={})",
+                    scan_height,
+                    min_abs_height
+                );
+                break;
+            };
+
+            match storage.get_header(scan_storage_height).await {
+                Ok(Some(header)) => {
+                    tracing::info!(
+                        "Found available header at blockchain height {} / storage height {}",
+                        scan_height,
+                        scan_storage_height
+                    );
+                    return Some((header.block_hash(), scan_height));
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        "Header missing at blockchain height {} / storage height {}, scanning back",
+                        scan_height,
+                        scan_storage_height
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Error reading header at blockchain height {} / storage height {}: {}",
+                        scan_height,
+                        scan_storage_height,
+                        e
+                    );
+                }
+            }
+
+            if scan_height == min_abs_height {
+                break;
+            }
+            scan_height = scan_height.saturating_sub(1);
+        }
+
+        None
+    }
     /// Calculate the start height of a CFHeaders batch.
     fn calculate_batch_start_height(cf_headers: &CFHeaders, stop_height: u32) -> u32 {
         stop_height.saturating_sub(cf_headers.filter_hashes.len() as u32 - 1)
@@ -176,10 +234,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Create a new filter sync manager.
-    pub fn new(
-        config: &ClientConfig,
-        received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
-    ) -> Self {
+    pub fn new(config: &ClientConfig, received_filter_heights: SharedFilterHeights) -> Self {
         Self {
             _config: config.clone(),
             syncing_filter_headers: false,
@@ -191,7 +246,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             syncing_filters: false,
             pending_block_downloads: VecDeque::new(),
             downloading_blocks: HashMap::new(),
-            processing_thread_requests: std::sync::Arc::new(std::sync::Mutex::new(
+            processing_thread_requests: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
             requested_filter_ranges: HashMap::new(),
@@ -515,58 +570,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                     next_batch_end_height
                                 );
 
-                                // Scan backwards to find the highest available header
-                                let mut scan_height = next_batch_end_height.saturating_sub(1);
                                 let min_height = self.current_sync_height; // Don't go below where we are
-                                let mut found_header_info = None;
-
-                                while scan_height >= min_height && found_header_info.is_none() {
-                                    let Some(scan_storage_height) =
-                                        self.header_abs_to_storage_index(scan_height)
-                                    else {
-                                        break;
-                                    };
-                                    match storage.get_header(scan_storage_height).await {
-                                        Ok(Some(header)) => {
-                                            tracing::info!(
-                                                "Found available header at blockchain height {} / storage height {} (originally tried {})",
-                                                scan_height,
-                                                scan_storage_height,
-                                                next_batch_end_height
-                                            );
-                                            found_header_info =
-                                                Some((header.block_hash(), scan_height));
-                                            break;
-                                        }
-                                        Ok(None) => {
-                                            tracing::debug!(
-                                                "Header not found at blockchain height {} / storage height {}, trying {}",
-                                                scan_height,
-                                                scan_storage_height,
-                                                scan_height.saturating_sub(1)
-                                            );
-                                            if scan_height == 0 {
-                                                break;
-                                            }
-                                            scan_height = scan_height.saturating_sub(1);
-                                        }
-                                        Err(e) => {
-                                            tracing::error!(
-                                                "Error checking header at height {}: {}",
-                                                scan_height,
-                                                e
-                                            );
-                                            if scan_height == 0 {
-                                                break;
-                                            }
-                                            scan_height = scan_height.saturating_sub(1);
-                                        }
-                                    }
-                                }
-
-                                match found_header_info {
+                                match self
+                                    .find_available_header_at_or_before(
+                                        next_batch_end_height.saturating_sub(1),
+                                        min_height,
+                                        storage,
+                                    )
+                                    .await
+                                {
                                     Some((hash, height)) => {
-                                        // Check if we found a header at a height less than our current sync height
                                         if height < self.current_sync_height {
                                             tracing::warn!(
                                                 "Found header at height {} which is less than current sync height {}. This means we already have filter headers up to {}. Marking sync as complete.",
@@ -574,8 +587,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                                 self.current_sync_height,
                                                 self.current_sync_height - 1
                                             );
-                                            // We already have filter headers up to current_sync_height - 1
-                                            // No need to request more, mark sync as complete
                                             self.syncing_filter_headers = false;
                                             return Ok(false);
                                         }
@@ -590,10 +601,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                         tracing::error!(
                                             "This indicates a serious storage inconsistency. Stopping filter header sync."
                                         );
-
-                                        // Mark sync as complete since we can't find any valid headers to request
                                         self.syncing_filter_headers = false;
-                                        return Ok(false); // Signal sync completion
+                                        return Err(SyncError::Storage(format!(
+                                            "No available headers found between {} and {} while selecting next batch stop hash",
+                                            min_height,
+                                            next_batch_end_height
+                                        )));
                                     }
                                 }
                             }
@@ -734,38 +747,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             recovery_batch_end_height
                         );
 
-                        // Scan backwards to find available header
-                        let mut scan_height = recovery_batch_end_height.saturating_sub(1);
                         let min_height = self.current_sync_height;
-
-                        let mut found_recovery_info = None;
-                        while scan_height >= min_height && found_recovery_info.is_none() {
-                            let scan_storage_height =
-                                match self.header_abs_to_storage_index(scan_height) {
-                                    Some(v) => v,
-                                    None => break,
-                                };
-                            if let Ok(Some(header)) = storage.get_header(scan_storage_height).await
-                            {
-                                tracing::info!(
-                                    "Found recovery header at blockchain height {} / storage height {} (originally tried {})",
-                                    scan_height,
-                                    scan_storage_height,
-                                    recovery_batch_end_height
-                                );
-                                found_recovery_info = Some((header.block_hash(), scan_height));
-                                break;
-                            } else {
-                                if scan_height == 0 {
-                                    break;
-                                }
-                                scan_height = scan_height.saturating_sub(1);
-                            }
-                        }
-
-                        match found_recovery_info {
+                        match self
+                            .find_available_header_at_or_before(
+                                recovery_batch_end_height.saturating_sub(1),
+                                min_height,
+                                storage,
+                            )
+                            .await
+                        {
                             Some((hash, height)) => {
-                                // Check if we found a header at a height less than our current sync height
                                 if height < self.current_sync_height {
                                     tracing::warn!(
                                         "Recovery: Found header at height {} which is less than current sync height {}. This indicates we already have filter headers up to {}. Marking sync as complete.",
@@ -773,8 +764,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                         self.current_sync_height,
                                         self.current_sync_height - 1
                                     );
-                                    // We already have filter headers up to current_sync_height - 1
-                                    // No point in trying to recover, mark sync as complete
                                     self.syncing_filter_headers = false;
                                     return Ok(false);
                                 }
@@ -1014,50 +1003,15 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         batch_end_height
                     );
 
-                    // Scan backwards to find the highest available header within the batch
-                    let mut scan_height = batch_end_height;
-                    let min_height = self.current_sync_height;
-                    let mut found_header = None;
-
-                    while scan_height >= min_height && found_header.is_none() {
-                        let Some(scan_storage_height) =
-                            self.header_abs_to_storage_index(scan_height)
-                        else {
-                            break;
-                        };
-                        match storage.get_header(scan_storage_height).await {
-                            Ok(Some(header)) => {
-                                tracing::info!(
-                                    "Found available header at blockchain height {} / storage height {} (originally tried {})",
-                                    scan_height,
-                                    scan_storage_height,
-                                    batch_end_height
-                                );
-                                found_header = Some(header.block_hash());
-                                break;
-                            }
-                            Ok(None) => {
-                                if scan_height == min_height {
-                                    break;
-                                }
-                                scan_height = scan_height.saturating_sub(1);
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Error getting header at height {}: {}",
-                                    scan_height,
-                                    e
-                                );
-                                if scan_height == min_height {
-                                    break;
-                                }
-                                scan_height = scan_height.saturating_sub(1);
-                            }
-                        }
-                    }
-
-                    match found_header {
-                        Some(hash) => hash,
+                    match self
+                        .find_available_header_at_or_before(
+                            batch_end_height,
+                            self.current_sync_height,
+                            storage,
+                        )
+                        .await
+                    {
+                        Some((hash, _height)) => hash,
                         None => {
                             // If we can't find any headers in the batch range, something is wrong
                             // Don't fall back to tip as that would create an oversized request
@@ -1745,7 +1699,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         // Log current state periodically
-        if let Ok(guard) = self.received_filter_heights.lock() {
+        {
+            let guard = self.received_filter_heights.lock().await;
             if guard.len() % 1000 == 0 {
                 tracing::info!(
                     "Filter sync state: {} filters received, {} active requests, {} pending requests",
@@ -1772,16 +1727,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Check if a filter request range is complete (all filters received).
     async fn is_request_complete(&self, start: u32, end: u32) -> SyncResult<bool> {
-        if let Ok(received_heights) = self.received_filter_heights.lock() {
-            for height in start..=end {
-                if !received_heights.contains(&height) {
-                    return Ok(false);
-                }
+        let received_heights = self.received_filter_heights.lock().await;
+        for height in start..=end {
+            if !received_heights.contains(&height) {
+                return Ok(false);
             }
-            Ok(true)
-        } else {
-            Err(SyncError::Storage("Failed to lock received filter heights".to_string()))
         }
+        Ok(true)
     }
 
     /// Record that a filter was received at a specific height.
@@ -1795,14 +1747,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             SyncError::Storage(format!("Failed to get header height by hash: {}", e))
         })? {
             // Record in received filter heights
-            if let Ok(mut heights) = self.received_filter_heights.lock() {
-                heights.insert(height);
-                tracing::trace!(
-                    "📊 Recorded filter received at height {} for block {}",
-                    height,
-                    block_hash
-                );
-            }
+            let mut heights = self.received_filter_heights.lock().await;
+            heights.insert(height);
+            tracing::trace!(
+                "📊 Recorded filter received at height {} for block {}",
+                height,
+                block_hash
+            );
         } else {
             tracing::warn!("Could not find height for filter block hash {}", block_hash);
         }
@@ -2476,9 +2427,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Check if this block was requested by the filter processing thread
         {
-            let mut processing_requests = self.processing_thread_requests.lock().map_err(|e| {
-                SyncError::InvalidState(format!("processing thread requests lock poisoned: {}", e))
-            })?;
+            let mut processing_requests = self.processing_thread_requests.lock().await;
             if processing_requests.remove(&block_hash) {
                 tracing::info!(
                     "📦 Received block {} requested by filter processing thread",
@@ -2654,10 +2603,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Get the number of filters that have been received.
     pub fn get_received_filter_count(&self) -> u32 {
-        if let Ok(heights) = self.received_filter_heights.lock() {
-            heights.len() as u32
-        } else {
-            0
+        match self.received_filter_heights.try_lock() {
+            Ok(heights) => heights.len() as u32,
+            Err(_) => 0,
         }
     }
 
@@ -2668,7 +2616,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     pub fn spawn_filter_processor(
         _network_message_sender: mpsc::Sender<NetworkMessage>,
         _processing_thread_requests: std::sync::Arc<
-            std::sync::Mutex<std::collections::HashSet<BlockHash>>,
+            tokio::sync::Mutex<std::collections::HashSet<BlockHash>>,
         >,
         stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> FilterNotificationSender {
@@ -2706,7 +2654,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         cfilter: dashcore::network::message_filter::CFilter,
         network_message_sender: &mpsc::Sender<NetworkMessage>,
         processing_thread_requests: &std::sync::Arc<
-            std::sync::Mutex<std::collections::HashSet<BlockHash>>,
+            tokio::sync::Mutex<std::collections::HashSet<BlockHash>>,
         >,
         stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> SyncResult<()> {
@@ -2757,19 +2705,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
             // Register this request in the processing thread tracking
             {
-                match processing_thread_requests.lock() {
-                    Ok(mut requests) => {
-                        requests.insert(cfilter.block_hash);
-                        tracing::debug!(
-                            "Registered block {} in processing thread requests",
-                            cfilter.block_hash
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to lock processing thread requests: {}", e);
-                        return Ok(());
-                    }
-                }
+                let mut requests = processing_thread_requests.lock().await;
+                requests.insert(cfilter.block_hash);
+                tracing::debug!(
+                    "Registered block {} in processing thread requests",
+                    cfilter.block_hash
+                );
             }
 
             // Request the full block download
@@ -2779,7 +2720,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             if let Err(e) = network_message_sender.send(getdata).await {
                 tracing::error!("Failed to request block download for match: {}", e);
                 // Remove from tracking if request failed
-                if let Ok(mut requests) = processing_thread_requests.lock() {
+                {
+                    let mut requests = processing_thread_requests.lock().await;
                     requests.remove(&cfilter.block_hash);
                 }
             } else {
@@ -2900,9 +2842,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             stats_lock.filter_sync_start_time = Some(std::time::Instant::now());
             stats_lock.last_filter_received_time = None;
             // Clear the received heights tracking for a fresh start
-            if let Ok(mut heights) = stats_lock.received_filter_heights.lock() {
-                heights.clear();
-            }
+            let received_filter_heights = stats_lock.received_filter_heights.clone();
+            drop(stats_lock); // Release the RwLock before awaiting the mutex
+            let mut heights = received_filter_heights.lock().await;
+            heights.clear();
             tracing::info!(
                 "📊 Started new filter sync tracking: {} filters requested",
                 total_filters_requested
@@ -2942,14 +2885,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             drop(stats_lock); // Release the stats lock before acquiring the mutex
 
             // Now lock the heights and insert
-            if let Ok(mut heights) = received_filter_heights.lock() {
-                heights.insert(height);
-                tracing::trace!(
-                    "📊 Recorded filter received at height {} for block {}",
-                    height,
-                    block_hash
-                );
-            };
+            let mut heights = received_filter_heights.lock().await;
+            heights.insert(height);
+            tracing::trace!(
+                "📊 Recorded filter received at height {} for block {}",
+                height,
+                block_hash
+            );
         } else {
             tracing::warn!("Could not find height for filter block hash {}", block_hash);
         }
@@ -3077,7 +3019,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Record receipt of a filter at a specific height.
     pub fn record_filter_received(&mut self, height: u32) {
-        if let Ok(mut heights) = self.received_filter_heights.lock() {
+        if let Ok(mut heights) = self.received_filter_heights.try_lock() {
             heights.insert(height);
             tracing::trace!("📊 Recorded filter received at height {}", height);
         }
@@ -3087,9 +3029,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     pub fn find_missing_ranges(&self) -> Vec<(u32, u32)> {
         let mut missing_ranges = Vec::new();
 
-        let heights = match self.received_filter_heights.lock() {
+        let heights = match self.received_filter_heights.try_lock() {
             Ok(heights) => heights.clone(),
-            Err(_) => return missing_ranges, // Return empty if lock fails
+            Err(_) => return missing_ranges,
         };
 
         // For each requested range
@@ -3124,9 +3066,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         let now = std::time::Instant::now();
         let mut timed_out = Vec::new();
 
-        let heights = match self.received_filter_heights.lock() {
+        let heights = match self.received_filter_heights.try_lock() {
             Ok(heights) => heights.clone(),
-            Err(_) => return timed_out, // Return empty if lock fails
+            Err(_) => return timed_out,
         };
 
         for ((start, end), request_time) in &self.requested_filter_ranges {
@@ -3151,9 +3093,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Check if a filter range is complete (all heights received).
     pub fn is_range_complete(&self, start_height: u32, end_height: u32) -> bool {
-        let heights = match self.received_filter_heights.lock() {
+        let heights = match self.received_filter_heights.try_lock() {
             Ok(heights) => heights,
-            Err(_) => return false, // Return false if lock fails
+            Err(_) => return false,
         };
 
         for height in start_height..=end_height {
@@ -3500,7 +3442,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Reset filter range tracking (useful for testing or restart scenarios).
     pub fn reset_filter_tracking(&mut self) {
         self.requested_filter_ranges.clear();
-        if let Ok(mut heights) = self.received_filter_heights.lock() {
+        if let Ok(mut heights) = self.received_filter_heights.try_lock() {
             heights.clear();
         }
         self.filter_retry_counts.clear();

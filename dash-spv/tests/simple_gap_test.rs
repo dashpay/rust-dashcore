@@ -1,7 +1,8 @@
 //! Basic test for CFHeader gap detection functionality.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use dash_spv::{
     client::ClientConfig,
