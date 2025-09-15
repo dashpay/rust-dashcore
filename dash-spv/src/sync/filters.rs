@@ -2842,7 +2842,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             stats_lock.filter_sync_start_time = Some(std::time::Instant::now());
             stats_lock.last_filter_received_time = None;
             // Clear the received heights tracking for a fresh start
-            let mut heights = stats_lock.received_filter_heights.lock().await;
+            let received_filter_heights = stats_lock.received_filter_heights.clone();
+            drop(stats_lock); // Release the RwLock before awaiting the mutex
+            let mut heights = received_filter_heights.lock().await;
             heights.clear();
             tracing::info!(
                 "📊 Started new filter sync tracking: {} filters requested",
