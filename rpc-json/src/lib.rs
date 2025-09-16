@@ -66,7 +66,6 @@ pub struct GetNetworkInfoResultAddress {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct GetNetworkInfoResult {
-    // FIXME: validate max value range for version (currently deserializes into usize)
     pub version: usize,
     #[serde(rename = "buildversion")]
     pub build_version: String,
