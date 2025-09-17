@@ -94,6 +94,30 @@ impl<
         S: StorageManager + Send + Sync + 'static,
     > DashSpvClient<W, N, S>
 {
+    /// Returns the current chain tip hash if available.
+    pub async fn tip_hash(&self) -> Option<dashcore::BlockHash> {
+        let state = self.state.read().await;
+        state.tip_hash()
+    }
+
+    /// Returns the current chain tip height (absolute), accounting for checkpoint base.
+    pub async fn tip_height(&self) -> u32 {
+        let state = self.state.read().await;
+        state.tip_height()
+    }
+
+    /// Clear all persisted storage (headers, filters, state, sync state).
+    pub async fn clear_storage(&mut self) -> Result<()> {
+        let mut storage = self.storage.lock().await;
+        storage.clear().await.map_err(SpvError::Storage)
+    }
+
+    /// Clear only the persisted sync state snapshot (keep headers/filters).
+    pub async fn clear_sync_state(&mut self) -> Result<()> {
+        let mut storage = self.storage.lock().await;
+        storage.clear_sync_state().await.map_err(SpvError::Storage)
+    }
+
     /// Take the progress receiver for external consumption.
     pub fn take_progress_receiver(
         &mut self,

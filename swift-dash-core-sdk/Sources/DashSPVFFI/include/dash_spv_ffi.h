@@ -149,6 +149,11 @@ typedef void (*WalletTransactionCallback)(const char *wallet_id,
                                           bool is_ours,
                                           void *user_data);
 
+typedef void (*FilterHeadersProgressCallback)(uint32_t filter_height,
+                                              uint32_t header_height,
+                                              double percentage,
+                                              void *user_data);
+
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
   TransactionCallback on_transaction;
@@ -158,6 +163,7 @@ typedef struct FFIEventCallbacks {
   MempoolRemovedCallback on_mempool_transaction_removed;
   CompactFilterMatchedCallback on_compact_filter_matched;
   WalletTransactionCallback on_wallet_transaction;
+  FilterHeadersProgressCallback on_filter_headers_progress;
   void *user_data;
 } FFIEventCallbacks;
 
@@ -414,6 +420,40 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  * - `client` must be a valid, non-null pointer.
  */
  struct FFISpvStats *dash_spv_ffi_client_get_stats(struct FFIDashSpvClient *client) ;
+
+/**
+ * Get the current chain tip hash (32 bytes) if available.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ * - `out_hash` must be a valid pointer to a 32-byte buffer.
+ */
+ int32_t dash_spv_ffi_client_get_tip_hash(struct FFIDashSpvClient *client, uint8_t *out_hash) ;
+
+/**
+ * Get the current chain tip height (absolute).
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ * - `out_height` must be a valid, non-null pointer.
+ */
+ int32_t dash_spv_ffi_client_get_tip_height(struct FFIDashSpvClient *client, uint32_t *out_height) ;
+
+/**
+ * Clear all persisted SPV storage (headers, filters, metadata, sync state).
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ */
+ int32_t dash_spv_ffi_client_clear_storage(struct FFIDashSpvClient *client) ;
+
+/**
+ * Clear only the persisted sync-state snapshot.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ */
+ int32_t dash_spv_ffi_client_clear_sync_state(struct FFIDashSpvClient *client) ;
 
 /**
  * Check if compact filter sync is currently available.

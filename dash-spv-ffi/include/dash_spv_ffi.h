@@ -392,10 +392,8 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
 /**
  * Cancels the sync operation.
  *
- * **Note**: This function currently only stops the SPV client and clears sync callbacks,
- * but does not fully abort the ongoing sync process. The sync operation may continue
- * running in the background until it completes naturally. Full sync cancellation with
- * proper task abortion is not yet implemented.
+ * This stops the SPV client, clears callbacks, and joins active threads so the sync
+ * operation halts immediately.
  *
  * # Safety
  * The client pointer must be valid and non-null.
@@ -420,6 +418,40 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  * - `client` must be a valid, non-null pointer.
  */
  struct FFISpvStats *dash_spv_ffi_client_get_stats(struct FFIDashSpvClient *client) ;
+
+/**
+ * Get the current chain tip hash (32 bytes) if available.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ * - `out_hash` must be a valid pointer to a 32-byte buffer.
+ */
+ int32_t dash_spv_ffi_client_get_tip_hash(struct FFIDashSpvClient *client, uint8_t *out_hash) ;
+
+/**
+ * Get the current chain tip height (absolute).
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ * - `out_height` must be a valid, non-null pointer.
+ */
+ int32_t dash_spv_ffi_client_get_tip_height(struct FFIDashSpvClient *client, uint32_t *out_height) ;
+
+/**
+ * Clear all persisted SPV storage (headers, filters, metadata, sync state).
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ */
+ int32_t dash_spv_ffi_client_clear_storage(struct FFIDashSpvClient *client) ;
+
+/**
+ * Clear only the persisted sync-state snapshot.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ */
+ int32_t dash_spv_ffi_client_clear_sync_state(struct FFIDashSpvClient *client) ;
 
 /**
  * Check if compact filter sync is currently available.
