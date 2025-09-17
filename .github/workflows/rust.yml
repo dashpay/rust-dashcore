@@ -25,8 +25,112 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
-      - name: Test dash-spv crate
-        run: cargo test -p dash-spv --all-features
+      - name: Test dash-spv crate (capture log)
+        id: spvtest
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          cargo test -p dash-spv --all-features 2>&1 | tee spv_test.log
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if grep -qE 'SIGSEGV|signal: 11' spv_test.log; then
+            echo "segv=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "segv=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Always continue; follow-up steps decide based on outputs
+          exit 0
+
+      - name: Upload dash-spv test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dash-spv-test-log
+          path: spv_test.log
+
+      - name: Scan for segfault culprit (dash-spv)
+        id: segvscan
+        if: ${{ steps.spvtest.outputs.segv == 'true' }}
+        shell: bash
+        run: |
+          set +e
+          echo "Detected SIGSEGV in parallel run; scanning tests sequentially..."
+          # List all tests for the crate
+          mapfile -t TESTS < <(cargo test -p dash-spv --all-features -- --list | sed -n 's/^\(.*\) ... .*/\1/p')
+          echo "Found ${#TESTS[@]} tests"
+          : > segv_scan.log
+          SEGV_TESTS=()
+          # Retry isolation up to 3 times to catch flaky crashes
+          for attempt in 1 2 3; do
+            echo "=== Isolation attempt $attempt/3 ===" | tee -a segv_scan.log
+            FOUND_THIS_ATTEMPT=()
+            for t in "${TESTS[@]}"; do
+              echo "--- Running $t (single-threaded) ---" | tee -a segv_scan.log
+              # Run test in isolation, single-threaded to improve determinism
+              cargo test -p dash-spv --all-features -- --nocapture --test-threads=1 "$t" 2>&1 | tee -a segv_scan.log
+              rc=${PIPESTATUS[0]}
+              if [ $rc -ne 0 ]; then
+                if tail -n 200 segv_scan.log | grep -qE 'SIGSEGV|signal: 11'; then
+                  FOUND_THIS_ATTEMPT+=("$t")
+                  SEGV_TESTS+=("$t")
+                fi
+              fi
+            done
+            if [ ${#FOUND_THIS_ATTEMPT[@]} -gt 0 ]; then
+              echo "Attempt $attempt found segfaulting tests: ${FOUND_THIS_ATTEMPT[*]}" | tee -a segv_scan.log
+              break
+            else
+              echo "Attempt $attempt found no segfaulting tests" | tee -a segv_scan.log
+            fi
+          done
+          if [ ${#SEGV_TESTS[@]} -eq 0 ]; then
+            echo "No consistent segfaulting tests found after 3 attempts" | tee -a segv_scan.log
+          fi
+          # De-duplicate the list for output
+          if [ ${#SEGV_TESTS[@]} -gt 0 ]; then
+            mapfile -t SEGV_UNIQ < <(printf "%s\n" "${SEGV_TESTS[@]}" | awk 'NF' | sort -u)
+          else
+            SEGV_UNIQ=()
+          fi
+          printf "%s\n" "Segfaulting tests detected: ${SEGV_UNIQ[*]-none}" | tee -a segv_scan.log
+          # Write outputs for later steps
+          {
+            echo 'segv_tests<<EOF'
+            printf "%s\n" "${SEGV_UNIQ[@]}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          # Save scan log
+          echo "scan_log=segv_scan.log" >> "$GITHUB_OUTPUT"
+
+      - name: Upload segv scan log
+        if: ${{ steps.spvtest.outputs.segv == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dash-spv-segv-scan-log
+          path: segv_scan.log
+
+      - name: Comment segfault summary on PR
+        if: ${{ github.event_name == 'pull_request' && steps.spvtest.outputs.segv == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tests = `${{ steps.segvscan.outputs.segv_tests }}`.trim();
+            const body = tests
+              ? `⚠️ SPV tests hit a SIGSEGV. Candidates (single-threaded isolation):\n\n${tests.split(/\s+/).map(t => `-  ${t}`).join('\n')}`
+              : `⚠️ SPV tests hit a SIGSEGV, but single-test isolation found no consistent culprit. See artifacts for logs.`;
+            const issue_number = context.payload.pull_request.number;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              body,
+            });
+      - name: Fail job if initial tests failed
+        if: ${{ steps.spvtest.outputs.status != '0' }}
+        run: |
+          echo "Initial dash-spv tests failed with status ${{ steps.spvtest.outputs.status }}" >&2
+          exit 1
       - name: Test dash-spv-ffi crate
         run: cargo test -p dash-spv-ffi --all-features
       
