@@ -23,6 +23,7 @@ log = "0.4"
 hex = "0.4"
 env_logger = "0.10"
 tracing = "0.1"
+futures = "0.3"
 # Use key-wallet-ffi for all wallet-related FFI types
 key-wallet-ffi = { path = "../key-wallet-ffi" }
 # Still need these for SPV client internals (not for FFI types)

@@ -11,6 +11,7 @@ use dash_spv::DashSpvClient;
 use dash_spv::Hash;
 use dashcore::Txid;
 
+use futures::future::{AbortHandle, Abortable};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -100,6 +101,12 @@ impl CallbackRegistry {
 struct SyncCallbackData {
     callback_id: u64,
     _marker: std::marker::PhantomData<()>,
+}
+
+async fn wait_for_shutdown_signal(signal: Arc<AtomicBool>) {
+    while !signal.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// FFIDashSpvClient structure
@@ -205,6 +212,19 @@ impl FFIDashSpvClient {
         Fut: std::future::Future<Output = T>,
     {
         self.runtime.block_on(f())
+    }
+
+    fn join_active_threads(&self) {
+        let handles = {
+            let mut guard = self.active_threads.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+
+        for handle in handles {
+            if let Err(e) = handle.join() {
+                tracing::error!("Failed to join active thread during cleanup: {:?}", e);
+            }
+        }
     }
 
     /// Start the event listener task to handle events from the SPV client.
@@ -366,6 +386,44 @@ impl FFIDashSpvClient {
     }
 }
 
+fn stop_client_internal(client: &FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
+    client.shutdown_signal.store(true, Ordering::Relaxed);
+
+    // Ensure callbacks are cleared so no further progress/completion notifications fire.
+    {
+        let mut cb_guard = client.sync_callbacks.lock().unwrap();
+        if let Some(ref callback_data) = *cb_guard {
+            CALLBACK_REGISTRY.lock().unwrap().unregister(callback_data.callback_id);
+        }
+        *cb_guard = None;
+    }
+
+    client.join_active_threads();
+
+    let inner = client.inner.clone();
+    let result = client.runtime.block_on(async {
+        let mut spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
+                }
+            }
+        };
+        let res = spv_client.stop().await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        res
+    });
+
+    client.shutdown_signal.store(false, Ordering::Relaxed);
+
+    result
+}
+
 /// Update the running client's configuration.
 ///
 /// # Safety
@@ -443,6 +501,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
 
     match result {
         Ok(()) => {
+            client.shutdown_signal.store(false, Ordering::Relaxed);
             // Start event listener after successful start
             client.start_event_listener();
             FFIErrorCode::Success as i32
@@ -463,27 +522,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
     null_check!(client);
 
     let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.stop().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
+    match stop_client_internal(client) {
         Ok(()) => FFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
@@ -742,8 +781,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let inner = client.inner.clone();
     let runtime = client.runtime.clone();
     let sync_callbacks = client.sync_callbacks.clone();
-    // Shared flag to coordinate internal threads during sync
-    let sync_running = Arc::new(AtomicBool::new(true));
+    let shutdown_signal = client.shutdown_signal.clone();
 
     // Take progress receiver from client
     let progress_receiver = {
@@ -755,38 +793,51 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     if let Some(mut receiver) = progress_receiver {
         let runtime_handle = runtime.handle().clone();
         let sync_callbacks_clone = sync_callbacks.clone();
+        let shutdown_signal_clone = shutdown_signal.clone();
 
         let handle = std::thread::spawn(move || {
             runtime_handle.block_on(async move {
-                while let Some(progress) = receiver.recv().await {
-                    // Handle callback in a thread-safe way
-                    let should_stop = matches!(progress.sync_stage, SyncStage::Complete);
+                loop {
+                    tokio::select! {
+                        maybe_progress = receiver.recv() => {
+                            match maybe_progress {
+                                Some(progress) => {
+                                    // Handle callback in a thread-safe way
+                                    let should_stop = matches!(progress.sync_stage, SyncStage::Complete);
 
-                    // Create FFI progress
-                    let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));
+                                    // Create FFI progress
+                                    let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));
 
-                    // Call the callback using the registry
-                    {
-                        let cb_guard = sync_callbacks_clone.lock().unwrap();
+                                    // Call the callback using the registry
+                                    {
+                                        let cb_guard = sync_callbacks_clone.lock().unwrap();
 
-                        if let Some(ref callback_data) = *cb_guard {
-                            let registry = CALLBACK_REGISTRY.lock().unwrap();
-                            if let Some(CallbackInfo::Detailed {
-                                progress_callback: Some(callback),
-                                user_data,
-                                ..
-                            }) = registry.get(callback_data.callback_id)
-                            {
-                                // SAFETY: The callback and user_data are safely stored in the registry
-                                // and accessed through thread-safe mechanisms. The registry ensures
-                                // proper lifetime management without raw pointer passing across threads.
-                                callback(ffi_progress.as_ref(), *user_data);
+                                        if let Some(ref callback_data) = *cb_guard {
+                                            let registry = CALLBACK_REGISTRY.lock().unwrap();
+                                            if let Some(CallbackInfo::Detailed {
+                                                progress_callback: Some(callback),
+                                                user_data,
+                                                ..
+                                            }) = registry.get(callback_data.callback_id)
+                                            {
+                                                // SAFETY: The callback and user_data are safely stored in the registry
+                                                // and accessed through thread-safe mechanisms. The registry ensures
+                                                // proper lifetime management without raw pointer passing across threads.
+                                                callback(ffi_progress.as_ref(), *user_data);
+                                            }
+                                        }
+                                    }
+
+                                    if should_stop {
+                                        break;
+                                    }
+                                }
+                                None => break,
                             }
                         }
-                    }
-
-                    if should_stop {
-                        break;
+                        _ = wait_for_shutdown_signal(shutdown_signal_clone.clone()) => {
+                            break;
+                        }
                     }
                 }
             });
@@ -799,29 +850,50 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     // Spawn sync task in a separate thread with safe callback access
     let runtime_handle = runtime.handle().clone();
     let sync_callbacks_clone = sync_callbacks.clone();
-    let sync_running_for_join = sync_running.clone();
+    let shutdown_signal_for_thread = shutdown_signal.clone();
+    let stop_triggered_for_thread = Arc::new(AtomicBool::new(false));
     let sync_handle = std::thread::spawn(move || {
+        let stop_triggered_for_callback = stop_triggered_for_thread.clone();
         // Run monitoring loop
-        let monitor_result = runtime_handle.block_on(async move {
-            let mut spv_client = {
-                let mut guard = inner.lock().unwrap();
-                match guard.take() {
-                    Some(client) => client,
-                    None => {
-                        return Err(dash_spv::SpvError::Config(
-                            "Client not initialized".to_string(),
-                        ))
+        let monitor_result = runtime_handle.block_on({
+            let inner = inner.clone();
+            let shutdown_signal_for_thread = shutdown_signal_for_thread.clone();
+            let stop_triggered_for_thread = stop_triggered_for_callback.clone();
+            async move {
+                let mut spv_client = {
+                    let mut guard = inner.lock().unwrap();
+                    match guard.take() {
+                        Some(client) => client,
+                        None => {
+                            return Err(dash_spv::SpvError::Config(
+                                "Client not initialized".to_string(),
+                            ))
+                        }
                     }
-                }
-            };
-            let res = spv_client.monitor_network().await;
-            let mut guard = inner.lock().unwrap();
-            *guard = Some(spv_client);
-            res
+                };
+                let (abort_handle, abort_registration) = AbortHandle::new_pair();
+                let mut monitor_future =
+                    Box::pin(Abortable::new(spv_client.monitor_network(), abort_registration));
+                let result = tokio::select! {
+                    res = &mut monitor_future => match res {
+                        Ok(inner) => inner,
+                        Err(_) => Ok(()),
+                    },
+                    _ = wait_for_shutdown_signal(shutdown_signal_for_thread.clone()) => {
+                        stop_triggered_for_thread.store(true, Ordering::Relaxed);
+                        abort_handle.abort();
+                        match monitor_future.as_mut().await {
+                            Ok(inner) => inner,
+                            Err(_) => Ok(()),
+                        }
+                    }
+                };
+                drop(monitor_future);
+                let mut guard = inner.lock().unwrap();
+                *guard = Some(spv_client);
+                result
+            }
         });
-
-        // Signal background handlers to stop
-        sync_running_for_join.store(false, Ordering::Relaxed);
 
         // Send completion callback and cleanup
         {
@@ -834,31 +906,29 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                     ..
                 }) = registry.unregister(callback_data.callback_id)
                 {
-                    match monitor_result {
-                        Ok(_) => {
-                            let msg =
-                                CString::new("Sync completed successfully").unwrap_or_else(|_| {
-                                    CString::new("Sync completed")
-                                        .expect("hardcoded string is safe")
-                                });
-                            // SAFETY: The callback and user_data are safely managed through the registry.
-                            // The registry ensures proper lifetime management and thread safety.
-                            // The string pointer is only valid for the duration of the callback.
-                            callback(true, msg.as_ptr(), user_data);
-                            // CString is automatically dropped here, which is safe because the callback
-                            // should not store or use the pointer after it returns
-                        }
-                        Err(e) => {
-                            let msg = match CString::new(format!("Sync failed: {}", e)) {
-                                Ok(s) => s,
-                                Err(_) => {
-                                    CString::new("Sync failed").expect("hardcoded string is safe")
-                                }
-                            };
-                            // SAFETY: Same as above
-                            callback(false, msg.as_ptr(), user_data);
-                            // CString is automatically dropped here, which is safe because the callback
-                            // should not store or use the pointer after it returns
+                    if stop_triggered_for_callback.load(Ordering::Relaxed) {
+                        let msg = CString::new("Sync stopped by request").unwrap_or_else(|_| {
+                            CString::new("Sync stopped").expect("hardcoded string is safe")
+                        });
+                        callback(false, msg.as_ptr(), user_data);
+                    } else {
+                        match monitor_result {
+                            Ok(_) => {
+                                let msg = CString::new("Sync completed successfully")
+                                    .unwrap_or_else(|_| {
+                                        CString::new("Sync completed")
+                                            .expect("hardcoded string is safe")
+                                    });
+                                callback(true, msg.as_ptr(), user_data);
+                            }
+                            Err(e) => {
+                                let msg = match CString::new(format!("Sync failed: {}", e)) {
+                                    Ok(s) => s,
+                                    Err(_) => CString::new("Sync failed")
+                                        .expect("hardcoded string is safe"),
+                                };
+                                callback(false, msg.as_ptr(), user_data);
+                            }
                         }
                     }
                 }
@@ -878,10 +948,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
 
 /// Cancels the sync operation.
 ///
-/// **Note**: This function currently only stops the SPV client and clears sync callbacks,
-/// but does not fully abort the ongoing sync process. The sync operation may continue
-/// running in the background until it completes naturally. Full sync cancellation with
-/// proper task abortion is not yet implemented.
+/// This stops the SPV client, clears callbacks, and joins active threads so the sync
+/// operation halts immediately.
 ///
 /// # Safety
 /// The client pointer must be valid and non-null.
@@ -894,34 +962,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpv
 
     let client = &(*client);
 
-    // Clear callbacks to stop progress updates and unregister from the registry
-    let mut cb_guard = client.sync_callbacks.lock().unwrap();
-    if let Some(ref callback_data) = *cb_guard {
-        CALLBACK_REGISTRY.lock().unwrap().unregister(callback_data.callback_id);
-    }
-    *cb_guard = None;
-
-    // TODO: Implement proper sync task cancellation using cancellation tokens or abort handles.
-    // Currently, this only stops the client, but the sync task may continue running in the background.
-    let inner = client.inner.clone();
-    let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-        let res = spv_client.stop().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
+    match stop_client_internal(client) {
+        Ok(()) => FFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
             FFIErrorCode::from(e) as i32
