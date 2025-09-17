@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 64
+**Total Functions**: 68
 
 ## Table of Contents
 
@@ -67,11 +67,12 @@ Functions: 26
 
 ### Synchronization
 
-Functions: 7
+Functions: 8
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_cancel_sync` | Cancels the sync operation | client |
+| `dash_spv_ffi_client_clear_sync_state` | Clear only the persisted sync-state snapshot | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
 | `dash_spv_ffi_client_is_filter_sync_available` | Check if compact filter sync is currently available | client |
 | `dash_spv_ffi_client_sync_to_tip` | Sync the SPV client to the chain tip | client |
@@ -135,7 +136,7 @@ Functions: 2
 
 ### Utility Functions
 
-Functions: 15
+Functions: 18
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -144,7 +145,10 @@ Functions: 15
 | `dash_spv_ffi_checkpoint_before_timestamp` | Get the last checkpoint at or before a given UNIX timestamp (seconds) | checkpoints |
 | `dash_spv_ffi_checkpoint_latest` | Get the latest checkpoint for the given network | checkpoints |
 | `dash_spv_ffi_checkpoints_between_heights` | Get all checkpoints between two heights (inclusive) | checkpoints |
+| `dash_spv_ffi_client_clear_storage` | Clear all persisted SPV storage (headers, filters, metadata, sync state) | client |
 | `dash_spv_ffi_client_get_stats` | Get current runtime statistics for the SPV client | client |
+| `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
+| `dash_spv_ffi_client_get_tip_height` | Get the current chain tip height (absolute) | client |
 | `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns an opaque pointer to FFIW... | client |
 | `dash_spv_ffi_client_record_send` | Record that we attempted to send a transaction by its txid | client |
 | `dash_spv_ffi_client_rescan_blockchain` | Request a rescan of the blockchain from a given height (not yet implemented) | client |
@@ -641,6 +645,22 @@ The client pointer must be valid and non-null.
 
 ---
 
+#### `dash_spv_ffi_client_clear_sync_state`
+
+```c
+dash_spv_ffi_client_clear_sync_state(client: *mut FFIDashSpvClient,) -> i32
+```
+
+**Description:**
+Clear only the persisted sync-state snapshot.  # Safety - `client` must be a valid, non-null pointer.
+
+**Safety:**
+- `client` must be a valid, non-null pointer.
+
+**Module:** `client`
+
+---
+
 #### `dash_spv_ffi_client_get_sync_progress`
 
 ```c
@@ -996,6 +1016,22 @@ Get all checkpoints between two heights (inclusive).  Returns an `FFIArray` of `
 
 ---
 
+#### `dash_spv_ffi_client_clear_storage`
+
+```c
+dash_spv_ffi_client_clear_storage(client: *mut FFIDashSpvClient) -> i32
+```
+
+**Description:**
+Clear all persisted SPV storage (headers, filters, metadata, sync state).  # Safety - `client` must be a valid, non-null pointer.
+
+**Safety:**
+- `client` must be a valid, non-null pointer.
+
+**Module:** `client`
+
+---
+
 #### `dash_spv_ffi_client_get_stats`
 
 ```c
@@ -1007,6 +1043,38 @@ Get current runtime statistics for the SPV client.  # Safety - `client` must be 
 
 **Safety:**
 - `client` must be a valid, non-null pointer.
+
+**Module:** `client`
+
+---
+
+#### `dash_spv_ffi_client_get_tip_hash`
+
+```c
+dash_spv_ffi_client_get_tip_hash(client: *mut FFIDashSpvClient, out_hash: *mut u8,) -> i32
+```
+
+**Description:**
+Get the current chain tip hash (32 bytes) if available.  # Safety - `client` must be a valid, non-null pointer. - `out_hash` must be a valid pointer to a 32-byte buffer.
+
+**Safety:**
+- `client` must be a valid, non-null pointer. - `out_hash` must be a valid pointer to a 32-byte buffer.
+
+**Module:** `client`
+
+---
+
+#### `dash_spv_ffi_client_get_tip_height`
+
+```c
+dash_spv_ffi_client_get_tip_height(client: *mut FFIDashSpvClient, out_height: *mut u32,) -> i32
+```
+
+**Description:**
+Get the current chain tip height (absolute).  # Safety - `client` must be a valid, non-null pointer. - `out_height` must be a valid, non-null pointer.
+
+**Safety:**
+- `client` must be a valid, non-null pointer. - `out_height` must be a valid, non-null pointer.
 
 **Module:** `client`
 
