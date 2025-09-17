@@ -636,7 +636,7 @@ dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpvClient) -> i32
 ```
 
 **Description:**
-Cancels the sync operation.  **Note**: This function currently only stops the SPV client and clears sync callbacks, but does not fully abort the ongoing sync process. The sync operation may continue running in the background until it completes naturally. Full sync cancellation with proper task abortion is not yet implemented.  # Safety The client pointer must be valid and non-null.  # Returns Returns 0 on success, or an error code on failure.
+Cancels the sync operation.  This stops the SPV client, clears callbacks, and joins active threads so the sync operation halts immediately.  # Safety The client pointer must be valid and non-null.  # Returns Returns 0 on success, or an error code on failure.
 
 **Safety:**
 The client pointer must be valid and non-null.
