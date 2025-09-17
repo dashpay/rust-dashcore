@@ -8,9 +8,10 @@ use super::transaction_router::TransactionRouter;
 use crate::wallet::immature_transaction::ImmatureTransaction;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
-use crate::{Network, Wallet};
+use crate::{Network, Utxo, Wallet};
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::BlockHash;
+use dashcore::{Address as DashAddress, OutPoint};
 use dashcore_hashes::Hash;
 
 /// Context for transaction processing
@@ -187,6 +188,60 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
                             account.transactions.insert(tx.txid(), tx_record);
 
+                            // Ingest UTXOs for outputs that pay to our addresses and
+                            // remove UTXOs that are spent by this transaction's inputs.
+                            // Only apply for spendable account types (Standard, CoinJoin).
+                            match &mut account.account_type {
+                                crate::managed_account::managed_account_type::ManagedAccountType::Standard { .. }
+                                | crate::managed_account::managed_account_type::ManagedAccountType::CoinJoin { .. } => {
+                                    // Build a set of addresses involved for fast membership tests
+                                    let mut involved_addrs = alloc::collections::BTreeSet::new();
+                                    for info in account_match.account_type_match.all_involved_addresses() {
+                                        involved_addrs.insert(info.address.clone());
+                                    }
+
+                                    // Determine confirmation state and block height for UTXOs
+                                    let (is_confirmed, utxo_height) = match context {
+                                        TransactionContext::Mempool => (false, 0u32),
+                                        TransactionContext::InBlock { height, .. }
+                                        | TransactionContext::InChainLockedBlock { height, .. } => (true, height),
+                                    };
+
+                                    // Insert UTXOs for matching outputs
+                                    let txid = tx.txid();
+                                    for (vout, output) in tx.output.iter().enumerate() {
+                                        if let Ok(addr) = DashAddress::from_script(&output.script_pubkey, network) {
+                                            if involved_addrs.contains(&addr) {
+                                                let outpoint = OutPoint { txid, vout: vout as u32 };
+                                                // Construct TxOut clone explicitly to avoid trait assumptions
+                                                let txout = dashcore::TxOut {
+                                                    value: output.value,
+                                                    script_pubkey: output.script_pubkey.clone(),
+                                                };
+                                                let mut utxo = Utxo::new(
+                                                    outpoint,
+                                                    txout,
+                                                    addr,
+                                                    utxo_height,
+                                                    tx.is_coin_base(),
+                                                );
+                                                utxo.is_confirmed = is_confirmed;
+                                                account.utxos.insert(outpoint, utxo);
+                                            }
+                                        }
+                                    }
+
+                                    // Remove any UTXOs that are being spent by this transaction
+                                    for input in &tx.input {
+                                        // If this input spends one of our UTXOs, remove it
+                                        account.utxos.remove(&input.previous_output);
+                                    }
+                                }
+                                _ => {
+                                    // Skip UTXO ingestion for identity/provider accounts
+                                }
+                            }
+
                             // Mark involved addresses as used
                             for address_info in
                                 account_match.account_type_match.all_involved_addresses()
@@ -238,6 +293,31 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
                     // Update cached balance
                     self.update_balance();
+
+                    // Emit a concise log for this detected transaction with net wallet change
+                    let wallet_net: i64 =
+                        (result.total_received as i64) - (result.total_sent as i64);
+                    let ctx = match context {
+                        TransactionContext::Mempool => "mempool".to_string(),
+                        TransactionContext::InBlock {
+                            height,
+                            ..
+                        } => alloc::format!("block {}", height),
+                        TransactionContext::InChainLockedBlock {
+                            height,
+                            ..
+                        } => {
+                            alloc::format!("chainlocked block {}", height)
+                        }
+                    };
+                    tracing::info!(
+                        txid = %tx.txid(),
+                        context = %ctx,
+                        net_change = wallet_net,
+                        received = result.total_received,
+                        sent = result.total_sent,
+                        "Wallet transaction detected: net balance change"
+                    );
                 }
             }
 

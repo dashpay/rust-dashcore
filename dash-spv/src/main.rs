@@ -224,7 +224,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new();
-    wallet_manager.create_wallet_from_mnemonic(
+    let wallet_id = wallet_manager.create_wallet_from_mnemonic(
         "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside",
         "",
         &[network],
@@ -261,6 +261,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 wallet,
                 enable_terminal_ui,
                 &matches,
+                wallet_id,
             )
             .await?;
         } else {
@@ -278,6 +279,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 wallet,
                 enable_terminal_ui,
                 &matches,
+                wallet_id,
             )
             .await?;
         }
@@ -289,8 +291,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
         };
-        run_client(config, network_manager, storage_manager, wallet, enable_terminal_ui, &matches)
-            .await?;
+        run_client(
+            config,
+            network_manager,
+            storage_manager,
+            wallet,
+            enable_terminal_ui,
+            &matches,
+            wallet_id,
+        )
+        .await?;
     }
 
     Ok(())
@@ -303,6 +313,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
     enable_terminal_ui: bool,
     matches: &clap::ArgMatches,
+    wallet_id: [u8; 32],
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
     let mut client =
@@ -357,6 +368,100 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     }
 
     tracing::info!("SPV client started successfully");
+
+    // Set up event logging: count detected transactions and log wallet balances periodically
+    // Take the client's event receiver and spawn a logger task
+    if let Some(mut event_rx) = client.take_event_receiver() {
+        let wallet_for_logger = wallet.clone();
+        let network_for_logger = config.network;
+        let wallet_id_for_logger = wallet_id;
+        tokio::spawn(async move {
+            use dash_spv::types::SpvEvent;
+            let mut total_detected_block_txs: u64 = 0;
+            let mut total_detected_mempool_txs: u64 = 0;
+            let mut last_snapshot = std::time::Instant::now();
+            let snapshot_interval = std::time::Duration::from_secs(10);
+
+            loop {
+                tokio::select! {
+                    maybe_event = event_rx.recv() => {
+                        match maybe_event {
+                            Some(SpvEvent::BlockProcessed { relevant_transactions, .. }) => {
+                                if relevant_transactions > 0 {
+                                    total_detected_block_txs = total_detected_block_txs.saturating_add(relevant_transactions as u64);
+                                    tracing::info!(
+                                        "Detected {} wallet-relevant tx(s) in block; cumulative (blocks): {}",
+                                        relevant_transactions,
+                                        total_detected_block_txs
+                                    );
+                                }
+                            }
+                            Some(SpvEvent::MempoolTransactionAdded { .. }) => {
+                                total_detected_mempool_txs = total_detected_mempool_txs.saturating_add(1);
+                                tracing::info!(
+                                    "Detected wallet-relevant mempool tx; cumulative (mempool): {}",
+                                    total_detected_mempool_txs
+                                );
+                            }
+                            Some(_) => { /* ignore other events */ }
+                            None => break, // sender closed
+                        }
+                    }
+                    // Also do a periodic snapshot while events are flowing
+                    _ = tokio::time::sleep(snapshot_interval) => {
+                        // Log snapshot if interval has elapsed
+                        if last_snapshot.elapsed() >= snapshot_interval {
+                            let (tx_count, confirmed, unconfirmed, locked, total, derived_incoming) = {
+                                let mgr = wallet_for_logger.read().await;
+                                // Count transactions via network state for the selected network
+                                let txs = mgr
+                                    .get_network_state(network_for_logger)
+                                    .map(|ns| ns.transactions.len())
+                                    .unwrap_or(0);
+
+                                // Read wallet balance from the managed wallet info
+                                let wb = mgr.get_wallet_balance(&wallet_id_for_logger).ok();
+                                let (c, u, l, t) = wb.map(|b| (b.confirmed, b.unconfirmed, b.locked, b.total)).unwrap_or((0, 0, 0, 0));
+
+                                // Derive a conservative incoming total by summing tx outputs to our addresses.
+                                let incoming_sum = if let Some(ns) = mgr.get_network_state(network_for_logger) {
+                                    let addrs = mgr.monitored_addresses(network_for_logger);
+                                    let addr_set: std::collections::HashSet<_> = addrs.into_iter().collect();
+                                    let mut sum_incoming: u64 = 0;
+                                    for rec in ns.transactions.values() {
+                                        for out in &rec.transaction.output {
+                                            if let Ok(out_addr) = dashcore::Address::from_script(&out.script_pubkey, network_for_logger) {
+                                                if addr_set.contains(&out_addr) {
+                                                    sum_incoming = sum_incoming.saturating_add(out.value);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    sum_incoming
+                                } else { 0 };
+
+                                (txs, c, u, l, t, incoming_sum)
+                            };
+                            tracing::info!(
+                                "Wallet tx summary: detected={} (blocks={} + mempool={}), balances: confirmed={} unconfirmed={} locked={} total={}, derived_incoming_total={} (approx)",
+                                tx_count,
+                                total_detected_block_txs,
+                                total_detected_mempool_txs,
+                                confirmed,
+                                unconfirmed,
+                                locked,
+                                total,
+                                derived_incoming
+                            );
+                            last_snapshot = std::time::Instant::now();
+                        }
+                    }
+                }
+            }
+        });
+    } else {
+        tracing::warn!("Event channel not available; transaction/balance logging disabled");
+    }
 
     // Add watch addresses if specified
     if let Some(addresses) = matches.get_many::<String>("watch-address") {
