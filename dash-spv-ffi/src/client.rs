@@ -5,8 +5,10 @@ use crate::{
 // Import wallet types from key-wallet-ffi
 use key_wallet_ffi::FFIWalletManager;
 
+use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
+use dash_spv::Hash;
 use dashcore::Txid;
 
 use once_cell::sync::Lazy;
@@ -106,7 +108,7 @@ type InnerClient = DashSpvClient<
         key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
     >,
     dash_spv::network::MultiPeerNetworkManager,
-    dash_spv::storage::MemoryStorageManager,
+    DiskStorageManager,
 >;
 type SharedClient = Arc<Mutex<Option<InnerClient>>>;
 
@@ -144,11 +146,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
         }
     };
 
-    let client_config = config.clone_inner();
-    let client_result = runtime.block_on(async {
+    let mut client_config = config.clone_inner();
+
+    let storage_path = client_config.storage_path.clone().unwrap_or_else(|| {
+        let mut path = std::env::temp_dir();
+        path.push("dash-spv");
+        path.push(format!("{:?}", client_config.network).to_lowercase());
+        tracing::warn!(
+            "dash-spv FFI config missing storage path, falling back to temp dir {:?}",
+            path
+        );
+        path
+    });
+    client_config.storage_path = Some(storage_path.clone());
+
+    let client_result = runtime.block_on(async move {
         // Construct concrete implementations for generics
         let network = dash_spv::network::MultiPeerNetworkManager::new(&client_config).await;
-        let storage = dash_spv::storage::MemoryStorageManager::new().await;
+        let storage = DiskStorageManager::new(storage_path.clone()).await;
         let wallet = key_wallet_manager::wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
         >::new();
@@ -990,6 +1005,187 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_stats(
         Err(e) => {
             set_last_error(&e.to_string());
             std::ptr::null_mut()
+        }
+    }
+}
+
+/// Get the current chain tip hash (32 bytes) if available.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
+/// - `out_hash` must be a valid pointer to a 32-byte buffer.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_hash(
+    client: *mut FFIDashSpvClient,
+    out_hash: *mut u8,
+) -> i32 {
+    null_check!(client);
+    if out_hash.is_null() {
+        set_last_error("Null out_hash pointer");
+        return FFIErrorCode::NullPointer as i32;
+    }
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(c) => c,
+                None => {
+                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+                }
+            }
+        };
+        let tip = spv_client.tip_hash().await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        Ok(tip)
+    });
+
+    match result {
+        Ok(Some(hash)) => {
+            let bytes = hash.to_byte_array();
+            // SAFETY: out_hash points to a buffer with at least 32 bytes
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_hash, 32);
+            FFIErrorCode::Success as i32
+        }
+        Ok(None) => {
+            set_last_error("No tip hash available");
+            FFIErrorCode::StorageError as i32
+        }
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
+/// Get the current chain tip height (absolute).
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
+/// - `out_height` must be a valid, non-null pointer.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_height(
+    client: *mut FFIDashSpvClient,
+    out_height: *mut u32,
+) -> i32 {
+    null_check!(client);
+    if out_height.is_null() {
+        set_last_error("Null out_height pointer");
+        return FFIErrorCode::NullPointer as i32;
+    }
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(c) => c,
+                None => {
+                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+                }
+            }
+        };
+        let height = spv_client.tip_height().await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        Ok(height)
+    });
+
+    match result {
+        Ok(height) => {
+            *out_height = height;
+            FFIErrorCode::Success as i32
+        }
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
+/// Clear all persisted SPV storage (headers, filters, metadata, sync state).
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashSpvClient) -> i32 {
+    null_check!(client);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let mut spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(c) => c,
+                None => {
+                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+                }
+            }
+        };
+
+        // Try to stop before clearing to ensure no in-flight writes race the wipe.
+        if let Err(e) = spv_client.stop().await {
+            tracing::warn!("Failed to stop client before clearing storage: {}", e);
+        }
+
+        let res = spv_client.clear_storage().await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        res
+    });
+
+    match result {
+        Ok(_) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
+/// Clear only the persisted sync-state snapshot.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_clear_sync_state(
+    client: *mut FFIDashSpvClient,
+) -> i32 {
+    null_check!(client);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let mut spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(c) => c,
+                None => {
+                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+                }
+            }
+        };
+
+        let res = spv_client.clear_sync_state().await;
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        res
+    });
+
+    match result {
+        Ok(_) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
         }
     }
 }
