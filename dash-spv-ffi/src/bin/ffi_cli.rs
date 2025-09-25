@@ -99,6 +99,12 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .help("Disable masternode list synchronization"),
         )
+        .arg(
+            Arg::new("no-filters")
+                .long("no-filters")
+                .action(ArgAction::SetTrue)
+                .help("Disable compact filter synchronization"),
+        )
         .get_matches();
 
     // Map network
@@ -108,6 +114,8 @@ fn main() {
         Some("regtest") => FFINetwork::Regtest,
         _ => FFINetwork::Dash,
     };
+
+    let disable_filter_sync = matches.get_flag("no-filters");
 
     unsafe {
         // Initialize tracing/logging via FFI so `tracing::info!` emits output
@@ -124,6 +132,8 @@ fn main() {
             );
             std::process::exit(1);
         }
+
+        let _ = dash_spv_ffi_config_set_filter_load(cfg, !disable_filter_sync);
 
         if let Some(workers) = matches.get_one::<u32>("workers") {
             let _ = dash_spv_ffi_config_set_worker_threads(cfg, *workers);
@@ -201,7 +211,10 @@ fn main() {
             let prog_ptr = dash_spv_ffi_client_get_sync_progress(client);
             if !prog_ptr.is_null() {
                 let prog = &*prog_ptr;
-                if prog.headers_synced && prog.filter_headers_synced {
+                let filters_complete = prog.filter_headers_synced
+                    || !prog.filter_sync_available
+                    || disable_filter_sync;
+                if prog.headers_synced && filters_complete {
                     dash_spv_ffi_sync_progress_destroy(prog_ptr);
                     break;
                 }
