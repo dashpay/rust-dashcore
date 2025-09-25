@@ -1,3 +1,4 @@
+use dash_spv_ffi::callbacks::FFIEventCallbacks;
 use dash_spv_ffi::*;
 use key_wallet_ffi::FFINetwork;
 use serial_test::serial;
@@ -288,5 +289,245 @@ fn test_enhanced_event_callbacks() {
         dash_spv_ffi_config_destroy(config);
 
         println!("✅ Enhanced event callbacks test completed successfully");
+    }
+}
+
+#[test]
+#[serial]
+fn test_drain_events_integration() {
+    unsafe {
+        println!("Testing drain_events integration with event callbacks...");
+
+        let event_data = TestEventData::new();
+
+        // Create config
+        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+        assert!(!config.is_null());
+
+        // Set data directory
+        let temp_dir = TempDir::new().unwrap();
+        let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
+        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+
+        // Create client
+        let client = dash_spv_ffi_client_new(config);
+        assert!(!client.is_null());
+
+        // Set up all event callbacks using the unified API
+        let user_data = Arc::as_ptr(&event_data) as *mut c_void;
+        let callbacks = FFIEventCallbacks {
+            on_balance_update: Some(test_balance_callback),
+            on_transaction: Some(test_transaction_callback),
+            on_block: Some(test_block_callback),
+            on_compact_filter_matched: Some(test_compact_filter_matched_callback),
+            on_mempool_transaction_added: None,
+            on_mempool_transaction_confirmed: None,
+            on_mempool_transaction_removed: None,
+            on_wallet_transaction: None,
+            on_filter_headers_progress: None,
+            user_data,
+        };
+        dash_spv_ffi_client_set_event_callbacks(client, callbacks);
+
+        // Test drain_events with no pending events
+        let result = dash_spv_ffi_client_drain_events(client);
+        assert_eq!(result, FFIErrorCode::Success as i32);
+
+        // Verify no events were processed (callbacks not called)
+        assert!(!event_data.block_received.load(Ordering::SeqCst));
+        assert!(!event_data.transaction_received.load(Ordering::SeqCst));
+        assert!(!event_data.balance_updated.load(Ordering::SeqCst));
+        assert!(!event_data.compact_filter_matched.load(Ordering::SeqCst));
+
+        // Test multiple drain calls
+        for _ in 0..10 {
+            let result = dash_spv_ffi_client_drain_events(client);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+        }
+
+        // State should remain unchanged
+        assert!(!event_data.block_received.load(Ordering::SeqCst));
+        assert!(!event_data.transaction_received.load(Ordering::SeqCst));
+        assert!(!event_data.balance_updated.load(Ordering::SeqCst));
+
+        // Clean up
+        dash_spv_ffi_client_destroy(client);
+        dash_spv_ffi_config_destroy(config);
+
+        println!("✅ drain_events integration test completed successfully");
+    }
+}
+
+#[test]
+#[serial]
+fn test_drain_events_concurrent_with_callbacks() {
+    unsafe {
+        println!("Testing drain_events concurrent access with callback setup...");
+
+        let event_data = TestEventData::new();
+
+        // Create config and client
+        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+        assert!(!config.is_null());
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
+        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+
+        let client = dash_spv_ffi_client_new(config);
+        assert!(!client.is_null());
+
+        // Set up callbacks while draining events concurrently
+        let user_data = Arc::as_ptr(&event_data) as *mut c_void;
+
+        // Set up callbacks and drain events
+        let callbacks = FFIEventCallbacks {
+            on_balance_update: Some(test_balance_callback),
+            on_transaction: Some(test_transaction_callback),
+            on_block: Some(test_block_callback),
+            on_compact_filter_matched: None,
+            on_mempool_transaction_added: None,
+            on_mempool_transaction_confirmed: None,
+            on_mempool_transaction_removed: None,
+            on_wallet_transaction: None,
+            on_filter_headers_progress: None,
+            user_data,
+        };
+        dash_spv_ffi_client_set_event_callbacks(client, callbacks);
+
+        let result = dash_spv_ffi_client_drain_events(client);
+        assert_eq!(result, FFIErrorCode::Success as i32);
+
+        // Test concurrent draining from multiple threads
+        let client_ptr = client as usize;
+        let handles: Vec<_> = (0..3)
+            .map(|thread_id| {
+                thread::spawn(move || {
+                    let client = client_ptr as *mut FFIDashSpvClient;
+                    for i in 0..20 {
+                        let result = dash_spv_ffi_client_drain_events(client);
+                        assert_eq!(result, FFIErrorCode::Success as i32);
+
+                        // Small delay to allow interleaving
+                        if i % 5 == 0 {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                    }
+                    println!("Thread {} completed drain operations", thread_id);
+                })
+            })
+            .collect();
+
+        // Wait for all threads
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Final drain to ensure everything is cleaned up
+        let result = dash_spv_ffi_client_drain_events(client);
+        assert_eq!(result, FFIErrorCode::Success as i32);
+
+        // Clean up
+        dash_spv_ffi_client_destroy(client);
+        dash_spv_ffi_config_destroy(config);
+
+        println!("✅ Concurrent drain_events test completed successfully");
+    }
+}
+
+#[test]
+#[serial]
+fn test_drain_events_callback_lifecycle() {
+    unsafe {
+        println!("Testing drain_events through callback lifecycle...");
+
+        let event_data = TestEventData::new();
+
+        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+        assert!(!config.is_null());
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
+        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+
+        let client = dash_spv_ffi_client_new(config);
+        assert!(!client.is_null());
+
+        let user_data = Arc::as_ptr(&event_data) as *mut c_void;
+
+        // Phase 1: No callbacks set - should work fine
+        let result = dash_spv_ffi_client_drain_events(client);
+        assert_eq!(result, FFIErrorCode::Success as i32);
+
+        // Phase 2: Set some callbacks
+        let callbacks = FFIEventCallbacks {
+            on_balance_update: Some(test_balance_callback),
+            on_transaction: Some(test_transaction_callback),
+            on_block: None,
+            on_compact_filter_matched: None,
+            on_mempool_transaction_added: None,
+            on_mempool_transaction_confirmed: None,
+            on_mempool_transaction_removed: None,
+            on_wallet_transaction: None,
+            on_filter_headers_progress: None,
+            user_data,
+        };
+        dash_spv_ffi_client_set_event_callbacks(client, callbacks);
+
+        // Drain with callbacks set
+        let result = dash_spv_ffi_client_drain_events(client);
+        assert_eq!(result, FFIErrorCode::Success as i32);
+
+        // Phase 3: Clear callbacks by setting to None
+        let callbacks = FFIEventCallbacks {
+            on_balance_update: None,
+            on_transaction: None,
+            on_block: None,
+            on_compact_filter_matched: None,
+            on_mempool_transaction_added: None,
+            on_mempool_transaction_confirmed: None,
+            on_mempool_transaction_removed: None,
+            on_wallet_transaction: None,
+            on_filter_headers_progress: None,
+            user_data: std::ptr::null_mut(),
+        };
+        dash_spv_ffi_client_set_event_callbacks(client, callbacks);
+
+        // Drain with cleared callbacks
+        let result = dash_spv_ffi_client_drain_events(client);
+        assert_eq!(result, FFIErrorCode::Success as i32);
+
+        // Phase 4: Re-set callbacks with different functions
+        let callbacks = FFIEventCallbacks {
+            on_balance_update: None,
+            on_transaction: None,
+            on_block: Some(test_block_callback),
+            on_compact_filter_matched: None,
+            on_mempool_transaction_added: None,
+            on_mempool_transaction_confirmed: None,
+            on_mempool_transaction_removed: None,
+            on_wallet_transaction: None,
+            on_filter_headers_progress: None,
+            user_data,
+        };
+        dash_spv_ffi_client_set_event_callbacks(client, callbacks);
+
+        // Final drain
+        let result = dash_spv_ffi_client_drain_events(client);
+        assert_eq!(result, FFIErrorCode::Success as i32);
+
+        // Verify no unexpected events were triggered
+        assert!(!event_data.balance_updated.load(Ordering::SeqCst));
+        assert!(!event_data.transaction_received.load(Ordering::SeqCst));
+        assert!(!event_data.block_received.load(Ordering::SeqCst));
+
+        // Clean up
+        dash_spv_ffi_client_destroy(client);
+        dash_spv_ffi_config_destroy(config);
+
+        println!("✅ Callback lifecycle drain_events test completed successfully");
     }
 }

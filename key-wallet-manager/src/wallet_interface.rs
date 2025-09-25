@@ -39,4 +39,14 @@ pub trait WalletInterface: Send + Sync {
         block_hash: &dashcore::BlockHash,
         network: Network,
     ) -> bool;
+
+    /// Return the earliest block height that should be scanned for this wallet on the
+    /// specified network. Implementations can use the wallet's birth height or other
+    /// metadata to provide a more precise rescan starting point.
+    ///
+    /// The default implementation returns `None`, which signals that the caller should
+    /// fall back to its existing behaviour.
+    async fn earliest_required_height(&self, _network: Network) -> Option<CoreBlockHeight> {
+        None
+    }
 }

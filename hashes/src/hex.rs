@@ -86,7 +86,7 @@ impl<'a> HexIterator<'a> {
     ///
     /// If the input string is of odd length.
     pub fn new(s: &'a str) -> Result<HexIterator<'a>, Error> {
-        if s.len() % 2 != 0 {
+        if !s.len().is_multiple_of(2) {
             Err(Error::OddLengthString(s.len()))
         } else {
             Ok(HexIterator {

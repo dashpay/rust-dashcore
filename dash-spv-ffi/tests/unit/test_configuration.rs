@@ -3,7 +3,7 @@ mod tests {
     use crate::*;
     use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
 
     #[test]
     #[serial]
@@ -308,6 +308,133 @@ mod tests {
                 dash_spv_ffi_config_set_data_dir(config, empty.as_ptr()),
                 FFIErrorCode::Success as i32
             );
+
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_worker_threads_configuration() {
+        unsafe {
+            let config = dash_spv_ffi_config_testnet();
+
+            // Test setting worker threads to 0 (auto mode)
+            let result = dash_spv_ffi_config_set_worker_threads(config, 0);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+
+            // Test setting specific worker thread counts
+            let thread_counts = [1, 2, 4, 8, 16, 32];
+            for &count in &thread_counts {
+                let result = dash_spv_ffi_config_set_worker_threads(config, count);
+                assert_eq!(result, FFIErrorCode::Success as i32);
+            }
+
+            // Test large worker thread count
+            let result = dash_spv_ffi_config_set_worker_threads(config, 1000);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+
+            // Test maximum value
+            let result = dash_spv_ffi_config_set_worker_threads(config, u32::MAX);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_worker_threads_with_null_config() {
+        unsafe {
+            // Test with null config pointer
+            let result = dash_spv_ffi_config_set_worker_threads(std::ptr::null_mut(), 4);
+            assert_eq!(result, FFIErrorCode::NullPointer as i32);
+
+            // Check error was set
+            let error_ptr = dash_spv_ffi_get_last_error();
+            assert!(!error_ptr.is_null());
+            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
+            assert!(
+                error_str.contains("Null")
+                    || error_str.contains("null")
+                    || error_str.contains("invalid")
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_worker_threads_persistence() {
+        unsafe {
+            // Test that worker thread setting is preserved
+            for &thread_count in &[0, 1, 4, 8] {
+                let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
+
+                // Set worker threads
+                let result = dash_spv_ffi_config_set_worker_threads(config, thread_count);
+                assert_eq!(result, FFIErrorCode::Success as i32);
+
+                // Create client with this config (this tests that the setting is used)
+                let temp_dir = tempfile::TempDir::new().unwrap();
+                let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
+                dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+                dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+
+                let client = dash_spv_ffi_client_new(config);
+                // Client creation should succeed regardless of worker thread count
+                assert!(
+                    !client.is_null(),
+                    "Failed to create client with {} worker threads",
+                    thread_count
+                );
+
+                dash_spv_ffi_client_destroy(client);
+                dash_spv_ffi_config_destroy(config);
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_worker_threads_multiple_configs() {
+        unsafe {
+            // Test that different configs can have different worker thread counts
+            let configs = [
+                (dash_spv_ffi_config_testnet(), 1),
+                (dash_spv_ffi_config_mainnet(), 4),
+                (dash_spv_ffi_config_new(FFINetwork::Regtest), 8),
+            ];
+
+            for (config, thread_count) in configs {
+                let result = dash_spv_ffi_config_set_worker_threads(config, thread_count);
+                assert_eq!(result, FFIErrorCode::Success as i32);
+            }
+
+            // Clean up all configs
+            for (config, _) in configs {
+                dash_spv_ffi_config_destroy(config);
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_worker_threads_edge_cases() {
+        unsafe {
+            let config = dash_spv_ffi_config_testnet();
+
+            // Test repeated setting of worker threads
+            for _ in 0..10 {
+                let result = dash_spv_ffi_config_set_worker_threads(config, 4);
+                assert_eq!(result, FFIErrorCode::Success as i32);
+            }
+
+            // Test setting different values in sequence
+            let sequence = [0, 1, 0, 8, 0, 16, 0];
+            for &count in &sequence {
+                let result = dash_spv_ffi_config_set_worker_threads(config, count);
+                assert_eq!(result, FFIErrorCode::Success as i32);
+            }
 
             dash_spv_ffi_config_destroy(config);
         }

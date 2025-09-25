@@ -22,7 +22,7 @@ mod tests {
             target: Target::from_compact(CompactTarget::from_consensus(0x1d00ffff)),
             merkle_root: Some(BlockHash::from_raw_hash(hash_bytes)),
             chain_work: format!("0x{:064x}", height * 1000),
-            masternode_list_name: if height % 100000 == 0 && height > 0 {
+            masternode_list_name: if height.is_multiple_of(100000) && height > 0 {
                 Some(format!("ML{}__70230", height))
             } else {
                 None

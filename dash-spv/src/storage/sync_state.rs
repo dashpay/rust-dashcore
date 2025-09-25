@@ -344,7 +344,7 @@ impl PersistentSyncState {
             50000
         };
 
-        height % interval == 0
+        height.is_multiple_of(interval)
     }
 }
 

@@ -4,20 +4,20 @@
 PROFILE ?= debug
 
 CC = gcc
-CFLAGS = -Wall -Wextra -Werror -std=c99 -I../.. -g -O0
-LDFLAGS = -L../../target/$(PROFILE) -ldash_spv_ffi -lpthread -ldl -lm
+CFLAGS = -Wall -Wextra -Werror -std=c99 -I../.. -I../../../key-wallet-ffi/include -g -O0
+LDFLAGS = -L../../../target/$(PROFILE) -ldash_spv_ffi -lkey_wallet_ffi -lpthread -ldl -lm
 
 # Platform-specific settings
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
-    LDFLAGS += -Wl,-rpath,../../target/$(PROFILE)
+    LDFLAGS += -Wl,-rpath,../../../target/$(PROFILE)
 endif
 ifeq ($(UNAME_S),Darwin)
-    LDFLAGS += -Wl,-rpath,@loader_path/../../target/$(PROFILE)
+    LDFLAGS += -Wl,-rpath,@loader_path/../../../target/$(PROFILE)
 endif
 
 # Test programs
-TESTS = test_basic test_advanced test_integration
+TESTS = test_basic test_advanced test_integration test_event_draining test_configuration
 
 # Build all tests
 all: $(TESTS)
@@ -30,6 +30,12 @@ test_advanced: test_advanced.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 test_integration: test_integration.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+test_event_draining: test_event_draining.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+test_configuration: test_configuration.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # Run all tests

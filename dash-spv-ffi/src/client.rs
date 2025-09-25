@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 
 /// Global callback registry for thread-safe callback management
 static CALLBACK_REGISTRY: Lazy<Arc<Mutex<CallbackRegistry>>> =
@@ -126,6 +127,8 @@ pub struct FFIDashSpvClient {
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     sync_callbacks: Arc<Mutex<Option<SyncCallbackData>>>,
     shutdown_signal: Arc<AtomicBool>,
+    // Stored event receiver for pull-based draining (no background thread by default)
+    event_rx: Arc<Mutex<Option<UnboundedReceiver<dash_spv::types::SpvEvent>>>>,
 }
 
 /// Create a new SPV client and return an opaque pointer.
@@ -140,12 +143,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     null_check!(config, std::ptr::null_mut());
 
     let config = &(*config);
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .thread_name("dash-spv-worker")
-        .worker_threads(4) // Use 4 threads for better performance on iOS
-        .enable_all()
-        .build()
-    {
+    // Build runtime with configurable worker threads (0 => auto)
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.thread_name("dash-spv-worker").enable_all();
+    if config.worker_threads > 0 {
+        builder.worker_threads(config.worker_threads as usize);
+    }
+    let runtime = match builder.build() {
         Ok(rt) => Arc::new(rt),
         Err(e) => {
             set_last_error(&format!("Failed to create runtime: {}", e));
@@ -194,6 +198,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 active_threads: Arc::new(Mutex::new(Vec::new())),
                 sync_callbacks: Arc::new(Mutex::new(None)),
                 shutdown_signal: Arc::new(AtomicBool::new(false)),
+                event_rx: Arc::new(Mutex::new(None)),
             };
             Box::into_raw(Box::new(ffi_client))
         }
@@ -227,163 +232,147 @@ impl FFIDashSpvClient {
         }
     }
 
-    /// Start the event listener task to handle events from the SPV client.
-    fn start_event_listener(&self) {
-        let inner = self.inner.clone();
-        let event_callbacks = self.event_callbacks.clone();
-        let runtime = self.runtime.clone();
-        let shutdown_signal = self.shutdown_signal.clone();
-
-        let handle = std::thread::spawn(move || {
-            runtime.block_on(async {
-                let event_rx = {
-                    let mut guard = inner.lock().unwrap();
-                    if let Some(ref mut client) = *guard {
-                        client.take_event_receiver()
-                    } else {
-                        None
+    /// Drain pending events and invoke configured callbacks (non-blocking).
+    fn drain_events_internal(&self) {
+        let mut rx_guard = self.event_rx.lock().unwrap();
+        let Some(rx) = rx_guard.as_mut() else {
+            return;
+        };
+        let callbacks = self.event_callbacks.lock().unwrap();
+        loop {
+            match rx.try_recv() {
+                Ok(event) => match event {
+                    dash_spv::types::SpvEvent::BalanceUpdate {
+                        confirmed,
+                        unconfirmed,
+                        ..
+                    } => {
+                        callbacks.call_balance_update(confirmed, unconfirmed);
                     }
-                };
-
-                if let Some(mut rx) = event_rx {
-                    tracing::info!("🎧 FFI event listener started successfully");
-                    loop {
-                        // Check shutdown signal
-                        if shutdown_signal.load(Ordering::Relaxed) {
-                            tracing::info!("🛑 FFI event listener received shutdown signal");
-                            break;
-                        }
-
-                        // Use recv with timeout to periodically check shutdown signal
-                        match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
-                            Ok(Some(event)) => {
-                                tracing::info!("🎧 FFI received event: {:?}", event);
-                                let callbacks = event_callbacks.lock().unwrap();
-                        match event {
-                            dash_spv::types::SpvEvent::BalanceUpdate { confirmed, unconfirmed, total } => {
-                                tracing::info!("💰 Balance update event: confirmed={}, unconfirmed={}, total={}", 
-                                             confirmed, unconfirmed, total);
-                                callbacks.call_balance_update(confirmed, unconfirmed);
-                            }
-                            dash_spv::types::SpvEvent::FilterHeadersProgress { filter_header_height, header_height, percentage } => {
-                                tracing::info!("📊 Filter headers progress event: filter={}, header={}, pct={:.2}",
-                                               filter_header_height, header_height, percentage);
-                                callbacks
-                                    .call_filter_headers_progress(
-                                        filter_header_height,
-                                        header_height,
-                                        percentage,
-                                    );
-                            }
-                            dash_spv::types::SpvEvent::TransactionDetected { ref txid, confirmed, ref addresses, amount, block_height, .. } => {
-                                tracing::info!("💸 Transaction detected: txid={}, confirmed={}, amount={}, addresses={:?}, height={:?}",
-                                             txid, confirmed, amount, addresses, block_height);
-                                // Parse the txid string to a Txid type
-                                if let Ok(txid_parsed) = txid.parse::<dashcore::Txid>() {
-                            // Call the general transaction callback
-                            callbacks.call_transaction(&txid_parsed, confirmed, amount, addresses, block_height);
-
-                                    // Also try to provide wallet-specific context
-                                    // Note: For now, we provide basic wallet context.
-                                    // In a more advanced implementation, we could enhance this
-                                    // to look up the actual wallet/account that owns this transaction.
-                                    let wallet_id_hex = "unknown"; // Placeholder - would need wallet lookup
-                                    let account_index = 0; // Default account index
-                                    let block_height = block_height.unwrap_or(0);
-                                    let is_ours = amount != 0; // Simple heuristic
-
-                                    callbacks.call_wallet_transaction(
-                                        wallet_id_hex,
-                                        account_index,
-                                        &txid_parsed,
-                                        confirmed,
-                                        amount,
-                                        addresses,
-                                        block_height,
-                                        is_ours,
-                                    );
-                                } else {
-                                    tracing::error!("Failed to parse transaction ID: {}", txid);
-                                }
-                            }
-                            dash_spv::types::SpvEvent::BlockProcessed { height, ref hash, transactions_count, relevant_transactions } => {
-                                tracing::info!("📦 Block processed: height={}, hash={}, total_tx={}, relevant_tx={}", 
-                                             height, hash, transactions_count, relevant_transactions);
-                                // Parse the block hash string to a BlockHash type
-                                if let Ok(hash_parsed) = hash.parse::<dashcore::BlockHash>() {
-                                    callbacks.call_block(height, &hash_parsed);
-                                } else {
-                                    tracing::error!("Failed to parse block hash: {}", hash);
-                                }
-                            }
-                            dash_spv::types::SpvEvent::SyncProgress { .. } => {
-                                // Sync progress is handled via existing progress callback
-                                tracing::debug!("📊 Sync progress event (handled separately)");
-                            }
-                            dash_spv::types::SpvEvent::ChainLockReceived { height, hash } => {
-                                // ChainLock events can be handled here
-                                tracing::info!("🔒 ChainLock received for height {} hash {}", height, hash);
-                            }
-                            dash_spv::types::SpvEvent::MempoolTransactionAdded { ref txid, transaction: _, amount, ref addresses, is_instant_send } => {
-                                tracing::info!("➕ Mempool transaction added: txid={}, amount={}, addresses={:?}, instant_send={}", 
-                                             txid, amount, addresses, is_instant_send);
-                                // Call the mempool-specific callback
-                                callbacks.call_mempool_transaction_added(txid, amount, addresses, is_instant_send);
-                            }
-                            dash_spv::types::SpvEvent::MempoolTransactionConfirmed { ref txid, block_height, ref block_hash } => {
-                                tracing::info!("✅ Mempool transaction confirmed: txid={}, height={}, hash={}", 
-                                             txid, block_height, block_hash);
-                                // Call the mempool confirmed callback
-                                callbacks.call_mempool_transaction_confirmed(txid, block_height, block_hash);
-                            }
-                            dash_spv::types::SpvEvent::MempoolTransactionRemoved { ref txid, ref reason } => {
-                                tracing::info!("❌ Mempool transaction removed: txid={}, reason={:?}", 
-                                             txid, reason);
-                                // Convert reason to u8 for FFI using existing conversion
-                                let ffi_reason: crate::types::FFIMempoolRemovalReason = reason.clone().into();
-                                let reason_code = ffi_reason as u8;
-                                callbacks.call_mempool_transaction_removed(txid, reason_code);
-                            }
-                            dash_spv::types::SpvEvent::CompactFilterMatched { hash } => {
-                                tracing::info!("📄 Compact filter matched: block={}", hash);
-
-                                // Try to provide richer information by looking up which wallet matched
-                                // Since we don't have direct access to filter details, we'll provide basic info
-                                if let Ok(block_hash_parsed) = hash.parse::<dashcore::BlockHash>() {
-                                    // For now, we'll call with empty matched scripts and unknown wallet
-                                    // In a more advanced implementation, we could enhance the SpvEvent to include this info
-                                    callbacks.call_compact_filter_matched(
-                                        &block_hash_parsed,
-                                        &[], // matched_scripts - empty for now
-                                        "unknown", // wallet_id - unknown for now
-                                    );
-                                } else {
-                                    tracing::error!("Failed to parse compact filter block hash: {}", hash);
-                                }
-                            }
-                        }
-                            }
-                            Ok(None) => {
-                                // Channel closed, exit loop
-                                tracing::info!("🎧 FFI event channel closed");
-                                break;
-                            }
-                            Err(_) => {
-                                // Timeout, continue to check shutdown signal
-                                continue;
-                            }
+                    dash_spv::types::SpvEvent::FilterHeadersProgress {
+                        filter_header_height,
+                        header_height,
+                        percentage,
+                    } => {
+                        callbacks.call_filter_headers_progress(
+                            filter_header_height,
+                            header_height,
+                            percentage,
+                        );
+                    }
+                    dash_spv::types::SpvEvent::TransactionDetected {
+                        ref txid,
+                        confirmed,
+                        ref addresses,
+                        amount,
+                        block_height,
+                        ..
+                    } => {
+                        if let Ok(txid_parsed) = txid.parse::<dashcore::Txid>() {
+                            callbacks.call_transaction(
+                                &txid_parsed,
+                                confirmed,
+                                amount,
+                                addresses,
+                                block_height,
+                            );
+                            let wallet_id_hex = "unknown";
+                            let account_index = 0;
+                            let block_height = block_height.unwrap_or(0);
+                            let is_ours = amount != 0;
+                            callbacks.call_wallet_transaction(
+                                wallet_id_hex,
+                                account_index,
+                                &txid_parsed,
+                                confirmed,
+                                amount,
+                                addresses,
+                                block_height,
+                                is_ours,
+                            );
                         }
                     }
-                    tracing::info!("🎧 FFI event listener stopped");
-                } else {
-                    tracing::error!("❌ Failed to get event receiver from SPV client");
+                    dash_spv::types::SpvEvent::BlockProcessed {
+                        height,
+                        ref hash,
+                        ..
+                    } => {
+                        if let Ok(hash_parsed) = hash.parse::<dashcore::BlockHash>() {
+                            callbacks.call_block(height, &hash_parsed);
+                        }
+                    }
+                    dash_spv::types::SpvEvent::SyncProgress {
+                        ..
+                    } => {}
+                    dash_spv::types::SpvEvent::ChainLockReceived {
+                        ..
+                    } => {}
+                    dash_spv::types::SpvEvent::MempoolTransactionAdded {
+                        ref txid,
+                        amount,
+                        ref addresses,
+                        is_instant_send,
+                        ..
+                    } => {
+                        callbacks.call_mempool_transaction_added(
+                            txid,
+                            amount,
+                            addresses,
+                            is_instant_send,
+                        );
+                    }
+                    dash_spv::types::SpvEvent::MempoolTransactionConfirmed {
+                        ref txid,
+                        block_height,
+                        ref block_hash,
+                    } => {
+                        callbacks.call_mempool_transaction_confirmed(
+                            txid,
+                            block_height,
+                            block_hash,
+                        );
+                    }
+                    dash_spv::types::SpvEvent::MempoolTransactionRemoved {
+                        ref txid,
+                        ref reason,
+                    } => {
+                        let ffi_reason: crate::types::FFIMempoolRemovalReason =
+                            reason.clone().into();
+                        let reason_code = ffi_reason as u8;
+                        callbacks.call_mempool_transaction_removed(txid, reason_code);
+                    }
+                    dash_spv::types::SpvEvent::CompactFilterMatched {
+                        hash,
+                    } => {
+                        if let Ok(block_hash_parsed) = hash.parse::<dashcore::BlockHash>() {
+                            callbacks.call_compact_filter_matched(
+                                &block_hash_parsed,
+                                &[],
+                                "unknown",
+                            );
+                        }
+                    }
+                },
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    *rx_guard = None;
+                    break;
                 }
-            });
-        });
-
-        // Store thread handle
-        self.active_threads.lock().unwrap().push(handle);
+            }
+        }
     }
+}
+
+/// Drain pending events and invoke configured callbacks (non-blocking).
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_drain_events(client: *mut FFIDashSpvClient) -> i32 {
+    null_check!(client);
+    let client = &*client;
+    client.drain_events_internal();
+    FFIErrorCode::Success as i32
 }
 
 fn stop_client_internal(client: &FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
@@ -501,9 +490,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
 
     match result {
         Ok(()) => {
-            client.shutdown_signal.store(false, Ordering::Relaxed);
-            // Start event listener after successful start
-            client.start_event_listener();
+            // After successful start, take event receiver for pull-based draining
+            let mut guard = client.inner.lock().unwrap();
+            if let Some(ref mut spv_client) = *guard {
+                match spv_client.take_event_receiver() {
+                    Some(rx) => {
+                        *client.event_rx.lock().unwrap() = Some(rx);
+                        tracing::debug!("Replaced FFI event receiver after client start");
+                    }
+                    None => {
+                        tracing::debug!(
+                            "No new event receiver returned after client start; keeping existing receiver"
+                        );
+                    }
+                }
+            }
             FFIErrorCode::Success as i32
         }
         Err(e) => {
@@ -1273,11 +1274,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
 
     let client = &(*client);
 
-    tracing::info!("🔧 Setting event callbacks on FFI client");
-    tracing::info!("   Block callback: {}", callbacks.on_block.is_some());
-    tracing::info!("   Transaction callback: {}", callbacks.on_transaction.is_some());
-    tracing::info!("   Balance update callback: {}", callbacks.on_balance_update.is_some());
-    tracing::info!(
+    tracing::debug!("Setting event callbacks on FFI client");
+    tracing::debug!("   Block callback: {}", callbacks.on_block.is_some());
+    tracing::debug!("   Transaction callback: {}", callbacks.on_transaction.is_some());
+    tracing::debug!("   Balance update callback: {}", callbacks.on_balance_update.is_some());
+    tracing::debug!(
         "   Filter headers progress callback: {}",
         callbacks.on_filter_headers_progress.is_some()
     );
@@ -1285,17 +1286,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     let mut event_callbacks = client.event_callbacks.lock().unwrap();
     *event_callbacks = callbacks;
 
-    // Check if we need to start the event listener
-    // This ensures callbacks work even if set after client.start()
-    let inner = client.inner.lock().unwrap();
-    if inner.is_some() {
-        drop(inner); // Release lock before starting listener
-        tracing::info!("🚀 Client already started, ensuring event listener is running");
-        // The event listener should already be running from start()
-        // but we log this for debugging
-    }
-
-    tracing::info!("✅ Event callbacks set successfully");
+    tracing::debug!("Event callbacks set successfully");
     FFIErrorCode::Success as i32
 }
 

@@ -26,6 +26,8 @@ impl From<FFIValidationMode> for ValidationMode {
 pub struct FFIClientConfig {
     // Opaque pointer to avoid exposing internal ClientConfig in generated C headers
     inner: *mut std::ffi::c_void,
+    // Tokio runtime worker thread count (0 = auto)
+    pub worker_threads: u32,
 }
 
 #[no_mangle]
@@ -34,6 +36,7 @@ pub extern "C" fn dash_spv_ffi_config_new(network: FFINetwork) -> *mut FFIClient
     let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
     Box::into_raw(Box::new(FFIClientConfig {
         inner,
+        worker_threads: 0,
     }))
 }
 
@@ -43,6 +46,7 @@ pub extern "C" fn dash_spv_ffi_config_mainnet() -> *mut FFIClientConfig {
     let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
     Box::into_raw(Box::new(FFIClientConfig {
         inner,
+        worker_threads: 0,
     }))
 }
 
@@ -52,6 +56,7 @@ pub extern "C" fn dash_spv_ffi_config_testnet() -> *mut FFIClientConfig {
     let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
     Box::into_raw(Box::new(FFIClientConfig {
         inner,
+        worker_threads: 0,
     }))
 }
 
@@ -356,6 +361,21 @@ impl FFIClientConfig {
     pub fn clone_inner(&self) -> ClientConfig {
         unsafe { (*(self.inner as *const ClientConfig)).clone() }
     }
+}
+
+/// Sets the number of Tokio worker threads for the FFI runtime (0 = auto)
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_worker_threads(
+    config: *mut FFIClientConfig,
+    threads: u32,
+) -> i32 {
+    null_check!(config);
+    let cfg = &mut *config;
+    cfg.worker_threads = threads;
+    FFIErrorCode::Success as i32
 }
 
 // Mempool configuration functions

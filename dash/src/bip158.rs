@@ -297,11 +297,12 @@ impl GcsFilterReader {
         let nm = n_elements.0 * self.m;
         let mut mapped =
             query.map(|e| map_to_range(self.filter.hash(e.borrow()), nm)).collect::<Vec<_>>();
+        // For an empty query set, "any" should be false (no items to match).
+        if mapped.is_empty() {
+            return Ok(false);
+        }
         // sort
         mapped.sort_unstable();
-        if mapped.is_empty() {
-            return Ok(true);
-        }
         if n_elements.0 == 0 {
             return Ok(false);
         }
@@ -343,12 +344,12 @@ impl GcsFilterReader {
         let nm = n_elements.0 * self.m;
         let mut mapped =
             query.map(|e| map_to_range(self.filter.hash(e.borrow()), nm)).collect::<Vec<_>>();
-        // sort
-        mapped.sort_unstable();
-        mapped.dedup();
         if mapped.is_empty() {
             return Ok(true);
         }
+        // sort
+        mapped.sort_unstable();
+        mapped.dedup();
         if n_elements.0 == 0 {
             return Ok(false);
         }

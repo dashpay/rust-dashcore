@@ -94,7 +94,7 @@ impl HeaderSyncManager {
             None => true,
             Some(last_time) => {
                 last_time.elapsed() >= std::time::Duration::from_secs(30)
-                    || self.total_headers_synced % 10000 == 0
+                    || self.total_headers_synced.is_multiple_of(10000)
             }
         };
 
@@ -407,7 +407,7 @@ impl HeaderSyncManager {
 
         // Headers request sent successfully
 
-        if self.total_headers_synced % 10000 == 0 {
+        if self.total_headers_synced.is_multiple_of(10000) {
             tracing::debug!("Requested headers starting from {:?}", base_hash);
         }
 
