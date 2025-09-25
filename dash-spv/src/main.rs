@@ -411,12 +411,18 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                     _ = tokio::time::sleep(snapshot_interval) => {
                         // Log snapshot if interval has elapsed
                         if last_snapshot.elapsed() >= snapshot_interval {
-                            let (tx_count, confirmed, unconfirmed, locked, total, derived_incoming) = {
+                            let (tx_count, wallet_affecting_tx_count, confirmed, unconfirmed, locked, total, derived_incoming) = {
                                 let mgr = wallet_for_logger.read().await;
                                 // Count transactions via network state for the selected network
                                 let txs = mgr
                                     .get_network_state(network_for_logger)
                                     .map(|ns| ns.transactions.len())
+                                    .unwrap_or(0);
+
+                                // Count wallet-affecting transactions from wallet transaction history
+                                let wallet_affecting = mgr
+                                    .wallet_transaction_history(&wallet_id_for_logger)
+                                    .map(|v| v.len())
                                     .unwrap_or(0);
 
                                 // Read wallet balance from the managed wallet info
@@ -440,13 +446,14 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                                     sum_incoming
                                 } else { 0 };
 
-                                (txs, c, u, l, t, incoming_sum)
+                                (txs, wallet_affecting, c, u, l, t, incoming_sum)
                             };
                             tracing::info!(
-                                "Wallet tx summary: detected={} (blocks={} + mempool={}), balances: confirmed={} unconfirmed={} locked={} total={}, derived_incoming_total={} (approx)",
+                                "Wallet tx summary: detected={} (blocks={} + mempool={}), affecting_wallet={}, balances: confirmed={} unconfirmed={} locked={} total={}, derived_incoming_total={} (approx)",
                                 tx_count,
                                 total_detected_block_txs,
                                 total_detected_mempool_txs,
+                                wallet_affecting_tx_count,
                                 confirmed,
                                 unconfirmed,
                                 locked,
