@@ -30,6 +30,7 @@ key-wallet-ffi = { path = "../key-wallet-ffi" }
 key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager" }
 rand = "0.8"
+clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.8"
@@ -39,3 +40,7 @@ dashcore-test-utils = { path = "../test-utils" }
 
 [build-dependencies]
 cbindgen = "0.29"
+
+[[bin]]
+name = "dash-spv-ffi"
+path = "src/bin/ffi_cli.rs"
