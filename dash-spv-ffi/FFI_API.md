@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 68
+**Total Functions**: 70
 
 ## Table of Contents
 
@@ -34,7 +34,7 @@ Functions: 4
 
 ### Configuration
 
-Functions: 26
+Functions: 27
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -63,6 +63,7 @@ Functions: 26
 | `dash_spv_ffi_config_set_user_agent` | Sets the user agent string to advertise in the P2P handshake  # Safety - `con... | config |
 | `dash_spv_ffi_config_set_validation_mode` | Sets the validation mode for the SPV client  # Safety - `config` must be a va... | config |
 | `dash_spv_ffi_config_set_wallet_creation_time` | Sets the wallet creation timestamp for synchronization optimization  # Safety... | config |
+| `dash_spv_ffi_config_set_worker_threads` | Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  # Saf... | config |
 | `dash_spv_ffi_config_testnet` | No description | config |
 
 ### Synchronization
@@ -119,10 +120,11 @@ Functions: 4
 
 ### Event Callbacks
 
-Functions: 1
+Functions: 2
 
 | Function | Description | Module |
 |----------|-------------|--------|
+| `dash_spv_ffi_client_drain_events` | Drain pending events and invoke configured callbacks (non-blocking) | client |
 | `dash_spv_ffi_client_set_event_callbacks` | Set event callbacks for the client | client |
 
 ### Error Handling
@@ -617,6 +619,22 @@ Sets the wallet creation timestamp for synchronization optimization  # Safety - 
 
 ---
 
+#### `dash_spv_ffi_config_set_worker_threads`
+
+```c
+dash_spv_ffi_config_set_worker_threads(config: *mut FFIClientConfig, threads: u32,) -> i32
+```
+
+**Description:**
+Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  # Safety - `config` must be a valid pointer to an FFIClientConfig
+
+**Safety:**
+- `config` must be a valid pointer to an FFIClientConfig
+
+**Module:** `config`
+
+---
+
 #### `dash_spv_ffi_config_testnet`
 
 ```c
@@ -904,6 +922,22 @@ This function is unsafe because: - The caller must ensure the handle pointer is 
 ---
 
 ### Event Callbacks - Detailed
+
+#### `dash_spv_ffi_client_drain_events`
+
+```c
+dash_spv_ffi_client_drain_events(client: *mut FFIDashSpvClient) -> i32
+```
+
+**Description:**
+Drain pending events and invoke configured callbacks (non-blocking).  # Safety - `client` must be a valid, non-null pointer.
+
+**Safety:**
+- `client` must be a valid, non-null pointer.
+
+**Module:** `client`
+
+---
 
 #### `dash_spv_ffi_client_set_event_callbacks`
 
