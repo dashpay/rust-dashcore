@@ -1180,7 +1180,7 @@ impl TaprootMerkleBranch {
     /// The function returns an error if the the number of bytes is not an integer multiple of 32 or
     /// if the number of hashes exceeds 128.
     pub fn decode(sl: &[u8]) -> Result<Self, TaprootError> {
-        if sl.len() % TAPROOT_CONTROL_NODE_SIZE != 0 {
+        if !sl.len().is_multiple_of(TAPROOT_CONTROL_NODE_SIZE) {
             Err(TaprootError::InvalidMerkleBranchSize(sl.len()))
         } else if sl.len() > TAPROOT_CONTROL_NODE_SIZE * TAPROOT_CONTROL_MAX_NODE_COUNT {
             Err(TaprootError::InvalidMerkleTreeDepth(sl.len() / TAPROOT_CONTROL_NODE_SIZE))
@@ -1329,7 +1329,7 @@ impl ControlBlock {
     /// - [`TaprootError::InvalidMerkleTreeDepth`] if merkle tree is too deep (more than 128 levels).
     pub fn decode(sl: &[u8]) -> Result<ControlBlock, TaprootError> {
         if sl.len() < TAPROOT_CONTROL_BASE_SIZE
-            || (sl.len() - TAPROOT_CONTROL_BASE_SIZE) % TAPROOT_CONTROL_NODE_SIZE != 0
+            || !(sl.len() - TAPROOT_CONTROL_BASE_SIZE).is_multiple_of(TAPROOT_CONTROL_NODE_SIZE)
         {
             return Err(TaprootError::InvalidControlBlockSize(sl.len()));
         }
