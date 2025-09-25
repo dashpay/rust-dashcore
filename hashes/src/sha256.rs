@@ -404,7 +404,7 @@ impl HashEngine {
     ///
     /// If `length` is not a multiple of the block size.
     pub fn from_midstate(midstate: Midstate, length: usize) -> HashEngine {
-        assert!(length % BLOCK_SIZE == 0, "length is no multiple of the block size");
+        assert!(length.is_multiple_of(BLOCK_SIZE), "length is no multiple of the block size");
 
         let mut ret = [0; 8];
         for (ret_val, midstate_bytes) in ret.iter_mut().zip(midstate[..].chunks_exact(4)) {
