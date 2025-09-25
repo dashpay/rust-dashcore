@@ -69,14 +69,28 @@ impl<
         let tip_height =
             self.storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
 
-        // TODO: Get earliest height from wallet's birth height or earliest address usage
-        // For now, default to last 100 blocks
-        let earliest_height = tip_height.saturating_sub(99);
-
-        let num_blocks = num_blocks.unwrap_or(100);
+        // Determine how many blocks to request
+        let num_blocks = num_blocks.unwrap_or(100).max(1);
         let default_start = tip_height.saturating_sub(num_blocks - 1);
-        let start_height = earliest_height.min(default_start); // Go back to the earliest required height
-        let actual_count = tip_height - start_height + 1; // Actual number of blocks available
+
+        // Ask the wallet for an earliest rescan height, falling back to the default window.
+        let wallet_hint = self.sync_manager.wallet_birth_height_hint().await;
+        let mut start_height = wallet_hint.unwrap_or(default_start).min(default_start);
+
+        // Respect any user-provided start height hint from the configuration.
+        if let Some(config_start) = self.sync_manager.config_start_height() {
+            let capped = config_start.min(tip_height);
+            start_height = start_height.max(capped);
+        }
+
+        // Make sure we never request past the current tip
+        start_height = start_height.min(tip_height);
+
+        let actual_count = if start_height <= tip_height {
+            tip_height - start_height + 1
+        } else {
+            0
+        };
 
         tracing::info!(
             "Requesting filters from height {} to {} ({} blocks based on filter tip height)",
@@ -84,10 +98,17 @@ impl<
             tip_height,
             actual_count
         );
+        if let Some(hint) = wallet_hint {
+            tracing::debug!("Wallet hint for earliest required height: {}", hint);
+        }
         tracing::info!("Filter processing and matching will happen automatically in background thread as CFilter messages arrive");
 
         // Send filter requests - processing will happen automatically in the background
-        self.sync_filters_coordinated(start_height, actual_count).await?;
+        if actual_count > 0 {
+            self.sync_filters_coordinated(start_height, actual_count).await?;
+        } else {
+            tracing::debug!("No filters requested because calculated range is empty");
+        }
 
         // Return empty vector since matching happens asynchronously in the filter processor thread
         // Actual matches will be processed and blocks requested automatically when CFilter messages arrive

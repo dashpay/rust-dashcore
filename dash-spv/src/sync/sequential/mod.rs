@@ -26,7 +26,7 @@ use crate::sync::{
 };
 use crate::types::ChainState;
 use crate::types::{SharedFilterHeights, SyncProgress};
-use key_wallet_manager::wallet_interface::WalletInterface;
+use key_wallet_manager::{wallet_interface::WalletInterface, Network as WalletNetwork};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -140,6 +140,27 @@ impl<
     /// Get the current chain height from the header sync manager
     pub fn get_chain_height(&self) -> u32 {
         self.header_sync.get_chain_height()
+    }
+
+    /// Get the earliest wallet birth height hint for the configured network, if available.
+    pub async fn wallet_birth_height_hint(&self) -> Option<u32> {
+        let wallet_network = match self.config.network {
+            dashcore::Network::Dash => WalletNetwork::Dash,
+            dashcore::Network::Testnet => WalletNetwork::Testnet,
+            dashcore::Network::Devnet => WalletNetwork::Devnet,
+            dashcore::Network::Regtest => WalletNetwork::Regtest,
+            _ => WalletNetwork::Dash,
+        };
+
+        let wallet_guard = self.wallet.read().await;
+        let result = wallet_guard.earliest_required_height(wallet_network).await;
+        drop(wallet_guard);
+        result
+    }
+
+    /// Get the configured start height hint, if any.
+    pub fn config_start_height(&self) -> Option<u32> {
+        self.config.start_from_height
     }
 
     /// Start the sequential sync process
