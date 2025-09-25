@@ -493,8 +493,17 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
             // After successful start, take event receiver for pull-based draining
             let mut guard = client.inner.lock().unwrap();
             if let Some(ref mut spv_client) = *guard {
-                let rx = spv_client.take_event_receiver();
-                *client.event_rx.lock().unwrap() = rx;
+                match spv_client.take_event_receiver() {
+                    Some(rx) => {
+                        *client.event_rx.lock().unwrap() = Some(rx);
+                        tracing::debug!("Replaced FFI event receiver after client start");
+                    }
+                    None => {
+                        tracing::debug!(
+                            "No new event receiver returned after client start; keeping existing receiver"
+                        );
+                    }
+                }
             }
             FFIErrorCode::Success as i32
         }
