@@ -122,16 +122,18 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut earliest: Option<CoreBlockHeight> = None;
 
         for info in self.wallet_infos.values() {
-            // Only consider wallets that actually track this network
+            // Only consider wallets that actually track this network AND have a known birth height
             if info.accounts(network).is_some() {
-                let birth_height = info.birth_height().unwrap_or(0);
-                earliest = Some(match earliest {
-                    Some(current) => current.min(birth_height),
-                    None => birth_height,
-                });
+                if let Some(birth_height) = info.birth_height() {
+                    earliest = Some(match earliest {
+                        Some(current) => current.min(birth_height),
+                        None => birth_height,
+                    });
+                }
             }
         }
 
+        // Return None if no wallets with known birth heights were found for this network
         earliest
     }
 }
