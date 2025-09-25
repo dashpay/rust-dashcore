@@ -61,6 +61,7 @@ typedef struct FFIArray {
 
 typedef struct FFIClientConfig {
   void *inner;
+  uint32_t worker_threads;
 
 } FFIClientConfig;
 
@@ -280,6 +281,14 @@ struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
  * - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
  */
  struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIClientConfig *config) ;
+
+/**
+ * Drain pending events and invoke configured callbacks (non-blocking).
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ */
+ int32_t dash_spv_ffi_client_drain_events(struct FFIDashSpvClient *client) ;
 
 /**
  * Update the running client's configuration.
@@ -701,6 +710,14 @@ int32_t dash_spv_ffi_config_set_masternode_sync_enabled(struct FFIClientConfig *
 
 void dash_spv_ffi_config_destroy(struct FFIClientConfig *config)
 ;
+
+/**
+ * Sets the number of Tokio worker threads for the FFI runtime (0 = auto)
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig
+ */
+ int32_t dash_spv_ffi_config_set_worker_threads(struct FFIClientConfig *config, uint32_t threads) ;
 
 /**
  * Enables or disables mempool tracking
