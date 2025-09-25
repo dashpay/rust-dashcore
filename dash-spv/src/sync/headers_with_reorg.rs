@@ -205,7 +205,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
 
             // Progress logging
-            if loaded_count % 50_000 == 0 || loaded_count == tip_height {
+            if loaded_count.is_multiple_of(50_000) || loaded_count == tip_height {
                 let elapsed = start_time.elapsed();
                 let headers_per_sec = loaded_count as f64 / elapsed.as_secs_f64();
                 tracing::info!(
