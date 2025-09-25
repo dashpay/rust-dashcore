@@ -391,7 +391,7 @@ impl ManagedAccount {
         let mut involved_change_addresses = Vec::new();
         let mut involved_other_addresses = Vec::new(); // For non-standard accounts
         let mut received = 0u64;
-        let sent = 0u64;
+        let mut sent = 0u64;
         let mut provider_payout_involved = false;
 
         // Check provider payouts in special transactions
@@ -455,15 +455,35 @@ impl ManagedAccount {
             }
         }
 
-        // Check inputs (sent) - would need UTXO information to properly calculate
-        // For now, we just mark that addresses are involved
-        // In a real implementation, we'd look up the previous outputs being spent
+        // Check inputs (sent) - rely on tracked UTXOs to determine spends
+        if !tx.is_coin_base() {
+            for input in &tx.input {
+                if let Some(utxo) = self.utxos.get(&input.previous_output) {
+                    sent = sent.saturating_add(utxo.txout.value);
+
+                    if let Some(address_info) = self.get_address_info(&utxo.address) {
+                        match self.classify_address(&utxo.address) {
+                            AddressClassification::External => {
+                                involved_receive_addresses.push(address_info);
+                            }
+                            AddressClassification::Internal => {
+                                involved_change_addresses.push(address_info);
+                            }
+                            AddressClassification::Other => {
+                                involved_other_addresses.push(address_info);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Create the appropriate AccountTypeMatch based on account type
         let has_addresses = !involved_receive_addresses.is_empty()
             || !involved_change_addresses.is_empty()
             || !involved_other_addresses.is_empty()
-            || provider_payout_involved;
+            || provider_payout_involved
+            || sent > 0;
 
         if has_addresses {
             let account_type_match = match &self.account_type {

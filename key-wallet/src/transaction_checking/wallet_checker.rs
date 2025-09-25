@@ -568,6 +568,96 @@ mod tests {
         assert!(managed_account.transactions.contains_key(&coinbase_tx.txid()));
     }
 
+    /// Test that spending a wallet-owned UTXO without creating change is detected
+    #[test]
+    fn test_wallet_checker_detects_spend_only_transaction() {
+        let network = Network::Testnet;
+        let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+            .expect("Should create wallet");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        // Prepare a managed BIP44 account and derive a receive address
+        let account_collection = wallet.accounts.get(&network).expect("Should have accounts");
+        let wallet_account =
+            account_collection.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
+
+        let receive_address = managed_wallet
+            .first_bip44_managed_account_mut(network)
+            .expect("Should have managed account")
+            .next_receive_address(Some(&wallet_account.account_xpub), true)
+            .expect("Should derive receive address");
+
+        // Fund the wallet with a transaction paying to the receive address
+        let funding_value = 50_000_000u64;
+        let funding_tx = create_transaction_to_address(&receive_address, funding_value);
+        let funding_context = TransactionContext::InBlock {
+            height: 1,
+            block_hash: Some(BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash")),
+            timestamp: Some(1_650_000_000),
+        };
+
+        let funding_result =
+            managed_wallet.check_transaction(&funding_tx, network, funding_context, Some(&wallet));
+        assert!(funding_result.is_relevant, "Funding transaction must be relevant");
+        assert_eq!(funding_result.total_received, funding_value);
+
+        // Build a spend transaction that sends funds to an external address only
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("Should create pubkey"),
+            network,
+        );
+        let spend_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: funding_value - 1_000, // leave a small fee
+                script_pubkey: external_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+
+        let spend_context = TransactionContext::InBlock {
+            height: 2,
+            block_hash: Some(BlockHash::from_slice(&[3u8; 32]).expect("Should create block hash")),
+            timestamp: Some(1_650_000_100),
+        };
+
+        let spend_result =
+            managed_wallet.check_transaction(&spend_tx, network, spend_context, Some(&wallet));
+
+        assert!(spend_result.is_relevant, "Spend transaction should be detected");
+        assert_eq!(spend_result.total_received, 0);
+        assert_eq!(spend_result.total_sent, funding_value);
+
+        // Ensure the UTXO was removed and the transaction record reflects the spend
+        let account = managed_wallet
+            .accounts
+            .get(&network)
+            .expect("Should have managed accounts")
+            .standard_bip44_accounts
+            .get(&0)
+            .expect("Should have managed BIP44 account");
+
+        assert!(account.utxos.is_empty(), "Spent UTXO should be removed");
+
+        let record = account
+            .transactions
+            .get(&spend_tx.txid())
+            .expect("Spend transaction should be recorded");
+        assert_eq!(record.net_amount, -(funding_value as i64));
+    }
+
     /// Test mempool context for timestamp/height handling
     #[test]
     fn test_wallet_checker_mempool_context() {
