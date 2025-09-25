@@ -101,14 +101,37 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
         }
 
-        // Check if any of our scripts match the filter
-        let hit = filter
-            .match_any(block_hash, &mut script_bytes.iter().map(|s| s.as_slice()))
-            .unwrap_or(false);
+        // If we don't watch any scripts for this network, there can be no match.
+        // Note: BlockFilterReader::match_any returns true for an empty query set,
+        // so we must guard this case explicitly to avoid false positives.
+        let hit = if script_bytes.is_empty() {
+            false
+        } else {
+            filter
+                .match_any(block_hash, &mut script_bytes.iter().map(|s| s.as_slice()))
+                .unwrap_or(false)
+        };
 
         // Cache the result
         self.filter_matches.entry(network).or_default().insert(*block_hash, hit);
 
         hit
+    }
+
+    async fn earliest_required_height(&self, network: Network) -> Option<CoreBlockHeight> {
+        let mut earliest: Option<CoreBlockHeight> = None;
+
+        for info in self.wallet_infos.values() {
+            // Only consider wallets that actually track this network
+            if info.accounts(network).is_some() {
+                let birth_height = info.birth_height().unwrap_or(0);
+                earliest = Some(match earliest {
+                    Some(current) => current.min(birth_height),
+                    None => birth_height,
+                });
+            }
+        }
+
+        earliest
     }
 }
