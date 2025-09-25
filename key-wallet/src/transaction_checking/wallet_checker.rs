@@ -298,7 +298,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     let wallet_net: i64 =
                         (result.total_received as i64) - (result.total_sent as i64);
                     let ctx = match context {
-                        TransactionContext::Mempool => alloc::format!("mempool"),
+                        TransactionContext::Mempool => "mempool".to_string(),
                         TransactionContext::InBlock {
                             height,
                             ..
