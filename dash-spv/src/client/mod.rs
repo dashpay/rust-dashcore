@@ -918,8 +918,21 @@ impl<
                         crate::types::SyncStage::Complete
                     };
 
+                    let status_display = self.create_status_display().await;
+                    let mut sync_progress = match status_display.sync_progress().await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!("Failed to compute sync progress snapshot: {}", e);
+                            SyncProgress::default()
+                        }
+                    };
+
+                    // Update peer count with the latest network information.
+                    sync_progress.peer_count = self.network.peer_count() as u32;
+                    sync_progress.header_height = current_height;
+
                     let progress = DetailedSyncProgress {
-                        current_height,
+                        sync_progress,
                         peer_best_height: peer_best,
                         percentage: if peer_best > 0 {
                             (current_height as f64 / peer_best as f64 * 100.0).min(100.0)
@@ -937,7 +950,6 @@ impl<
                             None
                         },
                         sync_stage,
-                        connected_peers: self.network.peer_count(),
                         total_headers_processed: current_height as u64,
                         total_bytes_downloaded,
                         sync_start_time,

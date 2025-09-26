@@ -85,8 +85,8 @@ impl Default for SyncProgress {
 /// Detailed sync progress with performance metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetailedSyncProgress {
-    /// Current state
-    pub current_height: u32,
+    /// Snapshot of the core sync metrics for quick consumption.
+    pub sync_progress: SyncProgress,
     pub peer_best_height: u32,
     pub percentage: f64,
 
@@ -97,7 +97,6 @@ pub struct DetailedSyncProgress {
 
     /// Detailed status
     pub sync_stage: SyncStage,
-    pub connected_peers: usize,
     pub total_headers_processed: u64,
     pub total_bytes_downloaded: u64,
 
@@ -130,7 +129,8 @@ impl DetailedSyncProgress {
         if self.peer_best_height == 0 {
             return 0.0;
         }
-        ((self.current_height as f64 / self.peer_best_height as f64) * 100.0).min(100.0)
+        let current_height = self.sync_progress.header_height;
+        ((current_height as f64 / self.peer_best_height as f64) * 100.0).min(100.0)
     }
 
     pub fn calculate_eta(&self) -> Option<Duration> {
@@ -138,7 +138,8 @@ impl DetailedSyncProgress {
             return None;
         }
 
-        let remaining = self.peer_best_height.saturating_sub(self.current_height);
+        let current_height = self.sync_progress.header_height;
+        let remaining = self.peer_best_height.saturating_sub(current_height);
         if remaining == 0 {
             return Some(Duration::from_secs(0));
         }

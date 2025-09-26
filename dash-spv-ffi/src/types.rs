@@ -97,14 +97,13 @@ impl From<SyncStage> for FFISyncStage {
 
 #[repr(C)]
 pub struct FFIDetailedSyncProgress {
-    pub current_height: u32,
     pub total_height: u32,
     pub percentage: f64,
     pub headers_per_second: f64,
     pub estimated_seconds_remaining: i64, // -1 if unknown
     pub stage: FFISyncStage,
     pub stage_message: FFIString,
-    pub connected_peers: u32,
+    pub overview: FFISyncProgress,
     pub total_headers: u64,
     pub sync_start_timestamp: i64,
 }
@@ -130,8 +129,9 @@ impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
             SyncStage::Failed(err) => err.clone(),
         };
 
+        let overview = FFISyncProgress::from(progress.sync_progress.clone());
+
         FFIDetailedSyncProgress {
-            current_height: progress.current_height,
             total_height: progress.peer_best_height,
             percentage: progress.percentage,
             headers_per_second: progress.headers_per_second,
@@ -141,7 +141,7 @@ impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
                 .unwrap_or(-1),
             stage: progress.sync_stage.into(),
             stage_message: FFIString::new(&stage_message),
-            connected_peers: progress.connected_peers as u32,
+            overview,
             total_headers: progress.total_headers_processed,
             sync_start_timestamp: progress
                 .sync_start_time

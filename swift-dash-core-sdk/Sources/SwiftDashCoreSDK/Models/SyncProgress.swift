@@ -11,6 +11,14 @@ public struct SyncProgress: Sendable, Equatable {
     public let estimatedTimeRemaining: TimeInterval?
     public let message: String?
     public let filterSyncAvailable: Bool
+    public let filterHeaderHeight: UInt32
+    public let masternodeHeight: UInt32
+    public let peerCount: UInt32
+    public let headersSynced: Bool
+    public let filterHeadersSynced: Bool
+    public let masternodesSynced: Bool
+    public let filtersDownloaded: UInt32
+    public let lastSyncedFilterHeight: UInt32
     
     public init(
         currentHeight: UInt32,
@@ -19,7 +27,15 @@ public struct SyncProgress: Sendable, Equatable {
         status: SyncStatus,
         estimatedTimeRemaining: TimeInterval? = nil,
         message: String? = nil,
-        filterSyncAvailable: Bool = false
+        filterSyncAvailable: Bool = false,
+        filterHeaderHeight: UInt32 = 0,
+        masternodeHeight: UInt32 = 0,
+        peerCount: UInt32 = 0,
+        headersSynced: Bool = false,
+        filterHeadersSynced: Bool = false,
+        masternodesSynced: Bool = false,
+        filtersDownloaded: UInt32 = 0,
+        lastSyncedFilterHeight: UInt32 = 0
     ) {
         self.currentHeight = currentHeight
         self.totalHeight = totalHeight
@@ -28,6 +44,14 @@ public struct SyncProgress: Sendable, Equatable {
         self.estimatedTimeRemaining = estimatedTimeRemaining
         self.message = message
         self.filterSyncAvailable = filterSyncAvailable
+        self.filterHeaderHeight = filterHeaderHeight
+        self.masternodeHeight = masternodeHeight
+        self.peerCount = peerCount
+        self.headersSynced = headersSynced
+        self.filterHeadersSynced = filterHeadersSynced
+        self.masternodesSynced = masternodesSynced
+        self.filtersDownloaded = filtersDownloaded
+        self.lastSyncedFilterHeight = lastSyncedFilterHeight
     }
     
     internal init(ffiProgress: FFISyncProgress) {
@@ -38,6 +62,14 @@ public struct SyncProgress: Sendable, Equatable {
         self.estimatedTimeRemaining = nil
         self.message = nil
         self.filterSyncAvailable = ffiProgress.filter_sync_available
+        self.filterHeaderHeight = ffiProgress.filter_header_height
+        self.masternodeHeight = ffiProgress.masternode_height
+        self.peerCount = ffiProgress.peer_count
+        self.headersSynced = ffiProgress.headers_synced
+        self.filterHeadersSynced = ffiProgress.filter_headers_synced
+        self.masternodesSynced = ffiProgress.masternodes_synced
+        self.filtersDownloaded = ffiProgress.filters_downloaded
+        self.lastSyncedFilterHeight = ffiProgress.last_synced_filter_height
     }
     
     public var blocksRemaining: UInt32 {

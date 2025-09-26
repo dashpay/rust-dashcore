@@ -8,16 +8,18 @@ import Network
 
 /// Detailed sync progress information with real-time statistics
 public struct DetailedSyncProgress: Sendable, Equatable {
-    public let currentHeight: UInt32
+    public let overview: SyncProgress
     public let totalHeight: UInt32
     public let percentage: Double
     public let headersPerSecond: Double
     public let estimatedSecondsRemaining: Int64
     public let stage: SyncStage
     public let stageMessage: String
-    public let connectedPeers: UInt32
     public let totalHeadersProcessed: UInt64
     public let syncStartTimestamp: Date
+    
+    public var currentHeight: UInt32 { overview.currentHeight }
+    public var connectedPeers: UInt32 { overview.peerCount }
     
     /// Calculated properties
     public var blocksRemaining: UInt32 {
@@ -65,39 +67,36 @@ public struct DetailedSyncProgress: Sendable, Equatable {
     
     /// Public initializer for creating DetailedSyncProgress
     public init(
-        currentHeight: UInt32,
+        overview: SyncProgress,
         totalHeight: UInt32,
         percentage: Double,
         headersPerSecond: Double,
         estimatedSecondsRemaining: Int64,
         stage: SyncStage,
         stageMessage: String,
-        connectedPeers: UInt32,
         totalHeadersProcessed: UInt64,
         syncStartTimestamp: Date
     ) {
-        self.currentHeight = currentHeight
+        self.overview = overview
         self.totalHeight = totalHeight
         self.percentage = percentage
         self.headersPerSecond = headersPerSecond
         self.estimatedSecondsRemaining = estimatedSecondsRemaining
         self.stage = stage
         self.stageMessage = stageMessage
-        self.connectedPeers = connectedPeers
         self.totalHeadersProcessed = totalHeadersProcessed
         self.syncStartTimestamp = syncStartTimestamp
     }
     
     /// Initialize from FFI type
     internal init(ffiProgress: FFIDetailedSyncProgress) {
-        self.currentHeight = ffiProgress.current_height
+        self.overview = SyncProgress(ffiProgress: ffiProgress.overview)
         self.totalHeight = ffiProgress.total_height
         self.percentage = ffiProgress.percentage
         self.headersPerSecond = ffiProgress.headers_per_second
         self.estimatedSecondsRemaining = ffiProgress.estimated_seconds_remaining
         self.stage = SyncStage(ffiStage: ffiProgress.stage)
         self.stageMessage = String(cString: ffiProgress.stage_message.ptr)
-        self.connectedPeers = ffiProgress.connected_peers
         self.totalHeadersProcessed = ffiProgress.total_headers
         self.syncStartTimestamp = Date(timeIntervalSince1970: TimeInterval(ffiProgress.sync_start_timestamp))
     }
@@ -308,6 +307,9 @@ extension DetailedSyncProgress {
             "Time Remaining": formattedTimeRemaining,
             "Connected Peers": "\(connectedPeers)",
             "Headers Processed": "\(totalHeadersProcessed)",
+            "Filter Header Height": "\(overview.filterHeaderHeight)",
+            "Filters Downloaded": "\(overview.filtersDownloaded)",
+            "Peer Count": "\(overview.peerCount)",
             "Duration": formattedSyncDuration
         ]
     }

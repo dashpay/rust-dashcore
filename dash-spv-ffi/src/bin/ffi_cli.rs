@@ -35,10 +35,10 @@ extern "C" fn on_detailed_progress(progress: *const FFIDetailedSyncProgress, _ud
         let p = &*progress;
         println!(
             "height {}/{} {:.2}% peers {} hps {:.1}",
-            p.current_height,
+            p.overview.header_height,
             p.total_height,
             p.percentage * 100.0,
-            p.connected_peers,
+            p.overview.peer_count,
             p.headers_per_second
         );
     }
