@@ -113,6 +113,15 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             AccountTypeMatch::ProviderPlatformKeys {
                                 ..
                             } => collection.provider_platform_keys.as_mut(),
+                            AccountTypeMatch::DashpayReceivingFunds {
+                                ..
+                            }
+                            | AccountTypeMatch::DashpayExternalAccount {
+                                ..
+                            } => {
+                                // DashPay managed accounts are not persisted here yet
+                                None
+                            }
                         };
 
                         if let Some(account) = account {
@@ -193,7 +202,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             // Only apply for spendable account types (Standard, CoinJoin).
                             match &mut account.account_type {
                                 crate::managed_account::managed_account_type::ManagedAccountType::Standard { .. }
-                                | crate::managed_account::managed_account_type::ManagedAccountType::CoinJoin { .. } => {
+                                | crate::managed_account::managed_account_type::ManagedAccountType::CoinJoin { .. }
+                                | crate::managed_account::managed_account_type::ManagedAccountType::DashpayReceivingFunds { .. }
+                                | crate::managed_account::managed_account_type::ManagedAccountType::DashpayExternalAccount { .. } => {
                                     // Build a set of addresses involved for fast membership tests
                                     let mut involved_addrs = alloc::collections::BTreeSet::new();
                                     for info in account_match.account_type_match.all_involved_addresses() {

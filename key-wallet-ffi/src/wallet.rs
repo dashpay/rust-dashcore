@@ -9,6 +9,7 @@ use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::slice;
 
+use crate::types::FFIAccountResult;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::{Mnemonic, Network, Seed, Wallet};
 
@@ -518,6 +519,138 @@ pub unsafe extern "C" fn wallet_add_account(
             FFIErrorCode::InvalidState,
             "Cannot modify wallet".to_string(),
         ),
+    }
+}
+
+/// Add a DashPay receiving funds account
+///
+/// # Safety
+/// - `wallet` must be a valid pointer
+/// - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+#[no_mangle]
+pub unsafe extern "C" fn wallet_add_dashpay_receiving_account(
+    wallet: *mut FFIWallet,
+    network: FFINetwork,
+    account_index: c_uint,
+    user_identity_id: *const u8,
+    friend_identity_id: *const u8,
+) -> FFIAccountResult {
+    use key_wallet::account::AccountType;
+    if wallet.is_null() || user_identity_id.is_null() || friend_identity_id.is_null() {
+        return FFIAccountResult::error(
+            crate::error::FFIErrorCode::InvalidInput,
+            "Null pointer provided".to_string(),
+        );
+    }
+    let w = &mut *wallet;
+    let wallet_mut = match w.inner_mut() {
+        Some(w) => w,
+        None => {
+            return FFIAccountResult::error(
+                crate::error::FFIErrorCode::InvalidInput,
+                "Wallet is immutable".to_string(),
+            )
+        }
+    };
+    let mut user_id = [0u8; 32];
+    let mut friend_id = [0u8; 32];
+    core::ptr::copy_nonoverlapping(user_identity_id, user_id.as_mut_ptr(), 32);
+    core::ptr::copy_nonoverlapping(friend_identity_id, friend_id.as_mut_ptr(), 32);
+
+    let acct = AccountType::DashpayReceivingFunds {
+        index: account_index,
+        user_identity_id: user_id,
+        friend_identity_id: friend_id,
+    };
+    let network_rust: key_wallet::Network = network.into();
+    match wallet_mut.add_account(acct.clone(), network_rust, None) {
+        Ok(()) => {
+            if let Some(coll) = wallet_mut.accounts.get(&network_rust) {
+                if let Some(account) = coll.account_of_type(acct) {
+                    let ffi_account = crate::types::FFIAccount::new(account);
+                    return FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)));
+                }
+            }
+            FFIAccountResult::error(
+                crate::error::FFIErrorCode::WalletError,
+                "Failed to retrieve account after adding".to_string(),
+            )
+        }
+        Err(e) => FFIAccountResult::error(crate::error::FFIErrorCode::InvalidInput, e.to_string()),
+    }
+}
+
+/// Add a DashPay external (watch-only) account with xpub bytes
+///
+/// # Safety
+/// - `wallet` must be valid, `xpub_bytes` must point to `xpub_len` bytes
+/// - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+#[no_mangle]
+pub unsafe extern "C" fn wallet_add_dashpay_external_account_with_xpub_bytes(
+    wallet: *mut FFIWallet,
+    network: FFINetwork,
+    account_index: c_uint,
+    user_identity_id: *const u8,
+    friend_identity_id: *const u8,
+    xpub_bytes: *const u8,
+    xpub_len: usize,
+) -> FFIAccountResult {
+    use key_wallet::account::AccountType;
+    use key_wallet::bip32::ExtendedPubKey;
+    if wallet.is_null()
+        || user_identity_id.is_null()
+        || friend_identity_id.is_null()
+        || xpub_bytes.is_null()
+    {
+        return FFIAccountResult::error(
+            crate::error::FFIErrorCode::InvalidInput,
+            "Null pointer provided".to_string(),
+        );
+    }
+    let w = &mut *wallet;
+    let wallet_mut = match w.inner_mut() {
+        Some(w) => w,
+        None => {
+            return FFIAccountResult::error(
+                crate::error::FFIErrorCode::InvalidInput,
+                "Wallet is immutable".to_string(),
+            )
+        }
+    };
+    let mut user_id = [0u8; 32];
+    let mut friend_id = [0u8; 32];
+    core::ptr::copy_nonoverlapping(user_identity_id, user_id.as_mut_ptr(), 32);
+    core::ptr::copy_nonoverlapping(friend_identity_id, friend_id.as_mut_ptr(), 32);
+    let xpub_slice = core::slice::from_raw_parts(xpub_bytes, xpub_len);
+    let xpub = match ExtendedPubKey::decode(xpub_slice) {
+        Ok(x) => x,
+        Err(_) => {
+            return FFIAccountResult::error(
+                crate::error::FFIErrorCode::InvalidInput,
+                "Invalid xpub bytes".to_string(),
+            )
+        }
+    };
+    let acct = AccountType::DashpayExternalAccount {
+        index: account_index,
+        user_identity_id: user_id,
+        friend_identity_id: friend_id,
+    };
+    let network_rust: key_wallet::Network = network.into();
+    match wallet_mut.add_account(acct.clone(), network_rust, Some(xpub)) {
+        Ok(()) => {
+            if let Some(coll) = wallet_mut.accounts.get(&network_rust) {
+                if let Some(account) = coll.account_of_type(acct) {
+                    let ffi_account = crate::types::FFIAccount::new(account);
+                    return FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)));
+                }
+            }
+            FFIAccountResult::error(
+                crate::error::FFIErrorCode::WalletError,
+                "Failed to retrieve account after adding".to_string(),
+            )
+        }
+        Err(e) => FFIAccountResult::error(crate::error::FFIErrorCode::InvalidInput, e.to_string()),
     }
 }
 

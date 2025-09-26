@@ -264,6 +264,8 @@ pub enum FFIAccountType {
     ProviderOperatorKeys = 9,
     /// Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/[key_index]
     ProviderPlatformKeys = 10,
+    DashpayReceivingFunds = 11,
+    DashpayExternalAccount = 12,
 }
 
 impl FFIAccountType {
@@ -298,6 +300,11 @@ impl FFIAccountType {
             FFIAccountType::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
             FFIAccountType::ProviderOperatorKeys => key_wallet::AccountType::ProviderOperatorKeys,
             FFIAccountType::ProviderPlatformKeys => key_wallet::AccountType::ProviderPlatformKeys,
+            // DashPay variants require additional identity IDs that are not part of this API yet.
+            // For now, these are not constructible via FFI AccountType conversion.
+            // Callers should not request AddressPool access for DashPay via this path.
+            FFIAccountType::DashpayReceivingFunds => key_wallet::AccountType::IdentityInvitation,
+            FFIAccountType::DashpayExternalAccount => key_wallet::AccountType::IdentityInvitation,
         }
     }
 
@@ -339,6 +346,14 @@ impl FFIAccountType {
             key_wallet::AccountType::ProviderPlatformKeys => {
                 (FFIAccountType::ProviderPlatformKeys, 0, None)
             }
+            key_wallet::AccountType::DashpayReceivingFunds {
+                index,
+                ..
+            } => (FFIAccountType::DashpayReceivingFunds, *index, None),
+            key_wallet::AccountType::DashpayExternalAccount {
+                index,
+                ..
+            } => (FFIAccountType::DashpayExternalAccount, *index, None),
         }
     }
 }

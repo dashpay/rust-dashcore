@@ -50,6 +50,15 @@ fn get_managed_account_by_type<'a>(
         AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_ref(),
         AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_ref(),
         AccountType::ProviderPlatformKeys => collection.provider_platform_keys.as_ref(),
+        AccountType::DashpayReceivingFunds {
+            ..
+        }
+        | AccountType::DashpayExternalAccount {
+            ..
+        } => {
+            // DashPay managed accounts are not currently persisted in ManagedAccountCollection
+            None
+        }
     }
 }
 
@@ -84,6 +93,15 @@ fn get_managed_account_by_type_mut<'a>(
         AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_mut(),
         AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_mut(),
         AccountType::ProviderPlatformKeys => collection.provider_platform_keys.as_mut(),
+        AccountType::DashpayReceivingFunds {
+            ..
+        }
+        | AccountType::DashpayExternalAccount {
+            ..
+        } => {
+            // DashPay managed accounts are not currently persisted in ManagedAccountCollection
+            None
+        }
     }
 }
 
@@ -780,6 +798,22 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
             if let Some(account) = &mut collection.provider_platform_keys {
                 if account.mark_address_used(&address) {
                     found = true;
+                }
+            }
+        }
+        if !found {
+            for account in collection.dashpay_receival_accounts.values_mut() {
+                if account.mark_address_used(&address) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            for account in collection.dashpay_external_accounts.values_mut() {
+                if account.mark_address_used(&address) {
+                    found = true;
+                    break;
                 }
             }
         }

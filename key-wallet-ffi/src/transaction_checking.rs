@@ -402,6 +402,42 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
+                AccountTypeMatch::DashpayReceivingFunds {
+                    account_index,
+                    involved_addresses,
+                } => {
+                    let ffi_match = FFIAccountMatch {
+                        account_type: 11, // DashpayReceivingFunds
+                        account_index: *account_index,
+                        registration_index: 0,
+                        received: account_match.received,
+                        sent: account_match.sent,
+                        external_addresses_count: involved_addresses.len() as c_uint,
+                        internal_addresses_count: 0,
+                        has_external_addresses: !involved_addresses.is_empty(),
+                        has_internal_addresses: false,
+                    };
+                    ffi_accounts.push(ffi_match);
+                    continue;
+                }
+                AccountTypeMatch::DashpayExternalAccount {
+                    account_index,
+                    involved_addresses,
+                } => {
+                    let ffi_match = FFIAccountMatch {
+                        account_type: 12, // DashpayExternalAccount
+                        account_index: *account_index,
+                        registration_index: 0,
+                        received: account_match.received,
+                        sent: account_match.sent,
+                        external_addresses_count: involved_addresses.len() as c_uint,
+                        internal_addresses_count: 0,
+                        has_external_addresses: !involved_addresses.is_empty(),
+                        has_internal_addresses: false,
+                    };
+                    ffi_accounts.push(ffi_match);
+                    continue;
+                }
             }
         }
 

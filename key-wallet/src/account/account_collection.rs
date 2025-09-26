@@ -16,6 +16,18 @@ use crate::account::BLSAccount;
 use crate::account::EdDSAAccount;
 use crate::AccountType;
 
+pub type DashpayOurUserIdentityId = [u8; 32];
+pub type DashpayContactIdentityId = [u8; 32];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub struct DashpayAccountKey {
+    pub index: u32,
+    pub user_identity_id: DashpayOurUserIdentityId,
+    pub friend_identity_id: DashpayContactIdentityId,
+}
+
 /// Collection of accounts organized by type
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -45,6 +57,10 @@ pub struct AccountCollection {
     /// Provider platform keys (optional)
     #[cfg(feature = "eddsa")]
     pub provider_platform_keys: Option<EdDSAAccount>,
+    /// DashPay receiving funds accounts
+    pub dashpay_receival_accounts: BTreeMap<DashpayAccountKey, Account>,
+    /// DashPay external (watch-only) accounts
+    pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, Account>,
 }
 
 impl AccountCollection {
@@ -64,6 +80,8 @@ impl AccountCollection {
             provider_operator_keys: None,
             #[cfg(feature = "eddsa")]
             provider_platform_keys: None,
+            dashpay_receival_accounts: BTreeMap::new(),
+            dashpay_external_accounts: BTreeMap::new(),
         }
     }
 
@@ -114,6 +132,30 @@ impl AccountCollection {
             }
             AccountType::ProviderPlatformKeys => {
                 return Err("ProviderPlatformKeys requires EdDSAAccount, use insert_eddsa_account");
+            }
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let key = DashpayAccountKey {
+                    index: *index,
+                    user_identity_id: *user_identity_id,
+                    friend_identity_id: *friend_identity_id,
+                };
+                self.dashpay_receival_accounts.insert(key, account);
+            }
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let key = DashpayAccountKey {
+                    index: *index,
+                    user_identity_id: *user_identity_id,
+                    friend_identity_id: *friend_identity_id,
+                };
+                self.dashpay_external_accounts.insert(key, account);
             }
         }
         Ok(())
@@ -174,6 +216,30 @@ impl AccountCollection {
             AccountType::ProviderPlatformKeys => self.provider_platform_keys.is_some(),
             #[cfg(not(feature = "eddsa"))]
             AccountType::ProviderPlatformKeys => false,
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let key = DashpayAccountKey {
+                    index: *index,
+                    user_identity_id: *user_identity_id,
+                    friend_identity_id: *friend_identity_id,
+                };
+                self.dashpay_receival_accounts.contains_key(&key)
+            }
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let key = DashpayAccountKey {
+                    index: *index,
+                    user_identity_id: *user_identity_id,
+                    friend_identity_id: *friend_identity_id,
+                };
+                self.dashpay_external_accounts.contains_key(&key)
+            }
         }
     }
 
@@ -203,6 +269,30 @@ impl AccountCollection {
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_ref(),
             AccountType::ProviderOperatorKeys => None, // BLSAccount, use bls_account_of_type
             AccountType::ProviderPlatformKeys => None, // EdDSAAccount, use eddsa_account_of_type
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let key = DashpayAccountKey {
+                    index,
+                    user_identity_id,
+                    friend_identity_id,
+                };
+                self.dashpay_receival_accounts.get(&key)
+            }
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let key = DashpayAccountKey {
+                    index,
+                    user_identity_id,
+                    friend_identity_id,
+                };
+                self.dashpay_external_accounts.get(&key)
+            }
         }
     }
 
@@ -232,6 +322,30 @@ impl AccountCollection {
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_mut(),
             AccountType::ProviderOperatorKeys => None, // BLSAccount, use bls_account_of_type_mut
             AccountType::ProviderPlatformKeys => None, // EdDSAAccount, use eddsa_account_of_type_mut
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let key = DashpayAccountKey {
+                    index,
+                    user_identity_id,
+                    friend_identity_id,
+                };
+                self.dashpay_receival_accounts.get_mut(&key)
+            }
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let key = DashpayAccountKey {
+                    index,
+                    user_identity_id,
+                    friend_identity_id,
+                };
+                self.dashpay_external_accounts.get_mut(&key)
+            }
         }
     }
 

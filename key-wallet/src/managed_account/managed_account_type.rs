@@ -1,3 +1,4 @@
+use crate::account::account_collection::{DashpayContactIdentityId, DashpayOurUserIdentityId};
 use crate::account::StandardAccountType;
 use crate::{AccountType, AddressPool, DerivationPath};
 #[cfg(feature = "bincode")]
@@ -76,6 +77,28 @@ pub enum ManagedAccountType {
         /// Provider platform keys address pool
         addresses: AddressPool,
     },
+    /// DashPay receiving funds account (single-pool)
+    DashpayReceivingFunds {
+        /// Account index
+        index: u32,
+        /// Our identity id
+        user_identity_id: DashpayOurUserIdentityId,
+        /// Contact identity id
+        friend_identity_id: DashpayContactIdentityId,
+        /// Address pool
+        addresses: AddressPool,
+    },
+    /// DashPay external (watch-only) account (single-pool)
+    DashpayExternalAccount {
+        /// Account index
+        index: u32,
+        /// Our identity id
+        user_identity_id: DashpayOurUserIdentityId,
+        /// Contact identity id
+        friend_identity_id: DashpayContactIdentityId,
+        /// Address pool
+        addresses: AddressPool,
+    },
 }
 
 impl ManagedAccountType {
@@ -116,6 +139,14 @@ impl ManagedAccountType {
             | Self::ProviderPlatformKeys {
                 ..
             } => None,
+            Self::DashpayReceivingFunds {
+                index,
+                ..
+            }
+            | Self::DashpayExternalAccount {
+                index,
+                ..
+            } => Some(*index),
         }
     }
 
@@ -183,6 +214,14 @@ impl ManagedAccountType {
             } => {
                 vec![addresses]
             }
+            Self::DashpayReceivingFunds {
+                addresses,
+                ..
+            }
+            | Self::DashpayExternalAccount {
+                addresses,
+                ..
+            } => vec![addresses],
         }
     }
 
@@ -234,6 +273,14 @@ impl ManagedAccountType {
             } => {
                 vec![addresses]
             }
+            Self::DashpayReceivingFunds {
+                addresses,
+                ..
+            }
+            | Self::DashpayExternalAccount {
+                addresses,
+                ..
+            } => vec![addresses],
         }
     }
 
@@ -329,6 +376,26 @@ impl ManagedAccountType {
             Self::ProviderPlatformKeys {
                 ..
             } => AccountType::ProviderPlatformKeys,
+            Self::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => AccountType::DashpayReceivingFunds {
+                index: *index,
+                user_identity_id: *user_identity_id,
+                friend_identity_id: *friend_identity_id,
+            },
+            Self::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => AccountType::DashpayExternalAccount {
+                index: *index,
+                user_identity_id: *user_identity_id,
+                friend_identity_id: *friend_identity_id,
+            },
         }
     }
 
@@ -485,6 +552,50 @@ impl ManagedAccountType {
                 )?;
 
                 Ok(Self::ProviderPlatformKeys {
+                    addresses: pool,
+                })
+            }
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let path = account_type
+                    .derivation_path(network)
+                    .unwrap_or_else(|_| DerivationPath::master());
+                let pool = AddressPool::new(
+                    path,
+                    crate::managed_account::address_pool::AddressPoolType::Absent,
+                    20,
+                    network,
+                    key_source,
+                )?;
+                Ok(Self::DashpayReceivingFunds {
+                    index,
+                    user_identity_id,
+                    friend_identity_id,
+                    addresses: pool,
+                })
+            }
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let path = account_type
+                    .derivation_path(network)
+                    .unwrap_or_else(|_| DerivationPath::master());
+                let pool = AddressPool::new(
+                    path,
+                    crate::managed_account::address_pool::AddressPoolType::Absent,
+                    20,
+                    network,
+                    key_source,
+                )?;
+                Ok(Self::DashpayExternalAccount {
+                    index,
+                    user_identity_id,
+                    friend_identity_id,
                     addresses: pool,
                 })
             }

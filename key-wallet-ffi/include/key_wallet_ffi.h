@@ -106,6 +106,8 @@ typedef enum {
      Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/[key_index]
      */
     PROVIDER_PLATFORM_KEYS = 10,
+    DASHPAY_RECEIVING_FUNDS = 11,
+    DASHPAY_EXTERNAL_ACCOUNT = 12,
 } FFIAccountType;
 
 /*
@@ -2385,6 +2387,37 @@ FFIManagedAccountResult managed_wallet_get_top_up_account_with_registration_inde
 ;
 
 /*
+ Get a managed DashPay receiving funds account by composite key
+
+ # Safety
+ - `manager`, `wallet_id` must be valid
+ - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+ */
+
+FFIManagedAccountResult managed_wallet_get_dashpay_receiving_account(const FFIWalletManager *manager,
+                                                                     const uint8_t *wallet_id,
+                                                                     FFINetwork network,
+                                                                     unsigned int account_index,
+                                                                     const uint8_t *user_identity_id,
+                                                                     const uint8_t *friend_identity_id)
+;
+
+/*
+ Get a managed DashPay external account by composite key
+
+ # Safety
+ - Pointers must be valid
+ */
+
+FFIManagedAccountResult managed_wallet_get_dashpay_external_account(const FFIWalletManager *manager,
+                                                                    const uint8_t *wallet_id,
+                                                                    FFINetwork network,
+                                                                    unsigned int account_index,
+                                                                    const uint8_t *user_identity_id,
+                                                                    const uint8_t *friend_identity_id)
+;
+
+/*
  Get the network of a managed account
 
  # Safety
@@ -3686,6 +3719,38 @@ FFIAccountResult wallet_add_account(FFIWallet *wallet,
                                     FFINetwork network,
                                     FFIAccountType account_type,
                                     unsigned int account_index)
+;
+
+/*
+ Add a DashPay receiving funds account
+
+ # Safety
+ - `wallet` must be a valid pointer
+ - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+ */
+
+FFIAccountResult wallet_add_dashpay_receiving_account(FFIWallet *wallet,
+                                                      FFINetwork network,
+                                                      unsigned int account_index,
+                                                      const uint8_t *user_identity_id,
+                                                      const uint8_t *friend_identity_id)
+;
+
+/*
+ Add a DashPay external (watch-only) account with xpub bytes
+
+ # Safety
+ - `wallet` must be valid, `xpub_bytes` must point to `xpub_len` bytes
+ - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+ */
+
+FFIAccountResult wallet_add_dashpay_external_account_with_xpub_bytes(FFIWallet *wallet,
+                                                                     FFINetwork network,
+                                                                     unsigned int account_index,
+                                                                     const uint8_t *user_identity_id,
+                                                                     const uint8_t *friend_identity_id,
+                                                                     const uint8_t *xpub_bytes,
+                                                                     size_t xpub_len)
 ;
 
 /*

@@ -848,6 +848,11 @@ impl Wallet {
                     // These use BLS/EdDSA keys, not regular xpubs
                     None
                 }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::DashpayReceivingFunds |
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::DashpayExternalAccount => {
+                    // Currently not retrieved via this helper
+                    None
+                }
             }
         })
     }
