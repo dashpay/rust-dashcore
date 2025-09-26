@@ -219,9 +219,6 @@ fn main() {
                     break;
                 }
                 dash_spv_ffi_sync_progress_destroy(prog_ptr);
-            } else {
-                // If progress is unavailable, assume sync finished or errored
-                break;
             }
             thread::sleep(Duration::from_millis(300));
         }
