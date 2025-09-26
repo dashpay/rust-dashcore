@@ -174,7 +174,6 @@ fn test_event_callbacks_setup() {
             on_mempool_transaction_removed: None,
             on_compact_filter_matched: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: None,
             user_data,
         };
 
@@ -268,7 +267,6 @@ fn test_enhanced_event_callbacks() {
             on_mempool_transaction_removed: None,
             on_compact_filter_matched: Some(test_compact_filter_matched_callback),
             on_wallet_transaction: Some(test_wallet_transaction_callback),
-            on_filter_headers_progress: None,
             user_data: Arc::as_ptr(&event_data) as *mut c_void,
         };
 
@@ -325,7 +323,6 @@ fn test_drain_events_integration() {
             on_mempool_transaction_confirmed: None,
             on_mempool_transaction_removed: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: None,
             user_data,
         };
         dash_spv_ffi_client_set_event_callbacks(client, callbacks);
@@ -392,7 +389,6 @@ fn test_drain_events_concurrent_with_callbacks() {
             on_mempool_transaction_confirmed: None,
             on_mempool_transaction_removed: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: None,
             user_data,
         };
         dash_spv_ffi_client_set_event_callbacks(client, callbacks);
@@ -472,7 +468,6 @@ fn test_drain_events_callback_lifecycle() {
             on_mempool_transaction_confirmed: None,
             on_mempool_transaction_removed: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: None,
             user_data,
         };
         dash_spv_ffi_client_set_event_callbacks(client, callbacks);
@@ -491,7 +486,6 @@ fn test_drain_events_callback_lifecycle() {
             on_mempool_transaction_confirmed: None,
             on_mempool_transaction_removed: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: None,
             user_data: std::ptr::null_mut(),
         };
         dash_spv_ffi_client_set_event_callbacks(client, callbacks);
@@ -510,7 +504,6 @@ fn test_drain_events_callback_lifecycle() {
             on_mempool_transaction_confirmed: None,
             on_mempool_transaction_removed: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: None,
             user_data,
         };
         dash_spv_ffi_client_set_event_callbacks(client, callbacks);

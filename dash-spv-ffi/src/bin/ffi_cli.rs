@@ -23,10 +23,6 @@ fn ffi_string_to_rust(s: *const c_char) -> String {
     unsafe { CStr::from_ptr(s) }.to_str().unwrap_or_default().to_owned()
 }
 
-extern "C" fn on_filter_headers_progress(filter: u32, headers: u32, pct: f64, _ud: *mut c_void) {
-    println!("filters: {} headers: {} progress: {:.2}%", filter, headers, pct * 100.0);
-}
-
 extern "C" fn on_detailed_progress(progress: *const FFIDetailedSyncProgress, _ud: *mut c_void) {
     if progress.is_null() {
         return;
@@ -171,7 +167,7 @@ fn main() {
             std::process::exit(1);
         }
 
-        // Set minimal event callbacks (progress via filter headers)
+        // Set minimal event callbacks
         let callbacks = FFIEventCallbacks {
             on_block: None,
             on_transaction: None,
@@ -181,7 +177,6 @@ fn main() {
             on_mempool_transaction_removed: None,
             on_compact_filter_matched: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: Some(on_filter_headers_progress),
             user_data: ptr::null_mut(),
         };
         let _ = dash_spv_ffi_client_set_event_callbacks(client, callbacks);

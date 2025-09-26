@@ -962,7 +962,7 @@ impl<
                     last_rate_calc = Instant::now();
                 }
 
-                // Emit filter headers progress only when heights change
+                // Emit a detailed progress snapshot when filter/header heights change
                 let (abs_header_height, filter_header_height) = {
                     let storage = self.storage.lock().await;
                     let storage_tip = storage.get_tip_height().await.ok().flatten().unwrap_or(0);
@@ -970,22 +970,60 @@ impl<
                         storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
                     (self.state.read().await.sync_base_height + storage_tip, filter_tip)
                 };
+
                 if abs_header_height != last_emitted_header_height
                     || filter_header_height != last_emitted_filter_header_height
                 {
-                    if abs_header_height > 0 {
-                        let pct = if filter_header_height <= abs_header_height {
-                            (filter_header_height as f64 / abs_header_height as f64 * 100.0)
-                                .min(100.0)
+                    // Build and emit a fresh DetailedSyncProgress snapshot reflecting current filter progress
+                    let peer_best = self
+                        .network
+                        .get_peer_best_height()
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(abs_header_height);
+
+                    let status_display = self.create_status_display().await;
+                    let mut sync_progress = match status_display.sync_progress().await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to compute sync progress snapshot (filter): {}",
+                                e
+                            );
+                            SyncProgress::default()
+                        }
+                    };
+                    // Ensure we include up-to-date header height and peer count
+                    sync_progress.peer_count = self.network.peer_count() as u32;
+                    sync_progress.header_height = abs_header_height;
+
+                    let progress = DetailedSyncProgress {
+                        sync_progress,
+                        peer_best_height: peer_best,
+                        percentage: if peer_best > 0 {
+                            (abs_header_height as f64 / peer_best as f64 * 100.0).min(100.0)
                         } else {
                             0.0
-                        };
-                        self.emit_event(SpvEvent::FilterHeadersProgress {
-                            filter_header_height,
-                            header_height: abs_header_height,
-                            percentage: pct,
-                        });
-                    }
+                        },
+                        headers_per_second: 0.0,
+                        bytes_per_second: 0,
+                        estimated_time_remaining: None,
+                        sync_stage: if abs_header_height < peer_best {
+                            crate::types::SyncStage::DownloadingHeaders {
+                                start: abs_header_height,
+                                end: peer_best,
+                            }
+                        } else {
+                            crate::types::SyncStage::Complete
+                        },
+                        total_headers_processed: abs_header_height as u64,
+                        total_bytes_downloaded,
+                        sync_start_time,
+                        last_update_time: SystemTime::now(),
+                    };
+                    self.emit_progress(progress);
+
                     last_emitted_header_height = abs_header_height;
                     last_emitted_filter_header_height = filter_header_height;
                 }

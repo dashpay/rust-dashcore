@@ -135,10 +135,6 @@ pub type WalletTransactionCallback = Option<
     ),
 >;
 
-pub type FilterHeadersProgressCallback = Option<
-    extern "C" fn(filter_height: u32, header_height: u32, percentage: f64, user_data: *mut c_void),
->;
-
 #[repr(C)]
 pub struct FFIEventCallbacks {
     pub on_block: BlockCallback,
@@ -149,7 +145,7 @@ pub struct FFIEventCallbacks {
     pub on_mempool_transaction_removed: MempoolRemovedCallback,
     pub on_compact_filter_matched: CompactFilterMatchedCallback,
     pub on_wallet_transaction: WalletTransactionCallback,
-    pub on_filter_headers_progress: FilterHeadersProgressCallback,
+    // on_filter_headers_progress removed
     pub user_data: *mut c_void,
 }
 
@@ -178,7 +174,6 @@ impl Default for FFIEventCallbacks {
             on_mempool_transaction_removed: None,
             on_compact_filter_matched: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: None,
             user_data: std::ptr::null_mut(),
         }
     }
@@ -390,22 +385,4 @@ impl FFIEventCallbacks {
     }
 }
 
-impl FFIEventCallbacks {
-    pub fn call_filter_headers_progress(
-        &self,
-        filter_height: u32,
-        header_height: u32,
-        percentage: f64,
-    ) {
-        if let Some(callback) = self.on_filter_headers_progress {
-            tracing::info!(
-                "📊 Calling filter headers progress callback: filter_height={}, header_height={}, pct={:.2}",
-                filter_height, header_height, percentage
-            );
-            callback(filter_height, header_height, percentage, self.user_data);
-            tracing::info!("✅ Filter headers progress callback completed");
-        } else {
-            tracing::debug!("Filter headers progress callback not set");
-        }
-    }
-}
+// Filter headers progress callback removed; detailed progress covers this data.

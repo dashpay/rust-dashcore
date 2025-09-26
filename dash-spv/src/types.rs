@@ -789,23 +789,6 @@ pub enum SpvEvent {
         percentage: f64,
     },
 
-    /// Filter headers progress update.
-    ///
-    /// Carries absolute blockchain heights for both the current filter header tip
-    /// and the current block header tip, along with a convenience percentage
-    /// (filter_header_height / header_height * 100), clamped to [0, 100].
-    ///
-    /// Consumers who sync from a checkpoint may prefer to recompute a
-    /// checkpoint-relative percentage using their base height.
-    FilterHeadersProgress {
-        /// Current absolute height of synchronized filter headers.
-        filter_header_height: u32,
-        /// Current absolute height of synchronized block headers.
-        header_height: u32,
-        /// Convenience percentage in [0, 100].
-        percentage: f64,
-    },
-
     /// ChainLock received and validated.
     ChainLockReceived {
         /// Block height of the ChainLock.
