@@ -132,8 +132,8 @@ async fn test_real_header_sync_genesis_to_1000() {
         client.sync_progress().await.expect("Failed to get initial sync progress");
 
     info!(
-        "Initial sync state: height={}, synced={}",
-        initial_progress.header_height, initial_progress.headers_synced
+        "Initial sync state: header_height={} filter_header_height={}",
+        initial_progress.header_height, initial_progress.filter_header_height
     );
 
     // Perform header sync
@@ -241,7 +241,7 @@ async fn test_real_header_sync_up_to_10k() {
                 }
 
                 // Check if we've reached our target or sync is complete
-                if progress.header_height >= MAX_TEST_HEADERS || progress.headers_synced {
+                if progress.header_height >= MAX_TEST_HEADERS {
                     return Ok::<_, dash_spv::error::SpvError>(progress);
                 }
 
