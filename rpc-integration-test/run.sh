@@ -1,51 +1,46 @@
 #!/bin/sh
 
-TESTDIR=/tmp/rust_bitcoincore_rpc_test
+set -e
 
-rm -rf ${TESTDIR}
-mkdir -p ${TESTDIR}/1 ${TESTDIR}/2
+TESTDIR=/tmp/rust_dashcore_rpc_test
 
-# To kill any remaining open bitcoind.
-killall -9 bitcoind
+rm -rf "${TESTDIR}"
+mkdir -p "${TESTDIR}/dash"
 
-bitcoind -regtest \
-    -datadir=${TESTDIR}/1 \
-    -port=12348 \
-    -server=0 \
-    -printtoconsole=0 &
-PID1=$!
-
-# Make sure it's listening on its p2p port.
-sleep 3
-
-BLOCKFILTERARG=""
-if bitcoind -version | grep -q "v0\.\(19\|2\)"; then
-    BLOCKFILTERARG="-blockfilterindex=1"
+# Kill any remaining dashd to avoid port conflicts
+if command -v killall >/dev/null 2>&1; then
+  killall -9 dashd 2>/dev/null || true
 fi
 
-FALLBACKFEEARG=""
-if bitcoind -version | grep -q "v0\.2"; then
-    FALLBACKFEEARG="-fallbackfee=0.00001000"
-fi
+# Start Dash Core on regtest using standard Dash RPC port 19898
+dashd -regtest \
+  -datadir="${TESTDIR}/dash" \
+  -rpcport=19898 \
+  -server=1 \
+  -txindex=1 \
+  -printtoconsole=0 &
+PID=$!
 
-bitcoind -regtest $BLOCKFILTERARG $FALLBACKFEEARG \
-    -datadir=${TESTDIR}/2 \
-    -connect=127.0.0.1:12348 \
-    -rpcport=12349 \
-    -server=1 \
-    -txindex=1 \
-    -printtoconsole=0 &
-PID2=$!
-
-# Let it connect to the other node.
+# Allow time for startup
 sleep 5
 
-RPC_URL=http://localhost:12349 \
-    RPC_COOKIE=${TESTDIR}/2/regtest/.cookie \
-    cargo run
+# Pre-create faucet wallet "main" so the test can fund addresses
+dash-cli -regtest -datadir="${TESTDIR}/dash" -rpcport=19898 -named createwallet wallet_name=main descriptors=false >/dev/null 2>&1 || true
+
+# Fund the faucet wallet with mature coins
+FAUCET_ADDR=$(dash-cli -regtest -datadir="${TESTDIR}/dash" -rpcport=19898 -rpcwallet=main getnewaddress)
+dash-cli -regtest -datadir="${TESTDIR}/dash" -rpcport=19898 generatetoaddress 110 "$FAUCET_ADDR" >/dev/null
+
+# Export per-node env vars expected by the test (both point to same node)
+export WALLET_NODE_RPC_URL="http://127.0.0.1:19898"
+export EVO_NODE_RPC_URL="http://127.0.0.1:19898"
+export WALLET_NODE_RPC_COOKIE="${TESTDIR}/dash/regtest/.cookie"
+export EVO_NODE_RPC_COOKIE="${TESTDIR}/dash/regtest/.cookie"
+
+cargo run
 
 RESULT=$?
 
-kill -9 $PID1 $PID2
+kill -9 $PID 2>/dev/null || true
 
 exit $RESULT

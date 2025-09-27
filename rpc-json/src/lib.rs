@@ -83,16 +83,11 @@ pub struct GetNetworkInfoResult {
     #[serde(rename = "networkactive")]
     pub network_active: bool,
     pub connections: usize,
-    #[serde(rename = "inboundconnections")]
-    pub inbound_connections: usize,
-    #[serde(rename = "outboundconnections")]
-    pub outbound_connections: usize,
-    #[serde(rename = "mnconnections")]
-    pub mn_connections: usize,
-    #[serde(rename = "inboundmnconnections")]
-    pub inbound_mn_connections: usize,
-    #[serde(rename = "outboundmnconnections")]
-    pub outbound_mn_connections: usize,
+    pub connections_in: usize,
+    pub connections_out: usize,
+    pub connections_mn: usize,
+    pub connections_mn_in: usize,
+    pub connections_mn_out: usize,
     #[serde(rename = "socketevents")]
     pub socket_events: String,
     pub networks: Vec<GetNetworkInfoResultNetwork>,
