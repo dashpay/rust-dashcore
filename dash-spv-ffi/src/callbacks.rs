@@ -385,4 +385,3 @@ impl FFIEventCallbacks {
     }
 }
 
-// Filter headers progress callback removed; detailed progress covers this data.
