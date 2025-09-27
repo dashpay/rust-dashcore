@@ -1,7 +1,7 @@
 //! Filter synchronization functionality.
 
 use dashcore::{
-    bip158::{BlockFilterReader, Error as Bip158Error},
+    bip158::{BlockFilter, BlockFilterReader, Error as Bip158Error},
     hash_types::FilterHeader,
     network::message::NetworkMessage,
     network::message_blockdata::Inventory,
@@ -102,6 +102,53 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
     FilterSyncManager<S, N>
 {
+    /// Verify that the received compact filter hashes to the expected filter header
+    /// based on previously synchronized CFHeaders.
+    pub async fn verify_cfilter_against_headers(
+        &self,
+        filter_data: &[u8],
+        height: u32,
+        storage: &S,
+    ) -> SyncResult<bool> {
+        // We expect filter headers to be synced before requesting filters.
+        // If we're at height 0 (genesis), skip verification because there is no previous header.
+        if height == 0 {
+            tracing::debug!("Skipping cfilter verification at genesis height 0");
+            return Ok(true);
+        }
+
+        // Load previous and expected headers
+        let prev_header = storage.get_filter_header(height - 1).await.map_err(|e| {
+            SyncError::Storage(format!("Failed to load previous filter header: {}", e))
+        })?;
+        let expected_header = storage.get_filter_header(height).await.map_err(|e| {
+            SyncError::Storage(format!("Failed to load expected filter header: {}", e))
+        })?;
+
+        let (Some(prev_header), Some(expected_header)) = (prev_header, expected_header) else {
+            tracing::warn!(
+                "Missing filter headers in storage for height {} (prev and/or expected)",
+                height
+            );
+            return Ok(false);
+        };
+
+        // Compute the header from the received filter bytes and compare
+        let filter = BlockFilter::new(filter_data);
+        let computed_header = filter.filter_header(&prev_header);
+
+        let matches = computed_header == expected_header;
+        if !matches {
+            tracing::error!(
+                "CFilter header mismatch at height {}: computed={:?}, expected={:?}",
+                height,
+                computed_header,
+                expected_header
+            );
+        }
+
+        Ok(matches)
+    }
     /// Scan backward from `abs_height` down to `min_abs_height` (inclusive)
     /// to find the nearest available block header stored in `storage`.
     /// Returns the found `(BlockHash, height)` or `None` if none available.
