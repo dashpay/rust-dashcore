@@ -145,7 +145,6 @@ pub struct FFIEventCallbacks {
     pub on_mempool_transaction_removed: MempoolRemovedCallback,
     pub on_compact_filter_matched: CompactFilterMatchedCallback,
     pub on_wallet_transaction: WalletTransactionCallback,
-    // on_filter_headers_progress removed
     pub user_data: *mut c_void,
 }
 
