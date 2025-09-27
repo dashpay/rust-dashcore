@@ -160,13 +160,16 @@ impl StorageManager for MemoryStorageManager {
             _ => 0u32,
         };
 
-        // If height >= base, treat as absolute; else accept it as a storage index for compatibility
-        let idx = if base > 0 && height >= base {
+        // If a base is present and the requested height is below the base, no header exists.
+        if base > 0 && height < base {
+            return Ok(None);
+        }
+        // Map absolute height to storage index
+        let idx = if base > 0 {
             (height - base) as usize
         } else {
             height as usize
         };
-
         Ok(self.headers.get(idx).copied())
     }
 
