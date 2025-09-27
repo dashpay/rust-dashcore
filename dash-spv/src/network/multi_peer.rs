@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, Mutex};
@@ -70,6 +70,8 @@ pub struct MultiPeerNetworkManager {
     user_agent: Option<String>,
     /// Exclusive mode: restrict to configured peers only (no DNS or peer store)
     exclusive_mode: bool,
+    /// Cached count of currently connected peers for fast, non-blocking queries
+    connected_peer_count: Arc<AtomicUsize>,
 }
 
 impl MultiPeerNetworkManager {
@@ -123,6 +125,7 @@ impl MultiPeerNetworkManager {
             peers_sent_headers2: Arc::new(Mutex::new(HashSet::new())),
             user_agent: config.user_agent.clone(),
             exclusive_mode,
+            connected_peer_count: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -209,6 +212,7 @@ impl MultiPeerNetworkManager {
         let mempool_strategy = self.mempool_strategy;
         let read_timeout = self.read_timeout;
         let user_agent = self.user_agent.clone();
+        let connected_peer_count = self.connected_peer_count.clone();
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -235,6 +239,9 @@ impl MultiPeerNetworkManager {
                                 return;
                             }
 
+                            // Increment connected peer counter on successful add
+                            connected_peer_count.fetch_add(1, Ordering::Relaxed);
+
                             // Add to known addresses
                             addrv2_handler.add_known_address(addr, ServiceFlags::from(1)).await;
 
@@ -246,6 +253,7 @@ impl MultiPeerNetworkManager {
                                 addrv2_handler,
                                 shutdown,
                                 reputation_manager.clone(),
+                                connected_peer_count.clone(),
                             )
                             .await;
                         }
@@ -287,6 +295,7 @@ impl MultiPeerNetworkManager {
         addrv2_handler: Arc<AddrV2Handler>,
         shutdown: Arc<AtomicBool>,
         reputation_manager: Arc<PeerReputationManager>,
+        connected_peer_count: Arc<AtomicUsize>,
     ) {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
@@ -551,7 +560,11 @@ impl MultiPeerNetworkManager {
 
             // Remove from pool
             log::warn!("Disconnecting from {} (peer reader loop ended)", addr);
-            pool.remove_connection(&addr).await;
+            let removed = pool.remove_connection(&addr).await;
+            if removed.is_some() {
+                // Decrement connected peer counter when a connection is removed
+                connected_peer_count.fetch_sub(1, Ordering::Relaxed);
+            }
 
             // Give small positive reputation if peer maintained long connection
             let conn_duration = Duration::from_secs(60 * loop_iteration); // Rough estimate
@@ -576,6 +589,7 @@ impl MultiPeerNetworkManager {
         let peer_search_started = self.peer_search_started.clone();
         let initial_peers = self.initial_peers.clone();
         let data_dir = self.data_dir.clone();
+        let connected_peer_count = self.connected_peer_count.clone();
 
         // Check if we're in exclusive mode (explicit flag or peers configured)
         let exclusive_mode = self.exclusive_mode;
@@ -597,6 +611,8 @@ impl MultiPeerNetworkManager {
 
                 let count = pool.connection_count().await;
                 log::debug!("Connected peers: {}", count);
+                // Keep the cached counter in sync with actual pool count
+                connected_peer_count.store(count, Ordering::Relaxed);
                 if exclusive_mode {
                     // In exclusive mode, only reconnect to originally specified peers
                     for addr in initial_peers.iter() {
@@ -987,6 +1003,7 @@ impl Clone for MultiPeerNetworkManager {
             peers_sent_headers2: self.peers_sent_headers2.clone(),
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
+            connected_peer_count: self.connected_peer_count.clone(),
         }
     }
 }
@@ -1068,19 +1085,13 @@ impl NetworkManager for MultiPeerNetworkManager {
     }
 
     fn is_connected(&self) -> bool {
-        // We're "connected" if we have at least one peer
-        let pool = self.pool.clone();
-        let count = tokio::task::block_in_place(move || {
-            tokio::runtime::Handle::current().block_on(pool.connection_count())
-        });
-        count > 0
+        // Use cached counter to avoid blocking in async context
+        self.connected_peer_count.load(Ordering::Relaxed) > 0
     }
 
     fn peer_count(&self) -> usize {
-        let pool = self.pool.clone();
-        tokio::task::block_in_place(move || {
-            tokio::runtime::Handle::current().block_on(pool.connection_count())
-        })
+        // Use cached counter to avoid blocking in async context
+        self.connected_peer_count.load(Ordering::Relaxed)
     }
 
     fn peer_info(&self) -> Vec<PeerInfo> {
