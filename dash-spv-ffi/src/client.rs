@@ -1268,7 +1268,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     tracing::debug!("   Block callback: {}", callbacks.on_block.is_some());
     tracing::debug!("   Transaction callback: {}", callbacks.on_transaction.is_some());
     tracing::debug!("   Balance update callback: {}", callbacks.on_balance_update.is_some());
-    tracing::debug!("   Filter headers progress callback: {}", false);
 
     let mut event_callbacks = client.event_callbacks.lock().unwrap();
     *event_callbacks = callbacks;
