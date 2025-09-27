@@ -206,10 +206,11 @@ fn main() {
             let prog_ptr = dash_spv_ffi_client_get_sync_progress(client);
             if !prog_ptr.is_null() {
                 let prog = &*prog_ptr;
-                let filters_complete = prog.filter_headers_synced
+                let headers_done = prog.header_height >= prog.filter_header_height;
+                let filters_complete = prog.filter_header_height >= prog.header_height
                     || !prog.filter_sync_available
                     || disable_filter_sync;
-                if prog.headers_synced && filters_complete {
+                if headers_done && filters_complete {
                     dash_spv_ffi_sync_progress_destroy(prog_ptr);
                     break;
                 }

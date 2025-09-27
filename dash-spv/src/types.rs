@@ -37,15 +37,6 @@ pub struct SyncProgress {
     /// Total number of peers connected.
     pub peer_count: u32,
 
-    /// Whether header sync is complete.
-    pub headers_synced: bool,
-
-    /// Whether filter headers sync is complete.
-    pub filter_headers_synced: bool,
-
-    /// Whether masternode list is synced.
-    pub masternodes_synced: bool,
-
     /// Whether filter sync is available (peers support it).
     pub filter_sync_available: bool,
 
@@ -70,9 +61,6 @@ impl Default for SyncProgress {
             filter_header_height: 0,
             masternode_height: 0,
             peer_count: 0,
-            headers_synced: false,
-            filter_headers_synced: false,
-            masternodes_synced: false,
             filter_sync_available: false,
             filters_downloaded: 0,
             last_synced_filter_height: None,
@@ -119,6 +107,14 @@ pub enum SyncStage {
     },
     StoringHeaders {
         batch_size: usize,
+    },
+    DownloadingFilterHeaders {
+        current: u32,
+        target: u32,
+    },
+    DownloadingFilters {
+        completed: u32,
+        total: u32,
     },
     Complete,
     Failed(String),

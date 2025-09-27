@@ -172,12 +172,8 @@ impl PersistentSyncState {
             sync_progress: sync_progress.clone(),
             checkpoints: Self::create_checkpoints(chain_state),
             masternode_sync: MasternodeSyncState {
-                last_synced_height: if sync_progress.masternodes_synced {
-                    Some(sync_progress.masternode_height)
-                } else {
-                    None
-                },
-                is_synced: sync_progress.masternodes_synced,
+                last_synced_height: None,
+                is_synced: false,
                 masternode_count: chain_state
                     .masternode_engine
                     .as_ref()

@@ -28,8 +28,10 @@ typedef enum FFISyncStage {
   Downloading = 2,
   Validating = 3,
   Storing = 4,
-  Complete = 5,
-  Failed = 6,
+  DownloadingFilterHeaders = 5,
+  DownloadingFilters = 6,
+  Complete = 7,
+  Failed = 8,
 } FFISyncStage;
 
 typedef enum DashSpvValidationMode {
@@ -75,9 +77,6 @@ typedef struct FFISyncProgress {
   uint32_t filter_header_height;
   uint32_t masternode_height;
   uint32_t peer_count;
-  bool headers_synced;
-  bool filter_headers_synced;
-  bool masternodes_synced;
   bool filter_sync_available;
   uint32_t filters_downloaded;
   uint32_t last_synced_filter_height;

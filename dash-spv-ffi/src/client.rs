@@ -794,7 +794,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                             match maybe_progress {
                                 Some(progress) => {
                                     // Handle callback in a thread-safe way
-                                    let should_stop = matches!(progress.sync_stage, SyncStage::Complete);
+                                    let should_stop = matches!(
+                                        progress.sync_stage,
+                                        SyncStage::Complete | SyncStage::Failed(_)
+                                    );
 
                                     // Create FFI progress
                                     let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));

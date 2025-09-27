@@ -107,11 +107,13 @@ public enum SyncStage: Equatable, Sendable {
     case connecting
     case queryingHeight
     case downloading
+    case downloadingFilterHeaders
+    case downloadingFilters
     case validating
     case storing
     case complete
     case failed
-    
+
     /// Initialize from FFI enum value
     internal init(ffiStage: FFISyncStage) {
         switch ffiStage.rawValue {
@@ -125,9 +127,13 @@ public enum SyncStage: Equatable, Sendable {
             self = .validating
         case 4:  // Storing
             self = .storing
-        case 5:  // Complete
+        case 5:  // Downloading filter headers
+            self = .downloadingFilterHeaders
+        case 6:  // Downloading filters
+            self = .downloadingFilters
+        case 7:  // Complete
             self = .complete
-        case 6:  // Failed
+        case 8:  // Failed
             self = .failed
         default:
             self = .failed
@@ -142,6 +148,10 @@ public enum SyncStage: Equatable, Sendable {
             return "Querying blockchain height"
         case .downloading:
             return "Downloading headers"
+        case .downloadingFilterHeaders:
+            return "Downloading filter headers"
+        case .downloadingFilters:
+            return "Downloading filters"
         case .validating:
             return "Validating headers"
         case .storing:
@@ -170,6 +180,10 @@ public enum SyncStage: Equatable, Sendable {
             return "🔍"
         case .downloading:
             return "⬇️"
+        case .downloadingFilterHeaders:
+            return "🧾"
+        case .downloadingFilters:
+            return "🪄"
         case .validating:
             return "✅"
         case .storing:

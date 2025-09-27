@@ -19,10 +19,11 @@ use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
+use crate::sync::sequential::phases::SyncPhase;
 use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{
     AddressBalance, ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats,
-    SyncProgress,
+    SyncProgress, SyncStage,
 };
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
@@ -146,6 +147,61 @@ impl<
     pub(crate) fn emit_event(&self, event: SpvEvent) {
         tracing::debug!("Emitting event: {:?}", event);
         let _ = self.event_tx.send(event);
+    }
+
+    fn map_phase_to_stage(
+        phase: &SyncPhase,
+        sync_progress: &SyncProgress,
+        peer_best_height: u32,
+    ) -> SyncStage {
+        match phase {
+            SyncPhase::Idle => {
+                if sync_progress.peer_count == 0 {
+                    SyncStage::Connecting
+                } else {
+                    SyncStage::QueryingPeerHeight
+                }
+            }
+            SyncPhase::DownloadingHeaders {
+                start_height,
+                target_height,
+                ..
+            } => SyncStage::DownloadingHeaders {
+                start: *start_height,
+                end: target_height.unwrap_or(peer_best_height),
+            },
+            SyncPhase::DownloadingMnList {
+                diffs_processed,
+                ..
+            } => SyncStage::ValidatingHeaders {
+                batch_size: *diffs_processed as usize,
+            },
+            SyncPhase::DownloadingCFHeaders {
+                current_height,
+                target_height,
+                ..
+            } => SyncStage::DownloadingFilterHeaders {
+                current: *current_height,
+                target: *target_height,
+            },
+            SyncPhase::DownloadingFilters {
+                completed_heights,
+                total_filters,
+                ..
+            } => SyncStage::DownloadingFilters {
+                completed: completed_heights.len() as u32,
+                total: *total_filters,
+            },
+            SyncPhase::DownloadingBlocks {
+                pending_blocks,
+                ..
+            } => SyncStage::StoringHeaders {
+                batch_size: pending_blocks.len(),
+            },
+            SyncPhase::FullySynced {
+                ..
+            } => SyncStage::Complete,
+        }
     }
 
     /// Helper to create a StatusDisplay instance.
@@ -674,8 +730,6 @@ impl<
                 let storage = self.storage.lock().await;
                 storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
             },
-            headers_synced: false, // Will be synced by monitoring loop
-            filter_headers_synced: false,
             ..SyncProgress::default()
         };
 
@@ -745,6 +799,7 @@ impl<
         // Last emitted heights for filter headers progress to avoid duplicate events
         let mut last_emitted_header_height: u32 = 0;
         let mut last_emitted_filter_header_height: u32 = 0;
+        let mut last_emitted_filters_downloaded: u64 = 0;
 
         loop {
             // Check if we should stop
@@ -903,20 +958,8 @@ impl<
                     }
 
                     let headers_per_second = headers_this_second as f64;
-
-                    // Determine sync stage
-                    let sync_stage = if self.network.peer_count() == 0 {
-                        crate::types::SyncStage::Connecting
-                    } else if current_height == 0 {
-                        crate::types::SyncStage::QueryingPeerHeight
-                    } else if current_height < peer_best {
-                        crate::types::SyncStage::DownloadingHeaders {
-                            start: current_height,
-                            end: peer_best,
-                        }
-                    } else {
-                        crate::types::SyncStage::Complete
-                    };
+                    let peer_count = self.network.peer_count() as u32;
+                    let phase_snapshot = self.sync_manager.current_phase().clone();
 
                     let status_display = self.create_status_display().await;
                     let mut sync_progress = match status_display.sync_progress().await {
@@ -928,8 +971,13 @@ impl<
                     };
 
                     // Update peer count with the latest network information.
-                    sync_progress.peer_count = self.network.peer_count() as u32;
+                    sync_progress.peer_count = peer_count;
                     sync_progress.header_height = current_height;
+                    sync_progress.filter_sync_available = self.config.enable_filters;
+
+                    let sync_stage =
+                        Self::map_phase_to_stage(&phase_snapshot, &sync_progress, peer_best);
+                    let filters_downloaded = sync_progress.filters_downloaded;
 
                     let progress = DetailedSyncProgress {
                         sync_progress,
@@ -956,6 +1004,7 @@ impl<
                         last_update_time: SystemTime::now(),
                     };
 
+                    last_emitted_filters_downloaded = filters_downloaded;
                     self.emit_progress(progress);
 
                     headers_this_second = 0;
@@ -963,16 +1012,19 @@ impl<
                 }
 
                 // Emit a detailed progress snapshot when filter/header heights change
-                let (abs_header_height, filter_header_height) = {
-                    let storage = self.storage.lock().await;
-                    let storage_tip = storage.get_tip_height().await.ok().flatten().unwrap_or(0);
-                    let filter_tip =
-                        storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
-                    (self.state.read().await.sync_base_height + storage_tip, filter_tip)
+                let (_sync_base_height, abs_header_height, filter_header_height) = {
+                    let (storage_tip, filter_tip) = {
+                        let storage = self.storage.lock().await;
+                        let storage_tip =
+                            storage.get_tip_height().await.ok().flatten().unwrap_or(0);
+                        let filter_tip =
+                            storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
+                        (storage_tip, filter_tip)
+                    };
+                    let base = { self.state.read().await.sync_base_height };
+                    (base, base + storage_tip, filter_tip)
                 };
 
-                if abs_header_height != last_emitted_header_height
-                    || filter_header_height != last_emitted_filter_header_height
                 {
                     // Build and emit a fresh DetailedSyncProgress snapshot reflecting current filter progress
                     let peer_best = self
@@ -983,6 +1035,7 @@ impl<
                         .flatten()
                         .unwrap_or(abs_header_height);
 
+                    let phase_snapshot = self.sync_manager.current_phase().clone();
                     let status_display = self.create_status_display().await;
                     let mut sync_progress = match status_display.sync_progress().await {
                         Ok(p) => p,
@@ -995,37 +1048,43 @@ impl<
                         }
                     };
                     // Ensure we include up-to-date header height and peer count
-                    sync_progress.peer_count = self.network.peer_count() as u32;
+                    let peer_count = self.network.peer_count() as u32;
+                    sync_progress.peer_count = peer_count;
                     sync_progress.header_height = abs_header_height;
+                    sync_progress.filter_sync_available = self.config.enable_filters;
 
-                    let progress = DetailedSyncProgress {
-                        sync_progress,
-                        peer_best_height: peer_best,
-                        percentage: if peer_best > 0 {
-                            (abs_header_height as f64 / peer_best as f64 * 100.0).min(100.0)
-                        } else {
-                            0.0
-                        },
-                        headers_per_second: 0.0,
-                        bytes_per_second: 0,
-                        estimated_time_remaining: None,
-                        sync_stage: if abs_header_height < peer_best {
-                            crate::types::SyncStage::DownloadingHeaders {
-                                start: abs_header_height,
-                                end: peer_best,
-                            }
-                        } else {
-                            crate::types::SyncStage::Complete
-                        },
-                        total_headers_processed: abs_header_height as u64,
-                        total_bytes_downloaded,
-                        sync_start_time,
-                        last_update_time: SystemTime::now(),
-                    };
-                    self.emit_progress(progress);
+                    let filters_downloaded = sync_progress.filters_downloaded;
 
-                    last_emitted_header_height = abs_header_height;
-                    last_emitted_filter_header_height = filter_header_height;
+                    if abs_header_height != last_emitted_header_height
+                        || filter_header_height != last_emitted_filter_header_height
+                        || filters_downloaded != last_emitted_filters_downloaded
+                    {
+                        let sync_stage =
+                            Self::map_phase_to_stage(&phase_snapshot, &sync_progress, peer_best);
+
+                        let progress = DetailedSyncProgress {
+                            sync_progress,
+                            peer_best_height: peer_best,
+                            percentage: if peer_best > 0 {
+                                (abs_header_height as f64 / peer_best as f64 * 100.0).min(100.0)
+                            } else {
+                                0.0
+                            },
+                            headers_per_second: 0.0,
+                            bytes_per_second: 0,
+                            estimated_time_remaining: None,
+                            sync_stage,
+                            total_headers_processed: abs_header_height as u64,
+                            total_bytes_downloaded,
+                            sync_start_time,
+                            last_update_time: SystemTime::now(),
+                        };
+                        last_emitted_header_height = abs_header_height;
+                        last_emitted_filter_header_height = filter_header_height;
+                        last_emitted_filters_downloaded = filters_downloaded;
+
+                        self.emit_progress(progress);
+                    }
                 }
 
                 last_status_update = Instant::now();
@@ -1970,18 +2029,11 @@ impl<
         tracing::debug!("Sequential sync manager will resume from stored state");
 
         // Determine phase based on sync progress
-        if saved_state.sync_progress.headers_synced {
-            if saved_state.sync_progress.filter_headers_synced {
-                // Headers and filter headers done, we're in filter download phase
-                tracing::info!("Resuming sequential sync in filter download phase");
-            } else {
-                // Headers done, need filter headers
-                tracing::info!("Resuming sequential sync in filter header download phase");
-            }
-        } else {
-            // Still downloading headers
-            tracing::info!("Resuming sequential sync in header download phase");
-        }
+        tracing::info!(
+            "Resuming sequential sync; saved header height {} filter header height {}",
+            saved_state.sync_progress.header_height,
+            saved_state.sync_progress.filter_header_height
+        );
 
         // Reset any in-flight requests
         self.sync_manager.reset_pending_requests();
