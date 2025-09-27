@@ -152,24 +152,21 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         const BATCH_SIZE: u32 = 10_000;
         let mut loaded_count = 0u32;
 
-        // When syncing from a checkpoint, we need to handle storage differently
-        // Storage indices start at 0, but represent blockchain heights starting from sync_base_height
-        let mut current_storage_index =
-            if self.is_synced_from_checkpoint() && self.get_sync_base_height() > 0 {
-                // For checkpoint sync, start from index 0 in storage
-                // (which represents blockchain height sync_base_height)
-                0u32
-            } else {
-                // For normal sync from genesis, start from 1 (genesis already in chain state)
-                1u32
-            };
+        // Determine the first blockchain height we need to load.
+        // For checkpoint syncs we start at the checkpoint base; otherwise we skip genesis (already present).
+        let base_height = if self.is_synced_from_checkpoint() && self.get_sync_base_height() > 0 {
+            self.get_sync_base_height()
+        } else {
+            1
+        };
 
-        while current_storage_index <= tip_height {
-            let end_storage_index = (current_storage_index + BATCH_SIZE - 1).min(tip_height);
+        let mut current_height = base_height;
+
+        while current_height <= tip_height {
+            let end_height = (current_height + BATCH_SIZE - 1).min(tip_height);
 
             // Load batch from storage
-            let headers_result =
-                storage.load_headers(current_storage_index..end_storage_index + 1).await;
+            let headers_result = storage.load_headers(current_height..end_height + 1).await;
 
             match headers_result {
                 Ok(headers) if !headers.is_empty() => {
@@ -186,8 +183,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     // Empty headers - this can happen for checkpoint sync with minimal headers
                     tracing::debug!(
                         "No headers found for range {}..{} - continuing",
-                        current_storage_index,
-                        end_storage_index + 1
+                        current_height,
+                        end_height + 1
                     );
                     // Break out of the loop since we've reached the end of available headers
                     break;
@@ -216,23 +213,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 );
             }
 
-            current_storage_index = end_storage_index + 1;
+            current_height = end_height + 1;
         }
 
-        // When loading from storage, tip_height is the storage index (0-based)
-        // Convert to absolute blockchain height
-        if self.is_synced_from_checkpoint() && self.get_sync_base_height() > 0 {
-            self.total_headers_synced = self.get_sync_base_height() + tip_height;
-            tracing::info!(
-                "Checkpoint sync initialization: storage_tip={}, sync_base={}, total_headers_synced={}, chain_state.headers.len()={}",
-                tip_height,
-                self.get_sync_base_height(),
-                self.total_headers_synced,
-                self.chain_state.read().await.headers.len()
-            );
-        } else {
-            self.total_headers_synced = tip_height;
-        }
+        self.total_headers_synced = tip_height;
 
         let elapsed = start_time.elapsed();
         tracing::info!(

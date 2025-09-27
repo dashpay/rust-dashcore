@@ -1159,25 +1159,36 @@ impl StorageManager for DiskStorageManager {
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
         let mut headers = Vec::new();
 
-        let start_segment = Self::get_segment_id(range.start);
-        let end_segment = Self::get_segment_id(range.end.saturating_sub(1));
+        // Convert blockchain height range to storage index range using sync_base_height
+        let sync_base_height = *self.sync_base_height.read().await;
+        let storage_start = if sync_base_height > 0 && range.start >= sync_base_height {
+            range.start - sync_base_height
+        } else {
+            range.start
+        };
+
+        let storage_end = if sync_base_height > 0 && range.end > sync_base_height {
+            range.end - sync_base_height
+        } else {
+            range.end
+        };
+
+        let start_segment = Self::get_segment_id(storage_start);
+        let end_segment = Self::get_segment_id(storage_end.saturating_sub(1));
 
         for segment_id in start_segment..=end_segment {
             self.ensure_segment_loaded(segment_id).await?;
 
             let segments = self.active_segments.read().await;
             if let Some(segment) = segments.get(&segment_id) {
-                let _segment_start_height = segment_id * HEADERS_PER_SEGMENT;
-                let _segment_end_height = _segment_start_height + segment.headers.len() as u32;
-
                 let start_idx = if segment_id == start_segment {
-                    Self::get_segment_offset(range.start)
+                    Self::get_segment_offset(storage_start)
                 } else {
                     0
                 };
 
                 let end_idx = if segment_id == end_segment {
-                    Self::get_segment_offset(range.end.saturating_sub(1)) + 1
+                    Self::get_segment_offset(storage_end.saturating_sub(1)) + 1
                 } else {
                     segment.headers.len()
                 };
@@ -1198,17 +1209,31 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        // TODO: This method currently expects storage-relative heights (0-based from sync_base_height).
-        // Consider refactoring to accept blockchain heights and handle conversion internally for better UX.
+        // Accept blockchain (absolute) height and convert to storage index using sync_base_height.
+        let sync_base_height = *self.sync_base_height.read().await;
 
-        // First check if this height is within our known range
-        let tip_height = self.cached_tip_height.read().await;
-        if let Some(tip) = *tip_height {
-            if height > tip {
+        // Convert absolute height to storage index (base-inclusive mapping)
+        let storage_index = if sync_base_height > 0 {
+            if height >= sync_base_height {
+                height - sync_base_height
+            } else {
+                // If caller passes a small value (likely a pre-conversion storage index), use it directly
+                height
+            }
+        } else {
+            height
+        };
+
+        // First check if this storage index is within our known range
+        let tip_index_opt = *self.cached_tip_height.read().await;
+        if let Some(tip_index) = tip_index_opt {
+            if storage_index > tip_index {
                 tracing::trace!(
-                    "Requested header at height {} is beyond tip height {}",
+                    "Requested header at storage index {} is beyond tip index {} (abs height {} base {})",
+                    storage_index,
+                    tip_index,
                     height,
-                    tip
+                    sync_base_height
                 );
                 return Ok(None);
             }
@@ -1217,8 +1242,8 @@ impl StorageManager for DiskStorageManager {
             return Ok(None);
         }
 
-        let segment_id = Self::get_segment_id(height);
-        let offset = Self::get_segment_offset(height);
+        let segment_id = Self::get_segment_id(storage_index);
+        let offset = Self::get_segment_offset(storage_index);
 
         self.ensure_segment_loaded(segment_id).await?;
 
@@ -1235,10 +1260,12 @@ impl StorageManager for DiskStorageManager {
 
         if header.is_none() {
             tracing::debug!(
-                "Header not found at height {} (segment: {}, offset: {})",
-                height,
+                "Header not found at storage index {} (segment: {}, offset: {}, abs height {}, base {})",
+                storage_index,
                 segment_id,
-                offset
+                offset,
+                height,
+                sync_base_height
             );
         }
 
@@ -1246,7 +1273,17 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
-        Ok(*self.cached_tip_height.read().await)
+        let tip_index_opt = *self.cached_tip_height.read().await;
+        if let Some(tip_index) = tip_index_opt {
+            let base = *self.sync_base_height.read().await;
+            if base > 0 {
+                Ok(Some(base + tip_index))
+            } else {
+                Ok(Some(tip_index))
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
@@ -1487,7 +1524,12 @@ impl StorageManager for DiskStorageManager {
 
         // Load all headers
         if let Some(tip_height) = self.get_tip_height().await? {
-            state.headers = self.load_headers(0..tip_height + 1).await?;
+            let range_start = if state.synced_from_checkpoint && state.sync_base_height > 0 {
+                state.sync_base_height
+            } else {
+                0
+            };
+            state.headers = self.load_headers(range_start..tip_height + 1).await?;
         }
 
         // Load all filter headers
@@ -2032,16 +2074,22 @@ mod tests {
         // Store headers using checkpoint sync method
         storage.store_headers_from_height(&headers, checkpoint_height).await?;
 
-        // Verify headers are stored at correct storage indices
-        // Header at blockchain height 1,100,000 should be at storage index 0
-        let header_at_0 = storage.get_header(0).await?;
-        assert!(header_at_0.is_some(), "Header at storage index 0 should exist");
-        assert_eq!(header_at_0.unwrap(), headers[0]);
+        // Set sync base height so storage interprets heights as blockchain heights
+        let mut base_state = ChainState::new();
+        base_state.sync_base_height = checkpoint_height;
+        base_state.synced_from_checkpoint = true;
+        storage.store_chain_state(&base_state).await?;
 
-        // Header at blockchain height 1,100,099 should be at storage index 99
-        let header_at_99 = storage.get_header(99).await?;
-        assert!(header_at_99.is_some(), "Header at storage index 99 should exist");
-        assert_eq!(header_at_99.unwrap(), headers[99]);
+        // Verify headers are stored at correct blockchain heights
+        // Header at blockchain height 1,100,000 should be retrievable by that height
+        let header_at_base = storage.get_header(checkpoint_height).await?;
+        assert!(header_at_base.is_some(), "Header at base blockchain height should exist");
+        assert_eq!(header_at_base.unwrap(), headers[0]);
+
+        // Header at blockchain height 1,100,099 should be retrievable by that height
+        let header_at_ending = storage.get_header(checkpoint_height + 99).await?;
+        assert!(header_at_ending.is_some(), "Header at ending blockchain height should exist");
+        assert_eq!(header_at_ending.unwrap(), headers[99]);
 
         // Test the reverse index (hash -> blockchain height)
         let hash_0 = headers[0].block_hash();
@@ -2081,11 +2129,11 @@ mod tests {
             "After index rebuild, hash should still map to blockchain height 1,100,000"
         );
 
-        // Verify headers can still be retrieved by storage index
-        let header_after_reload = storage2.get_header(0).await?;
+        // Verify header can still be retrieved by blockchain height after reload
+        let header_after_reload = storage2.get_header(checkpoint_height).await?;
         assert!(
             header_after_reload.is_some(),
-            "Header at storage index 0 should exist after reload"
+            "Header at base blockchain height should exist after reload"
         );
         assert_eq!(header_after_reload.unwrap(), headers[0]);
 

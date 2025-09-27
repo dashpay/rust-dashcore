@@ -109,27 +109,22 @@ pub trait StorageManager: Send + Sync {
     /// Load block headers in the given range.
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>>;
 
-    /// Get a specific header by height.
-    ///
-    /// TODO: Consider changing this API to accept blockchain heights instead of storage-relative heights.
-    /// Currently expects storage index (0-based from sync_base_height), but this creates confusion
-    /// since most blockchain operations work with absolute blockchain heights. A future refactor
-    /// could make this more intuitive by handling the height conversion internally.
+    /// Get a specific header by blockchain height.
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>>;
 
-    /// Get the current tip height.
+    /// Get the current tip blockchain height.
     async fn get_tip_height(&self) -> StorageResult<Option<u32>>;
 
     /// Store filter headers.
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()>;
 
-    /// Load filter headers in the given range.
+    /// Load filter headers in the given blockchain height range.
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>>;
 
-    /// Get a specific filter header by height.
+    /// Get a specific filter header by blockchain height.
     async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>>;
 
-    /// Get the current filter tip height.
+    /// Get the current filter tip blockchain height.
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>>;
 
     /// Store masternode state.
@@ -144,10 +139,10 @@ pub trait StorageManager: Send + Sync {
     /// Load chain state.
     async fn load_chain_state(&self) -> StorageResult<Option<ChainState>>;
 
-    /// Store a compact filter.
+    /// Store a compact filter at a blockchain height.
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()>;
 
-    /// Load a compact filter.
+    /// Load a compact filter by blockchain height.
     async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>>;
 
     /// Store metadata.
@@ -168,7 +163,7 @@ pub trait StorageManager: Send + Sync {
         hash: &dashcore::BlockHash,
     ) -> StorageResult<Option<u32>>;
 
-    /// Get multiple headers in a single batch operation.
+    /// Get multiple headers in a single batch operation using blockchain heights.
     /// Returns headers with their heights. More efficient than calling get_header multiple times.
     async fn get_headers_batch(
         &self,

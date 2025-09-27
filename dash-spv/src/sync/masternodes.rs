@@ -675,56 +675,43 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 validation_height
             );
 
-            // Convert blockchain heights to storage indices for storage.get_header()
-            // TODO: Consider changing storage API to accept blockchain heights instead of storage-relative heights
-            let storage_validation_height = if validation_height >= sync_base_height {
-                validation_height - sync_base_height
-            } else {
-                tracing::warn!("⚠️ Validation height {} is before sync base height {}, skipping quorum validation",
-                    validation_height, sync_base_height);
-                continue;
-            };
-
-            let storage_quorum_height = if quorum_height >= sync_base_height {
-                quorum_height - sync_base_height
-            } else {
-                tracing::warn!(
-                    "⚠️ Quorum height {} is before sync base height {}, skipping quorum validation",
-                    quorum_height,
-                    sync_base_height
-                );
-                continue;
-            };
+            // Use blockchain heights directly with storage API
+            let storage_validation_height = validation_height;
+            let storage_quorum_height = quorum_height;
 
             tracing::debug!("🔄 Height conversion: blockchain validation_height={} -> storage_height={}, blockchain quorum_height={} -> storage_height={}",
                 validation_height, storage_validation_height, quorum_height, storage_quorum_height);
 
-            // Get base block hash (storage_validation_height)
+            // Get base block hash (blockchain height)
             let base_header = match storage.get_header(storage_validation_height).await {
                 Ok(Some(header)) => header,
                 Ok(None) => {
-                    tracing::warn!("⚠️ Base header not found at storage height {} (blockchain height {}), skipping",
+                    tracing::warn!(
+                        "⚠️ Base header not found at storage height {} (blockchain height {}), skipping",
                         storage_validation_height, validation_height);
                     continue;
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to get base header at storage height {} (blockchain height {}): {}, skipping",
+                    tracing::warn!(
+                        "⚠️ Failed to get base header at storage height {} (blockchain height {}): {}, skipping",
                         storage_validation_height, validation_height, e);
                     continue;
                 }
             };
             let base_block_hash = base_header.block_hash();
 
-            // Get target block hash (storage_quorum_height)
+            // Get target block hash (blockchain height)
             let target_header = match storage.get_header(storage_quorum_height).await {
                 Ok(Some(header)) => header,
                 Ok(None) => {
-                    tracing::warn!("⚠️ Target header not found at storage height {} (blockchain height {}), skipping",
+                    tracing::warn!(
+                        "⚠️ Target header not found at storage height {} (blockchain height {}), skipping",
                         storage_quorum_height, quorum_height);
                     continue;
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to get target header at storage height {} (blockchain height {}): {}, skipping",
+                    tracing::warn!(
+                        "⚠️ Failed to get target header at storage height {} (blockchain height {}): {}, skipping",
                         storage_quorum_height, quorum_height, e);
                     continue;
                 }

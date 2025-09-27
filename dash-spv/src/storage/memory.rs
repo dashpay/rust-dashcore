@@ -111,26 +111,76 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        let start = range.start as usize;
-        let end = range.end.min(self.headers.len() as u32) as usize;
+        // Interpret range as blockchain (absolute) heights and map to storage indices
+        let (base, has_base) = match self.load_sync_state().await {
+            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
+                (state.sync_base_height, true)
+            }
+            _ => (0u32, false),
+        };
 
-        if start > self.headers.len() {
+        let start_idx = if has_base {
+            if range.start < base {
+                0usize
+            } else {
+                (range.start - base) as usize
+            }
+        } else {
+            range.start as usize
+        };
+
+        let end_abs = range.end.min(if has_base {
+            base + self.headers.len() as u32
+        } else {
+            self.headers.len() as u32
+        });
+        let end_idx = if has_base {
+            if end_abs <= base {
+                0usize
+            } else {
+                (end_abs - base) as usize
+            }
+        } else {
+            end_abs as usize
+        };
+
+        if start_idx > self.headers.len() {
             return Ok(Vec::new());
         }
-
-        Ok(self.headers[start..end].to_vec())
+        let end_idx = end_idx.min(self.headers.len());
+        Ok(self.headers[start_idx..end_idx].to_vec())
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        Ok(self.headers.get(height as usize).copied())
+        // Accept blockchain (absolute) height; convert to storage index using base (if any)
+        let base = match self.load_sync_state().await {
+            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
+                state.sync_base_height
+            }
+            _ => 0u32,
+        };
+
+        // If height >= base, treat as absolute; else accept it as a storage index for compatibility
+        let idx = if base > 0 && height >= base {
+            (height - base) as usize
+        } else {
+            height as usize
+        };
+
+        Ok(self.headers.get(idx).copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
         if self.headers.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(self.headers.len() as u32 - 1))
+            return Ok(None);
         }
+        let base = match self.load_sync_state().await {
+            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
+                state.sync_base_height
+            }
+            _ => 0u32,
+        };
+        Ok(Some(base + self.headers.len() as u32 - 1))
     }
 
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
@@ -349,11 +399,23 @@ impl StorageManager for MemoryStorageManager {
             return Ok(Vec::new());
         }
 
-        let mut results = Vec::with_capacity((end_height - start_height + 1) as usize);
+        // Map absolute heights to storage indices
+        let base = match self.load_sync_state().await {
+            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
+                state.sync_base_height
+            }
+            _ => 0u32,
+        };
 
-        for height in start_height..=end_height {
-            if let Some(header) = self.headers.get(height as usize) {
-                results.push((height, *header));
+        let mut results = Vec::with_capacity((end_height - start_height + 1) as usize);
+        for abs_h in start_height..=end_height {
+            let idx = if base > 0 && abs_h >= base {
+                (abs_h - base) as usize
+            } else {
+                abs_h as usize
+            };
+            if let Some(header) = self.headers.get(idx) {
+                results.push((abs_h, *header));
             }
         }
 
