@@ -412,7 +412,10 @@ impl StorageManager for MemoryStorageManager {
 
         let mut results = Vec::with_capacity((end_height - start_height + 1) as usize);
         for abs_h in start_height..=end_height {
-            let idx = if base > 0 && abs_h >= base {
+            let idx = if base > 0 {
+                if abs_h < base {
+                    continue;
+                }
                 (abs_h - base) as usize
             } else {
                 abs_h as usize
