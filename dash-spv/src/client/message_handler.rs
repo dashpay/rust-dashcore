@@ -7,6 +7,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{MempoolState, SpvEvent, SpvStats};
+use dashcore::bip158::{BlockFilter, BlockFilterWriter};
 use key_wallet_manager::wallet_interface::WalletInterface;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -238,10 +239,94 @@ impl<
                     block.txdata.len()
                 );
 
-                // Process new block (update state, check watched items)
-                if let Err(e) = self.process_new_block(block).await {
-                    tracing::error!("❌ Failed to process new block {}: {}", block_hash, e);
-                    return Err(e);
+                // 1) Ensure header processing and chain tip update for this block
+                //    Route the header through the sequential sync manager as a Headers message
+                let header = block.header;
+                let headers_msg = NetworkMessage::Headers(vec![header]);
+                if let Err(e) = self
+                    .sync_manager
+                    .handle_message(headers_msg, &mut *self.network, &mut *self.storage)
+                    .await
+                {
+                    tracing::error!(
+                        "❌ Failed to process header for block {} via sync manager: {}",
+                        block_hash,
+                        e
+                    );
+                    return Err(SpvError::Sync(e));
+                }
+
+                // 2) Locally construct a basic compact filter from block outputs only
+                //    and check relevance via the wallet through the block processor
+                let mut filter_bytes = Vec::new();
+                {
+                    let mut writer = BlockFilterWriter::new(&mut filter_bytes, &block);
+                    writer.add_output_scripts();
+                    if let Err(e) = writer.finish() {
+                        tracing::warn!(
+                            "Failed to finalize locally constructed compact filter for block {}: {}. Proceeding to process block.",
+                            block_hash,
+                            e
+                        );
+                    }
+                }
+
+                // Send the constructed filter to the block processor to check with wallet
+                let (cf_tx, cf_rx) = tokio::sync::oneshot::channel();
+                let cf_task = crate::client::BlockProcessingTask::ProcessCompactFilter {
+                    filter: BlockFilter::new(&filter_bytes),
+                    block_hash,
+                    response_tx: cf_tx,
+                };
+                if let Err(e) = self.block_processor_tx.send(cf_task) {
+                    tracing::warn!(
+                        "Failed to send local compact filter for block {} to processor: {}. Proceeding to process block.",
+                        block_hash,
+                        e
+                    );
+                    // Fall through to processing the block anyway
+                }
+
+                let should_process_block = match cf_rx.await {
+                    Ok(Ok(matches)) => {
+                        if matches {
+                            tracing::info!(
+                                "🎯 Locally constructed compact filter matched for block {}",
+                                block_hash
+                            );
+                            true
+                        } else {
+                            tracing::info!(
+                                "🚫 Local compact filter did not match for block {} - skipping block processing",
+                                block_hash
+                            );
+                            false
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            "Compact filter check errored for block {}: {}. Proceeding to process block.",
+                            block_hash,
+                            e
+                        );
+                        true
+                    }
+                    Err(_) => {
+                        // If the receiver is dropped or the worker didn't respond, proceed
+                        tracing::warn!(
+                            "Compact filter check channel dropped for block {}. Proceeding to process block.",
+                            block_hash
+                        );
+                        true
+                    }
+                };
+
+                if should_process_block {
+                    // 3) Process new block (update state, check wallet)
+                    if let Err(e) = self.process_new_block(block).await {
+                        tracing::error!("❌ Failed to process new block {}: {}", block_hash, e);
+                        return Err(e);
+                    }
                 }
             }
             NetworkMessage::Inv(inv) => {
@@ -434,31 +519,16 @@ impl<
             self.network.send_message(getdata).await.map_err(SpvError::Network)?;
         }
 
-        // Process new blocks immediately when detected
+        // For blocks announced via inventory during tip sync, request full blocks for privacy
         if !blocks_to_request.is_empty() {
             tracing::info!(
-                "🔄 Processing {} new block announcements to stay synchronized",
+                "📥 Requesting {} new blocks announced via inventory",
                 blocks_to_request.len()
             );
 
-            // Extract block hashes
-            let block_hashes: Vec<dashcore::BlockHash> = blocks_to_request
-                .iter()
-                .filter_map(|inv| {
-                    if let Inventory::Block(hash) = inv {
-                        Some(*hash)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            // Process each new block
-            for block_hash in block_hashes {
-                tracing::info!("📥 Requesting header for new block {}", block_hash);
-                if let Err(e) = self.process_new_block_hash(block_hash).await {
-                    tracing::error!("❌ Failed to process new block {}: {}", block_hash, e);
-                }
+            let getdata = NetworkMessage::GetData(blocks_to_request);
+            if let Err(e) = self.network.send_message(getdata).await {
+                tracing::error!("Failed to request announced blocks: {}", e);
             }
         }
 
