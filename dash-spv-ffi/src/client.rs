@@ -249,7 +249,6 @@ impl FFIDashSpvClient {
                     } => {
                         callbacks.call_balance_update(confirmed, unconfirmed);
                     }
-                    // FilterHeadersProgress removed; detailed progress reports cover this now.
                     dash_spv::types::SpvEvent::TransactionDetected {
                         ref txid,
                         confirmed,
