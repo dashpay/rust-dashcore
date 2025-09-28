@@ -241,7 +241,7 @@ impl<
 
                 // 1) Ensure header processing and chain tip update for this block
                 //    Route the header through the sequential sync manager as a Headers message
-                let headers_msg = NetworkMessage::Headers(vec![block.header.clone()]);
+                let headers_msg = NetworkMessage::Headers(vec![block.header]);
                 if let Err(e) = self
                     .sync_manager
                     .handle_message(headers_msg, &mut *self.network, &mut *self.storage)
