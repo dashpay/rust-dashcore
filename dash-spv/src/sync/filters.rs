@@ -1321,32 +1321,30 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         let end = count.map(|c| start + c - 1).unwrap_or(filter_tip_height).min(filter_tip_height); // Ensure we don't go beyond available filter headers
 
-        if start > end {
+        let base_height = self.sync_base_height;
+        let clamped_start = start.max(base_height);
+
+        if clamped_start > end {
             self.syncing_filters = false;
             return Ok(SyncProgress::default());
         }
 
         tracing::info!(
             "🔄 Starting compact filter sync from height {} to {} ({} blocks)",
-            start,
+            clamped_start,
             end,
-            end - start + 1
+            end - clamped_start + 1
         );
 
         // Request filters in batches
         let batch_size = FILTER_REQUEST_BATCH_SIZE;
-        let mut current_height = start;
+        let mut current_height = clamped_start;
         let mut filters_downloaded = 0;
 
         while current_height <= end {
             let batch_end = (current_height + batch_size - 1).min(end);
 
             tracing::debug!("Requesting filters for heights {} to {}", current_height, batch_end);
-
-            // Get stop hash for this batch
-            if self.header_abs_to_storage_index(batch_end).is_none() {
-                return Err(SyncError::Storage("batch_end below checkpoint base".to_string()));
-            }
 
             let stop_hash = storage
                 .get_header(batch_end)
@@ -1454,7 +1452,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             filter_header_tip_height
         };
 
-        if start > end {
+        let base_height = self.sync_base_height;
+        let clamped_start = start.max(base_height);
+
+        if clamped_start > end {
             tracing::warn!(
                 "⚠️ Filter sync requested from height {} but end height is {} - no filters to sync",
                 start,
@@ -1465,27 +1466,20 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         tracing::info!(
             "🔄 Building filter request queue from height {} to {} ({} blocks, filter headers available up to {})",
-            start,
+            clamped_start,
             end,
-            end - start + 1,
+            end - clamped_start + 1,
             filter_header_tip_height
         );
 
         // Build requests in batches
         let batch_size = FILTER_REQUEST_BATCH_SIZE;
-        let mut current_height = start;
+        let mut current_height = clamped_start;
 
         while current_height <= end {
             let batch_end = (current_height + batch_size - 1).min(end);
 
             // Ensure the batch end height is within the stored header range
-            if self.header_abs_to_storage_index(batch_end).is_none() {
-                return Err(SyncError::Validation(format!(
-                    "batch_end {} is at or before checkpoint base {}",
-                    batch_end, self.sync_base_height
-                )));
-            }
-
             let stop_hash = storage
                 .get_header(batch_end)
                 .await
@@ -1807,10 +1801,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Calculate stop hash for retry; ensure height is within the stored window
         if self.header_abs_to_storage_index(end).is_none() {
-            return Err(SyncError::Validation(format!(
-                "retry end {} is at or before checkpoint base {}",
-                end, self.sync_base_height
-            )));
+            tracing::debug!(
+                "Skipping retry for range {}-{} because end is below checkpoint base {}",
+                start,
+                end,
+                self.sync_base_height
+            );
+            return Ok(());
         }
 
         match storage.get_header(end).await {
@@ -3246,10 +3243,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
             // Ensure retry end height is within the stored header window
             if self.header_abs_to_storage_index(end).is_none() {
-                return Err(SyncError::Validation(format!(
-                    "retry range end {} is at or before checkpoint base {}",
-                    end, self.sync_base_height
-                )));
+                tracing::debug!(
+                    "Skipping retry for range {}-{} because end is below checkpoint base {}",
+                    start,
+                    end,
+                    self.sync_base_height
+                );
+                continue;
             }
 
             match storage.get_header(end).await {
@@ -3287,10 +3287,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             let batch_end = (current_start + max_batch_size - 1).min(end);
 
                             if self.header_abs_to_storage_index(batch_end).is_none() {
-                                return Err(SyncError::Validation(format!(
-                                    "retry batch_end {} is at or before checkpoint base {}",
-                                    batch_end, self.sync_base_height
-                                )));
+                                tracing::debug!(
+                                    "Skipping retry batch {}-{} because batch end is below checkpoint base {}",
+                                    current_start,
+                                    batch_end,
+                                    self.sync_base_height
+                                );
+                                current_start = batch_end + 1;
+                                continue;
                             }
 
                             match storage.get_header(batch_end).await {
