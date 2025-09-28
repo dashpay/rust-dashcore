@@ -259,7 +259,7 @@ impl<
                 let effective_height = self.header_sync.get_chain_height();
                 let sync_base_height = self.header_sync.get_sync_base_height();
 
-                // Also get the actual storage tip height to verify
+                // Also get the actual tip height to verify (blockchain height)
                 let storage_tip = storage
                     .get_tip_height()
                     .await
@@ -282,7 +282,7 @@ impl<
 
                 // Use the minimum of effective height and what's actually in storage
                 let _safe_height = if let Some(tip) = storage_tip {
-                    let storage_based_height = sync_base_height + tip;
+                    let storage_based_height = tip;
                     if storage_based_height < effective_height {
                         tracing::warn!(
                             "Chain state height {} exceeds storage height {}, using storage height",
@@ -1239,9 +1239,7 @@ impl<
         );
 
         // Process QRInfo with full block height feeding and comprehensive processing
-        self.masternode_sync
-            .handle_qrinfo_message(qr_info.clone(), storage, network, sync_base_height)
-            .await;
+        self.masternode_sync.handle_qrinfo_message(qr_info.clone(), storage, network).await;
 
         // Check if QRInfo processing completed successfully
         if let Some(error) = self.masternode_sync.last_error() {
@@ -1350,6 +1348,32 @@ impl<
         let mut wallet = self.wallet.write().await;
 
         // Check filter against wallet if available
+        // First, verify filter data matches expected filter header chain
+        let height = storage
+            .get_header_height_by_hash(&cfilter.block_hash)
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter block height: {}", e)))?
+            .ok_or_else(|| {
+                SyncError::Validation(format!(
+                    "Block height not found for cfilter block {}",
+                    cfilter.block_hash
+                ))
+            })?;
+
+        let header_ok = self
+            .filter_sync
+            .verify_cfilter_against_headers(&cfilter.filter, height, &*storage)
+            .await?;
+
+        if !header_ok {
+            tracing::warn!(
+                "Rejecting CFilter for block {} at height {} due to header mismatch",
+                cfilter.block_hash,
+                height
+            );
+            return Ok(());
+        }
+
         let matches = self
             .filter_sync
             .check_filter_for_matches(
@@ -1950,6 +1974,20 @@ impl<
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get filter block height: {}", e)))?
             .ok_or(SyncError::InvalidState("Filter block height not found".to_string()))?;
+
+        // Verify against expected header chain before storing
+        let header_ok = self
+            .filter_sync
+            .verify_cfilter_against_headers(&cfilter.filter, height, &*storage)
+            .await?;
+        if !header_ok {
+            tracing::warn!(
+                "Rejecting post-sync CFilter for block {} at height {} due to header mismatch",
+                cfilter.block_hash,
+                height
+            );
+            return Ok(());
+        }
 
         // Store the filter
         storage

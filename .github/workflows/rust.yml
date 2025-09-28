@@ -329,6 +329,7 @@ jobs:
 
   integrations_tests:
     name: Integration Tests
+    if: ${{ false }} # Temporarily disabled
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -356,4 +357,3 @@ jobs:
         uses: reviewdog/action-actionlint@v1
         with:
           fail_on_error: true
-

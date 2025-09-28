@@ -48,13 +48,13 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
         // For checkpoint sync: height = checkpoint_height + storage_count
         let storage = self.storage.lock().await;
         if let Ok(Some(storage_tip)) = storage.get_tip_height().await {
-            let blockchain_height = state.sync_base_height + storage_tip;
+            let blockchain_height = storage_tip;
             if with_logging {
                 tracing::debug!(
-                    "Status display: storage_tip={}, sync_base={}, blockchain_height={}",
-                    storage_tip,
+                    "Status display: reported tip height={}, sync_base={}, raw_storage_tip={}",
+                    blockchain_height,
                     state.sync_base_height,
-                    blockchain_height
+                    storage_tip
                 );
             }
             blockchain_height
