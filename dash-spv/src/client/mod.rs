@@ -195,8 +195,8 @@ impl<
             SyncPhase::DownloadingBlocks {
                 pending_blocks,
                 ..
-            } => SyncStage::StoringHeaders {
-                batch_size: pending_blocks.len(),
+            } => SyncStage::DownloadingBlocks {
+                pending: pending_blocks.len(),
             },
             SyncPhase::FullySynced {
                 ..

@@ -1,6 +1,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -15,6 +16,8 @@ enum NetworkOpt {
     Testnet,
     Regtest,
 }
+
+static SYNC_COMPLETED: AtomicBool = AtomicBool::new(false);
 
 fn ffi_string_to_rust(s: *const c_char) -> String {
     if s.is_null() {
@@ -44,6 +47,7 @@ extern "C" fn on_completion(success: bool, msg: *const c_char, _ud: *mut c_void)
     let m = ffi_string_to_rust(msg);
     if success {
         println!("Completed: {}", m);
+        SYNC_COMPLETED.store(true, Ordering::SeqCst);
     } else {
         eprintln!("Failed: {}", m);
     }
@@ -188,6 +192,9 @@ fn main() {
             std::process::exit(1);
         }
 
+        // Ensure completion flag is reset before starting sync
+        SYNC_COMPLETED.store(false, Ordering::SeqCst);
+
         // Run sync on this thread; detailed progress will print via callback
         let rc = dash_spv_ffi_client_sync_to_tip_with_progress(
             client,
@@ -206,11 +213,14 @@ fn main() {
             let prog_ptr = dash_spv_ffi_client_get_sync_progress(client);
             if !prog_ptr.is_null() {
                 let prog = &*prog_ptr;
-                let headers_done = prog.header_height >= prog.filter_header_height;
-                let filters_complete = prog.filter_header_height >= prog.header_height
-                    || !prog.filter_sync_available
-                    || disable_filter_sync;
-                if headers_done && filters_complete {
+                let headers_done = SYNC_COMPLETED.load(Ordering::SeqCst);
+                let filters_complete = if disable_filter_sync || !prog.filter_sync_available {
+                    false
+                } else {
+                    prog.filter_header_height >= prog.header_height
+                        && prog.last_synced_filter_height >= prog.filter_header_height
+                };
+                if headers_done && (filters_complete || disable_filter_sync) {
                     dash_spv_ffi_sync_progress_destroy(prog_ptr);
                     break;
                 }

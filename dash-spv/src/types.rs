@@ -116,6 +116,9 @@ pub enum SyncStage {
         completed: u32,
         total: u32,
     },
+    DownloadingBlocks {
+        pending: usize,
+    },
     Complete,
     Failed(String),
 }

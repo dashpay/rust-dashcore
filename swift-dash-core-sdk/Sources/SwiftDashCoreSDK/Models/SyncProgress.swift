@@ -28,9 +28,6 @@ public struct SyncProgress: Sendable, Equatable {
         filterHeaderHeight: UInt32 = 0,
         masternodeHeight: UInt32 = 0,
         peerCount: UInt32 = 0,
-        headersSynced: Bool = false,
-        filterHeadersSynced: Bool = false,
-        masternodesSynced: Bool = false,
         filtersDownloaded: UInt32 = 0,
         lastSyncedFilterHeight: UInt32 = 0
     ) {

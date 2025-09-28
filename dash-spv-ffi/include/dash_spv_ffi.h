@@ -30,8 +30,9 @@ typedef enum FFISyncStage {
   Storing = 4,
   DownloadingFilterHeaders = 5,
   DownloadingFilters = 6,
-  Complete = 7,
-  Failed = 8,
+  DownloadingBlocks = 7,
+  Complete = 8,
+  Failed = 9,
 } FFISyncStage;
 
 typedef enum DashSpvValidationMode {

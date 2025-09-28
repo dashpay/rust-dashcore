@@ -109,6 +109,7 @@ public enum SyncStage: Equatable, Sendable {
     case downloading
     case downloadingFilterHeaders
     case downloadingFilters
+    case downloadingBlocks
     case validating
     case storing
     case complete
@@ -131,9 +132,11 @@ public enum SyncStage: Equatable, Sendable {
             self = .downloadingFilterHeaders
         case 6:  // Downloading filters
             self = .downloadingFilters
-        case 7:  // Complete
+        case 7:  // Downloading blocks
+            self = .downloadingBlocks
+        case 8:  // Complete
             self = .complete
-        case 8:  // Failed
+        case 9:  // Failed
             self = .failed
         default:
             self = .failed
@@ -152,6 +155,8 @@ public enum SyncStage: Equatable, Sendable {
             return "Downloading filter headers"
         case .downloadingFilters:
             return "Downloading filters"
+        case .downloadingBlocks:
+            return "Downloading blocks"
         case .validating:
             return "Validating headers"
         case .storing:
@@ -184,6 +189,8 @@ public enum SyncStage: Equatable, Sendable {
             return "🧾"
         case .downloadingFilters:
             return "🪄"
+        case .downloadingBlocks:
+            return "📦"
         case .validating:
             return "✅"
         case .storing:
