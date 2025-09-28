@@ -752,23 +752,11 @@ impl<
         let _phase_progress = self.current_phase.progress();
 
         SyncProgress {
-            headers_synced: matches!(
-                self.current_phase,
-                SyncPhase::DownloadingHeaders { .. } | SyncPhase::FullySynced { .. }
-            ),
-            header_height: 0, // PLACEHOLDER: Caller MUST query storage.get_tip_height()
-            filter_headers_synced: matches!(
-                self.current_phase,
-                SyncPhase::DownloadingCFHeaders { .. } | SyncPhase::FullySynced { .. }
-            ),
+            header_height: 0,        // PLACEHOLDER: Caller MUST query storage.get_tip_height()
             filter_header_height: 0, // PLACEHOLDER: Caller MUST query storage.get_filter_tip_height()
-            masternodes_synced: matches!(
-                self.current_phase,
-                SyncPhase::DownloadingMnList { .. } | SyncPhase::FullySynced { .. }
-            ),
-            masternode_height: 0, // PLACEHOLDER: Caller MUST query masternode state from storage
-            peer_count: 0,        // PLACEHOLDER: Caller MUST query network.peer_count()
-            filters_downloaded: 0, // PLACEHOLDER: Caller MUST calculate from storage
+            masternode_height: 0,    // PLACEHOLDER: Caller MUST query masternode state from storage
+            peer_count: 0,           // PLACEHOLDER: Caller MUST query network.peer_count()
+            filters_downloaded: 0,   // PLACEHOLDER: Caller MUST calculate from storage
             last_synced_filter_height: None, // PLACEHOLDER: Caller MUST query from storage
             sync_start: std::time::SystemTime::now(),
             last_update: std::time::SystemTime::now(),

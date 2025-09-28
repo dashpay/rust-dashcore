@@ -37,15 +37,6 @@ pub struct SyncProgress {
     /// Total number of peers connected.
     pub peer_count: u32,
 
-    /// Whether header sync is complete.
-    pub headers_synced: bool,
-
-    /// Whether filter headers sync is complete.
-    pub filter_headers_synced: bool,
-
-    /// Whether masternode list is synced.
-    pub masternodes_synced: bool,
-
     /// Whether filter sync is available (peers support it).
     pub filter_sync_available: bool,
 
@@ -70,9 +61,6 @@ impl Default for SyncProgress {
             filter_header_height: 0,
             masternode_height: 0,
             peer_count: 0,
-            headers_synced: false,
-            filter_headers_synced: false,
-            masternodes_synced: false,
             filter_sync_available: false,
             filters_downloaded: 0,
             last_synced_filter_height: None,
@@ -85,8 +73,8 @@ impl Default for SyncProgress {
 /// Detailed sync progress with performance metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetailedSyncProgress {
-    /// Current state
-    pub current_height: u32,
+    /// Snapshot of the core sync metrics for quick consumption.
+    pub sync_progress: SyncProgress,
     pub peer_best_height: u32,
     pub percentage: f64,
 
@@ -97,7 +85,6 @@ pub struct DetailedSyncProgress {
 
     /// Detailed status
     pub sync_stage: SyncStage,
-    pub connected_peers: usize,
     pub total_headers_processed: u64,
     pub total_bytes_downloaded: u64,
 
@@ -121,6 +108,17 @@ pub enum SyncStage {
     StoringHeaders {
         batch_size: usize,
     },
+    DownloadingFilterHeaders {
+        current: u32,
+        target: u32,
+    },
+    DownloadingFilters {
+        completed: u32,
+        total: u32,
+    },
+    DownloadingBlocks {
+        pending: usize,
+    },
     Complete,
     Failed(String),
 }
@@ -130,7 +128,8 @@ impl DetailedSyncProgress {
         if self.peer_best_height == 0 {
             return 0.0;
         }
-        ((self.current_height as f64 / self.peer_best_height as f64) * 100.0).min(100.0)
+        let current_height = self.sync_progress.header_height;
+        ((current_height as f64 / self.peer_best_height as f64) * 100.0).min(100.0)
     }
 
     pub fn calculate_eta(&self) -> Option<Duration> {
@@ -138,7 +137,8 @@ impl DetailedSyncProgress {
             return None;
         }
 
-        let remaining = self.peer_best_height.saturating_sub(self.current_height);
+        let current_height = self.sync_progress.header_height;
+        let remaining = self.peer_best_height.saturating_sub(current_height);
         if remaining == 0 {
             return Some(Duration::from_secs(0));
         }
@@ -785,23 +785,6 @@ pub enum SpvEvent {
         /// Target block height.
         target_height: u32,
         /// Progress percentage.
-        percentage: f64,
-    },
-
-    /// Filter headers progress update.
-    ///
-    /// Carries absolute blockchain heights for both the current filter header tip
-    /// and the current block header tip, along with a convenience percentage
-    /// (filter_header_height / header_height * 100), clamped to [0, 100].
-    ///
-    /// Consumers who sync from a checkpoint may prefer to recompute a
-    /// checkpoint-relative percentage using their base height.
-    FilterHeadersProgress {
-        /// Current absolute height of synchronized filter headers.
-        filter_header_height: u32,
-        /// Current absolute height of synchronized block headers.
-        header_height: u32,
-        /// Convenience percentage in [0, 100].
         percentage: f64,
     },
 

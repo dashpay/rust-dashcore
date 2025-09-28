@@ -319,7 +319,6 @@ async fn test_header_sync_with_client_integration() {
 
     let stats = stats.unwrap();
     assert_eq!(stats.header_height, 0);
-    assert!(!stats.headers_synced);
 
     info!("Header sync client integration test completed");
 }

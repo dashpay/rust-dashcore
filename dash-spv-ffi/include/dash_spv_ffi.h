@@ -28,8 +28,11 @@ typedef enum FFISyncStage {
   Downloading = 2,
   Validating = 3,
   Storing = 4,
-  Complete = 5,
-  Failed = 6,
+  DownloadingFilterHeaders = 5,
+  DownloadingFilters = 6,
+  DownloadingBlocks = 7,
+  Complete = 8,
+  Failed = 9,
 } FFISyncStage;
 
 typedef enum DashSpvValidationMode {
@@ -70,31 +73,27 @@ typedef struct FFIString {
   uintptr_t length;
 } FFIString;
 
+typedef struct FFISyncProgress {
+  uint32_t header_height;
+  uint32_t filter_header_height;
+  uint32_t masternode_height;
+  uint32_t peer_count;
+  bool filter_sync_available;
+  uint32_t filters_downloaded;
+  uint32_t last_synced_filter_height;
+} FFISyncProgress;
+
 typedef struct FFIDetailedSyncProgress {
-  uint32_t current_height;
   uint32_t total_height;
   double percentage;
   double headers_per_second;
   int64_t estimated_seconds_remaining;
   enum FFISyncStage stage;
   struct FFIString stage_message;
-  uint32_t connected_peers;
+  struct FFISyncProgress overview;
   uint64_t total_headers;
   int64_t sync_start_timestamp;
 } FFIDetailedSyncProgress;
-
-typedef struct FFISyncProgress {
-  uint32_t header_height;
-  uint32_t filter_header_height;
-  uint32_t masternode_height;
-  uint32_t peer_count;
-  bool headers_synced;
-  bool filter_headers_synced;
-  bool masternodes_synced;
-  bool filter_sync_available;
-  uint32_t filters_downloaded;
-  uint32_t last_synced_filter_height;
-} FFISyncProgress;
 
 typedef struct FFISpvStats {
   uint32_t connected_peers;
@@ -150,11 +149,6 @@ typedef void (*WalletTransactionCallback)(const char *wallet_id,
                                           bool is_ours,
                                           void *user_data);
 
-typedef void (*FilterHeadersProgressCallback)(uint32_t filter_height,
-                                              uint32_t header_height,
-                                              double percentage,
-                                              void *user_data);
-
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
   TransactionCallback on_transaction;
@@ -164,7 +158,6 @@ typedef struct FFIEventCallbacks {
   MempoolRemovedCallback on_mempool_transaction_removed;
   CompactFilterMatchedCallback on_compact_filter_matched;
   WalletTransactionCallback on_wallet_transaction;
-  FilterHeadersProgressCallback on_filter_headers_progress;
   void *user_data;
 } FFIEventCallbacks;
 

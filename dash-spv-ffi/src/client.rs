@@ -249,17 +249,6 @@ impl FFIDashSpvClient {
                     } => {
                         callbacks.call_balance_update(confirmed, unconfirmed);
                     }
-                    dash_spv::types::SpvEvent::FilterHeadersProgress {
-                        filter_header_height,
-                        header_height,
-                        percentage,
-                    } => {
-                        callbacks.call_filter_headers_progress(
-                            filter_header_height,
-                            header_height,
-                            percentage,
-                        );
-                    }
                     dash_spv::types::SpvEvent::TransactionDetected {
                         ref txid,
                         confirmed,
@@ -804,7 +793,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                             match maybe_progress {
                                 Some(progress) => {
                                     // Handle callback in a thread-safe way
-                                    let should_stop = matches!(progress.sync_stage, SyncStage::Complete);
+                                    let should_stop = matches!(
+                                        progress.sync_stage,
+                                        SyncStage::Complete | SyncStage::Failed(_)
+                                    );
 
                                     // Create FFI progress
                                     let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));
@@ -945,7 +937,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     FFIErrorCode::Success as i32
 }
 
-// Note: filter headers progress is forwarded via FFIEventCallbacks.on_filter_headers_progress
+// Filter header progress updates are included in the detailed sync progress callback.
 
 /// Cancels the sync operation.
 ///
@@ -1278,10 +1270,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     tracing::debug!("   Block callback: {}", callbacks.on_block.is_some());
     tracing::debug!("   Transaction callback: {}", callbacks.on_transaction.is_some());
     tracing::debug!("   Balance update callback: {}", callbacks.on_balance_update.is_some());
-    tracing::debug!(
-        "   Filter headers progress callback: {}",
-        callbacks.on_filter_headers_progress.is_some()
-    );
 
     let mut event_callbacks = client.event_callbacks.lock().unwrap();
     *event_callbacks = callbacks;

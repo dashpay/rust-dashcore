@@ -99,9 +99,6 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
             filter_header_height,
             masternode_height: state.last_masternode_diff_height.unwrap_or(0),
             peer_count: 1,                // TODO: Get from network manager
-            headers_synced: false,        // TODO: Implement
-            filter_headers_synced: false, // TODO: Implement
-            masternodes_synced: false,    // TODO: Implement
             filter_sync_available: false, // TODO: Get from network manager
             filters_downloaded: filters_received,
             last_synced_filter_height,

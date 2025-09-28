@@ -2828,6 +2828,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     ) {
         // Look up height for the block hash
         if let Ok(Some(height)) = storage.get_header_height_by_hash(block_hash).await {
+            // Increment the received counter so high-level progress reflects the update
+            Self::update_filter_received(stats).await;
+
             // Get the shared filter heights arc from stats
             let stats_lock = stats.read().await;
             let received_filter_heights = stats_lock.received_filter_heights.clone();

@@ -28,8 +28,11 @@ typedef enum FFISyncStage {
   Downloading = 2,
   Validating = 3,
   Storing = 4,
-  Complete = 5,
-  Failed = 6,
+  DownloadingFilterHeaders = 5,
+  DownloadingFilters = 6,
+  DownloadingBlocks = 7,
+  Complete = 8,
+  Failed = 9,
 } FFISyncStage;
 
 typedef enum DashSpvValidationMode {
@@ -61,6 +64,7 @@ typedef struct FFIArray {
 
 typedef struct FFIClientConfig {
   void *inner;
+  uint32_t worker_threads;
 
 } FFIClientConfig;
 
@@ -69,31 +73,27 @@ typedef struct FFIString {
   uintptr_t length;
 } FFIString;
 
+typedef struct FFISyncProgress {
+  uint32_t header_height;
+  uint32_t filter_header_height;
+  uint32_t masternode_height;
+  uint32_t peer_count;
+  bool filter_sync_available;
+  uint32_t filters_downloaded;
+  uint32_t last_synced_filter_height;
+} FFISyncProgress;
+
 typedef struct FFIDetailedSyncProgress {
-  uint32_t current_height;
   uint32_t total_height;
   double percentage;
   double headers_per_second;
   int64_t estimated_seconds_remaining;
   enum FFISyncStage stage;
   struct FFIString stage_message;
-  uint32_t connected_peers;
+  struct FFISyncProgress overview;
   uint64_t total_headers;
   int64_t sync_start_timestamp;
 } FFIDetailedSyncProgress;
-
-typedef struct FFISyncProgress {
-  uint32_t header_height;
-  uint32_t filter_header_height;
-  uint32_t masternode_height;
-  uint32_t peer_count;
-  bool headers_synced;
-  bool filter_headers_synced;
-  bool masternodes_synced;
-  bool filter_sync_available;
-  uint32_t filters_downloaded;
-  uint32_t last_synced_filter_height;
-} FFISyncProgress;
 
 typedef struct FFISpvStats {
   uint32_t connected_peers;
@@ -149,11 +149,6 @@ typedef void (*WalletTransactionCallback)(const char *wallet_id,
                                           bool is_ours,
                                           void *user_data);
 
-typedef void (*FilterHeadersProgressCallback)(uint32_t filter_height,
-                                              uint32_t header_height,
-                                              double percentage,
-                                              void *user_data);
-
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
   TransactionCallback on_transaction;
@@ -163,7 +158,6 @@ typedef struct FFIEventCallbacks {
   MempoolRemovedCallback on_mempool_transaction_removed;
   CompactFilterMatchedCallback on_compact_filter_matched;
   WalletTransactionCallback on_wallet_transaction;
-  FilterHeadersProgressCallback on_filter_headers_progress;
   void *user_data;
 } FFIEventCallbacks;
 
@@ -282,6 +276,14 @@ struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
  struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIClientConfig *config) ;
 
 /**
+ * Drain pending events and invoke configured callbacks (non-blocking).
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ */
+ int32_t dash_spv_ffi_client_drain_events(struct FFIDashSpvClient *client) ;
+
+/**
  * Update the running client's configuration.
  *
  * # Safety
@@ -392,10 +394,8 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
 /**
  * Cancels the sync operation.
  *
- * **Note**: This function currently only stops the SPV client and clears sync callbacks,
- * but does not fully abort the ongoing sync process. The sync operation may continue
- * running in the background until it completes naturally. Full sync cancellation with
- * proper task abortion is not yet implemented.
+ * This stops the SPV client, clears callbacks, and joins active threads so the sync
+ * operation halts immediately.
  *
  * # Safety
  * The client pointer must be valid and non-null.
@@ -703,6 +703,14 @@ int32_t dash_spv_ffi_config_set_masternode_sync_enabled(struct FFIClientConfig *
 
 void dash_spv_ffi_config_destroy(struct FFIClientConfig *config)
 ;
+
+/**
+ * Sets the number of Tokio worker threads for the FFI runtime (0 = auto)
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig
+ */
+ int32_t dash_spv_ffi_config_set_worker_threads(struct FFIClientConfig *config, uint32_t threads) ;
 
 /**
  * Enables or disables mempool tracking

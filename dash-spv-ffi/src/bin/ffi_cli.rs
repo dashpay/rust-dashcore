@@ -1,6 +1,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -16,15 +17,13 @@ enum NetworkOpt {
     Regtest,
 }
 
+static SYNC_COMPLETED: AtomicBool = AtomicBool::new(false);
+
 fn ffi_string_to_rust(s: *const c_char) -> String {
     if s.is_null() {
         return String::new();
     }
     unsafe { CStr::from_ptr(s) }.to_str().unwrap_or_default().to_owned()
-}
-
-extern "C" fn on_filter_headers_progress(filter: u32, headers: u32, pct: f64, _ud: *mut c_void) {
-    println!("filters: {} headers: {} progress: {:.2}%", filter, headers, pct * 100.0);
 }
 
 extern "C" fn on_detailed_progress(progress: *const FFIDetailedSyncProgress, _ud: *mut c_void) {
@@ -35,10 +34,10 @@ extern "C" fn on_detailed_progress(progress: *const FFIDetailedSyncProgress, _ud
         let p = &*progress;
         println!(
             "height {}/{} {:.2}% peers {} hps {:.1}",
-            p.current_height,
+            p.overview.header_height,
             p.total_height,
             p.percentage * 100.0,
-            p.connected_peers,
+            p.overview.peer_count,
             p.headers_per_second
         );
     }
@@ -48,6 +47,7 @@ extern "C" fn on_completion(success: bool, msg: *const c_char, _ud: *mut c_void)
     let m = ffi_string_to_rust(msg);
     if success {
         println!("Completed: {}", m);
+        SYNC_COMPLETED.store(true, Ordering::SeqCst);
     } else {
         eprintln!("Failed: {}", m);
     }
@@ -171,7 +171,7 @@ fn main() {
             std::process::exit(1);
         }
 
-        // Set minimal event callbacks (progress via filter headers)
+        // Set minimal event callbacks
         let callbacks = FFIEventCallbacks {
             on_block: None,
             on_transaction: None,
@@ -181,7 +181,6 @@ fn main() {
             on_mempool_transaction_removed: None,
             on_compact_filter_matched: None,
             on_wallet_transaction: None,
-            on_filter_headers_progress: Some(on_filter_headers_progress),
             user_data: ptr::null_mut(),
         };
         let _ = dash_spv_ffi_client_set_event_callbacks(client, callbacks);
@@ -192,6 +191,9 @@ fn main() {
             eprintln!("Start failed: {}", ffi_string_to_rust(dash_spv_ffi_get_last_error()));
             std::process::exit(1);
         }
+
+        // Ensure completion flag is reset before starting sync
+        SYNC_COMPLETED.store(false, Ordering::SeqCst);
 
         // Run sync on this thread; detailed progress will print via callback
         let rc = dash_spv_ffi_client_sync_to_tip_with_progress(
@@ -211,10 +213,14 @@ fn main() {
             let prog_ptr = dash_spv_ffi_client_get_sync_progress(client);
             if !prog_ptr.is_null() {
                 let prog = &*prog_ptr;
-                let filters_complete = prog.filter_headers_synced
-                    || !prog.filter_sync_available
-                    || disable_filter_sync;
-                if prog.headers_synced && filters_complete {
+                let headers_done = SYNC_COMPLETED.load(Ordering::SeqCst);
+                let filters_complete = if disable_filter_sync || !prog.filter_sync_available {
+                    false
+                } else {
+                    prog.filter_header_height >= prog.header_height
+                        && prog.last_synced_filter_height >= prog.filter_header_height
+                };
+                if headers_done && (filters_complete || disable_filter_sync) {
                     dash_spv_ffi_sync_progress_destroy(prog_ptr);
                     break;
                 }
