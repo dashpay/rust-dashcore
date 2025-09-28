@@ -152,15 +152,19 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-    let sync_base_height = *self.sync_base_height.read().await;
-    if sync_base_height > 0 && height < sync_base_height {
-        return Ok(None);
-    }
-    // Convert absolute height to storage index (base-inclusive mapping)
-    let idx = (height.saturating_sub(sync_base_height)) as usize;
-    Ok(self.headers.get(idx).cloned())
-}
+        let sync_base_height = match self.load_sync_state().await {
+            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
+                state.sync_base_height
+            }
+            _ => 0u32,
+        };
+        if sync_base_height > 0 && height < sync_base_height {
+            return Ok(None);
+        }
+
+        // Convert absolute height to storage index (base-inclusive mapping)
+        let idx = height.saturating_sub(sync_base_height) as usize;
+        Ok(self.headers.get(idx).copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
