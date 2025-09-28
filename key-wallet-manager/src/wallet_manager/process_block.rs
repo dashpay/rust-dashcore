@@ -1,5 +1,8 @@
 use crate::wallet_interface::WalletInterface;
 use crate::{Network, WalletManager};
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt::Write as _;
 use async_trait::async_trait;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
@@ -135,5 +138,34 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         // Return None if no wallets with known birth heights were found for this network
         earliest
+    }
+
+    async fn describe(&self, network: Network) -> String {
+        let wallet_count = self.wallet_infos.len();
+        if wallet_count == 0 {
+            return format!("WalletManager: 0 wallets (network {})", network);
+        }
+
+        let mut details = Vec::with_capacity(wallet_count);
+        for (wallet_id, info) in &self.wallet_infos {
+            let name = info.name().unwrap_or("unnamed");
+
+            let mut wallet_id_hex = String::with_capacity(wallet_id.len() * 2);
+            for byte in wallet_id {
+                let _ = write!(&mut wallet_id_hex, "{:02x}", byte);
+            }
+
+            let script_count = info.monitored_addresses(network).len();
+            let summary = format!("{} scripts", script_count);
+
+            details.push(format!("{} ({}): {}", name, wallet_id_hex, summary));
+        }
+
+        format!(
+            "WalletManager: {} wallet(s) on {}\n{}",
+            wallet_count,
+            network,
+            details.join("\n")
+        )
     }
 }
