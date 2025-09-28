@@ -476,7 +476,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         qr_info: QRInfo,
         storage: &mut S,
         network: &mut dyn NetworkManager,
-        sync_base_height: u32,
     ) {
         self.log_qrinfo_details(&qr_info, "📋 Masternode sync processing QRInfo (unified path)");
 
@@ -509,9 +508,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Feed QRInfo to engine and get additional MnListDiffs needed for quorum validation
         // This is the critical step that dash-evo-tool performs after initial QRInfo processing
-        if let Err(e) = self
-            .feed_qrinfo_and_get_additional_diffs(&qr_info, storage, network, sync_base_height)
-            .await
+        if let Err(e) = self.feed_qrinfo_and_get_additional_diffs(&qr_info, storage, network).await
         {
             tracing::error!("❌ Failed to process QRInfo follow-up diffs: {}", e);
             self.error = Some(e);
@@ -539,7 +536,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         qr_info: &QRInfo,
         storage: &mut S,
         network: &mut dyn NetworkManager,
-        sync_base_height: u32,
     ) -> Result<(), String> {
         tracing::info!(
             "🔗 Feeding QRInfo to engine and getting additional diffs for quorum validation"
@@ -591,9 +587,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         };
 
         // Step 3: Fetch additional MnListDiffs for quorum validation (avoiding borrow conflicts)
-        if let Err(e) =
-            self.fetch_diffs_with_hashes(&quorum_hashes, storage, network, sync_base_height).await
-        {
+        if let Err(e) = self.fetch_diffs_with_hashes(&quorum_hashes, storage, network).await {
             let error_msg =
                 format!("Failed to fetch additional diffs for quorum validation: {}", e);
             tracing::error!("❌ {}", error_msg);
@@ -623,7 +617,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         quorum_hashes: &std::collections::BTreeSet<QuorumHash>,
         storage: &mut S,
         network: &mut dyn NetworkManager,
-        sync_base_height: u32,
     ) -> Result<(), String> {
         use dashcore::network::message::NetworkMessage;
         use dashcore::network::message_sml::GetMnListDiff;
@@ -675,56 +668,43 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 validation_height
             );
 
-            // Convert blockchain heights to storage indices for storage.get_header()
-            // TODO: Consider changing storage API to accept blockchain heights instead of storage-relative heights
-            let storage_validation_height = if validation_height >= sync_base_height {
-                validation_height - sync_base_height
-            } else {
-                tracing::warn!("⚠️ Validation height {} is before sync base height {}, skipping quorum validation",
-                    validation_height, sync_base_height);
-                continue;
-            };
-
-            let storage_quorum_height = if quorum_height >= sync_base_height {
-                quorum_height - sync_base_height
-            } else {
-                tracing::warn!(
-                    "⚠️ Quorum height {} is before sync base height {}, skipping quorum validation",
-                    quorum_height,
-                    sync_base_height
-                );
-                continue;
-            };
+            // Use blockchain heights directly with storage API
+            let storage_validation_height = validation_height;
+            let storage_quorum_height = quorum_height;
 
             tracing::debug!("🔄 Height conversion: blockchain validation_height={} -> storage_height={}, blockchain quorum_height={} -> storage_height={}",
                 validation_height, storage_validation_height, quorum_height, storage_quorum_height);
 
-            // Get base block hash (storage_validation_height)
+            // Get base block hash (blockchain height)
             let base_header = match storage.get_header(storage_validation_height).await {
                 Ok(Some(header)) => header,
                 Ok(None) => {
-                    tracing::warn!("⚠️ Base header not found at storage height {} (blockchain height {}), skipping",
+                    tracing::warn!(
+                        "⚠️ Base header not found at storage height {} (blockchain height {}), skipping",
                         storage_validation_height, validation_height);
                     continue;
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to get base header at storage height {} (blockchain height {}): {}, skipping",
+                    tracing::warn!(
+                        "⚠️ Failed to get base header at storage height {} (blockchain height {}): {}, skipping",
                         storage_validation_height, validation_height, e);
                     continue;
                 }
             };
             let base_block_hash = base_header.block_hash();
 
-            // Get target block hash (storage_quorum_height)
+            // Get target block hash (blockchain height)
             let target_header = match storage.get_header(storage_quorum_height).await {
                 Ok(Some(header)) => header,
                 Ok(None) => {
-                    tracing::warn!("⚠️ Target header not found at storage height {} (blockchain height {}), skipping",
+                    tracing::warn!(
+                        "⚠️ Target header not found at storage height {} (blockchain height {}), skipping",
                         storage_quorum_height, quorum_height);
                     continue;
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to get target header at storage height {} (blockchain height {}): {}, skipping",
+                    tracing::warn!(
+                        "⚠️ Failed to get target header at storage height {} (blockchain height {}): {}, skipping",
                         storage_quorum_height, quorum_height, e);
                     continue;
                 }

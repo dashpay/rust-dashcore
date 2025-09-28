@@ -259,7 +259,7 @@ impl<
                 let effective_height = self.header_sync.get_chain_height();
                 let sync_base_height = self.header_sync.get_sync_base_height();
 
-                // Also get the actual storage tip height to verify
+                // Also get the actual tip height to verify (blockchain height)
                 let storage_tip = storage
                     .get_tip_height()
                     .await
@@ -282,7 +282,7 @@ impl<
 
                 // Use the minimum of effective height and what's actually in storage
                 let _safe_height = if let Some(tip) = storage_tip {
-                    let storage_based_height = sync_base_height + tip;
+                    let storage_based_height = tip;
                     if storage_based_height < effective_height {
                         tracing::warn!(
                             "Chain state height {} exceeds storage height {}, using storage height",
@@ -1251,9 +1251,7 @@ impl<
         );
 
         // Process QRInfo with full block height feeding and comprehensive processing
-        self.masternode_sync
-            .handle_qrinfo_message(qr_info.clone(), storage, network, sync_base_height)
-            .await;
+        self.masternode_sync.handle_qrinfo_message(qr_info.clone(), storage, network).await;
 
         // Check if QRInfo processing completed successfully
         if let Some(error) = self.masternode_sync.last_error() {

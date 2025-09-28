@@ -880,14 +880,12 @@ impl<
 
                 // Emit detailed progress update
                 if last_rate_calc.elapsed() >= Duration::from_secs(1) {
-                    // Storage tip is the headers vector index (0-based).
-                    let current_storage_tip = {
+                    // Storage tip now represents the absolute blockchain height.
+                    let current_tip_height = {
                         let storage = self.storage.lock().await;
                         storage.get_tip_height().await.ok().flatten().unwrap_or(0)
                     };
-                    // Convert to absolute blockchain height: base + storage_tip
-                    let sync_base_height = { self.state.read().await.sync_base_height };
-                    let current_height = sync_base_height + current_storage_tip;
+                    let current_height = current_tip_height;
                     let peer_best = self
                         .network
                         .get_peer_best_height()
@@ -897,9 +895,9 @@ impl<
                         .unwrap_or(current_height);
 
                     // Calculate headers downloaded this second
-                    if current_storage_tip > last_height {
-                        headers_this_second = current_storage_tip - last_height;
-                        last_height = current_storage_tip;
+                    if current_tip_height > last_height {
+                        headers_this_second = current_tip_height - last_height;
+                        last_height = current_tip_height;
                     }
 
                     let headers_per_second = headers_this_second as f64;
@@ -956,7 +954,7 @@ impl<
                     let storage_tip = storage.get_tip_height().await.ok().flatten().unwrap_or(0);
                     let filter_tip =
                         storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
-                    (self.state.read().await.sync_base_height + storage_tip, filter_tip)
+                    (storage_tip, filter_tip)
                 };
                 if abs_header_height != last_emitted_header_height
                     || filter_header_height != last_emitted_filter_header_height
@@ -1770,8 +1768,13 @@ impl<
         let mut loaded_count = 0u32;
         let target_height = saved_state.chain_tip.height;
 
-        // Start from height 1 (genesis is already in ChainState)
-        let mut current_height = 1u32;
+        // Determine first height to load. Skip genesis (already present) unless we started from a checkpoint base.
+        let mut current_height =
+            if saved_state.synced_from_checkpoint && saved_state.sync_base_height > 0 {
+                saved_state.sync_base_height
+            } else {
+                1u32
+            };
 
         while current_height <= target_height {
             let end_height = (current_height + BATCH_SIZE - 1).min(target_height);
@@ -1786,12 +1789,12 @@ impl<
             };
 
             if headers.is_empty() {
-                tracing::error!(
-                    "Failed to load headers for range {}..{} - storage may be corrupted",
+                tracing::warn!(
+                    "No headers found for range {}..{} when restoring from state",
                     current_height,
                     end_height + 1
                 );
-                return Ok(false);
+                break;
             }
 
             // Validate headers before adding to chain state
