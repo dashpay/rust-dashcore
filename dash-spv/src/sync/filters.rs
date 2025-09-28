@@ -311,16 +311,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
     }
 
-    /// Convert block header storage index to absolute blockchain height.
-    /// Storage indexing is base-inclusive: at checkpoint base B, absolute height == B + index.
-    fn header_storage_to_abs_height(&self, index: u32) -> u32 {
-        if self.sync_base_height > 0 {
-            self.sync_base_height + index
-        } else {
-            index
-        }
-    }
-
     /// Convert absolute blockchain height to filter header storage index.
     /// Storage indexing is base-inclusive for filter headers as well.
     fn filter_abs_to_storage_index(&self, height: u32) -> Option<u32> {

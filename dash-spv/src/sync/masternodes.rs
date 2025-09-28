@@ -476,7 +476,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         qr_info: QRInfo,
         storage: &mut S,
         network: &mut dyn NetworkManager,
-        sync_base_height: u32,
     ) {
         self.log_qrinfo_details(&qr_info, "📋 Masternode sync processing QRInfo (unified path)");
 
@@ -509,9 +508,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Feed QRInfo to engine and get additional MnListDiffs needed for quorum validation
         // This is the critical step that dash-evo-tool performs after initial QRInfo processing
-        if let Err(e) = self
-            .feed_qrinfo_and_get_additional_diffs(&qr_info, storage, network, sync_base_height)
-            .await
+        if let Err(e) = self.feed_qrinfo_and_get_additional_diffs(&qr_info, storage, network).await
         {
             tracing::error!("❌ Failed to process QRInfo follow-up diffs: {}", e);
             self.error = Some(e);
@@ -539,7 +536,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         qr_info: &QRInfo,
         storage: &mut S,
         network: &mut dyn NetworkManager,
-        sync_base_height: u32,
     ) -> Result<(), String> {
         tracing::info!(
             "🔗 Feeding QRInfo to engine and getting additional diffs for quorum validation"
@@ -591,9 +587,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         };
 
         // Step 3: Fetch additional MnListDiffs for quorum validation (avoiding borrow conflicts)
-        if let Err(e) =
-            self.fetch_diffs_with_hashes(&quorum_hashes, storage, network, sync_base_height).await
-        {
+        if let Err(e) = self.fetch_diffs_with_hashes(&quorum_hashes, storage, network).await {
             let error_msg =
                 format!("Failed to fetch additional diffs for quorum validation: {}", e);
             tracing::error!("❌ {}", error_msg);
@@ -623,7 +617,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         quorum_hashes: &std::collections::BTreeSet<QuorumHash>,
         storage: &mut S,
         network: &mut dyn NetworkManager,
-        sync_base_height: u32,
     ) -> Result<(), String> {
         use dashcore::network::message::NetworkMessage;
         use dashcore::network::message_sml::GetMnListDiff;

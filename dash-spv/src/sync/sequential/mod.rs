@@ -1251,9 +1251,7 @@ impl<
         );
 
         // Process QRInfo with full block height feeding and comprehensive processing
-        self.masternode_sync
-            .handle_qrinfo_message(qr_info.clone(), storage, network, sync_base_height)
-            .await;
+        self.masternode_sync.handle_qrinfo_message(qr_info.clone(), storage, network).await;
 
         // Check if QRInfo processing completed successfully
         if let Some(error) = self.masternode_sync.last_error() {
