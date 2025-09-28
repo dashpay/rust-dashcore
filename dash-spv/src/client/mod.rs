@@ -119,6 +119,42 @@ impl<
         storage.clear_sync_state().await.map_err(SpvError::Storage)
     }
 
+    /// Clear all stored filter headers and compact filters while keeping other data intact.
+    pub async fn clear_filters(&mut self) -> Result<()> {
+        {
+            let mut storage = self.storage.lock().await;
+            storage.clear_filters().await.map_err(SpvError::Storage)?;
+        }
+
+        // Reset in-memory chain state for filters
+        {
+            let mut state = self.state.write().await;
+            state.filter_headers.clear();
+            state.current_filter_tip = None;
+        }
+
+        // Reset filter sync manager tracking
+        self.sync_manager.filter_sync_mut().clear_filter_state().await;
+
+        // Reset filter-related statistics
+        let received_heights = {
+            let stats = self.stats.read().await;
+            stats.received_filter_heights.clone()
+        };
+
+        {
+            let mut stats = self.stats.write().await;
+            stats.filter_headers_downloaded = 0;
+            stats.filter_height = 0;
+            stats.filters_downloaded = 0;
+            stats.filters_received = 0;
+        }
+
+        received_heights.lock().await.clear();
+
+        Ok(())
+    }
+
     /// Take the progress receiver for external consumption.
     pub fn take_progress_receiver(
         &mut self,

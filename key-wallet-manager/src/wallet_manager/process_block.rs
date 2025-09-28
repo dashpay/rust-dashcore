@@ -2,8 +2,8 @@ use crate::wallet_interface::WalletInterface;
 use crate::{Network, WalletManager};
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::fmt::Write as _;
 use async_trait::async_trait;
+use core::fmt::Write as _;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Block, BlockHash, Transaction, Txid};
@@ -161,11 +161,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             details.push(format!("{} ({}): {}", name, wallet_id_hex, summary));
         }
 
-        format!(
-            "WalletManager: {} wallet(s) on {}\n{}",
-            wallet_count,
-            network,
-            details.join("\n")
-        )
+        format!("WalletManager: {} wallet(s) on {}\n{}", wallet_count, network, details.join("\n"))
     }
 }

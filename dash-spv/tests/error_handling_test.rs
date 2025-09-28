@@ -380,6 +380,13 @@ impl StorageManager for MockStorageManager {
         Ok(())
     }
 
+    async fn clear_filters(&mut self) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
     async fn stats(&self) -> StorageResult<dash_spv::storage::StorageStats> {
         Ok(dash_spv::storage::StorageStats {
             header_count: 0,

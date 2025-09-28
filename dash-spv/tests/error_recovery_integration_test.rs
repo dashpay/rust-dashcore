@@ -655,6 +655,10 @@ impl StorageManager for MockStorageManager {
         Ok(())
     }
 
+    async fn clear_filters(&mut self) -> dash_spv::error::StorageResult<()> {
+        Ok(())
+    }
+
     async fn stats(&self) -> dash_spv::error::StorageResult<dash_spv::storage::StorageStats> {
         Ok(dash_spv::storage::StorageStats {
             header_count: 0,
