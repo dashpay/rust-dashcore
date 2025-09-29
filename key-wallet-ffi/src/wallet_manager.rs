@@ -19,6 +19,7 @@ use crate::types::FFINetworks;
 use crate::FFINetwork;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
+use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::WalletManager;
 
 /// FFI wrapper for WalletManager
@@ -42,6 +43,58 @@ impl FFIWalletManager {
             runtime,
         }
     }
+}
+
+/// Describe the wallet manager for a given network and return a newly
+/// allocated C string.
+///
+/// # Safety
+/// - `manager` must be a valid pointer to an `FFIWalletManager`
+/// - Callers must free the returned string with `wallet_manager_free_string`
+#[no_mangle]
+pub unsafe extern "C" fn wallet_manager_describe(
+    manager: *const FFIWalletManager,
+    network: crate::FFINetwork,
+    error: *mut FFIError,
+) -> *mut c_char {
+    if manager.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null_mut();
+    }
+
+    let manager_ref = &*manager;
+    let runtime = manager_ref.runtime.clone();
+    let manager_arc = manager_ref.manager.clone();
+
+    let description = runtime.block_on(async {
+        let guard = manager_arc.read().await;
+        guard.describe(network.into()).await
+    });
+
+    match CString::new(description) {
+        Ok(c_string) => {
+            FFIError::set_success(error);
+            c_string.into_raw()
+        }
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidState,
+                format!("Failed to create description string: {}", e),
+            );
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Free a string previously returned by wallet manager APIs.
+#[no_mangle]
+pub unsafe extern "C" fn wallet_manager_free_string(value: *mut c_char) {
+    if value.is_null() {
+        return;
+    }
+
+    drop(CString::from_raw(value));
 }
 
 /// Create a new wallet manager

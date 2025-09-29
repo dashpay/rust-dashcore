@@ -531,27 +531,35 @@ int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *cli
 /**
  * Get the wallet manager from the SPV client
  *
- * Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager.
- * This allows direct interaction with the wallet manager without going through the client.
+ * Returns a pointer to an `FFIWalletManager` wrapper that clones the underlying
+ * `Arc<RwLock<WalletManager>>`. This allows direct interaction with the wallet
+ * manager without going back through the client for each call.
  *
  * # Safety
  *
  * The caller must ensure that:
  * - The client pointer is valid
- * - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi
+ * - The returned pointer is released exactly once using
+ *   `dash_spv_ffi_wallet_manager_free`
  *
  * # Returns
  *
- * An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized.
- * Swift should treat this as an OpaquePointer.
- * Get a handle to the wallet manager owned by this client.
+ * A pointer to the wallet manager wrapper, or NULL if the client is not initialized.
+ */
+ FFIWalletManager *dash_spv_ffi_client_get_wallet_manager(struct FFIDashSpvClient *client) ;
+
+/**
+ * Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
+ *
+ * This simply forwards to `wallet_manager_free` in key-wallet-ffi so that
+ * lifetime management is consistent between direct key-wallet usage and the
+ * SPV client pathway.
  *
  * # Safety
- * - `client` must be a valid, non-null pointer.
+ * - `manager` must either be null or a pointer previously returned by
+ *   `dash_spv_ffi_client_get_wallet_manager`.
  */
-
-void *dash_spv_ffi_client_get_wallet_manager(struct FFIDashSpvClient *client)
-;
+ void dash_spv_ffi_wallet_manager_free(FFIWalletManager *manager) ;
 
  struct FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network) ;
 

@@ -2546,8 +2546,15 @@ mod message_handler_test;
 
 #[cfg(test)]
 mod tests {
+    use super::{ClientConfig, DashSpvClient};
+    use crate::network::mock::MockNetworkManager;
+    use crate::storage::MemoryStorageManager;
     use crate::types::{MempoolState, UnconfirmedTransaction};
-    use dashcore::{Amount, Transaction, TxOut};
+    use dashcore::{Amount, Network, Transaction, TxOut};
+    use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet_manager::wallet_interface::WalletInterface;
+    use key_wallet_manager::wallet_manager::WalletManager;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
@@ -2556,6 +2563,61 @@ mod tests {
     // 1. The sign of net_amount
     // 2. Validation of transaction effects on addresses
     // 3. Edge cases like zero amounts and conflicting signs
+
+    #[tokio::test]
+    async fn client_exposes_shared_wallet_manager() {
+        let mut config = ClientConfig::default();
+        config.network = Network::Dash;
+        config.enable_filters = false;
+        config.enable_masternodes = false;
+        config.enable_mempool_tracking = false;
+
+        let network_manager = MockNetworkManager::new();
+        let storage = MemoryStorageManager::new().await.expect("memory storage should initialize");
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+
+        let client = DashSpvClient::new(config, network_manager, storage, wallet)
+            .await
+            .expect("client construction must succeed");
+
+        let shared_wallet = client.wallet().clone();
+
+        {
+            let guard = shared_wallet.read().await;
+            assert_eq!(guard.wallet_count(), 0, "new managers start empty");
+        }
+
+        let mut temp_manager = WalletManager::<ManagedWalletInfo>::new();
+        let (serialized_wallet, _wallet_id) = temp_manager
+            .create_wallet_from_mnemonic_return_serialized_bytes(
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+                "",
+                &[Network::Dash],
+                None,
+                WalletAccountCreationOptions::Default,
+                false,
+                false,
+            )
+            .expect("wallet serialization should succeed");
+
+        {
+            let mut guard = shared_wallet.write().await;
+            guard
+                .import_wallet_from_bytes(&serialized_wallet)
+                .expect("importing serialized wallet should succeed");
+        }
+
+        let description = {
+            let guard = shared_wallet.read().await;
+            guard.describe(Network::Dash).await
+        };
+
+        assert!(
+            description.contains("WalletManager: 1 wallet"),
+            "description should capture imported wallet, got: {}",
+            description
+        );
+    }
 
     #[tokio::test]
     async fn test_get_mempool_balance_logic() {

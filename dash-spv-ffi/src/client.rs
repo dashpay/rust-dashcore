@@ -1485,27 +1485,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
 
 /// Get the wallet manager from the SPV client
 ///
-/// Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager.
-/// This allows direct interaction with the wallet manager without going through the client.
+/// Returns a pointer to an `FFIWalletManager` wrapper that clones the underlying
+/// `Arc<RwLock<WalletManager>>`. This allows direct interaction with the wallet
+/// manager without going back through the client for each call.
 ///
 /// # Safety
 ///
 /// The caller must ensure that:
 /// - The client pointer is valid
-/// - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi
+/// - The returned pointer is released exactly once using
+///   `dash_spv_ffi_wallet_manager_free`
 ///
 /// # Returns
 ///
-/// An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized.
-/// Swift should treat this as an OpaquePointer.
-/// Get a handle to the wallet manager owned by this client.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
+/// A pointer to the wallet manager wrapper, or NULL if the client is not initialized.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_get_wallet_manager(
     client: *mut FFIDashSpvClient,
-) -> *mut c_void {
+) -> *mut FFIWalletManager {
     null_check!(client, std::ptr::null_mut());
 
     let client = &*client;
@@ -1519,9 +1516,27 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_wallet_manager(
         // Create the FFIWalletManager with the cloned Arc
         let manager = FFIWalletManager::from_arc(wallet_arc, runtime);
 
-        Box::into_raw(Box::new(manager)) as *mut c_void
+        Box::into_raw(Box::new(manager))
     } else {
         set_last_error("Client not initialized");
         std::ptr::null_mut()
     }
+}
+
+/// Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
+///
+/// This simply forwards to `wallet_manager_free` in key-wallet-ffi so that
+/// lifetime management is consistent between direct key-wallet usage and the
+/// SPV client pathway.
+///
+/// # Safety
+/// - `manager` must either be null or a pointer previously returned by
+///   `dash_spv_ffi_client_get_wallet_manager`.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_manager_free(manager: *mut FFIWalletManager) {
+    if manager.is_null() {
+        return;
+    }
+
+    key_wallet_ffi::wallet_manager::wallet_manager_free(manager);
 }
