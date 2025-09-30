@@ -8,7 +8,7 @@ version = "0.40.0"
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }
 # Use fixed version of elliptic-curve-tools with DefaultIsZeroes trait bound
-elliptic-curve-tools = { git = "https://github.com/mikelodder7/elliptic-curve-tools", branch = "main" }
+elliptic-curve-tools = { git = "https://github.com/mikelodder7/elliptic-curve-tools", rev = "8eaba09c9dc93ab367b3ad6fa85ed8e7ae8f0da5" }
 
 [profile.release]
 # Default to unwinding for most crates
