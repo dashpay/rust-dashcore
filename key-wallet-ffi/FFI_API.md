@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 232
+**Total Functions**: 234
 
 ## Table of Contents
 
@@ -42,7 +42,7 @@ Functions: 3
 
 ### Wallet Manager
 
-Functions: 17
+Functions: 19
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -51,8 +51,10 @@ Functions: 17
 | `wallet_manager_add_wallet_from_mnemonic_with_options` | Add a wallet from mnemonic to the manager with options  # Safety  - `manager`... | wallet_manager |
 | `wallet_manager_create` | Create a new wallet manager | wallet_manager |
 | `wallet_manager_current_height` | Get current height for a network  # Safety  - `manager` must be a valid point... | wallet_manager |
+| `wallet_manager_describe` | Describe the wallet manager for a given network and return a newly allocated ... | wallet_manager |
 | `wallet_manager_free` | Free wallet manager  # Safety  - `manager` must be a valid pointer to an FFIW... | wallet_manager |
 | `wallet_manager_free_addresses` | Free address array  # Safety  - `addresses` must be a valid pointer to an arr... | wallet_manager |
+| `wallet_manager_free_string` | Free a string previously returned by wallet manager APIs | wallet_manager |
 | `wallet_manager_free_wallet_bytes` | No description | wallet_manager |
 | `wallet_manager_free_wallet_ids` | Free wallet IDs buffer  # Safety  - `wallet_ids` must be a valid pointer to a... | wallet_manager |
 | `wallet_manager_get_managed_wallet_info` | Get managed wallet info from the manager  Returns a reference to the managed ... | wallet_manager |
@@ -476,6 +478,22 @@ Get current height for a network  # Safety  - `manager` must be a valid pointer 
 
 ---
 
+#### `wallet_manager_describe`
+
+```c
+wallet_manager_describe(manager: *const FFIWalletManager, network: crate::FFINetwork, error: *mut FFIError,) -> *mut c_char
+```
+
+**Description:**
+Describe the wallet manager for a given network and return a newly allocated C string.  # Safety - `manager` must be a valid pointer to an `FFIWalletManager` - Callers must free the returned string with `wallet_manager_free_string`
+
+**Safety:**
+- `manager` must be a valid pointer to an `FFIWalletManager` - Callers must free the returned string with `wallet_manager_free_string`
+
+**Module:** `wallet_manager`
+
+---
+
 #### `wallet_manager_free`
 
 ```c
@@ -503,6 +521,22 @@ Free address array  # Safety  - `addresses` must be a valid pointer to an array 
 
 **Safety:**
 - `addresses` must be a valid pointer to an array of C string pointers allocated by this library - `count` must match the original allocation size - Each address pointer in the array must be either null or a valid C string allocated by this library - The pointers must not be used after calling this function - This function must only be called once per allocation
+
+**Module:** `wallet_manager`
+
+---
+
+#### `wallet_manager_free_string`
+
+```c
+wallet_manager_free_string(value: *mut c_char) -> ()
+```
+
+**Description:**
+Free a string previously returned by wallet manager APIs.  # Safety - `value` must be either null or a pointer obtained from `wallet_manager_describe` (or other wallet manager FFI helpers that specify this free function). - The pointer must not be used after this call returns.
+
+**Safety:**
+- `value` must be either null or a pointer obtained from `wallet_manager_describe` (or other wallet manager FFI helpers that specify this free function). - The pointer must not be used after this call returns.
 
 **Module:** `wallet_manager`
 

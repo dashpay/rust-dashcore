@@ -5,7 +5,7 @@
 /// 2. No longer requires going through the client for each operation
 /// 3. Cleaner and more efficient access to wallet functionality
 use dash_spv_ffi::*;
-use key_wallet_ffi::{wallet_manager_free, wallet_manager_wallet_count, FFIError};
+use key_wallet_ffi::{wallet_manager_wallet_count, FFIError};
 
 fn main() {
     unsafe {
@@ -21,22 +21,22 @@ fn main() {
             panic!("Failed to create client");
         }
 
-        // Get the wallet manager - now returns void* for Swift compatibility
-        // This contains a cloned Arc to the wallet manager, allowing
-        // direct interaction without going through the client
-        let wallet_manager_ptr = dash_spv_ffi_client_get_wallet_manager(client);
-        if wallet_manager_ptr.is_null() {
+        // Get the wallet manager - this returns a strongly typed pointer that
+        // shares the Arc with the SPV client, allowing direct interaction
+        let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
+        if wallet_manager.is_null() {
             panic!("Failed to get wallet manager");
         }
-        // Cast back to FFIWalletManager for use
-        let wallet_manager = wallet_manager_ptr as *mut key_wallet_ffi::FFIWalletManager;
 
         // Now we can use the wallet manager directly
         // No need to go through client -> inner -> spv_client -> wallet()
 
         // Get the number of wallets (should be 0 initially)
         let mut error = std::mem::zeroed::<FFIError>();
-        let wallet_count = wallet_manager_wallet_count(wallet_manager, &mut error);
+        let wallet_count = wallet_manager_wallet_count(
+            wallet_manager as *const key_wallet_ffi::FFIWalletManager,
+            &mut error,
+        );
         println!("Number of wallets: {}", wallet_count);
 
         // Note: To get total balance, you would need to iterate through wallets
@@ -66,7 +66,7 @@ fn main() {
         // Clean up
         // The wallet manager can now be independently destroyed
         // It maintains its own Arc reference to the underlying wallet
-        wallet_manager_free(wallet_manager);
+        dash_spv_ffi_wallet_manager_free(wallet_manager);
         dash_spv_ffi_client_destroy(client);
         dash_spv_ffi_config_destroy(config);
 

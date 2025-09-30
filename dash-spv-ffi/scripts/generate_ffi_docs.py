@@ -287,7 +287,10 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("2. **Cleanup Required**: All returned pointers must be freed using the appropriate `_destroy` function")
     md.append("3. **Thread Safety**: The SPV client is thread-safe")
     md.append("4. **Error Handling**: Check return codes and use `dash_spv_ffi_get_last_error()` for details")
-    md.append("5. **Opaque Pointers**: `dash_spv_ffi_client_get_wallet_manager()` returns `void*` for Swift compatibility")
+    md.append(
+        "5. **Shared Ownership**: `dash_spv_ffi_client_get_wallet_manager()` returns `FFIWalletManager*` "
+        "that must be released with `dash_spv_ffi_wallet_manager_free()`"
+    )
     md.append("")
     
     # Usage Examples
@@ -312,8 +315,8 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("// Sync to chain tip")
     md.append("dash_spv_ffi_client_sync_to_tip(client, NULL, NULL);")
     md.append("")
-    md.append("// Get wallet manager (returns void* for Swift)")
-    md.append("void* wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);")
+    md.append("// Get wallet manager (shares ownership with the client)")
+    md.append("FFIWalletManager* wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);")
     md.append("")
     md.append("// Clean up")
     md.append("dash_spv_ffi_client_destroy(client);")

@@ -1631,6 +1631,27 @@ impl StorageManager for DiskStorageManager {
         Ok(())
     }
 
+    async fn clear_filters(&mut self) -> StorageResult<()> {
+        // Stop worker to prevent concurrent writes to filter directories
+        self.stop_worker().await;
+
+        // Clear in-memory filter state
+        self.active_filter_segments.write().await.clear();
+        *self.cached_filter_tip_height.write().await = None;
+
+        // Remove filter headers and compact filter files
+        let filters_dir = self.base_path.join("filters");
+        if filters_dir.exists() {
+            tokio::fs::remove_dir_all(&filters_dir).await?;
+        }
+        tokio::fs::create_dir_all(&filters_dir).await?;
+
+        // Restart background worker for future operations
+        self.start_worker().await;
+
+        Ok(())
+    }
+
     async fn stats(&self) -> StorageResult<StorageStats> {
         let mut component_sizes = HashMap::new();
         let mut total_size = 0u64;

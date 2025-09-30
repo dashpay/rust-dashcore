@@ -60,6 +60,10 @@ mod tests {
             // Return true for all filters in test
             true
         }
+
+        async fn describe(&self, _network: Network) -> String {
+            "MockWallet (test implementation)".to_string()
+        }
     }
 
     fn create_test_block(network: Network) -> Block {
@@ -235,6 +239,10 @@ mod tests {
             ) -> bool {
                 // Always return false - filter doesn't match
                 false
+            }
+
+            async fn describe(&self, _network: Network) -> String {
+                "NonMatchingWallet (test implementation)".to_string()
             }
         }
 

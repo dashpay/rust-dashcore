@@ -3728,6 +3728,31 @@ FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
 ;
 
 /*
+ Describe the wallet manager for a given network and return a newly
+ allocated C string.
+
+ # Safety
+ - `manager` must be a valid pointer to an `FFIWalletManager`
+ - Callers must free the returned string with `wallet_manager_free_string`
+ */
+
+char *wallet_manager_describe(const FFIWalletManager *manager,
+                              FFINetwork network,
+                              FFIError *error)
+;
+
+/*
+ Free a string previously returned by wallet manager APIs.
+
+ # Safety
+ - `value` must be either null or a pointer obtained from
+   `wallet_manager_describe` (or other wallet manager FFI helpers that
+   specify this free function).
+ - The pointer must not be used after this call returns.
+ */
+ void wallet_manager_free_string(char *value) ;
+
+/*
  Create a new wallet manager
  */
  FFIWalletManager *wallet_manager_create(FFIError *error) ;

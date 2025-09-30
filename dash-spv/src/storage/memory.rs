@@ -307,6 +307,12 @@ impl StorageManager for MemoryStorageManager {
         Ok(())
     }
 
+    async fn clear_filters(&mut self) -> StorageResult<()> {
+        self.filter_headers.clear();
+        self.filters.clear();
+        Ok(())
+    }
+
     async fn stats(&self) -> StorageResult<StorageStats> {
         let mut component_sizes = HashMap::new();
 

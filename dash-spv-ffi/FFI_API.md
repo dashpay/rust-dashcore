@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 70
+**Total Functions**: 71
 
 ## Table of Contents
 
@@ -138,7 +138,7 @@ Functions: 2
 
 ### Utility Functions
 
-Functions: 18
+Functions: 19
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -151,7 +151,7 @@ Functions: 18
 | `dash_spv_ffi_client_get_stats` | Get current runtime statistics for the SPV client | client |
 | `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
 | `dash_spv_ffi_client_get_tip_height` | Get the current chain tip height (absolute) | client |
-| `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns an opaque pointer to FFIW... | client |
+| `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an `FFIWalle... | client |
 | `dash_spv_ffi_client_record_send` | Record that we attempted to send a transaction by its txid | client |
 | `dash_spv_ffi_client_rescan_blockchain` | Request a rescan of the blockchain from a given height (not yet implemented) | client |
 | `dash_spv_ffi_enable_test_mode` | No description | utils |
@@ -160,6 +160,7 @@ Functions: 18
 | `dash_spv_ffi_string_array_destroy` | Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents | types |
 | `dash_spv_ffi_string_destroy` | No description | types |
 | `dash_spv_ffi_version` | No description | utils |
+| `dash_spv_ffi_wallet_manager_free` | Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager` | client |
 
 ## Detailed Function Documentation
 
@@ -1117,14 +1118,14 @@ Get the current chain tip height (absolute).  # Safety - `client` must be a vali
 #### `dash_spv_ffi_client_get_wallet_manager`
 
 ```c
-dash_spv_ffi_client_get_wallet_manager(client: *mut FFIDashSpvClient,) -> *mut c_void
+dash_spv_ffi_client_get_wallet_manager(client: *mut FFIDashSpvClient,) -> *mut FFIWalletManager
 ```
 
 **Description:**
-Get the wallet manager from the SPV client  Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager. This allows direct interaction with the wallet manager without going through the client.  # Safety  The caller must ensure that: - The client pointer is valid - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi  # Returns  An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized. Swift should treat this as an OpaquePointer. Get a handle to the wallet manager owned by this client.  # Safety - `client` must be a valid, non-null pointer.
+Get the wallet manager from the SPV client  Returns a pointer to an `FFIWalletManager` wrapper that clones the underlying `Arc<RwLock<WalletManager>>`. This allows direct interaction with the wallet manager without going back through the client for each call.  # Safety  The caller must ensure that: - The client pointer is valid - The returned pointer is released exactly once using `dash_spv_ffi_wallet_manager_free`  # Returns  A pointer to the wallet manager wrapper, or NULL if the client is not initialized.
 
 **Safety:**
-The caller must ensure that: - The client pointer is valid - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi
+The caller must ensure that: - The client pointer is valid - The returned pointer is released exactly once using `dash_spv_ffi_wallet_manager_free`
 
 **Module:** `client`
 
@@ -1237,6 +1238,22 @@ dash_spv_ffi_version() -> *const c_char
 
 ---
 
+#### `dash_spv_ffi_wallet_manager_free`
+
+```c
+dash_spv_ffi_wallet_manager_free(manager: *mut FFIWalletManager) -> ()
+```
+
+**Description:**
+Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.  This simply forwards to `wallet_manager_free` in key-wallet-ffi so that lifetime management is consistent between direct key-wallet usage and the SPV client pathway.  # Safety - `manager` must either be null or a pointer previously returned by `dash_spv_ffi_client_get_wallet_manager`.
+
+**Safety:**
+- `manager` must either be null or a pointer previously returned by `dash_spv_ffi_client_get_wallet_manager`.
+
+**Module:** `client`
+
+---
+
 ## Type Definitions
 
 ### Core Types
@@ -1266,7 +1283,7 @@ dash_spv_ffi_version() -> *const c_char
 2. **Cleanup Required**: All returned pointers must be freed using the appropriate `_destroy` function
 3. **Thread Safety**: The SPV client is thread-safe
 4. **Error Handling**: Check return codes and use `dash_spv_ffi_get_last_error()` for details
-5. **Opaque Pointers**: `dash_spv_ffi_client_get_wallet_manager()` returns `void*` for Swift compatibility
+5. **Shared Ownership**: `dash_spv_ffi_client_get_wallet_manager()` returns `FFIWalletManager*` that must be released with `dash_spv_ffi_wallet_manager_free()`
 
 ## Usage Examples
 
@@ -1289,8 +1306,8 @@ if (result != 0) {
 // Sync to chain tip
 dash_spv_ffi_client_sync_to_tip(client, NULL, NULL);
 
-// Get wallet manager (returns void* for Swift)
-void* wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
+// Get wallet manager (shares ownership with the client)
+FFIWalletManager* wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
 
 // Clean up
 dash_spv_ffi_client_destroy(client);

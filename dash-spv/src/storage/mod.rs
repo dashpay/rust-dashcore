@@ -154,6 +154,9 @@ pub trait StorageManager: Send + Sync {
     /// Clear all data.
     async fn clear(&mut self) -> StorageResult<()>;
 
+    /// Clear all filter headers and compact filters.
+    async fn clear_filters(&mut self) -> StorageResult<()>;
+
     /// Get storage statistics.
     async fn stats(&self) -> StorageResult<StorageStats>;
 

@@ -2,6 +2,7 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
+use alloc::string::String;
 use async_trait::async_trait;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
@@ -48,5 +49,13 @@ pub trait WalletInterface: Send + Sync {
     /// fall back to its existing behaviour.
     async fn earliest_required_height(&self, _network: Network) -> Option<CoreBlockHeight> {
         None
+    }
+
+    /// Provide a human-readable description of the wallet implementation.
+    ///
+    /// Implementations are encouraged to include high-level state such as the
+    /// number of managed wallets, networks, or tracked scripts.
+    async fn describe(&self, _network: Network) -> String {
+        "Wallet interface description unavailable".to_string()
     }
 }

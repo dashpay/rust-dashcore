@@ -119,6 +119,42 @@ impl<
         storage.clear_sync_state().await.map_err(SpvError::Storage)
     }
 
+    /// Clear all stored filter headers and compact filters while keeping other data intact.
+    pub async fn clear_filters(&mut self) -> Result<()> {
+        {
+            let mut storage = self.storage.lock().await;
+            storage.clear_filters().await.map_err(SpvError::Storage)?;
+        }
+
+        // Reset in-memory chain state for filters
+        {
+            let mut state = self.state.write().await;
+            state.filter_headers.clear();
+            state.current_filter_tip = None;
+        }
+
+        // Reset filter sync manager tracking
+        self.sync_manager.filter_sync_mut().clear_filter_state().await;
+
+        // Reset filter-related statistics
+        let received_heights = {
+            let stats = self.stats.read().await;
+            stats.received_filter_heights.clone()
+        };
+
+        {
+            let mut stats = self.stats.write().await;
+            stats.filter_headers_downloaded = 0;
+            stats.filter_height = 0;
+            stats.filters_downloaded = 0;
+            stats.filters_received = 0;
+        }
+
+        received_heights.lock().await.clear();
+
+        Ok(())
+    }
+
     /// Take the progress receiver for external consumption.
     pub fn take_progress_receiver(
         &mut self,
@@ -2510,8 +2546,15 @@ mod message_handler_test;
 
 #[cfg(test)]
 mod tests {
+    use super::{ClientConfig, DashSpvClient};
+    use crate::network::mock::MockNetworkManager;
+    use crate::storage::MemoryStorageManager;
     use crate::types::{MempoolState, UnconfirmedTransaction};
-    use dashcore::{Amount, Transaction, TxOut};
+    use dashcore::{Amount, Network, Transaction, TxOut};
+    use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet_manager::wallet_interface::WalletInterface;
+    use key_wallet_manager::wallet_manager::WalletManager;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
@@ -2520,6 +2563,63 @@ mod tests {
     // 1. The sign of net_amount
     // 2. Validation of transaction effects on addresses
     // 3. Edge cases like zero amounts and conflicting signs
+
+    #[tokio::test]
+    async fn client_exposes_shared_wallet_manager() {
+        let config = ClientConfig {
+            network: Network::Dash,
+            enable_filters: false,
+            enable_masternodes: false,
+            enable_mempool_tracking: false,
+            ..Default::default()
+        };
+
+        let network_manager = MockNetworkManager::new();
+        let storage = MemoryStorageManager::new().await.expect("memory storage should initialize");
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+
+        let client = DashSpvClient::new(config, network_manager, storage, wallet)
+            .await
+            .expect("client construction must succeed");
+
+        let shared_wallet = client.wallet().clone();
+
+        {
+            let guard = shared_wallet.read().await;
+            assert_eq!(guard.wallet_count(), 0, "new managers start empty");
+        }
+
+        let mut temp_manager = WalletManager::<ManagedWalletInfo>::new();
+        let (serialized_wallet, _wallet_id) = temp_manager
+            .create_wallet_from_mnemonic_return_serialized_bytes(
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+                "",
+                &[Network::Dash],
+                None,
+                WalletAccountCreationOptions::Default,
+                false,
+                false,
+            )
+            .expect("wallet serialization should succeed");
+
+        {
+            let mut guard = shared_wallet.write().await;
+            guard
+                .import_wallet_from_bytes(&serialized_wallet)
+                .expect("importing serialized wallet should succeed");
+        }
+
+        let description = {
+            let guard = shared_wallet.read().await;
+            guard.describe(Network::Dash).await
+        };
+
+        assert!(
+            description.contains("WalletManager: 1 wallet"),
+            "description should capture imported wallet, got: {}",
+            description
+        );
+    }
 
     #[tokio::test]
     async fn test_get_mempool_balance_logic() {

@@ -3466,4 +3466,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.last_sync_progress = std::time::Instant::now();
         tracing::debug!("Reset filter sync pending requests");
     }
+
+    /// Fully clear filter tracking state, including received heights.
+    pub async fn clear_filter_state(&mut self) {
+        self.reset_pending_requests();
+        let mut heights = self.received_filter_heights.lock().await;
+        heights.clear();
+        tracing::info!("Cleared filter sync state and received heights");
+    }
 }
