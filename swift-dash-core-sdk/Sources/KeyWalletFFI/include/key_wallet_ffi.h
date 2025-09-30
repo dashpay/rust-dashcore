@@ -3743,6 +3743,12 @@ char *wallet_manager_describe(const FFIWalletManager *manager,
 
 /*
  Free a string previously returned by wallet manager APIs.
+
+ # Safety
+ - `value` must be either null or a pointer obtained from
+   `wallet_manager_describe` (or other wallet manager FFI helpers that
+   specify this free function).
+ - The pointer must not be used after this call returns.
  */
  void wallet_manager_free_string(char *value) ;
 

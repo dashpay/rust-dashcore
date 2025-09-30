@@ -55,6 +55,7 @@ mod tests {
 
             let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
             assert!(!wallet_manager.is_null());
+            let wallet_manager_ptr = wallet_manager as *mut key_wallet_ffi::FFIWalletManager;
 
             // Prepare a serialized wallet using the native manager so we can import it
             let mut native_manager = WalletManager::<ManagedWalletInfo>::new();
@@ -74,7 +75,7 @@ mod tests {
             let mut error = FFIError::success();
             let mut imported_wallet_id = [0u8; 32];
             let import_ok = wallet_manager_import_wallet_from_bytes(
-                wallet_manager,
+                wallet_manager_ptr,
                 serialized_wallet.as_ptr(),
                 serialized_wallet.len(),
                 imported_wallet_id.as_mut_ptr(),
@@ -87,7 +88,7 @@ mod tests {
             let mut ids_ptr: *mut u8 = std::ptr::null_mut();
             let mut id_count: usize = 0;
             let ids_ok = wallet_manager_get_wallet_ids(
-                wallet_manager as *const FFIWalletManager,
+                wallet_manager_ptr as *const FFIWalletManager,
                 &mut ids_ptr,
                 &mut id_count,
                 &mut error as *mut FFIError,
@@ -103,7 +104,7 @@ mod tests {
             // Call the describe helper through FFI to ensure the shared instance reports correctly
             let mut description_error = FFIError::success();
             let description_ptr = key_wallet_ffi::wallet_manager_describe(
-                wallet_manager as *const FFIWalletManager,
+                wallet_manager_ptr as *const FFIWalletManager,
                 FFINetwork::Dash,
                 &mut description_error as *mut FFIError,
             );

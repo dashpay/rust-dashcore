@@ -1,9 +1,9 @@
 use crate::{
     null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
-    FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress,
+    FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress, FFIWalletManager,
 };
 // Import wallet types from key-wallet-ffi
-use key_wallet_ffi::FFIWalletManager;
+use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
 
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::SyncStage;
@@ -1514,9 +1514,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_wallet_manager(
         let runtime = client.runtime.clone();
 
         // Create the FFIWalletManager with the cloned Arc
-        let manager = FFIWalletManager::from_arc(wallet_arc, runtime);
+        let manager = KeyWalletFFIWalletManager::from_arc(wallet_arc, runtime);
 
-        Box::into_raw(Box::new(manager))
+        Box::into_raw(Box::new(manager)) as *mut FFIWalletManager
     } else {
         set_last_error("Client not initialized");
         std::ptr::null_mut()
@@ -1538,5 +1538,5 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_manager_free(manager: *mut FFIWalle
         return;
     }
 
-    key_wallet_ffi::wallet_manager::wallet_manager_free(manager);
+    key_wallet_ffi::wallet_manager::wallet_manager_free(manager as *mut KeyWalletFFIWalletManager);
 }

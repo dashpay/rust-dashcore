@@ -2566,11 +2566,13 @@ mod tests {
 
     #[tokio::test]
     async fn client_exposes_shared_wallet_manager() {
-        let mut config = ClientConfig::default();
-        config.network = Network::Dash;
-        config.enable_filters = false;
-        config.enable_masternodes = false;
-        config.enable_mempool_tracking = false;
+        let config = ClientConfig {
+            network: Network::Dash,
+            enable_filters: false,
+            enable_masternodes: false,
+            enable_mempool_tracking: false,
+            ..Default::default()
+        };
 
         let network_manager = MockNetworkManager::new();
         let storage = MemoryStorageManager::new().await.expect("memory storage should initialize");
