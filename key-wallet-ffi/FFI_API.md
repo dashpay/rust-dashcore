@@ -533,7 +533,10 @@ wallet_manager_free_string(value: *mut c_char) -> ()
 ```
 
 **Description:**
-Free a string previously returned by wallet manager APIs.
+Free a string previously returned by wallet manager APIs.  # Safety - `value` must be either null or a pointer obtained from `wallet_manager_describe` (or other wallet manager FFI helpers that specify this free function). - The pointer must not be used after this call returns.
+
+**Safety:**
+- `value` must be either null or a pointer obtained from `wallet_manager_describe` (or other wallet manager FFI helpers that specify this free function). - The pointer must not be used after this call returns.
 
 **Module:** `wallet_manager`
 
