@@ -567,10 +567,35 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
             }
         }
 
-        // Emit balance update event
+        // Emit balance update event by aggregating address balances if there were changes
         if !balance_changes.is_empty() {
-            // WalletInterface doesn't expose total balance - skip balance event for now
-            tracing::debug!("Balance changes detected but WalletInterface doesn't expose balance");
+            let mut confirmed_total: u64 = 0;
+            let mut unconfirmed_total: u64 = 0;
+
+            // Aggregate balances for all watched addresses
+            let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
+            for watch_item in watch_items.iter() {
+                if let WatchItem::Address { address, .. } = watch_item {
+                    if let Ok(balance) = self.get_address_balance(address).await {
+                        confirmed_total = confirmed_total.saturating_add(balance.confirmed.to_sat());
+                        unconfirmed_total = unconfirmed_total.saturating_add(balance.unconfirmed.to_sat());
+                    }
+                }
+            }
+
+            let total = confirmed_total.saturating_add(unconfirmed_total);
+            let _ = self.event_tx.send(crate::types::SpvEvent::BalanceUpdate {
+                confirmed: confirmed_total,
+                unconfirmed: unconfirmed_total,
+                total,
+            });
+            tracing::debug!(
+                "🔔 Emitted BalanceUpdate after block {}: confirmed={}, unconfirmed={}, total={}",
+                block_height,
+                confirmed_total,
+                unconfirmed_total,
+                total
+            );
         }
 
         Ok(())

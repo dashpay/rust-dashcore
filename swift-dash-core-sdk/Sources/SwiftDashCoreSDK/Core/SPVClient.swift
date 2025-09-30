@@ -566,6 +566,65 @@ private let eventMempoolTransactionRemovedCallback: MempoolRemovedCallback = { t
     client.eventSubject.send(event)
 }
 
+// Compact filter matched callback
+private let eventCompactFilterMatchedCallback: CompactFilterMatchedCallback = { blockHashBytes, matchedScripts, walletId, userData in
+    guard let userData = userData,
+          let blockHashBytes = blockHashBytes else { return }
+
+    let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
+    guard let client = holder.client else { return }
+
+    // Convert hash to hex
+    let hashArray = withUnsafeBytes(of: blockHashBytes.pointee) { bytes in
+        Array(bytes)
+    }
+    let hashHex = hashArray.map { String(format: "%02x", $0) }.joined()
+
+    // Extract scripts and wallet id if provided
+    let scripts: [String] = matchedScripts.map { String(cString: $0).split(separator: ",").map(String.init) } ?? []
+    let wallet = walletId.map { String(cString: $0) }
+
+    // Currently just log/emit a generic event via error channel until we define a strong type
+    // Downstream can observe and act if needed
+    client.eventSubject.send(.error(.internalError("Compact filter matched for wallet=\(wallet ?? "?") block=\(hashHex) scripts=\(scripts.count)")))
+}
+
+// Wallet transaction callback
+private let eventWalletTransactionCallback: WalletTransactionCallback = { walletId, accountIndex, txidBytes, confirmed, amount, addresses, blockHeight, isOurs, userData in
+    guard let userData = userData,
+          let txidBytes = txidBytes else { return }
+
+    let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
+    guard let client = holder.client else { return }
+
+    // Convert txid to hex
+    let txidArray = withUnsafeBytes(of: txidBytes.pointee) { bytes in
+        Array(bytes)
+    }
+    let txidString = txidArray.map { String(format: "%02x", $0) }.joined()
+
+    let wallet = walletId.map { String(cString: $0) } ?? "unknown"
+    let addressesArray: [String] = {
+        if let addresses = addresses {
+            let s = String(cString: addresses)
+            return s.split(separator: ",").map(String.init)
+        }
+        return []
+    }()
+
+    // Re-emit using existing transactionReceived until a dedicated case is needed
+    let event = SPVEvent.transactionReceived(
+        txid: txidString,
+        confirmed: confirmed,
+        amount: amount,
+        addresses: addressesArray,
+        blockHeight: blockHeight > 0 ? blockHeight : nil
+    )
+    client.eventSubject.send(event)
+    // Optionally, log wallet/account context
+    print("Wallet tx event: wallet=\(wallet) account=\(accountIndex) ours=\(isOurs) txid=\(txidString)")
+}
+
 @Observable
 public final class SPVClient {
     @ObservationIgnored
@@ -574,6 +633,10 @@ public final class SPVClient {
     private let asyncBridge = AsyncBridge()
     private var eventCallbacksSet = false
     private var eventCallbackHolder: EventCallbackHolder?
+    // Wallet manager obtained from the SPV client (shared with core)
+    private var ffiWalletManager: UnsafeMutablePointer<FFIWalletManager>?
+    private var eventDrainTimer: DispatchSourceTimer?
+    private let eventDrainQueue = DispatchQueue(label: "SPVClient.EventDrain")
     
     public private(set) var isConnected: Bool = false
     public private(set) var syncProgress: SyncProgress?
@@ -623,6 +686,15 @@ public final class SPVClient {
             // Note: This is only needed if client is destroyed before callbacks complete
         }
         
+        // Stop event drain loop if running
+        stopEventDrainLoop()
+
+        // Release wallet manager if attached
+        if let mgr = ffiWalletManager {
+            dash_spv_ffi_wallet_manager_free(mgr)
+            ffiWalletManager = nil
+        }
+
         if let client = client {
             dash_spv_ffi_client_destroy(client)
         }
@@ -698,6 +770,9 @@ public final class SPVClient {
         isConnected = true
         print("✅ SPV client started successfully")
         
+        // Start draining FFI events periodically so callbacks propagate to Swift
+        startEventDrainLoop()
+
         // Monitor peer connections with multiple checks
         print("\n🔍 Monitoring peer connections...")
         var totalWaitTime = 0
@@ -762,6 +837,15 @@ public final class SPVClient {
             throw DashSDKError.notConnected
         }
         
+        // Stop draining events before shutting down
+        stopEventDrainLoop()
+
+        // Release wallet manager if attached
+        if let mgr = ffiWalletManager {
+            dash_spv_ffi_wallet_manager_free(mgr)
+            ffiWalletManager = nil
+        }
+
         let result = dash_spv_ffi_client_stop(client)
         try FFIBridge.checkError(result)
         
@@ -1133,6 +1217,8 @@ public final class SPVClient {
             on_mempool_transaction_added: eventMempoolTransactionAddedCallback,
             on_mempool_transaction_confirmed: eventMempoolTransactionConfirmedCallback,
             on_mempool_transaction_removed: eventMempoolTransactionRemovedCallback,
+            on_compact_filter_matched: eventCompactFilterMatchedCallback,
+            on_wallet_transaction: eventWalletTransactionCallback,
             user_data: userData
         )
         
@@ -1153,6 +1239,104 @@ public final class SPVClient {
             print("✅ Event callbacks set successfully")
             eventCallbacksSet = true
         }
+    }
+
+    // MARK: - Event Draining
+
+    private func startEventDrainLoop() {
+        // Avoid creating multiple timers
+        if eventDrainTimer != nil { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: eventDrainQueue)
+        // Drain frequently but lightly; adjust interval as needed
+        timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(200))
+        timer.setEventHandler { [weak self] in
+            guard let self = self, self.isConnected, let client = self.client else { return }
+            _ = dash_spv_ffi_client_drain_events(client)
+        }
+        eventDrainTimer = timer
+        timer.resume()
+
+        // Also perform an immediate drain once to flush any queued events
+        if let client = client {
+            _ = dash_spv_ffi_client_drain_events(client)
+        }
+    }
+
+    private func stopEventDrainLoop() {
+        if let timer = eventDrainTimer {
+            timer.setEventHandler {}
+            timer.cancel()
+            eventDrainTimer = nil
+        }
+    }
+
+    // MARK: - Wallet Attachment (Option B)
+
+    /// Attach a wallet (mnemonic) to the SPV client's internal wallet manager so SPV monitors its addresses
+    public func attachWallet(mnemonic: String, passphrase: String = "") throws {
+        guard isConnected, let client = client else {
+            throw DashSDKError.notConnected
+        }
+
+        // Get (or reuse) the wallet manager from SPV client
+        if ffiWalletManager == nil {
+            guard let mgr = dash_spv_ffi_client_get_wallet_manager(client) else {
+                let err = FFIBridge.getLastError() ?? "Failed to get wallet manager from SPV client"
+                throw DashSDKError.ffiError(code: -1, message: err)
+            }
+            ffiWalletManager = mgr
+        }
+
+        // Map Swift network to key-wallet FFI network enum
+        let networks: FFINetworks
+        switch configuration.network {
+        case .mainnet: networks = FFINetworks(rawValue: 1) // Dash
+        case .testnet: networks = FFINetworks(rawValue: 2) // Testnet
+        case .regtest: networks = FFINetworks(rawValue: 4) // Regtest (if defined as bitflags)
+        default: networks = FFINetworks(rawValue: 1)
+        }
+
+        // Call key-wallet-ffi to add wallet to the shared manager
+        var error = FFIError()
+        let ok = mnemonic.withCString { mnemC in
+            passphrase.withCString { passC in
+                wallet_manager_add_wallet_from_mnemonic(ffiWalletManager, mnemC, passC, networks, &error)
+            }
+        }
+        if !ok {
+            // Try to extract error message if available via KeyWalletFFI API, otherwise surface generic
+            throw DashSDKError.ffiError(code: Int32(error.code), message: "Failed to add wallet to manager")
+        }
+
+        print("✅ Wallet attached to SPV wallet manager")
+    }
+
+    /// Attach a pre-serialized wallet to the SPV client's wallet manager
+    public func attachWallet(serializedWalletBytes: Data) throws {
+        guard isConnected, let client = client else {
+            throw DashSDKError.notConnected
+        }
+
+        if ffiWalletManager == nil {
+            guard let mgr = dash_spv_ffi_client_get_wallet_manager(client) else {
+                let err = FFIBridge.getLastError() ?? "Failed to get wallet manager from SPV client"
+                throw DashSDKError.ffiError(code: -1, message: err)
+            }
+            ffiWalletManager = mgr
+        }
+
+        // Import serialized wallet
+        var error = FFIError()
+        var walletId = [UInt8](repeating: 0, count: 32)
+        let ok = serializedWalletBytes.withUnsafeBytes { bytes -> Bool in
+            guard let base = bytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return false }
+            return wallet_manager_import_wallet_from_bytes(ffiWalletManager, base, bytes.count, &walletId, &error)
+        }
+        if !ok {
+            throw DashSDKError.ffiError(code: Int32(error.code), message: "Failed to import wallet bytes into manager")
+        }
+        print("✅ Wallet bytes imported into SPV wallet manager")
     }
 }
 

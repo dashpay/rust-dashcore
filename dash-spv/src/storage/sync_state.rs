@@ -204,28 +204,33 @@ impl PersistentSyncState {
         let mut checkpoints = Vec::new();
         let tip_height = chain_state.tip_height();
 
+        // Track heights we've already added to avoid duplicates
+        let mut added_heights = std::collections::HashSet::new();
+
         // Create checkpoints at strategic intervals
         let checkpoint_intervals = [1000, 10000, 50000, 100000];
 
         for &interval in &checkpoint_intervals {
             let mut height = interval;
             while height <= tip_height {
-                if let Some(header) = chain_state.header_at_height(height) {
-                    let filter_header = chain_state.filter_header_at_height(height).copied();
-                    checkpoints.push(SyncCheckpoint {
-                        height,
-                        block_hash: header.block_hash(),
-                        filter_header,
-                        validated: true,
-                        created_at: SystemTime::now(),
-                    });
+                if added_heights.insert(height) {
+                    if let Some(header) = chain_state.header_at_height(height) {
+                        let filter_header = chain_state.filter_header_at_height(height).copied();
+                        checkpoints.push(SyncCheckpoint {
+                            height,
+                            block_hash: header.block_hash(),
+                            filter_header,
+                            validated: true,
+                            created_at: SystemTime::now(),
+                        });
+                    }
                 }
                 height += interval;
             }
         }
 
-        // Always add the tip as a checkpoint
-        if tip_height > 0 {
+        // Always add the tip as a checkpoint (unless already added)
+        if tip_height > 0 && added_heights.insert(tip_height) {
             if let Some(header) = chain_state.get_tip_header() {
                 let filter_header = chain_state.filter_header_at_height(tip_height).copied();
                 checkpoints.push(SyncCheckpoint {
@@ -237,6 +242,9 @@ impl PersistentSyncState {
                 });
             }
         }
+
+        // Sort checkpoints by height to ensure ascending order
+        checkpoints.sort_by_key(|cp| cp.height);
 
         checkpoints
     }
@@ -396,5 +404,85 @@ mod tests {
         let validation = state.validate(Network::Testnet);
         assert!(!validation.is_valid);
         assert!(!validation.errors.is_empty());
+    }
+
+    #[test]
+    fn test_checkpoint_creation_no_duplicates() {
+        // Test that create_checkpoints doesn't create duplicate heights
+        // by simulating the logic with a mock ChainState-like structure
+
+        // Simulate checkpoint intervals that would create duplicates at 800000
+        let checkpoint_intervals = [1000, 10000, 50000, 100000];
+        let tip_height = 800000;
+
+        let mut added_heights = std::collections::HashSet::new();
+        let mut checkpoints = Vec::new();
+
+        // Simulate the logic from create_checkpoints
+        for &interval in &checkpoint_intervals {
+            let mut height = interval;
+            while height <= tip_height {
+                if added_heights.insert(height) {
+                    checkpoints.push(SyncCheckpoint {
+                        height,
+                        block_hash: BlockHash::from_byte_array([0; 32]),
+                        filter_header: None,
+                        validated: true,
+                        created_at: SystemTime::now(),
+                    });
+                }
+                height += interval;
+            }
+        }
+
+        // Add tip checkpoint if not already added
+        if added_heights.insert(tip_height) {
+            checkpoints.push(SyncCheckpoint {
+                height: tip_height,
+                block_hash: BlockHash::from_byte_array([0; 32]),
+                filter_header: None,
+                validated: true,
+                created_at: SystemTime::now(),
+            });
+        }
+
+        // Sort by height
+        checkpoints.sort_by_key(|cp| cp.height);
+
+        // Verify no duplicates
+        let mut heights = std::collections::HashSet::new();
+        for checkpoint in &checkpoints {
+            assert!(
+                heights.insert(checkpoint.height),
+                "Duplicate checkpoint at height {}",
+                checkpoint.height
+            );
+        }
+
+        // Verify checkpoints are in ascending order
+        for i in 1..checkpoints.len() {
+            assert!(
+                checkpoints[i - 1].height < checkpoints[i].height,
+                "Checkpoints not in ascending order: {} >= {}",
+                checkpoints[i - 1].height,
+                checkpoints[i].height
+            );
+        }
+
+        // Verify tip checkpoint is included
+        assert_eq!(
+            checkpoints.last().unwrap().height,
+            800000,
+            "Tip checkpoint not found, last checkpoint at height {}",
+            checkpoints.last().unwrap().height
+        );
+
+        // Verify we don't have 5 checkpoints at 800000 (which would happen without deduplication)
+        let height_800000_count = checkpoints.iter().filter(|cp| cp.height == 800000).count();
+        assert_eq!(
+            height_800000_count, 1,
+            "Should have exactly one checkpoint at height 800000, but found {}",
+            height_800000_count
+        );
     }
 }
