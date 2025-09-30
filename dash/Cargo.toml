@@ -63,7 +63,7 @@ anyhow = { version= "1.0" }
 hex = { version= "0.4" }
 bincode = { version= "=2.0.0-rc.3", optional = true }
 bincode_derive = { version= "=2.0.0-rc.3", optional = true }
-blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "be108b2cf6ac64eedbe04f91c63731533c8956bc", optional = true }
+blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900", optional = true }
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
