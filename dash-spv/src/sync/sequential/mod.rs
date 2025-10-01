@@ -77,6 +77,9 @@ pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: Wallet
 
     /// Optional wallet reference for filter checking
     wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
+
+    /// Statistics for tracking sync progress
+    stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
 }
 
 impl<
@@ -91,6 +94,7 @@ impl<
         received_filter_heights: SharedFilterHeights,
         wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
         chain_state: Arc<RwLock<ChainState>>,
+        stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
@@ -112,6 +116,7 @@ impl<
             max_phase_retries: 3,
             current_phase_retries: 0,
             wallet,
+            stats,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         })
@@ -1387,6 +1392,12 @@ impl<
         drop(wallet);
 
         if matches {
+            // Update filter match statistics
+            {
+                let mut stats = self.stats.write().await;
+                stats.filters_matched += 1;
+            }
+
             tracing::info!("🎯 Filter match found! Requesting block {}", cfilter.block_hash);
             // Request the full block
             let inv = Inventory::Block(cfilter.block_hash);
