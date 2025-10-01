@@ -234,6 +234,12 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                 block_hash,
                 height
             );
+
+            // Update statistics for blocks with relevant transactions
+            {
+                let mut stats = self.stats.write().await;
+                stats.blocks_with_relevant_transactions += 1;
+            }
         }
         drop(wallet); // Release lock
 

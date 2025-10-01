@@ -311,6 +311,7 @@ impl<
             received_filter_heights,
             wallet.clone(),
             state.clone(),
+            stats.clone(),
         )
         .map_err(SpvError::Sync)?;
 
