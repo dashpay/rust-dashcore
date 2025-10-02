@@ -236,6 +236,25 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                         // If this input spends one of our UTXOs, remove it
                                         account.utxos.remove(&input.previous_output);
                                     }
+
+                                    // Recalculate account balance from UTXOs
+                                    let mut confirmed = 0u64;
+                                    let mut unconfirmed = 0u64;
+                                    let mut locked = 0u64;
+
+                                    for utxo in account.utxos.values() {
+                                        let value = utxo.txout.value;
+                                        if utxo.is_locked {
+                                            locked += value;
+                                        } else if utxo.is_confirmed {
+                                            confirmed += value;
+                                        } else {
+                                            unconfirmed += value;
+                                        }
+                                    }
+
+                                    // Update account balance (ignore errors as we're recalculating from scratch)
+                                    let _ = account.update_balance(confirmed, unconfirmed, locked);
                                 }
                                 _ => {
                                     // Skip UTXO ingestion for identity/provider accounts
