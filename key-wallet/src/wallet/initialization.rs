@@ -30,7 +30,7 @@ pub type WalletAccountCreationTopUpAccounts = BTreeSet<u32>;
 /// Options for specifying which accounts to create when initializing a wallet
 #[derive(Debug, Clone, Default)]
 pub enum WalletAccountCreationOptions {
-    /// Default account creation: Creates account 0 for BIP44, account 0 for CoinJoin,
+    /// Default account creation: Creates account 0 for BIP32, BIP44, account 0 for CoinJoin,
     /// and all special purpose accounts (Identity Registration, Identity Invitation,
     /// Provider keys, etc.)
     #[default]
