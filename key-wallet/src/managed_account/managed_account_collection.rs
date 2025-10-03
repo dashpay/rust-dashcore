@@ -13,6 +13,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use crate::gap_limit::{DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT, DEFAULT_SPECIAL_GAP_LIMIT};
 
 /// Collection of managed accounts organized by type
 #[derive(Debug, Clone, Default)]
@@ -329,7 +330,7 @@ impl ManagedAccountCollection {
                 let external_pool = AddressPool::new(
                     external_path,
                     AddressPoolType::External,
-                    20,
+                    DEFAULT_EXTERNAL_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -339,7 +340,7 @@ impl ManagedAccountCollection {
                 let internal_pool = AddressPool::new(
                     internal_path,
                     AddressPoolType::Internal,
-                    20,
+                    DEFAULT_INTERNAL_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -357,7 +358,7 @@ impl ManagedAccountCollection {
                 index,
             } => {
                 let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                    AddressPool::new(base_path, AddressPoolType::Absent, DEFAULT_COINJOIN_GAP_LIMIT, network, key_source)?;
                 ManagedAccountType::CoinJoin {
                     index,
                     addresses,
@@ -365,7 +366,7 @@ impl ManagedAccountCollection {
             }
             AccountType::IdentityRegistration => {
                 let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                    AddressPool::new(base_path, AddressPoolType::Absent, DEFAULT_SPECIAL_GAP_LIMIT, network, key_source)?;
                 ManagedAccountType::IdentityRegistration {
                     addresses,
                 }
@@ -374,7 +375,7 @@ impl ManagedAccountCollection {
                 registration_index,
             } => {
                 let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                    AddressPool::new(base_path, AddressPoolType::Absent, DEFAULT_SPECIAL_GAP_LIMIT, network, key_source)?;
                 ManagedAccountType::IdentityTopUp {
                     registration_index,
                     addresses,
@@ -382,35 +383,35 @@ impl ManagedAccountCollection {
             }
             AccountType::IdentityTopUpNotBoundToIdentity => {
                 let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                    AddressPool::new(base_path, AddressPoolType::Absent, DEFAULT_SPECIAL_GAP_LIMIT, network, key_source)?;
                 ManagedAccountType::IdentityTopUpNotBoundToIdentity {
                     addresses,
                 }
             }
             AccountType::IdentityInvitation => {
                 let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                    AddressPool::new(base_path, AddressPoolType::Absent, DEFAULT_SPECIAL_GAP_LIMIT, network, key_source)?;
                 ManagedAccountType::IdentityInvitation {
                     addresses,
                 }
             }
             AccountType::ProviderVotingKeys => {
                 let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                    AddressPool::new(base_path, AddressPoolType::Absent, DEFAULT_SPECIAL_GAP_LIMIT, network, key_source)?;
                 ManagedAccountType::ProviderVotingKeys {
                     addresses,
                 }
             }
             AccountType::ProviderOwnerKeys => {
                 let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                    AddressPool::new(base_path, AddressPoolType::Absent, DEFAULT_SPECIAL_GAP_LIMIT, network, key_source)?;
                 ManagedAccountType::ProviderOwnerKeys {
                     addresses,
                 }
             }
             AccountType::ProviderOperatorKeys => {
                 let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                    AddressPool::new(base_path, AddressPoolType::Absent, DEFAULT_SPECIAL_GAP_LIMIT, network, key_source)?;
                 ManagedAccountType::ProviderOperatorKeys {
                     addresses,
                 }
@@ -419,7 +420,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::AbsentHardened,
-                    20,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
