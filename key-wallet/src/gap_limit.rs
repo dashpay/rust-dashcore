@@ -19,7 +19,7 @@ pub const DEFAULT_INTERNAL_GAP_LIMIT: u32 = 100;
 /// Standard gap limit for CoinJoin addresses
 pub const DEFAULT_COINJOIN_GAP_LIMIT: u32 = 500;
 
-/// Standard gap limit for CoinJoin addresses
+/// Standard gap limit for special purpose keys (identity, provider keys)
 pub const DEFAULT_SPECIAL_GAP_LIMIT: u32 = 20;
 /// Maximum gap limit to prevent excessive address generation
 pub const MAX_GAP_LIMIT: u32 = 1000;
