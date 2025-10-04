@@ -15,7 +15,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
-use crate::gap_limit::{DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_SPECIAL_GAP_LIMIT};
 use crate::Network;
 use dashcore::{Address, AddressType, ScriptBuf};
 
