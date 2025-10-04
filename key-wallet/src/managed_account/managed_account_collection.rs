@@ -6,7 +6,7 @@
 use crate::account::account_type::AccountType;
 use crate::gap_limit::{
     DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
-    DEFAULT_SPECIAL_GAP_LIMIT
+    DEFAULT_SPECIAL_GAP_LIMIT,
 };
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
