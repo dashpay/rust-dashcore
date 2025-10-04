@@ -306,9 +306,9 @@ fn test_transaction_affects_multiple_accounts() {
     };
     wallet.add_account(account_type, network, None).expect("Failed to add account to wallet");
 
-    // Add a BIP32 account
+    // Add another BIP32 account
     let account_type = AccountType::Standard {
-        index: 0,
+        index: 1,
         standard_account_type: StandardAccountType::BIP32Account,
     };
     wallet.add_account(account_type, network, None).expect("Failed to add account to wallet");
