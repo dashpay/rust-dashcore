@@ -17,6 +17,7 @@ use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey}
 use crate::error::{Error, Result};
 use crate::Network;
 use dashcore::{Address, AddressType, ScriptBuf};
+use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 
 /// Types of public keys used in the address pool
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1059,7 +1060,7 @@ impl AddressPoolBuilder {
         Self {
             base_path: None,
             pool_type: AddressPoolType::External,
-            gap_limit: 20,
+            gap_limit: DEFAULT_EXTERNAL_GAP_LIMIT,
             network: Network::Dash,
             lookahead_size: 40,
             address_type: AddressType::P2pkh,
