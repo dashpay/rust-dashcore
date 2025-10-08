@@ -15,9 +15,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
+use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 use crate::Network;
 use dashcore::{Address, AddressType, ScriptBuf};
-use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 
 /// Types of public keys used in the address pool
 #[derive(Debug, Clone, PartialEq, Eq)]
