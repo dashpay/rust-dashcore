@@ -8,9 +8,73 @@ use dashcore::{
     Txid,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Shared, mutex-protected set of filter heights used across components.
 pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>;
+
+/// A block header with its cached hash to avoid expensive X11 recomputation.
+///
+/// During header sync, each header's hash is computed multiple times:
+/// - For existence checks in storage
+/// - For validation logging
+/// - For chain continuity validation
+/// - For storage indexing
+///
+/// This wrapper caches the hash after first computation, providing ~4-6x reduction
+/// in X11 hashing operations per header.
+#[derive(Debug, Clone)]
+pub struct CachedHeader {
+    /// The block header
+    header: BlockHeader,
+    /// Cached hash (computed lazily and stored in Arc for cheap clones)
+    hash: Arc<std::sync::OnceLock<BlockHash>>,
+}
+
+impl CachedHeader {
+    /// Create a new cached header from a block header
+    pub fn new(header: BlockHeader) -> Self {
+        Self {
+            header,
+            hash: Arc::new(std::sync::OnceLock::new()),
+        }
+    }
+
+    /// Get the block header
+    pub fn header(&self) -> &BlockHeader {
+        &self.header
+    }
+
+    /// Get the cached block hash (computes once, returns cached value thereafter)
+    pub fn block_hash(&self) -> BlockHash {
+        *self.hash.get_or_init(|| self.header.block_hash())
+    }
+
+    /// Convert back to a plain BlockHeader
+    pub fn into_inner(self) -> BlockHeader {
+        self.header
+    }
+}
+
+impl From<BlockHeader> for CachedHeader {
+    fn from(header: BlockHeader) -> Self {
+        Self::new(header)
+    }
+}
+
+impl AsRef<BlockHeader> for CachedHeader {
+    fn as_ref(&self) -> &BlockHeader {
+        &self.header
+    }
+}
+
+impl std::ops::Deref for CachedHeader {
+    type Target = BlockHeader;
+
+    fn deref(&self) -> &Self::Target {
+        &self.header
+    }
+}
 
 /// Unique identifier for a peer connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

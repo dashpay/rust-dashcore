@@ -248,7 +248,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                     // Calculate net amount for this transaction (simplified: sum outputs to wallet addresses)
                     // Note: This is an approximation - proper calculation would require tracking inputs too
                     let mut net_amount: i64 = 0;
-                    let mut affected_addresses: Vec<String> = Vec::new();
+                    let affected_addresses: Vec<String> = Vec::new();
 
                     // Sum up outputs that belong to the wallet
                     // (wallet.process_block already determined this tx is relevant)

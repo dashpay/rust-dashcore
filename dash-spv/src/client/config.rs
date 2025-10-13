@@ -163,6 +163,19 @@ pub struct ClientConfig {
     /// Rate limit for CF header requests per second (default: 10.0).
     pub cfheaders_request_rate_limit: Option<f64>,
 
+    // CFHeaders flow control configuration
+    /// Maximum concurrent CFHeaders requests for parallel sync (default: 50).
+    pub max_concurrent_cfheaders_requests_parallel: usize,
+
+    /// Enable flow control for CFHeaders requests (default: true).
+    pub enable_cfheaders_flow_control: bool,
+
+    /// Timeout for CFHeaders requests in seconds (default: 30).
+    pub cfheaders_request_timeout_secs: u64,
+
+    /// Maximum retry attempts for failed CFHeaders batches (default: 3).
+    pub max_cfheaders_retries: u32,
+
     /// Rate limit for filter requests per second (default: 50.0).
     pub filters_request_rate_limit: Option<f64>,
 
@@ -238,6 +251,11 @@ impl Default for ClientConfig {
             blocks_request_rate_limit: None,
             start_from_height: None,
             wallet_creation_time: None,
+            // CFHeaders flow control defaults
+            max_concurrent_cfheaders_requests_parallel: 50,
+            enable_cfheaders_flow_control: true,
+            cfheaders_request_timeout_secs: 30,
+            max_cfheaders_retries: 3,
             // QRInfo defaults (simplified per plan)
             qr_info_extra_share: false, // Matches DMLviewer.patch default
             qr_info_timeout: Duration::from_secs(30),

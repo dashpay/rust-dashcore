@@ -329,8 +329,14 @@ impl<
                     self.filter_sync.set_sync_base_height(sync_base_height);
                 }
 
-                // Check if filter sync actually started
-                let sync_started = self.filter_sync.start_sync_headers(network, storage).await?;
+                // Use flow control if enabled, otherwise use single-request mode
+                let sync_started = if self.config.enable_cfheaders_flow_control {
+                    tracing::info!("Using CFHeaders flow control for parallel sync");
+                    self.filter_sync.start_sync_headers_with_flow_control(network, storage).await?
+                } else {
+                    tracing::info!("Using single-request CFHeaders sync (flow control disabled)");
+                    self.filter_sync.start_sync_headers(network, storage).await?
+                };
 
                 if !sync_started {
                     // No peers support compact filters or already up to date
@@ -617,7 +623,11 @@ impl<
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                self.filter_sync.check_sync_timeout(storage, network).await?;
+                if self.config.enable_cfheaders_flow_control {
+                    self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
+                } else {
+                    self.filter_sync.check_sync_timeout(storage, network).await?;
+                }
             }
             SyncPhase::DownloadingMnList {
                 ..
@@ -1050,7 +1060,11 @@ impl<
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                self.filter_sync.check_sync_timeout(storage, network).await?;
+                if self.config.enable_cfheaders_flow_control {
+                    self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
+                } else {
+                    self.filter_sync.check_sync_timeout(storage, network).await?;
+                }
             }
             _ => {
                 // For other phases, we'll need phase-specific recovery
