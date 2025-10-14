@@ -11,14 +11,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// Standard gap limit for external addresses (BIP44 recommendation)
-pub const DEFAULT_EXTERNAL_GAP_LIMIT: u32 = 20;
+pub const DEFAULT_EXTERNAL_GAP_LIMIT: u32 = 30;
 
 /// Standard gap limit for internal (change) addresses
-pub const DEFAULT_INTERNAL_GAP_LIMIT: u32 = 10;
+pub const DEFAULT_INTERNAL_GAP_LIMIT: u32 = 30;
 
 /// Standard gap limit for CoinJoin addresses
-pub const DEFAULT_COINJOIN_GAP_LIMIT: u32 = 10;
+pub const DEFAULT_COINJOIN_GAP_LIMIT: u32 = 30;
 
+/// Standard gap limit for special purpose keys (identity, provider keys)
+pub const DEFAULT_SPECIAL_GAP_LIMIT: u32 = 5;
 /// Maximum gap limit to prevent excessive address generation
 pub const MAX_GAP_LIMIT: u32 = 1000;
 

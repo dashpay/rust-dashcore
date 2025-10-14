@@ -171,6 +171,16 @@ impl Wallet {
         }
         match options {
             WalletAccountCreationOptions::Default => {
+                // Create default BIP32 account 0
+                self.add_account(
+                    AccountType::Standard {
+                        index: 0,
+                        standard_account_type: StandardAccountType::BIP32Account,
+                    },
+                    network,
+                    None,
+                )?;
+
                 // Create default BIP44 account 0
                 self.add_account(
                     AccountType::Standard {
@@ -347,6 +357,16 @@ impl Wallet {
         }
         match options {
             WalletAccountCreationOptions::Default => {
+                // Create default BIP32 account 0
+                self.add_account_with_passphrase(
+                    AccountType::Standard {
+                        index: 0,
+                        standard_account_type: StandardAccountType::BIP32Account,
+                    },
+                    network,
+                    passphrase,
+                )?;
+
                 // Create default BIP44 account 0
                 self.add_account_with_passphrase(
                     AccountType::Standard {
