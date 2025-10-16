@@ -526,6 +526,32 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.sync_in_progress = false;
         self.last_sync_time = Some(Instant::now());
 
+        // Persist masternode state so phase manager can detect completion
+        // We store the current header tip height as the masternode sync height.
+        match storage.get_tip_height().await {
+            Ok(Some(tip_height)) => {
+                let state = crate::storage::MasternodeState {
+                    last_height: tip_height,
+                    engine_state: Vec::new(),
+                    last_update: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                };
+                if let Err(e) = storage.store_masternode_state(&state).await {
+                    tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+                }
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    "⚠️ Storage returned no tip height when persisting masternode state"
+                );
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ Failed to read tip height to persist masternode state: {}", e);
+            }
+        }
+
         tracing::info!("✅ QRInfo processing completed successfully (unified path)");
     }
 
