@@ -12,12 +12,16 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
+    // Type alias for transaction effects map
+    type TransactionEffectsMap =
+        Arc<Mutex<std::collections::BTreeMap<dashcore::Txid, (i64, Vec<String>)>>>;
+
     // Mock WalletInterface implementation for testing
     struct MockWallet {
         processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
         processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
         // Map txid -> (net_amount, addresses)
-        effects: Arc<Mutex<std::collections::BTreeMap<dashcore::Txid, (i64, Vec<String>)>>>,
+        effects: TransactionEffectsMap,
     }
 
     impl MockWallet {
