@@ -410,6 +410,7 @@ fn double_sha256(data: &[u8]) -> [u8; 32] {
 }
 
 /// AES-256-ECB encryption
+#[allow(deprecated)]
 fn aes_encrypt(data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
     use aes::Aes256;
@@ -435,6 +436,7 @@ fn aes_encrypt(data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// AES-256-ECB decryption
+#[allow(deprecated)]
 fn aes_decrypt(data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
     use aes::Aes256;
