@@ -509,7 +509,10 @@ pub unsafe extern "C" fn managed_account_get_transactions(
 
     // Allocate array for transaction records
     let count = transactions.len();
-    let layout = std::alloc::Layout::array::<FFITransactionRecord>(count).unwrap();
+    let layout = match std::alloc::Layout::array::<FFITransactionRecord>(count) {
+        Ok(layout) => layout,
+        Err(_) => return false,
+    };
     let ptr = std::alloc::alloc(layout) as *mut FFITransactionRecord;
 
     if ptr.is_null() {
