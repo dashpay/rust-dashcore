@@ -243,30 +243,28 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
 
             // Emit TransactionDetected events for each relevant transaction
             for txid in &txids {
-                // Find the transaction in the block to get details
                 if let Some(tx) = block.txdata.iter().find(|t| &t.txid() == txid) {
-                    // Calculate net amount for this transaction (simplified: sum outputs to wallet addresses)
-                    // Note: This is an approximation - proper calculation would require tracking inputs too
-                    let mut net_amount: i64 = 0;
-                    let affected_addresses: Vec<String> = Vec::new();
-
-                    // Sum up outputs that belong to the wallet
-                    // (wallet.process_block already determined this tx is relevant)
-                    for output in &tx.output {
-                        // Approximate: count all outputs as received (proper impl would check wallet ownership)
-                        net_amount += output.value as i64;
+                    // Ask the wallet for the precise effect of this transaction
+                    let effect = wallet.transaction_effect(tx, self.network).await;
+                    if let Some((net_amount, affected_addresses)) = effect {
+                        tracing::info!("📤 Emitting TransactionDetected event for {}", txid);
+                        let _ = self.event_tx.send(SpvEvent::TransactionDetected {
+                            txid: txid.to_string(),
+                            confirmed: true,
+                            block_height: Some(height),
+                            amount: net_amount,
+                            addresses: affected_addresses,
+                        });
+                    } else {
+                        // Fallback: emit event with zero and no addresses if wallet could not compute
+                        let _ = self.event_tx.send(SpvEvent::TransactionDetected {
+                            txid: txid.to_string(),
+                            confirmed: true,
+                            block_height: Some(height),
+                            amount: 0,
+                            addresses: Vec::new(),
+                        });
                     }
-
-                    tracing::info!("📤 Emitting TransactionDetected event for {}", txid);
-
-                    // Emit individual transaction event
-                    let _ = self.event_tx.send(SpvEvent::TransactionDetected {
-                        txid: txid.to_string(),
-                        confirmed: true, // Block transactions are confirmed
-                        block_height: Some(height),
-                        amount: net_amount,
-                        addresses: affected_addresses, // TODO: Get actual addresses from wallet
-                    });
                 }
             }
         }
