@@ -567,7 +567,10 @@ pub unsafe extern "C" fn managed_account_free_transactions(
     count: usize,
 ) {
     if !transactions.is_null() && count > 0 {
-        let layout = std::alloc::Layout::array::<FFITransactionRecord>(count).unwrap();
+        let layout = match std::alloc::Layout::array::<FFITransactionRecord>(count) {
+            Ok(layout) => layout,
+            Err(_) => return,
+        };
         std::alloc::dealloc(transactions as *mut u8, layout);
     }
 }
