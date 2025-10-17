@@ -161,10 +161,7 @@ fn test_transaction_routing_to_bip32_account() {
 
     // Check with update_state = false
     let result = managed_wallet_info.check_transaction(
-        &tx,
-        network,
-        context,
-        Some(&wallet), // don't update state
+        &tx, network, context, None, // don't update state
     );
 
     // The transaction should be recognized as relevant
@@ -405,10 +402,7 @@ fn test_transaction_affects_multiple_accounts() {
 
     // Test with update_state = false to ensure state isn't modified
     let result2 = managed_wallet_info.check_transaction(
-        &tx,
-        network,
-        context,
-        Some(&wallet), // don't update state
+        &tx, network, context, None, // don't update state
     );
 
     assert_eq!(
