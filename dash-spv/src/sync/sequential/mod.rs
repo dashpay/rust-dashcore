@@ -1978,22 +1978,21 @@ impl<
                     })?
                     .unwrap_or(0);
 
-                // Start from the lesser of filter_tip and (stop_height - 1)
-                let mut start_height = stop_height.saturating_sub(1);
-                if filter_tip < start_height {
-                    // normal case: request from tip up to stop
-                    start_height = filter_tip;
-                }
-
-                // If start is not before stop, there's nothing to request
-                if start_height >= stop_height {
+                // Check if we're already up-to-date before computing start_height
+                if filter_tip >= stop_height {
                     tracing::debug!(
-                        "Skipping CFHeaders request: start_height {} >= stop_height {} (tip: {})",
-                        start_height,
-                        stop_height,
-                        filter_tip
+                        "Skipping CFHeaders request: already up-to-date (filter_tip: {}, stop_height: {})",
+                        filter_tip,
+                        stop_height
                     );
                 } else {
+                    // Start from the lesser of filter_tip and (stop_height - 1)
+                    let mut start_height = stop_height.saturating_sub(1);
+                    if filter_tip < start_height {
+                        // normal case: request from tip up to stop
+                        start_height = filter_tip;
+                    }
+
                     tracing::info!(
                         "📋 Requesting filter headers up to height {} (start: {}, stop: {})",
                         stop_height,
