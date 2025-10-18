@@ -234,6 +234,39 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                 block_hash,
                 height
             );
+
+            // Update statistics for blocks with relevant transactions
+            {
+                let mut stats = self.stats.write().await;
+                stats.blocks_with_relevant_transactions += 1;
+            }
+
+            // Emit TransactionDetected events for each relevant transaction
+            for txid in &txids {
+                if let Some(tx) = block.txdata.iter().find(|t| &t.txid() == txid) {
+                    // Ask the wallet for the precise effect of this transaction
+                    let effect = wallet.transaction_effect(tx, self.network).await;
+                    if let Some((net_amount, affected_addresses)) = effect {
+                        tracing::info!("📤 Emitting TransactionDetected event for {}", txid);
+                        let _ = self.event_tx.send(SpvEvent::TransactionDetected {
+                            txid: txid.to_string(),
+                            confirmed: true,
+                            block_height: Some(height),
+                            amount: net_amount,
+                            addresses: affected_addresses,
+                        });
+                    } else {
+                        // Fallback: emit event with zero and no addresses if wallet could not compute
+                        let _ = self.event_tx.send(SpvEvent::TransactionDetected {
+                            txid: txid.to_string(),
+                            confirmed: true,
+                            block_height: Some(height),
+                            amount: 0,
+                            addresses: Vec::new(),
+                        });
+                    }
+                }
+            }
         }
         drop(wallet); // Release lock
 

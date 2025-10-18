@@ -50,6 +50,30 @@ struct ActiveRequest {
     sent_time: std::time::Instant,
 }
 
+/// Represents a CFHeaders request to be sent or queued.
+#[derive(Debug, Clone)]
+struct CFHeaderRequest {
+    start_height: u32,
+    stop_hash: BlockHash,
+    #[allow(dead_code)]
+    is_retry: bool,
+}
+
+/// Represents an active CFHeaders request that has been sent and is awaiting response.
+#[derive(Debug)]
+struct ActiveCFHeaderRequest {
+    sent_time: std::time::Instant,
+    stop_hash: BlockHash,
+}
+
+/// Represents a received CFHeaders batch waiting for sequential processing.
+#[derive(Debug)]
+struct ReceivedCFHeaderBatch {
+    cfheaders: CFHeaders,
+    #[allow(dead_code)]
+    received_at: std::time::Instant,
+}
+
 /// Manages BIP157 filter synchronization.
 pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     _phantom_s: std::marker::PhantomData<S>,
@@ -97,6 +121,24 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     gap_restart_failure_count: u32,
     /// Maximum gap restart attempts before giving up
     max_gap_restart_attempts: u32,
+    /// Queue of pending CFHeaders requests
+    pending_cfheader_requests: VecDeque<CFHeaderRequest>,
+    /// Currently active CFHeaders requests: (start_height, stop_height) -> ActiveCFHeaderRequest
+    active_cfheader_requests: HashMap<u32, ActiveCFHeaderRequest>,
+    /// Whether CFHeaders flow control is enabled
+    cfheaders_flow_control_enabled: bool,
+    /// Retry counts per CFHeaders range: start_height -> retry_count
+    cfheader_retry_counts: HashMap<u32, u32>,
+    /// Maximum retries for CFHeaders
+    max_cfheader_retries: u32,
+    /// Received CFHeaders batches waiting for sequential processing: start_height -> batch
+    received_cfheader_batches: HashMap<u32, ReceivedCFHeaderBatch>,
+    /// Next expected height for sequential processing
+    next_cfheader_height_to_process: u32,
+    /// Maximum concurrent CFHeaders requests
+    max_concurrent_cfheader_requests: usize,
+    /// Timeout for CFHeaders requests
+    cfheader_request_timeout: std::time::Duration,
 }
 
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
@@ -291,6 +333,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             ),
             gap_restart_failure_count: 0,
             max_gap_restart_attempts: config.max_cfheader_gap_restart_attempts,
+            // CFHeaders flow control fields
+            pending_cfheader_requests: VecDeque::new(),
+            active_cfheader_requests: HashMap::new(),
+            cfheaders_flow_control_enabled: config.enable_cfheaders_flow_control,
+            cfheader_retry_counts: HashMap::new(),
+            max_cfheader_retries: config.max_cfheaders_retries,
+            received_cfheader_batches: HashMap::new(),
+            next_cfheader_height_to_process: 0,
+            max_concurrent_cfheader_requests: config.max_concurrent_cfheaders_requests_parallel,
+            cfheader_request_timeout: std::time::Duration::from_secs(
+                config.cfheaders_request_timeout_secs,
+            ),
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         }
@@ -351,6 +405,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         if !self.syncing_filter_headers {
             // Not currently syncing, ignore
             return Ok(true);
+        }
+
+        // Check if we're using flow control
+        if self.cfheaders_flow_control_enabled {
+            return self.handle_cfheaders_with_flow_control(cf_headers, storage, network).await;
         }
 
         // Don't update last_sync_progress here - only update when we actually make progress
@@ -1033,6 +1092,497 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .map_err(|e| SyncError::Network(format!("Failed to send GetCFHeaders: {}", e)))?;
 
         tracing::debug!("Requested filter headers from height {} to {}", start_height, stop_hash);
+
+        Ok(())
+    }
+
+    /// Start synchronizing filter headers with flow control for parallel requests.
+    pub async fn start_sync_headers_with_flow_control(
+        &mut self,
+        network: &mut N,
+        storage: &mut S,
+    ) -> SyncResult<bool> {
+        if self.syncing_filter_headers {
+            return Err(SyncError::SyncInProgress);
+        }
+
+        // Check if any connected peer supports compact filters
+        if !network
+            .has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS)
+            .await
+        {
+            tracing::warn!(
+                "⚠️  No connected peers support compact filters (BIP 157/158). Skipping filter synchronization."
+            );
+            return Ok(false); // No sync started
+        }
+
+        tracing::info!("🚀 Starting filter header synchronization with flow control");
+
+        // Get current filter tip
+        let current_filter_height = storage
+            .get_filter_tip_height()
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
+            .unwrap_or(0);
+
+        // Get header tip (absolute blockchain height)
+        let header_tip_height = storage
+            .get_tip_height()
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
+            .ok_or_else(|| {
+                SyncError::Storage("No headers available for filter sync".to_string())
+            })?;
+
+        if current_filter_height >= header_tip_height {
+            tracing::info!("Filter headers already synced to header tip");
+            return Ok(false); // Already synced
+        }
+
+        // Determine next height to request
+        let next_height =
+            if self.sync_base_height > 0 && current_filter_height < self.sync_base_height {
+                tracing::info!(
+                    "Starting filter sync from checkpoint base {} (current filter height: {})",
+                    self.sync_base_height,
+                    current_filter_height
+                );
+                self.sync_base_height
+            } else {
+                current_filter_height + 1
+            };
+
+        if next_height > header_tip_height {
+            tracing::warn!(
+                "Filter sync requested but next height {} > header tip {}, nothing to sync",
+                next_height,
+                header_tip_height
+            );
+            return Ok(false);
+        }
+
+        // Set up flow control state
+        self.syncing_filter_headers = true;
+        self.current_sync_height = next_height;
+        self.next_cfheader_height_to_process = next_height;
+        self.last_sync_progress = std::time::Instant::now();
+
+        // Build request queue
+        self.build_cfheader_request_queue(storage, next_height, header_tip_height).await?;
+
+        // Send initial batch of requests
+        self.process_cfheader_request_queue(network).await?;
+
+        tracing::info!(
+            "✅ CFHeaders flow control initiated ({} requests queued, {} active)",
+            self.pending_cfheader_requests.len(),
+            self.active_cfheader_requests.len()
+        );
+
+        Ok(true)
+    }
+
+    /// Build queue of CFHeaders requests from the specified range.
+    async fn build_cfheader_request_queue(
+        &mut self,
+        storage: &S,
+        start_height: u32,
+        end_height: u32,
+    ) -> SyncResult<()> {
+        // Clear any existing queue
+        self.pending_cfheader_requests.clear();
+        self.active_cfheader_requests.clear();
+        self.cfheader_retry_counts.clear();
+        self.received_cfheader_batches.clear();
+
+        tracing::info!(
+            "🔄 Building CFHeaders request queue from height {} to {} ({} blocks)",
+            start_height,
+            end_height,
+            end_height - start_height + 1
+        );
+
+        // Build requests in batches of FILTER_BATCH_SIZE (1999)
+        let mut current_height = start_height;
+
+        while current_height <= end_height {
+            let batch_end = (current_height + FILTER_BATCH_SIZE - 1).min(end_height);
+
+            // Get stop_hash for this batch
+            let stop_hash = storage
+                .get_header(batch_end)
+                .await
+                .map_err(|e| {
+                    SyncError::Storage(format!(
+                        "Failed to get stop header at height {}: {}",
+                        batch_end, e
+                    ))
+                })?
+                .ok_or_else(|| {
+                    SyncError::Storage(format!("Stop header not found at height {}", batch_end))
+                })?
+                .block_hash();
+
+            // Create CFHeaders request and add to queue
+            let request = CFHeaderRequest {
+                start_height: current_height,
+                stop_hash,
+                is_retry: false,
+            };
+
+            self.pending_cfheader_requests.push_back(request);
+
+            tracing::debug!(
+                "Queued CFHeaders request for heights {} to {} (stop_hash: {})",
+                current_height,
+                batch_end,
+                stop_hash
+            );
+
+            current_height = batch_end + 1;
+        }
+
+        tracing::info!(
+            "📋 CFHeaders request queue built with {} batches",
+            self.pending_cfheader_requests.len()
+        );
+
+        Ok(())
+    }
+
+    /// Process the CFHeaders request queue with flow control.
+    async fn process_cfheader_request_queue(&mut self, network: &mut N) -> SyncResult<()> {
+        // Send initial batch up to max_concurrent_cfheader_requests
+        let initial_send_count =
+            self.max_concurrent_cfheader_requests.min(self.pending_cfheader_requests.len());
+
+        for _ in 0..initial_send_count {
+            if let Some(request) = self.pending_cfheader_requests.pop_front() {
+                self.send_cfheader_request(network, request).await?;
+            }
+        }
+
+        tracing::info!(
+            "🚀 Sent initial batch of {} CFHeaders requests ({} queued, {} active)",
+            initial_send_count,
+            self.pending_cfheader_requests.len(),
+            self.active_cfheader_requests.len()
+        );
+
+        Ok(())
+    }
+
+    /// Send a single CFHeaders request and track it as active.
+    async fn send_cfheader_request(
+        &mut self,
+        network: &mut N,
+        request: CFHeaderRequest,
+    ) -> SyncResult<()> {
+        // Send the actual network request
+        self.request_filter_headers(network, request.start_height, request.stop_hash).await?;
+
+        // Track this request as active
+        let active_request = ActiveCFHeaderRequest {
+            sent_time: std::time::Instant::now(),
+            stop_hash: request.stop_hash,
+        };
+
+        self.active_cfheader_requests.insert(request.start_height, active_request);
+
+        tracing::debug!(
+            "📡 Sent CFHeaders request for height {} (stop_hash: {}, now {} active)",
+            request.start_height,
+            request.stop_hash,
+            self.active_cfheader_requests.len()
+        );
+
+        Ok(())
+    }
+
+    /// Handle CFHeaders message with flow control (buffering and sequential processing).
+    async fn handle_cfheaders_with_flow_control(
+        &mut self,
+        cf_headers: CFHeaders,
+        storage: &mut S,
+        network: &mut N,
+    ) -> SyncResult<bool> {
+        // Handle empty response - indicates end of sync
+        if cf_headers.filter_hashes.is_empty() {
+            tracing::info!("Received empty CFHeaders response - sync complete");
+            self.syncing_filter_headers = false;
+            self.clear_cfheader_flow_control_state();
+            return Ok(false);
+        }
+
+        // Get the height range for this batch
+        let (batch_start_height, stop_height, _header_tip_height) =
+            self.get_batch_height_range(&cf_headers, storage).await?;
+
+        tracing::debug!(
+            "Received CFHeaders batch: start={}, stop={}, count={}, next_expected={}",
+            batch_start_height,
+            stop_height,
+            cf_headers.filter_hashes.len(),
+            self.next_cfheader_height_to_process
+        );
+
+        // Mark this request as complete in active tracking
+        self.active_cfheader_requests.remove(&batch_start_height);
+
+        // Check if this is the next expected batch
+        if batch_start_height == self.next_cfheader_height_to_process {
+            // Process this batch immediately
+            tracing::debug!("Processing expected batch at height {}", batch_start_height);
+            self.process_cfheader_batch(cf_headers, storage, network).await?;
+
+            // Try to process any buffered batches that are now in sequence
+            self.process_buffered_cfheader_batches(storage, network).await?;
+        } else if batch_start_height > self.next_cfheader_height_to_process {
+            // Out of order - buffer for later
+            tracing::debug!(
+                "Buffering out-of-order batch at height {} (expected {})",
+                batch_start_height,
+                self.next_cfheader_height_to_process
+            );
+
+            let batch = ReceivedCFHeaderBatch {
+                cfheaders: cf_headers,
+                received_at: std::time::Instant::now(),
+            };
+
+            self.received_cfheader_batches.insert(batch_start_height, batch);
+        } else {
+            // Already processed - likely a duplicate or retry
+            tracing::debug!(
+                "Ignoring already-processed batch at height {} (current expected: {})",
+                batch_start_height,
+                self.next_cfheader_height_to_process
+            );
+        }
+
+        // Send next queued requests to fill available slots
+        self.process_next_queued_cfheader_requests(network).await?;
+
+        // Check if sync is complete
+        if self.is_cfheader_sync_complete(storage).await? {
+            tracing::info!("✅ CFHeaders sync complete!");
+            self.syncing_filter_headers = false;
+            self.clear_cfheader_flow_control_state();
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    /// Process a single CFHeaders batch (extracted from original handle_cfheaders logic).
+    async fn process_cfheader_batch(
+        &mut self,
+        cf_headers: CFHeaders,
+        storage: &mut S,
+        _network: &mut N,
+    ) -> SyncResult<()> {
+        let (batch_start_height, stop_height, _header_tip_height) =
+            self.get_batch_height_range(&cf_headers, storage).await?;
+
+        // Verify and process the batch
+        match self.verify_filter_header_chain(&cf_headers, batch_start_height, storage).await {
+            Ok(true) => {
+                tracing::debug!(
+                    "✅ Filter header chain verification successful for batch {}-{}",
+                    batch_start_height,
+                    stop_height
+                );
+
+                // Store the verified filter headers
+                self.store_filter_headers(cf_headers.clone(), storage).await?;
+
+                // Update next expected height
+                self.next_cfheader_height_to_process = stop_height + 1;
+                self.current_sync_height = stop_height + 1;
+                self.last_sync_progress = std::time::Instant::now();
+
+                tracing::debug!(
+                    "Updated next expected height to {}, batch processed successfully",
+                    self.next_cfheader_height_to_process
+                );
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    "⚠️ Filter header chain verification failed for batch {}-{}",
+                    batch_start_height,
+                    stop_height
+                );
+                return Err(SyncError::Validation(
+                    "Filter header chain verification failed".to_string(),
+                ));
+            }
+            Err(e) => {
+                tracing::error!("❌ Filter header chain verification failed: {}", e);
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process buffered CFHeaders batches that are now in sequence.
+    async fn process_buffered_cfheader_batches(
+        &mut self,
+        storage: &mut S,
+        network: &mut N,
+    ) -> SyncResult<()> {
+        while let Some(batch) =
+            self.received_cfheader_batches.remove(&self.next_cfheader_height_to_process)
+        {
+            tracing::debug!(
+                "Processing buffered batch at height {}",
+                self.next_cfheader_height_to_process
+            );
+
+            self.process_cfheader_batch(batch.cfheaders, storage, network).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Process next requests from the queue when active requests complete.
+    async fn process_next_queued_cfheader_requests(&mut self, network: &mut N) -> SyncResult<()> {
+        let available_slots = self
+            .max_concurrent_cfheader_requests
+            .saturating_sub(self.active_cfheader_requests.len());
+
+        let mut sent_count = 0;
+        for _ in 0..available_slots {
+            if let Some(request) = self.pending_cfheader_requests.pop_front() {
+                self.send_cfheader_request(network, request).await?;
+                sent_count += 1;
+            } else {
+                break;
+            }
+        }
+
+        if sent_count > 0 {
+            tracing::debug!(
+                "🚀 Sent {} additional CFHeaders requests from queue ({} queued, {} active)",
+                sent_count,
+                self.pending_cfheader_requests.len(),
+                self.active_cfheader_requests.len()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Check if CFHeaders sync is complete.
+    async fn is_cfheader_sync_complete(&self, storage: &S) -> SyncResult<bool> {
+        // Sync is complete if:
+        // 1. No pending requests
+        // 2. No active requests
+        // 3. No buffered batches
+        // 4. Current height >= header tip
+
+        if !self.pending_cfheader_requests.is_empty() {
+            return Ok(false);
+        }
+
+        if !self.active_cfheader_requests.is_empty() {
+            return Ok(false);
+        }
+
+        if !self.received_cfheader_batches.is_empty() {
+            return Ok(false);
+        }
+
+        let header_tip = storage
+            .get_tip_height()
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get header tip: {}", e)))?
+            .unwrap_or(0);
+
+        Ok(self.next_cfheader_height_to_process > header_tip)
+    }
+
+    /// Clear flow control state.
+    fn clear_cfheader_flow_control_state(&mut self) {
+        self.pending_cfheader_requests.clear();
+        self.active_cfheader_requests.clear();
+        self.cfheader_retry_counts.clear();
+        self.received_cfheader_batches.clear();
+    }
+
+    /// Check for timed out CFHeaders requests and handle recovery.
+    pub async fn check_cfheader_request_timeouts(
+        &mut self,
+        network: &mut N,
+        storage: &S,
+    ) -> SyncResult<()> {
+        if !self.cfheaders_flow_control_enabled || !self.syncing_filter_headers {
+            return Ok(());
+        }
+
+        let now = std::time::Instant::now();
+        let mut timed_out_requests = Vec::new();
+
+        // Check for timed out active requests
+        for (start_height, active_req) in &self.active_cfheader_requests {
+            if now.duration_since(active_req.sent_time) > self.cfheader_request_timeout {
+                timed_out_requests.push((*start_height, active_req.stop_hash));
+            }
+        }
+
+        // Handle timeouts: remove from active, retry or give up based on retry count
+        for (start_height, stop_hash) in timed_out_requests {
+            self.handle_cfheader_request_timeout(start_height, stop_hash, network, storage).await?;
+        }
+
+        // Check queue status and send next batch if needed
+        self.process_next_queued_cfheader_requests(network).await?;
+
+        Ok(())
+    }
+
+    /// Handle a specific CFHeaders request timeout.
+    async fn handle_cfheader_request_timeout(
+        &mut self,
+        start_height: u32,
+        stop_hash: BlockHash,
+        _network: &mut N,
+        _storage: &S,
+    ) -> SyncResult<()> {
+        let retry_count = self.cfheader_retry_counts.get(&start_height).copied().unwrap_or(0);
+
+        // Remove from active requests
+        self.active_cfheader_requests.remove(&start_height);
+
+        if retry_count >= self.max_cfheader_retries {
+            tracing::error!(
+                "❌ CFHeaders request for height {} failed after {} retries, giving up",
+                start_height,
+                retry_count
+            );
+            return Ok(());
+        }
+
+        tracing::info!(
+            "🔄 Retrying timed out CFHeaders request for height {} (attempt {}/{})",
+            start_height,
+            retry_count + 1,
+            self.max_cfheader_retries
+        );
+
+        // Create new request and add back to queue for retry
+        let retry_request = CFHeaderRequest {
+            start_height,
+            stop_hash,
+            is_retry: true,
+        };
+
+        // Update retry count
+        self.cfheader_retry_counts.insert(start_height, retry_count + 1);
+
+        // Add to front of queue for priority retry
+        self.pending_cfheader_requests.push_front(retry_request);
 
         Ok(())
     }

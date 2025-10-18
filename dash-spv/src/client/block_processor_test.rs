@@ -12,10 +12,16 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
+    // Type alias for transaction effects map
+    type TransactionEffectsMap =
+        Arc<Mutex<std::collections::BTreeMap<dashcore::Txid, (i64, Vec<String>)>>>;
+
     // Mock WalletInterface implementation for testing
     struct MockWallet {
         processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
         processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
+        // Map txid -> (net_amount, addresses)
+        effects: TransactionEffectsMap,
     }
 
     impl MockWallet {
@@ -23,7 +29,13 @@ mod tests {
             Self {
                 processed_blocks: Arc::new(Mutex::new(Vec::new())),
                 processed_transactions: Arc::new(Mutex::new(Vec::new())),
+                effects: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
             }
+        }
+
+        async fn set_effect(&self, txid: dashcore::Txid, net: i64, addresses: Vec<String>) {
+            let mut map = self.effects.lock().await;
+            map.insert(txid, (net, addresses));
         }
     }
 
@@ -63,6 +75,15 @@ mod tests {
 
         async fn describe(&self, _network: Network) -> String {
             "MockWallet (test implementation)".to_string()
+        }
+
+        async fn transaction_effect(
+            &self,
+            tx: &Transaction,
+            _network: Network,
+        ) -> Option<(i64, Vec<String>)> {
+            let map = self.effects.lock().await;
+            map.get(&tx.txid()).cloned()
         }
     }
 
@@ -110,6 +131,15 @@ mod tests {
 
         // Send block processing task
         let (response_tx, _response_rx) = oneshot::channel();
+
+        // Prime wallet with an effect for the coinbase tx in the genesis block
+        let txid = block.txdata[0].txid();
+        {
+            let wallet_guard = wallet.read().await;
+            wallet_guard
+                .set_effect(txid, 1234, vec!["XyTestAddr1".to_string(), "XyTestAddr2".to_string()])
+                .await;
+        }
         task_tx
             .send(BlockProcessingTask::ProcessBlock {
                 block: Box::new(block.clone()),
@@ -120,21 +150,46 @@ mod tests {
         // Process the block in a separate task
         let processor_handle = tokio::spawn(async move { processor.run().await });
 
-        // Wait for event
+        // Wait for events; capture the TransactionDetected for our tx
+        let mut saw_tx_event = false;
         tokio::time::timeout(std::time::Duration::from_millis(100), async {
             while let Some(event) = event_rx.recv().await {
-                if let SpvEvent::BlockProcessed {
-                    hash,
-                    ..
-                } = event
-                {
-                    assert_eq!(hash.to_string(), block_hash.to_string());
-                    break;
+                match event {
+                    SpvEvent::TransactionDetected {
+                        txid: tid,
+                        amount,
+                        addresses,
+                        confirmed,
+                        block_height,
+                    } => {
+                        // Should use wallet-provided values
+                        assert_eq!(tid, txid.to_string());
+                        assert_eq!(amount, 1234);
+                        assert_eq!(
+                            addresses,
+                            vec!["XyTestAddr1".to_string(), "XyTestAddr2".to_string()]
+                        );
+                        assert!(confirmed);
+                        assert_eq!(block_height, Some(0));
+                        saw_tx_event = true;
+                    }
+                    SpvEvent::BlockProcessed {
+                        hash,
+                        ..
+                    } => {
+                        assert_eq!(hash.to_string(), block_hash.to_string());
+                        if saw_tx_event {
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
             }
         })
         .await
         .expect("Should receive block processed event");
+
+        assert!(saw_tx_event, "Should emit TransactionDetected with wallet-provided effect");
 
         // Verify wallet was called
         {
@@ -286,6 +341,158 @@ mod tests {
         let event_result =
             tokio::time::timeout(std::time::Duration::from_millis(50), event_rx.recv()).await;
         assert!(event_result.is_err(), "Should not receive any event for non-matching filter");
+
+        // Shutdown
+        drop(task_tx);
+        let _ = processor_handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_transaction_detected_fallback_when_no_wallet_effect() {
+        let (processor, task_tx, mut event_rx, _wallet, storage) = setup_processor().await;
+
+        // Create a test block
+        let block = create_test_block(Network::Dash);
+        let block_hash = block.block_hash();
+        let txid = block.txdata[0].txid();
+
+        // Store header so height lookup succeeds
+        {
+            let mut storage = storage.lock().await;
+            storage.store_headers(&[block.header]).await.unwrap();
+        }
+
+        // Send block processing task without priming any effect (transaction_effect will return None)
+        let (response_tx, _response_rx) = oneshot::channel();
+        task_tx
+            .send(BlockProcessingTask::ProcessBlock {
+                block: Box::new(block.clone()),
+                response_tx,
+            })
+            .unwrap();
+
+        // Process
+        let processor_handle = tokio::spawn(async move { processor.run().await });
+
+        let mut saw_tx_event = false;
+        tokio::time::timeout(std::time::Duration::from_millis(100), async {
+            while let Some(event) = event_rx.recv().await {
+                match event {
+                    SpvEvent::TransactionDetected {
+                        txid: tid,
+                        amount,
+                        addresses,
+                        confirmed,
+                        block_height,
+                    } => {
+                        assert_eq!(tid, txid.to_string());
+                        assert_eq!(
+                            amount, 0,
+                            "fallback amount should be 0 when no effect available"
+                        );
+                        assert!(addresses.is_empty(), "fallback addresses should be empty");
+                        assert!(confirmed);
+                        assert_eq!(block_height, Some(0));
+                        saw_tx_event = true;
+                    }
+                    SpvEvent::BlockProcessed {
+                        hash,
+                        ..
+                    } => {
+                        assert_eq!(hash.to_string(), block_hash.to_string());
+                        if saw_tx_event {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("Should receive events");
+
+        assert!(saw_tx_event, "Should emit TransactionDetected with fallback values");
+
+        // Shutdown
+        drop(task_tx);
+        let _ = processor_handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_transaction_detected_negative_amount_and_duplicate_addresses() {
+        let (processor, task_tx, mut event_rx, wallet, storage) = setup_processor().await;
+
+        // Create a test block
+        let block = create_test_block(Network::Dash);
+        let block_hash = block.block_hash();
+        let txid = block.txdata[0].txid();
+
+        // Store header so height lookup succeeds
+        {
+            let mut storage = storage.lock().await;
+            storage.store_headers(&[block.header]).await.unwrap();
+        }
+
+        // Prime wallet with negative amount and duplicate addresses
+        {
+            let wallet_guard = wallet.read().await;
+            wallet_guard
+                .set_effect(
+                    txid,
+                    -500,
+                    vec!["DupAddr".to_string(), "DupAddr".to_string(), "UniqueAddr".to_string()],
+                )
+                .await;
+        }
+
+        // Send block processing task
+        let (response_tx, _response_rx) = oneshot::channel();
+        task_tx
+            .send(BlockProcessingTask::ProcessBlock {
+                block: Box::new(block.clone()),
+                response_tx,
+            })
+            .unwrap();
+
+        // Process
+        let processor_handle = tokio::spawn(async move { processor.run().await });
+
+        let mut saw_tx_event = false;
+        tokio::time::timeout(std::time::Duration::from_millis(100), async {
+            while let Some(event) = event_rx.recv().await {
+                match event {
+                    SpvEvent::TransactionDetected {
+                        txid: tid,
+                        amount,
+                        addresses,
+                        confirmed,
+                        block_height,
+                    } => {
+                        assert_eq!(tid, txid.to_string());
+                        assert_eq!(amount, -500);
+                        // BlockProcessor uses wallet-provided addresses as-is (no dedup here)
+                        assert_eq!(addresses, vec!["DupAddr", "DupAddr", "UniqueAddr"]);
+                        assert!(confirmed);
+                        assert_eq!(block_height, Some(0));
+                        saw_tx_event = true;
+                    }
+                    SpvEvent::BlockProcessed {
+                        hash,
+                        ..
+                    } => {
+                        assert_eq!(hash.to_string(), block_hash.to_string());
+                        if saw_tx_event {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("Should receive events");
+
+        assert!(saw_tx_event, "Should emit TransactionDetected with negative net and duplicates");
 
         // Shutdown
         drop(task_tx);

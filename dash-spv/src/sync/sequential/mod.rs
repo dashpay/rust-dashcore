@@ -77,6 +77,9 @@ pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: Wallet
 
     /// Optional wallet reference for filter checking
     wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
+
+    /// Statistics for tracking sync progress
+    stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
 }
 
 impl<
@@ -91,6 +94,7 @@ impl<
         received_filter_heights: SharedFilterHeights,
         wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
         chain_state: Arc<RwLock<ChainState>>,
+        stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
@@ -112,6 +116,7 @@ impl<
             max_phase_retries: 3,
             current_phase_retries: 0,
             wallet,
+            stats,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         })
@@ -324,8 +329,14 @@ impl<
                     self.filter_sync.set_sync_base_height(sync_base_height);
                 }
 
-                // Check if filter sync actually started
-                let sync_started = self.filter_sync.start_sync_headers(network, storage).await?;
+                // Use flow control if enabled, otherwise use single-request mode
+                let sync_started = if self.config.enable_cfheaders_flow_control {
+                    tracing::info!("Using CFHeaders flow control for parallel sync");
+                    self.filter_sync.start_sync_headers_with_flow_control(network, storage).await?
+                } else {
+                    tracing::info!("Using single-request CFHeaders sync (flow control disabled)");
+                    self.filter_sync.start_sync_headers(network, storage).await?
+                };
 
                 if !sync_started {
                     // No peers support compact filters or already up to date
@@ -612,7 +623,11 @@ impl<
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                self.filter_sync.check_sync_timeout(storage, network).await?;
+                if self.config.enable_cfheaders_flow_control {
+                    self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
+                } else {
+                    self.filter_sync.check_sync_timeout(storage, network).await?;
+                }
             }
             SyncPhase::DownloadingMnList {
                 ..
@@ -1045,7 +1060,11 @@ impl<
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                self.filter_sync.check_sync_timeout(storage, network).await?;
+                if self.config.enable_cfheaders_flow_control {
+                    self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
+                } else {
+                    self.filter_sync.check_sync_timeout(storage, network).await?;
+                }
             }
             _ => {
                 // For other phases, we'll need phase-specific recovery
@@ -1265,6 +1284,9 @@ impl<
 
             // Transition to next phase (filter headers)
             self.transition_to_next_phase(storage, network, "QRInfo processing completed").await?;
+
+            // Immediately execute the next phase so CFHeaders begins without delay
+            self.execute_current_phase(network, storage).await?;
         }
 
         Ok(())
@@ -1387,6 +1409,12 @@ impl<
         drop(wallet);
 
         if matches {
+            // Update filter match statistics
+            {
+                let mut stats = self.stats.write().await;
+                stats.filters_matched += 1;
+            }
+
             tracing::info!("🎯 Filter match found! Requesting block {}", cfilter.block_hash);
             // Request the full block
             let inv = Inventory::Block(cfilter.block_hash);
@@ -1854,69 +1882,138 @@ impl<
 
             // If we have masternodes enabled, request masternode list updates for ChainLock validation
             if self.config.enable_masternodes {
-                // For ChainLock validation, we need masternode lists at (block_height - CHAINLOCK_VALIDATION_MASTERNODE_OFFSET)
-                // We request the masternode diff for each new block (not just offset blocks) to maintain a complete rolling window
-                let base_block_hash = if height > 0 {
-                    // Get the previous block hash
-                    storage
-                        .get_header(height - 1)
-                        .await
-                        .map_err(|e| {
-                            SyncError::Storage(format!("Failed to get previous block: {}", e))
-                        })?
-                        .map(|h| h.block_hash())
-                        .ok_or(SyncError::InvalidState("Previous block not found".to_string()))?
-                } else {
-                    // Genesis block case
-                    dashcore::blockdata::constants::genesis_block(self.config.network).block_hash()
+                // Use the latest persisted masternode state height as base to guarantee base < stop
+                let base_height = match storage.load_masternode_state().await {
+                    Ok(Some(state)) => state.last_height,
+                    _ => 0,
                 };
 
-                tracing::info!(
-                    "📋 Requesting masternode list diff for block at height {} to maintain ChainLock validation window",
-                    blockchain_height
-                );
+                if base_height < height {
+                    let base_block_hash = if base_height > 0 {
+                        storage
+                            .get_header(base_height)
+                            .await
+                            .map_err(|e| {
+                                SyncError::Storage(format!(
+                                    "Failed to get masternode base block at {}: {}",
+                                    base_height, e
+                                ))
+                            })?
+                            .map(|h| h.block_hash())
+                            .ok_or(SyncError::InvalidState(
+                                "Masternode base block not found".to_string(),
+                            ))?
+                    } else {
+                        // Genesis block case
+                        dashcore::blockdata::constants::genesis_block(self.config.network)
+                            .block_hash()
+                    };
 
-                let getmnlistdiff =
-                    NetworkMessage::GetMnListD(dashcore::network::message_sml::GetMnListDiff {
-                        base_block_hash,
-                        block_hash: header.block_hash(),
-                    });
+                    tracing::info!(
+                        "📋 Requesting masternode list diff for block at height {} (base: {} -> target: {})",
+                        blockchain_height,
+                        base_height,
+                        height
+                    );
 
-                network.send_message(getmnlistdiff).await.map_err(|e| {
-                    SyncError::Network(format!("Failed to request masternode diff: {}", e))
-                })?;
+                    let getmnlistdiff =
+                        NetworkMessage::GetMnListD(dashcore::network::message_sml::GetMnListDiff {
+                            base_block_hash,
+                            block_hash: header.block_hash(),
+                        });
+
+                    network.send_message(getmnlistdiff).await.map_err(|e| {
+                        SyncError::Network(format!("Failed to request masternode diff: {}", e))
+                    })?;
+                } else {
+                    tracing::debug!(
+                        "Skipping masternode diff request: base_height {} >= target height {}",
+                        base_height,
+                        height
+                    );
+                }
 
                 // The masternode diff will arrive via handle_message and be processed by masternode_sync
             }
 
             // If we have filters enabled, request filter headers for the new blocks
             if self.config.enable_filters {
-                // Request filter headers for the new block
-                let stop_hash = header.block_hash();
-                let start_height = height.saturating_sub(1);
+                // Determine stop as the previous block to avoid peer race on newly announced tip
+                let stop_hash = if height > 0 {
+                    storage
+                        .get_header(height - 1)
+                        .await
+                        .map_err(|e| {
+                            SyncError::Storage(format!(
+                                "Failed to get previous block for CFHeaders stop: {}",
+                                e
+                            ))
+                        })?
+                        .map(|h| h.block_hash())
+                        .ok_or(SyncError::InvalidState(
+                            "Previous block not found for CFHeaders stop".to_string(),
+                        ))?
+                } else {
+                    dashcore::blockdata::constants::genesis_block(self.config.network).block_hash()
+                };
 
-                tracing::info!(
-                    "📋 Requesting filter headers for block at height {} (start: {}, stop: {})",
-                    blockchain_height,
-                    start_height,
-                    stop_hash
-                );
+                // Resolve the absolute blockchain height for stop_hash
+                let stop_height = storage
+                    .get_header_height_by_hash(&stop_hash)
+                    .await
+                    .map_err(|e| {
+                        SyncError::Storage(format!(
+                            "Failed to get stop height for CFHeaders: {}",
+                            e
+                        ))
+                    })?
+                    .ok_or(SyncError::InvalidState("Stop block height not found".to_string()))?;
 
-                let get_cfheaders =
-                    NetworkMessage::GetCFHeaders(dashcore::network::message_filter::GetCFHeaders {
-                        filter_type: 0, // Basic filter
+                // Current filter headers tip (absolute blockchain height)
+                let filter_tip = storage
+                    .get_filter_tip_height()
+                    .await
+                    .map_err(|e| {
+                        SyncError::Storage(format!("Failed to get filter tip height: {}", e))
+                    })?
+                    .unwrap_or(0);
+
+                // Check if we're already up-to-date before computing start_height
+                if filter_tip >= stop_height {
+                    tracing::debug!(
+                        "Skipping CFHeaders request: already up-to-date (filter_tip: {}, stop_height: {})",
+                        filter_tip,
+                        stop_height
+                    );
+                } else {
+                    // Start from the lesser of filter_tip and (stop_height - 1)
+                    let mut start_height = stop_height.saturating_sub(1);
+                    if filter_tip < start_height {
+                        // normal case: request from tip up to stop
+                        start_height = filter_tip;
+                    }
+
+                    tracing::info!(
+                        "📋 Requesting filter headers up to height {} (start: {}, stop: {})",
+                        stop_height,
                         start_height,
-                        stop_hash,
-                    });
+                        stop_hash
+                    );
 
-                network.send_message(get_cfheaders).await.map_err(|e| {
-                    SyncError::Network(format!("Failed to request filter headers: {}", e))
-                })?;
+                    let get_cfheaders = NetworkMessage::GetCFHeaders(
+                        dashcore::network::message_filter::GetCFHeaders {
+                            filter_type: 0, // Basic filter
+                            start_height,
+                            stop_hash,
+                        },
+                    );
 
-                // The filter headers will arrive via handle_message
-                // Then we'll request the actual filter
-                // Then check if it matches our watch items
-                // Then request the block if it matches
+                    network.send_message(get_cfheaders).await.map_err(|e| {
+                        SyncError::Network(format!("Failed to request filter headers: {}", e))
+                    })?;
+
+                    // The filter headers will arrive via handle_message, then we'll request filters
+                }
             }
         }
 

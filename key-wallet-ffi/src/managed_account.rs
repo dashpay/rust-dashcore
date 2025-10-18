@@ -7,6 +7,8 @@
 use std::os::raw::c_uint;
 use std::sync::Arc;
 
+use dashcore::hashes::Hash;
+
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIAccountType, FFINetwork};
@@ -455,6 +457,122 @@ pub unsafe extern "C" fn managed_account_get_utxo_count(
 
     let account = &*account;
     account.inner().utxos.len() as c_uint
+}
+
+/// FFI-compatible transaction record
+#[repr(C)]
+pub struct FFITransactionRecord {
+    /// Transaction ID (32 bytes)
+    pub txid: [u8; 32],
+    /// Net amount for this account (positive = received, negative = sent)
+    pub net_amount: i64,
+    /// Block height if confirmed, 0 if unconfirmed
+    pub height: u32,
+    /// Block hash if confirmed (32 bytes), all zeros if unconfirmed
+    pub block_hash: [u8; 32],
+    /// Unix timestamp
+    pub timestamp: u64,
+    /// Fee if known, 0 if unknown
+    pub fee: u64,
+    /// Whether this is our transaction
+    pub is_ours: bool,
+}
+
+/// Get all transactions from a managed account
+///
+/// Returns an array of FFITransactionRecord structures.
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `transactions_out` must be a valid pointer to receive the transactions array pointer
+/// - `count_out` must be a valid pointer to receive the count
+/// - The caller must free the returned array using `managed_account_free_transactions`
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_get_transactions(
+    account: *const FFIManagedAccount,
+    transactions_out: *mut *mut FFITransactionRecord,
+    count_out: *mut usize,
+) -> bool {
+    if account.is_null() || transactions_out.is_null() || count_out.is_null() {
+        return false;
+    }
+
+    let account = &*account;
+    let transactions = &account.inner().transactions;
+
+    if transactions.is_empty() {
+        *transactions_out = std::ptr::null_mut();
+        *count_out = 0;
+        return true;
+    }
+
+    // Allocate array for transaction records
+    let count = transactions.len();
+    let layout = match std::alloc::Layout::array::<FFITransactionRecord>(count) {
+        Ok(layout) => layout,
+        Err(_) => return false,
+    };
+    let ptr = std::alloc::alloc(layout) as *mut FFITransactionRecord;
+
+    if ptr.is_null() {
+        return false;
+    }
+
+    // Copy transaction data into FFI structures
+    for (i, (_txid, record)) in transactions.iter().enumerate() {
+        let ffi_record = &mut *ptr.add(i);
+
+        // Copy txid
+        ffi_record.txid = record.txid.to_byte_array();
+
+        // Copy net amount
+        ffi_record.net_amount = record.net_amount;
+
+        // Copy height (0 if unconfirmed)
+        ffi_record.height = record.height.unwrap_or(0);
+
+        // Copy block hash (zeros if unconfirmed)
+        if let Some(block_hash) = record.block_hash {
+            ffi_record.block_hash = block_hash.to_byte_array();
+        } else {
+            ffi_record.block_hash = [0u8; 32];
+        }
+
+        // Copy timestamp
+        ffi_record.timestamp = record.timestamp;
+
+        // Copy fee (0 if unknown)
+        ffi_record.fee = record.fee.unwrap_or(0);
+
+        // Copy is_ours flag
+        ffi_record.is_ours = record.is_ours;
+    }
+
+    *transactions_out = ptr;
+    *count_out = count;
+    true
+}
+
+/// Free transactions array returned by managed_account_get_transactions
+///
+/// # Safety
+///
+/// - `transactions` must be a pointer returned by `managed_account_get_transactions`
+/// - `count` must be the count returned by `managed_account_get_transactions`
+/// - This function must only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_free_transactions(
+    transactions: *mut FFITransactionRecord,
+    count: usize,
+) {
+    if !transactions.is_null() && count > 0 {
+        let layout = match std::alloc::Layout::array::<FFITransactionRecord>(count) {
+            Ok(layout) => layout,
+            Err(_) => return,
+        };
+        std::alloc::dealloc(transactions as *mut u8, layout);
+    }
 }
 
 /// Free a managed account handle

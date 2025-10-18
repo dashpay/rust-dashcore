@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 234
+**Total Functions**: 236
 
 ## Table of Contents
 
@@ -132,7 +132,7 @@ Functions: 57
 
 ### Account Management
 
-Functions: 92
+Functions: 94
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -218,6 +218,7 @@ Functions: 92
 | `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection  Return... | managed_account_collection |
 | `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  # Saf... | managed_account_collection |
 | `managed_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer ... | managed_account |
+| `managed_account_free_transactions` | Free transactions array returned by managed_account_get_transactions  # Safet... | managed_account |
 | `managed_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a va... | managed_account |
 | `managed_account_get_address_pool` | Get an address pool from a managed account by type  This function returns the... | managed_account |
 | `managed_account_get_balance` | Get the balance of a managed account  # Safety  - `account` must be a valid p... | managed_account |
@@ -227,6 +228,7 @@ Functions: 92
 | `managed_account_get_is_watch_only` | Check if a managed account is watch-only  # Safety  - `account` must be a val... | managed_account |
 | `managed_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid p... | managed_account |
 | `managed_account_get_transaction_count` | Get the number of transactions in a managed account  # Safety  - `account` mu... | managed_account |
+| `managed_account_get_transactions` | Get all transactions from a managed account  Returns an array of FFITransacti... | managed_account |
 | `managed_account_get_utxo_count` | Get the number of UTXOs in a managed account  # Safety  - `account` must be a... | managed_account |
 
 ### Address Management
@@ -2819,6 +2821,22 @@ Free a managed account handle  # Safety  - `account` must be a valid pointer to 
 
 ---
 
+#### `managed_account_free_transactions`
+
+```c
+managed_account_free_transactions(transactions: *mut FFITransactionRecord, count: usize,) -> ()
+```
+
+**Description:**
+Free transactions array returned by managed_account_get_transactions  # Safety  - `transactions` must be a pointer returned by `managed_account_get_transactions` - `count` must be the count returned by `managed_account_get_transactions` - This function must only be called once per allocation
+
+**Safety:**
+- `transactions` must be a pointer returned by `managed_account_get_transactions` - `count` must be the count returned by `managed_account_get_transactions` - This function must only be called once per allocation
+
+**Module:** `managed_account`
+
+---
+
 #### `managed_account_get_account_type`
 
 ```c
@@ -2958,6 +2976,22 @@ Get the number of transactions in a managed account  # Safety  - `account` must 
 
 **Safety:**
 - `account` must be a valid pointer to an FFIManagedAccount instance
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_account_get_transactions`
+
+```c
+managed_account_get_transactions(account: *const FFIManagedAccount, transactions_out: *mut *mut FFITransactionRecord, count_out: *mut usize,) -> bool
+```
+
+**Description:**
+Get all transactions from a managed account  Returns an array of FFITransactionRecord structures.  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_account_free_transactions`
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_account_free_transactions`
 
 **Module:** `managed_account`
 
