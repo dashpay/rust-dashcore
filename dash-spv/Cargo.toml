@@ -43,8 +43,8 @@ rand = "0.8"
 hex = "0.4"
 indexmap = "2.0"
 
-# Terminal UI
-crossterm = "0.27"
+# Terminal UI (optional)
+crossterm = { version = "0.27", optional = true }
 
 # DNS (trust-dns-resolver was renamed to hickory_resolver)
 hickory-resolver = "0.25"
@@ -61,6 +61,7 @@ hex = "0.4"
 [[bin]]
 name = "dash-spv"
 path = "src/main.rs"
+required-features = ["terminal-ui"]
 
 [lib]
 name = "dash_spv"
@@ -69,3 +70,6 @@ path = "src/lib.rs"
 [features]
 # Gate incomplete mock-dependent tests to avoid "unexpected cfg" warnings.
 skip_mock_implementation_incomplete = []
+
+# Terminal UI feature (off by default, for use by binary only)
+terminal-ui = ["dep:crossterm"]
