@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
+#[cfg(feature = "terminal-ui")]
 use crate::terminal::TerminalUI;
 use std::collections::HashSet;
 
@@ -77,6 +78,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     validation: ValidationManager,
     chainlock_manager: Arc<ChainLockManager>,
     running: Arc<RwLock<bool>>,
+    #[cfg(feature = "terminal-ui")]
     terminal_ui: Option<Arc<TerminalUI>>,
     filter_processor: Option<FilterNotificationSender>,
     block_processor_tx: mpsc::UnboundedSender<BlockProcessingTask>,
@@ -241,6 +243,7 @@ impl<
     }
 
     /// Helper to create a StatusDisplay instance.
+    #[cfg(feature = "terminal-ui")]
     async fn create_status_display(&self) -> StatusDisplay<'_, S> {
         StatusDisplay::new(
             &self.state,
@@ -249,6 +252,12 @@ impl<
             &self.terminal_ui,
             &self.config,
         )
+    }
+
+    /// Helper to create a StatusDisplay instance (without terminal UI).
+    #[cfg(not(feature = "terminal-ui"))]
+    async fn create_status_display(&self) -> StatusDisplay<'_, S> {
+        StatusDisplay::new(&self.state, &self.stats, self.storage.clone(), &None, &self.config)
     }
 
     // UTXO mismatch checking removed - handled by external wallet
@@ -344,6 +353,7 @@ impl<
             validation,
             chainlock_manager,
             running: Arc::new(RwLock::new(false)),
+            #[cfg(feature = "terminal-ui")]
             terminal_ui: None,
             filter_processor: None,
             block_processor_tx,
@@ -487,6 +497,7 @@ impl<
         }
 
         // Update terminal UI after connection with initial data
+        #[cfg(feature = "terminal-ui")]
         if let Some(ui) = &self.terminal_ui {
             // Get initial header count from storage
             let (header_height, filter_height) = {
@@ -511,12 +522,14 @@ impl<
     }
 
     /// Enable terminal UI for status display.
+    #[cfg(feature = "terminal-ui")]
     pub fn enable_terminal_ui(&mut self) {
         let ui = Arc::new(TerminalUI::new(true));
         self.terminal_ui = Some(ui);
     }
 
     /// Get the terminal UI handle.
+    #[cfg(feature = "terminal-ui")]
     pub fn get_terminal_ui(&self) -> Option<Arc<TerminalUI>> {
         self.terminal_ui.clone()
     }

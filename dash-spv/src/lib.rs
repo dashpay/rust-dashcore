@@ -66,6 +66,7 @@ pub mod mempool_filter;
 pub mod network;
 pub mod storage;
 pub mod sync;
+#[cfg(feature = "terminal-ui")]
 pub mod terminal;
 pub mod types;
 pub mod validation;
