@@ -17,6 +17,7 @@ pub struct StatusDisplay<'a, S: StorageManager> {
     storage: Arc<Mutex<S>>,
     #[cfg(feature = "terminal-ui")]
     terminal_ui: &'a Option<Arc<TerminalUI>>,
+    #[allow(dead_code)]
     config: &'a ClientConfig,
 }
 
