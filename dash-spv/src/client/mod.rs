@@ -257,13 +257,7 @@ impl<
     /// Helper to create a StatusDisplay instance (without terminal UI).
     #[cfg(not(feature = "terminal-ui"))]
     async fn create_status_display(&self) -> StatusDisplay<'_, S> {
-        StatusDisplay::new(
-            &self.state,
-            &self.stats,
-            self.storage.clone(),
-            &None,
-            &self.config,
-        )
+        StatusDisplay::new(&self.state, &self.stats, self.storage.clone(), &None, &self.config)
     }
 
     // UTXO mismatch checking removed - handled by external wallet

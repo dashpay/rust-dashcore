@@ -152,7 +152,8 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
 
                 // Get filter header height from storage
                 let storage = self.storage.lock().await;
-                let filter_height = storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
+                let filter_height =
+                    storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
                 drop(storage);
 
                 // Get latest chainlock height from state
