@@ -10,7 +10,6 @@ use super::types::*;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use dashcore::BlockHash;
 
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
     super::manager::FilterSyncManager<S, N>

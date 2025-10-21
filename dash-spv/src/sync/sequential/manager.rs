@@ -7,10 +7,8 @@ use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::{FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager};
-use crate::types::{SharedFilterHeights, SyncProgress};
+use crate::types::SyncProgress;
 use key_wallet_manager::wallet_interface::WalletInterface;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use super::phases::{PhaseTransition, SyncPhase};
 use super::request_control::RequestController;

@@ -11,19 +11,17 @@
 //! - Filter processor spawning and management
 
 use dashcore::{
-    bip158::{BlockFilter, BlockFilterReader, Error as Bip158Error},
+    bip158::{BlockFilterReader, Error as Bip158Error},
     network::message::NetworkMessage,
     network::message_blockdata::Inventory,
     BlockHash, ScriptBuf,
 };
-use std::collections::HashSet;
 use tokio::sync::mpsc;
 
 use super::types::*;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::types::FilterMatch;
 
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
     super::manager::FilterSyncManager<S, N>
@@ -68,6 +66,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Check if filter matches any of the provided scripts using BIP158 GCS filter.
+    #[allow(dead_code)]
     fn filter_matches_scripts(
         &self,
         filter_data: &[u8],

@@ -12,14 +12,9 @@
 //! - Progress tracking and gap detection
 
 use dashcore::{
-    bip158::{BlockFilter, BlockFilterReader, Error as Bip158Error},
-    hash_types::FilterHeader,
-    network::message::NetworkMessage,
-    network::message_blockdata::Inventory,
-    network::message_filter::GetCFilters,
+    bip158::BlockFilter, network::message::NetworkMessage, network::message_filter::GetCFilters,
     BlockHash,
 };
-use dashcore_hashes::{sha256d, Hash};
 
 use super::types::*;
 use crate::error::{SyncError, SyncResult};

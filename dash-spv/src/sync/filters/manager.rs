@@ -3,23 +3,15 @@
 //! This module contains the FilterSyncManager struct and high-level coordination logic
 //! that delegates to specialized sub-modules for headers, downloads, matching, gaps, etc.
 
-use dashcore::{
-    bip158::{BlockFilter, BlockFilterReader, Error as Bip158Error},
-    hash_types::FilterHeader,
-    network::message::NetworkMessage,
-    network::message_blockdata::Inventory,
-    network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters},
-    BlockHash, ScriptBuf,
-};
+use dashcore::{hash_types::FilterHeader, network::message_filter::CFHeaders, BlockHash};
 use dashcore_hashes::{sha256d, Hash};
 use std::collections::{HashMap, HashSet, VecDeque};
-use tokio::sync::mpsc;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::types::{SharedFilterHeights, SyncProgress};
+use crate::types::SharedFilterHeights;
 
 // Import types and constants from the types module
 use super::types::*;

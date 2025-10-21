@@ -11,7 +11,7 @@ use crate::error::{StorageError, StorageResult};
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::segments::{FilterSegmentCache, SegmentCache};
-use super::{HEADERS_PER_SEGMENT, MAX_ACTIVE_SEGMENTS};
+use super::HEADERS_PER_SEGMENT;
 
 /// Commands for the background worker
 #[derive(Debug, Clone)]

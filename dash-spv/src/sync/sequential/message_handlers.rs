@@ -1,13 +1,11 @@
 //! Message handlers for synchronization phases.
 
-use std::collections::HashSet;
 use std::ops::DerefMut;
 use std::time::Instant;
 
 use dashcore::block::Block;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
-use dashcore::BlockHash;
 
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;

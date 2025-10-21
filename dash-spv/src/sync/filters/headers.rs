@@ -14,12 +14,10 @@
 //! - Stability checking before declaring sync complete
 
 use dashcore::{
-    hash_types::FilterHeader,
     network::message::NetworkMessage,
     network::message_filter::{CFHeaders, GetCFHeaders},
     BlockHash,
 };
-use dashcore_hashes::{sha256d, Hash};
 
 use super::types::*;
 use crate::error::{SyncError, SyncResult};

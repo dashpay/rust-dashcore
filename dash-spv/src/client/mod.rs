@@ -4,7 +4,7 @@
 //!
 //! ## Module Structure
 //!
-//! - `client.rs` - Core DashSpvClient struct definition and simple accessors
+//! - `core.rs` - Core DashSpvClient struct definition and simple accessors
 //! - `lifecycle.rs` - Client lifecycle (new, start, stop, shutdown)
 //! - `events.rs` - Event emission and progress tracking receivers
 //! - `progress.rs` - Sync progress calculation and reporting
@@ -41,7 +41,7 @@ pub mod status_display;
 
 // New refactored modules
 mod chainlock;
-mod client;
+mod core;
 mod events;
 mod lifecycle;
 mod mempool;
@@ -57,7 +57,7 @@ pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
 
 // Re-export the main client struct
-pub use client::DashSpvClient;
+pub use core::DashSpvClient;
 
 #[cfg(test)]
 mod config_test;
@@ -73,11 +73,9 @@ mod tests {
     use super::{ClientConfig, DashSpvClient};
     use crate::network::mock::MockNetworkManager;
     use crate::storage::MemoryStorageManager;
-    use crate::types::{MempoolState, UnconfirmedTransaction};
+    use crate::types::UnconfirmedTransaction;
     use dashcore::{Amount, Network, Transaction, TxOut};
-    use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-    use key_wallet_manager::wallet_interface::WalletInterface;
     use key_wallet_manager::wallet_manager::WalletManager;
     use std::sync::Arc;
     use tokio::sync::RwLock;

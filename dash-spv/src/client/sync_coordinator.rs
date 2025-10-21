@@ -11,13 +11,12 @@
 //! This is the largest module as it handles all coordination between network,
 //! storage, and the sync manager.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::types::{DetailedSyncProgress, SpvEvent, SyncProgress};
+use crate::types::{DetailedSyncProgress, SyncProgress};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::{BlockProcessingTask, DashSpvClient, MessageHandler};

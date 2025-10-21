@@ -1,7 +1,6 @@
 //! Statistics and progress tracking for filter synchronization.
 
 use super::types::*;
-use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use dashcore::BlockHash;

@@ -141,6 +141,7 @@ impl<
     }
 
     /// Update mempool filter with wallet's monitored addresses.
+    #[allow(dead_code)]
     pub(super) async fn update_mempool_filter(&mut self) {
         // TODO: Get monitored addresses from wallet
         // For now, create empty filter until wallet integration is complete
