@@ -1,4 +1,36 @@
 //! High-level client API for the Dash SPV client.
+//!
+//! # ⚠️ WARNING: THIS FILE IS TOO LARGE (2,819 LINES)
+//!
+//! This file violates Single Responsibility Principle by handling:
+//! - Client lifecycle (new, start, stop)
+//! - Sync coordination
+//! - Event emission and handling
+//! - Progress tracking
+//! - Block processing coordination
+//! - Wallet integration
+//! - Mempool management
+//! - Filter coordination
+//!
+//! ## Recommended Split:
+//! ```
+//! client/
+//!   ├── core.rs                   - DashSpvClient struct & lifecycle
+//!   ├── sync_coordination.rs      - sync_to_tip, monitor_network
+//!   ├── event_handling.rs         - Event emission
+//!   ├── progress_tracking.rs      - Progress calculation
+//!   └── mempool_coordination.rs   - Mempool management
+//! ```
+//!
+//! ## Lock Ordering (CRITICAL - Prevents Deadlocks):
+//! When acquiring multiple locks, ALWAYS use this order:
+//! 1. running (Arc<RwLock<bool>>)
+//! 2. state (Arc<RwLock<ChainState>>)
+//! 3. stats (Arc<RwLock<SpvStats>>)
+//! 4. mempool_state (Arc<RwLock<MempoolState>>)
+//! 5. storage (Arc<Mutex<S>>)
+//!
+//! Never acquire locks in reverse order or deadlock will occur!
 
 pub mod block_processor;
 pub mod config;
