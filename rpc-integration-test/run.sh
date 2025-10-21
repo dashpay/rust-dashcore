@@ -1,12 +1,12 @@
 #!/bin/sh
 
-TESTDIR=/tmp/rust_bitcoincore_rpc_test
+TESTDIR=/tmp/rust_dashcore_rpc_test
 
 rm -rf ${TESTDIR}
 mkdir -p ${TESTDIR}/1 ${TESTDIR}/2
 
-# To kill any remaining open bitcoind.
-killall -9 bitcoind
+# To kill any remaining open dashd.
+killall -9 dashd
 
 bitcoind -regtest \
     -datadir=${TESTDIR}/1 \
@@ -18,17 +18,7 @@ PID1=$!
 # Make sure it's listening on its p2p port.
 sleep 3
 
-BLOCKFILTERARG=""
-if bitcoind -version | grep -q "v0\.\(19\|2\)"; then
-    BLOCKFILTERARG="-blockfilterindex=1"
-fi
-
-FALLBACKFEEARG=""
-if bitcoind -version | grep -q "v0\.2"; then
-    FALLBACKFEEARG="-fallbackfee=0.00001000"
-fi
-
-bitcoind -regtest $BLOCKFILTERARG $FALLBACKFEEARG \
+dashd -regtest \
     -datadir=${TESTDIR}/2 \
     -connect=127.0.0.1:12348 \
     -rpcport=12349 \
