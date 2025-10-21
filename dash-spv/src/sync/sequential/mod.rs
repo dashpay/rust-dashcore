@@ -2,6 +2,23 @@
 //!
 //! This module implements a strict sequential sync pipeline where each phase
 //! must complete 100% before the next phase begins.
+//!
+//! # ⚠️ WARNING: THIS FILE IS TOO LARGE (2,246 LINES)
+//!
+//! ## Sequential Sync Benefits:
+//! - Simpler state management (one active phase)
+//! - Easier error recovery (restart current phase)
+//! - Matches dependencies (need headers before filters)
+//! - More reliable than concurrent sync
+//!
+//! ## Tradeoff:
+//! Slower total sync time, but significantly simpler code.
+//!
+//! ## CRITICAL: Lock Ordering
+//! To prevent deadlocks, acquire locks in this order:
+//! 1. state (via read/write methods)
+//! 2. storage (via async methods)
+//! 3. network (via send_message)
 
 pub mod phases;
 pub mod progress;

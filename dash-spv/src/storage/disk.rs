@@ -1,4 +1,25 @@
 //! Disk-based storage implementation with segmented files and async background saving.
+//!
+//! # ⚠️ WARNING: THIS FILE IS TOO LARGE (2,226 LINES)
+//!
+//! ## Segmented Storage Design
+//! Headers are stored in segments of 10,000 headers each. Benefits:
+//! - Better I/O patterns (read entire segment vs random access)
+//! - Easier corruption recovery (lose max 10K headers, not all)
+//! - Simpler index management
+//!
+//! ## Performance Considerations:
+//! - ❌ No compression (filters could compress ~70%)
+//! - ❌ No checksums (corruption not detected)
+//! - ❌ No write-ahead logging (crash may corrupt)
+//! - ✅ Atomic writes via temp files
+//! - ✅ Async background saving
+//!
+//! ## Alternative: Consider embedded DB (RocksDB/Sled) for:
+//! - Built-in compression
+//! - Crash recovery
+//! - Better concurrency
+//! - Simpler code
 
 use async_trait::async_trait;
 use std::collections::HashMap;

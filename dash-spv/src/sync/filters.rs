@@ -1,4 +1,37 @@
 //! Filter synchronization functionality.
+//!
+//! # ⚠️ CRITICAL WARNING: THIS FILE IS TOO LARGE (4,027 LINES)
+//!
+//! This file has become unmaintainable and MUST be split. It currently handles:
+//! 1. Filter header synchronization (cfheaders)
+//! 2. Compact filter download (cfilter)
+//! 3. Filter matching against wallet addresses
+//! 4. Gap detection and recovery
+//! 5. Request batching and routing
+//! 6. Timeout and retry logic
+//! 7. Progress tracking and statistics
+//! 8. Peer selection and scoring
+//!
+//! ## Recommended Split:
+//! ```
+//! sync/filters/
+//!   ├── manager.rs       - FilterSyncManager (~300 lines)
+//!   ├── headers.rs       - Filter header sync (~500 lines)
+//!   ├── download.rs      - Filter download (~600 lines)
+//!   ├── matching.rs      - Filter matching logic (~400 lines)
+//!   ├── gaps.rs          - Gap detection/recovery (~500 lines)
+//!   ├── requests.rs      - Request management (~400 lines)
+//!   ├── retry.rs         - Retry logic (~300 lines)
+//!   ├── stats.rs         - Statistics (~200 lines)
+//!   └── types.rs         - Filter-specific types (~100 lines)
+//! ```
+//!
+//! ## Thread Safety:
+//! Lock acquisition order (to prevent deadlocks):
+//! 1. pending_requests
+//! 2. active_requests
+//! 3. received_heights
+//! 4. gap_tracker
 
 use dashcore::{
     bip158::{BlockFilter, BlockFilterReader, Error as Bip158Error},
