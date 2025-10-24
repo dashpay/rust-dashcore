@@ -1,5 +1,7 @@
 //! FFI bindings for dash-network library
 
+use std::fmt;
+
 use dash_network::Network as DashNetwork;
 
 // Initialize function
@@ -70,16 +72,18 @@ impl NetworkInfo {
         self.network.magic()
     }
 
-    pub fn to_string(&self) -> String {
-        self.network.to_string()
-    }
-
     pub fn is_core_v20_active(&self, block_height: u32) -> bool {
         self.network.core_v20_is_active_at(block_height)
     }
 
     pub fn core_v20_activation_height(&self) -> u32 {
         self.network.core_v20_activation_height()
+    }
+}
+
+impl fmt::Display for NetworkInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.network.fmt(f)
     }
 }
 

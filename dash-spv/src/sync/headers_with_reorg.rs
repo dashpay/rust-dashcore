@@ -18,7 +18,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::headers2_state::Headers2StateManager;
-use crate::types::ChainState;
+use crate::types::{CachedHeader, ChainState};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -152,24 +152,21 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         const BATCH_SIZE: u32 = 10_000;
         let mut loaded_count = 0u32;
 
-        // When syncing from a checkpoint, we need to handle storage differently
-        // Storage indices start at 0, but represent blockchain heights starting from sync_base_height
-        let mut current_storage_index =
-            if self.is_synced_from_checkpoint() && self.get_sync_base_height() > 0 {
-                // For checkpoint sync, start from index 0 in storage
-                // (which represents blockchain height sync_base_height)
-                0u32
-            } else {
-                // For normal sync from genesis, start from 1 (genesis already in chain state)
-                1u32
-            };
+        // Determine the first blockchain height we need to load.
+        // For checkpoint syncs we start at the checkpoint base; otherwise we skip genesis (already present).
+        let base_height = if self.is_synced_from_checkpoint() && self.get_sync_base_height() > 0 {
+            self.get_sync_base_height()
+        } else {
+            1
+        };
 
-        while current_storage_index <= tip_height {
-            let end_storage_index = (current_storage_index + BATCH_SIZE - 1).min(tip_height);
+        let mut current_height = base_height;
+
+        while current_height <= tip_height {
+            let end_height = (current_height + BATCH_SIZE - 1).min(tip_height);
 
             // Load batch from storage
-            let headers_result =
-                storage.load_headers(current_storage_index..end_storage_index + 1).await;
+            let headers_result = storage.load_headers(current_height..end_height + 1).await;
 
             match headers_result {
                 Ok(headers) if !headers.is_empty() => {
@@ -186,8 +183,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     // Empty headers - this can happen for checkpoint sync with minimal headers
                     tracing::debug!(
                         "No headers found for range {}..{} - continuing",
-                        current_storage_index,
-                        end_storage_index + 1
+                        current_height,
+                        end_height + 1
                     );
                     // Break out of the loop since we've reached the end of available headers
                     break;
@@ -216,23 +213,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 );
             }
 
-            current_storage_index = end_storage_index + 1;
+            current_height = end_height + 1;
         }
 
-        // When loading from storage, tip_height is the storage index (0-based)
-        // Convert to absolute blockchain height
-        if self.is_synced_from_checkpoint() && self.get_sync_base_height() > 0 {
-            self.total_headers_synced = self.get_sync_base_height() + tip_height;
-            tracing::info!(
-                "Checkpoint sync initialization: storage_tip={}, sync_base={}, total_headers_synced={}, chain_state.headers.len()={}",
-                tip_height,
-                self.get_sync_base_height(),
-                self.total_headers_synced,
-                self.chain_state.read().await.headers.len()
-            );
-        } else {
-            self.total_headers_synced = tip_height;
-        }
+        self.total_headers_synced = tip_height;
 
         let elapsed = start_time.elapsed();
         tracing::info!(
@@ -257,7 +241,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Step 1: Handle Empty Batch
         if headers.is_empty() {
             tracing::info!(
-                "📊 Header sync complete - no more headers from peers. Total headers synced: {}, chain_state.tip_height: {}", 
+                "📊 Header sync complete - no more headers from peers. Total headers synced: {}, chain_state.tip_height: {}",
                 self.total_headers_synced,
                 self.chain_state.read().await.tip_height()
             );
@@ -265,18 +249,28 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Ok(false);
         }
 
+        // Wrap headers in CachedHeader to avoid redundant X11 hashing
+        // This prevents recomputing hashes during validation, logging, and storage
+        let cached_headers: Vec<CachedHeader> =
+            headers.iter().map(|h| CachedHeader::new(*h)).collect();
+
         // Step 2: Validate Batch Connection Point
-        let first_header = &headers[0];
+        let first_cached = &cached_headers[0];
+        let first_header = first_cached.header();
         let tip =
             self.chain_state.read().await.get_tip_header().ok_or_else(|| {
                 SyncError::InvalidState("No tip header in chain state".to_string())
             })?;
 
         // Check if the first header connects to our tip
-        if first_header.prev_blockhash != tip.block_hash() {
+        // Cache tip hash to avoid recomputing it
+        let tip_cached = CachedHeader::new(tip);
+        let tip_hash = tip_cached.block_hash();
+
+        if first_header.prev_blockhash != tip_hash {
             tracing::warn!(
                 "Received header batch that does not connect to our tip. Expected prev_hash: {}, got: {}. Dropping message.",
-                tip.block_hash(),
+                tip_hash,
                 first_header.prev_blockhash
             );
             // Gracefully drop the message and let timeout mechanism handle re-requesting
@@ -306,14 +300,17 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.last_sync_progress = std::time::Instant::now();
 
         // Log details about the batch for debugging
-        if !headers.is_empty() {
-            let last = headers.last().unwrap();
+        if !cached_headers.is_empty() {
+            let last_cached = cached_headers.last().unwrap();
+            // Use cached hashes to avoid redundant X11 computation
+            let first_hash = first_cached.block_hash();
+            let last_hash = last_cached.block_hash();
             tracing::debug!(
                 "Received headers batch: first.prev_hash={}, first.hash={}, last.hash={}, count={}",
                 first_header.prev_blockhash,
-                first_header.block_hash(),
-                last.block_hash(),
-                headers.len()
+                first_hash,
+                last_hash,
+                cached_headers.len()
             );
         }
 
@@ -321,16 +318,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Checkpoint Validation: Perform in-memory security check against checkpoints
         let current_height = self.chain_state.read().await.get_height();
-        for (index, header) in headers.iter().enumerate() {
+        for (index, cached_header) in cached_headers.iter().enumerate() {
             let prospective_height = current_height + (index as u32) + 1;
 
-            if self.reorg_config.enforce_checkpoints
-                && !self.checkpoint_manager.validate_block(prospective_height, &header.block_hash())
-            {
-                return Err(SyncError::Validation(format!(
-                    "Block at height {} does not match checkpoint",
-                    prospective_height
-                )));
+            if self.reorg_config.enforce_checkpoints {
+                // Use cached hash to avoid redundant X11 computation in loop
+                let header_hash = cached_header.block_hash();
+                if !self.checkpoint_manager.validate_block(prospective_height, &header_hash) {
+                    return Err(SyncError::Validation(format!(
+                        "Block at height {} does not match checkpoint",
+                        prospective_height
+                    )));
+                }
             }
         }
 
@@ -343,10 +342,25 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         // Store Headers in Bulk: Single atomic database operation
-        storage
-            .store_headers(&headers)
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
+        // Extract precomputed hashes from cached headers to avoid redundant X11 in storage
+        let precomputed_hashes: Vec<BlockHash> =
+            cached_headers.iter().map(|ch| ch.block_hash()).collect();
+
+        // Use the internal storage method if available (DiskStorageManager optimization)
+        if let Some(disk_storage) =
+            storage.as_any_mut().downcast_mut::<crate::storage::disk::DiskStorageManager>()
+        {
+            disk_storage
+                .store_headers_internal(&headers, Some(&precomputed_hashes))
+                .await
+                .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
+        } else {
+            // Fallback to standard store_headers for other storage backends
+            storage
+                .store_headers(&headers)
+                .await
+                .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
+        }
 
         // Update Sync Progress
         let batch_size = headers.len() as u32;
@@ -377,11 +391,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         if self.syncing_headers {
             // During sync mode - request next batch
-            let tip_hash = {
-                let cs = self.chain_state.read().await;
-                cs.get_tip_header().map(|h| h.block_hash())
-            };
-            if let Some(hash) = tip_hash {
+            // Use the last cached header's hash to avoid redundant X11 computation
+            if let Some(last_cached) = cached_headers.last() {
+                let hash = last_cached.block_hash();
                 self.request_headers(network, Some(hash)).await?;
             }
         }

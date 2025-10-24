@@ -7,6 +7,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{MempoolState, SpvEvent, SpvStats};
+// Removed local ad-hoc compact filter construction in favor of always processing full blocks
 use key_wallet_manager::wallet_interface::WalletInterface;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -238,7 +239,23 @@ impl<
                     block.txdata.len()
                 );
 
-                // Process new block (update state, check watched items)
+                // 1) Ensure header processing and chain tip update for this block
+                //    Route the header through the sequential sync manager as a Headers message
+                let headers_msg = NetworkMessage::Headers(vec![block.header]);
+                if let Err(e) = self
+                    .sync_manager
+                    .handle_message(headers_msg, &mut *self.network, &mut *self.storage)
+                    .await
+                {
+                    tracing::error!(
+                        "❌ Failed to process header for block {} via sync manager: {}",
+                        block_hash,
+                        e
+                    );
+                    return Err(SpvError::Sync(e));
+                }
+
+                // 2) Always process the full block (privacy and correctness)
                 if let Err(e) = self.process_new_block(block).await {
                     tracing::error!("❌ Failed to process new block {}: {}", block_hash, e);
                     return Err(e);
@@ -434,31 +451,16 @@ impl<
             self.network.send_message(getdata).await.map_err(SpvError::Network)?;
         }
 
-        // Process new blocks immediately when detected
+        // For blocks announced via inventory during tip sync, request full blocks for privacy
         if !blocks_to_request.is_empty() {
             tracing::info!(
-                "🔄 Processing {} new block announcements to stay synchronized",
+                "📥 Requesting {} new blocks announced via inventory",
                 blocks_to_request.len()
             );
 
-            // Extract block hashes
-            let block_hashes: Vec<dashcore::BlockHash> = blocks_to_request
-                .iter()
-                .filter_map(|inv| {
-                    if let Inventory::Block(hash) = inv {
-                        Some(*hash)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            // Process each new block
-            for block_hash in block_hashes {
-                tracing::info!("📥 Requesting header for new block {}", block_hash);
-                if let Err(e) = self.process_new_block_hash(block_hash).await {
-                    tracing::error!("❌ Failed to process new block {}: {}", block_hash, e);
-                }
+            let getdata = NetworkMessage::GetData(blocks_to_request);
+            if let Err(e) = self.network.send_message(getdata).await {
+                tracing::error!("Failed to request announced blocks: {}", e);
             }
         }
 

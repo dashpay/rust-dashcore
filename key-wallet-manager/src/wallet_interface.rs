@@ -2,6 +2,7 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
+use alloc::string::String;
 use async_trait::async_trait;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
@@ -40,6 +41,17 @@ pub trait WalletInterface: Send + Sync {
         network: Network,
     ) -> bool;
 
+    /// Return the wallet's per-transaction net change and involved addresses if known.
+    /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.
+    /// If the wallet has no record for the transaction, returns None.
+    async fn transaction_effect(
+        &self,
+        _tx: &Transaction,
+        _network: Network,
+    ) -> Option<(i64, alloc::vec::Vec<alloc::string::String>)> {
+        None
+    }
+
     /// Return the earliest block height that should be scanned for this wallet on the
     /// specified network. Implementations can use the wallet's birth height or other
     /// metadata to provide a more precise rescan starting point.
@@ -48,5 +60,13 @@ pub trait WalletInterface: Send + Sync {
     /// fall back to its existing behaviour.
     async fn earliest_required_height(&self, _network: Network) -> Option<CoreBlockHeight> {
         None
+    }
+
+    /// Provide a human-readable description of the wallet implementation.
+    ///
+    /// Implementations are encouraged to include high-level state such as the
+    /// number of managed wallets, networks, or tracked scripts.
+    async fn describe(&self, _network: Network) -> String {
+        "Wallet interface description unavailable".to_string()
     }
 }

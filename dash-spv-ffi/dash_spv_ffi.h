@@ -28,8 +28,11 @@ typedef enum FFISyncStage {
   Downloading = 2,
   Validating = 3,
   Storing = 4,
-  Complete = 5,
-  Failed = 6,
+  DownloadingFilterHeaders = 5,
+  DownloadingFilters = 6,
+  DownloadingBlocks = 7,
+  Complete = 8,
+  Failed = 9,
 } FFISyncStage;
 
 typedef enum DashSpvValidationMode {
@@ -70,31 +73,27 @@ typedef struct FFIString {
   uintptr_t length;
 } FFIString;
 
+typedef struct FFISyncProgress {
+  uint32_t header_height;
+  uint32_t filter_header_height;
+  uint32_t masternode_height;
+  uint32_t peer_count;
+  bool filter_sync_available;
+  uint32_t filters_downloaded;
+  uint32_t last_synced_filter_height;
+} FFISyncProgress;
+
 typedef struct FFIDetailedSyncProgress {
-  uint32_t current_height;
   uint32_t total_height;
   double percentage;
   double headers_per_second;
   int64_t estimated_seconds_remaining;
   enum FFISyncStage stage;
   struct FFIString stage_message;
-  uint32_t connected_peers;
+  struct FFISyncProgress overview;
   uint64_t total_headers;
   int64_t sync_start_timestamp;
 } FFIDetailedSyncProgress;
-
-typedef struct FFISyncProgress {
-  uint32_t header_height;
-  uint32_t filter_header_height;
-  uint32_t masternode_height;
-  uint32_t peer_count;
-  bool headers_synced;
-  bool filter_headers_synced;
-  bool masternodes_synced;
-  bool filter_sync_available;
-  uint32_t filters_downloaded;
-  uint32_t last_synced_filter_height;
-} FFISyncProgress;
 
 typedef struct FFISpvStats {
   uint32_t connected_peers;
@@ -150,11 +149,6 @@ typedef void (*WalletTransactionCallback)(const char *wallet_id,
                                           bool is_ours,
                                           void *user_data);
 
-typedef void (*FilterHeadersProgressCallback)(uint32_t filter_height,
-                                              uint32_t header_height,
-                                              double percentage,
-                                              void *user_data);
-
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
   TransactionCallback on_transaction;
@@ -164,7 +158,6 @@ typedef struct FFIEventCallbacks {
   MempoolRemovedCallback on_mempool_transaction_removed;
   CompactFilterMatchedCallback on_compact_filter_matched;
   WalletTransactionCallback on_wallet_transaction;
-  FilterHeadersProgressCallback on_filter_headers_progress;
   void *user_data;
 } FFIEventCallbacks;
 
@@ -538,27 +531,35 @@ int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *cli
 /**
  * Get the wallet manager from the SPV client
  *
- * Returns an opaque pointer to FFIWalletManager that contains a cloned Arc reference to the wallet manager.
- * This allows direct interaction with the wallet manager without going through the client.
+ * Returns a pointer to an `FFIWalletManager` wrapper that clones the underlying
+ * `Arc<RwLock<WalletManager>>`. This allows direct interaction with the wallet
+ * manager without going back through the client for each call.
  *
  * # Safety
  *
  * The caller must ensure that:
  * - The client pointer is valid
- * - The returned pointer is freed using `wallet_manager_free` from key-wallet-ffi
+ * - The returned pointer is released exactly once using
+ *   `dash_spv_ffi_wallet_manager_free`
  *
  * # Returns
  *
- * An opaque pointer (void*) to the wallet manager, or NULL if the client is not initialized.
- * Swift should treat this as an OpaquePointer.
- * Get a handle to the wallet manager owned by this client.
+ * A pointer to the wallet manager wrapper, or NULL if the client is not initialized.
+ */
+ FFIWalletManager *dash_spv_ffi_client_get_wallet_manager(struct FFIDashSpvClient *client) ;
+
+/**
+ * Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
+ *
+ * This simply forwards to `wallet_manager_free` in key-wallet-ffi so that
+ * lifetime management is consistent between direct key-wallet usage and the
+ * SPV client pathway.
  *
  * # Safety
- * - `client` must be a valid, non-null pointer.
+ * - `manager` must either be null or a pointer previously returned by
+ *   `dash_spv_ffi_client_get_wallet_manager`.
  */
-
-void *dash_spv_ffi_client_get_wallet_manager(struct FFIDashSpvClient *client)
-;
+ void dash_spv_ffi_wallet_manager_free(FFIWalletManager *manager) ;
 
  struct FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network) ;
 

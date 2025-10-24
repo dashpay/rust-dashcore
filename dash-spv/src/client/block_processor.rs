@@ -179,17 +179,21 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                     let mut wallet = self.wallet.write().await;
                     let matches =
                         wallet.check_compact_filter(&filter, &block_hash, self.network).await;
-                    drop(wallet);
 
                     if matches {
                         tracing::info!("🎯 Compact filter matched for block {}", block_hash);
-
+                        drop(wallet);
                         // Emit event if filter matched
                         let _ = self.event_tx.send(SpvEvent::CompactFilterMatched {
                             hash: block_hash.to_string(),
                         });
                     } else {
-                        tracing::debug!("Compact filter did not match for block {}", block_hash);
+                        tracing::debug!(
+                            "Compact filter did not match for block {}, {}",
+                            block_hash,
+                            wallet.describe(self.network).await
+                        );
+                        drop(wallet);
                     }
 
                     let _ = response_tx.send(Ok(matches));
@@ -230,6 +234,39 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                 block_hash,
                 height
             );
+
+            // Update statistics for blocks with relevant transactions
+            {
+                let mut stats = self.stats.write().await;
+                stats.blocks_with_relevant_transactions += 1;
+            }
+
+            // Emit TransactionDetected events for each relevant transaction
+            for txid in &txids {
+                if let Some(tx) = block.txdata.iter().find(|t| &t.txid() == txid) {
+                    // Ask the wallet for the precise effect of this transaction
+                    let effect = wallet.transaction_effect(tx, self.network).await;
+                    if let Some((net_amount, affected_addresses)) = effect {
+                        tracing::info!("📤 Emitting TransactionDetected event for {}", txid);
+                        let _ = self.event_tx.send(SpvEvent::TransactionDetected {
+                            txid: txid.to_string(),
+                            confirmed: true,
+                            block_height: Some(height),
+                            amount: net_amount,
+                            addresses: affected_addresses,
+                        });
+                    } else {
+                        // Fallback: emit event with zero and no addresses if wallet could not compute
+                        let _ = self.event_tx.send(SpvEvent::TransactionDetected {
+                            txid: txid.to_string(),
+                            confirmed: true,
+                            block_height: Some(height),
+                            amount: 0,
+                            addresses: Vec::new(),
+                        });
+                    }
+                }
+            }
         }
         drop(wallet); // Release lock
 

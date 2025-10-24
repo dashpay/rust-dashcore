@@ -12,6 +12,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::headers2_state::Headers2StateManager;
+use crate::types::CachedHeader;
 use crate::validation::ValidationManager;
 
 /// Manages header synchronization.
@@ -424,9 +425,15 @@ impl HeaderSyncManager {
             return Ok(Vec::new());
         }
 
+        // Wrap headers in CachedHeader to avoid redundant X11 hashing
+        // Each header's hash will be computed at most once instead of 4-6 times
+        let cached_headers: Vec<CachedHeader> =
+            headers.iter().map(|h| CachedHeader::new(*h)).collect();
+
         let mut validated = Vec::with_capacity(headers.len());
 
-        for (i, header) in headers.iter().enumerate() {
+        for (i, cached_header) in cached_headers.iter().enumerate() {
+            let header = cached_header.header();
             // Get the previous header for validation
             let prev_header = if i == 0 {
                 // First header in batch - get from storage
@@ -447,8 +454,10 @@ impl HeaderSyncManager {
             };
 
             // Check if this header already exists in storage
+            // Use cached hash to avoid redundant X11 computation
+            let header_hash = cached_header.block_hash();
             let already_exists = storage
-                .get_header_height_by_hash(&header.block_hash())
+                .get_header_height_by_hash(&header_hash)
                 .await
                 .map_err(|e| {
                     SyncError::Storage(format!("Failed to check header existence: {}", e))
@@ -458,7 +467,7 @@ impl HeaderSyncManager {
             if already_exists {
                 tracing::info!(
                     "⚠️ Header {} already exists in storage, skipping validation",
-                    header.block_hash()
+                    header_hash
                 );
                 // Add the existing header to validated vector so subsequent headers
                 // can reference it correctly
@@ -467,7 +476,7 @@ impl HeaderSyncManager {
             }
 
             // Validate the header
-            tracing::info!("Validating new header {} at index {}", header.block_hash(), i);
+            tracing::info!("Validating new header {} at index {}", header_hash, i);
             if let Some(prev) = prev_header.as_ref() {
                 tracing::debug!("Previous header: {}", prev.block_hash());
             }
@@ -475,8 +484,7 @@ impl HeaderSyncManager {
             self.validation.validate_header(header, prev_header.as_ref()).map_err(|e| {
                 SyncError::Validation(format!(
                     "Header validation failed for block {}: {}",
-                    header.block_hash(),
-                    e
+                    header_hash, e
                 ))
             })?;
 

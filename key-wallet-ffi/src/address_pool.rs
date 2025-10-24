@@ -904,24 +904,34 @@ pub unsafe extern "C" fn address_pool_get_addresses_in_range(
 
     *count_out = 0;
 
-    if end_index <= start_index {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "End index must be greater than start index".to_string(),
-        );
-        return std::ptr::null_mut();
-    }
-
     let pool = &*pool;
     let address_pool = &*pool.pool;
 
     // Collect address infos in the range
     let mut infos = Vec::new();
 
-    for idx in start_index..end_index {
-        if let Some(info) = address_pool.info_at_index(idx) {
-            infos.push(Box::into_raw(Box::new(address_info_to_ffi(info))));
+    // Special case: if start_index == 0 and end_index == 0, return all addresses
+    if start_index == 0 && end_index == 0 {
+        for idx in 0..=address_pool.highest_generated.unwrap_or(0) {
+            if let Some(info) = address_pool.info_at_index(idx) {
+                infos.push(Box::into_raw(Box::new(address_info_to_ffi(info))));
+            }
+        }
+    } else {
+        // Normal range query
+        if end_index <= start_index {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "End index must be greater than start index".to_string(),
+            );
+            return std::ptr::null_mut();
+        }
+
+        for idx in start_index..end_index {
+            if let Some(info) = address_pool.info_at_index(idx) {
+                infos.push(Box::into_raw(Box::new(address_info_to_ffi(info))));
+            }
         }
     }
 

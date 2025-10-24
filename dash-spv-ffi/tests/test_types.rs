@@ -84,11 +84,8 @@ mod tests {
             filter_header_height: 90,
             masternode_height: 80,
             peer_count: 5,
-            headers_synced: true,
-            filter_headers_synced: false,
-            masternodes_synced: false,
-            filters_downloaded: 50,
             filter_sync_available: true,
+            filters_downloaded: 50,
             last_synced_filter_height: Some(45),
             sync_start: std::time::SystemTime::now(),
             last_update: std::time::SystemTime::now(),
@@ -100,9 +97,6 @@ mod tests {
         assert_eq!(ffi_progress.filter_header_height, 90);
         assert_eq!(ffi_progress.masternode_height, 80);
         assert_eq!(ffi_progress.peer_count, 5);
-        assert!(ffi_progress.headers_synced);
-        assert!(!ffi_progress.filter_headers_synced);
-        assert!(!ffi_progress.masternodes_synced);
         assert_eq!(ffi_progress.filters_downloaded, 50);
         assert_eq!(ffi_progress.last_synced_filter_height, 45);
     }

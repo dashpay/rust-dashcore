@@ -534,6 +534,40 @@ typedef struct {
 } FFIBalance;
 
 /*
+ FFI-compatible transaction record
+ */
+typedef struct {
+    /*
+     Transaction ID (32 bytes)
+     */
+    uint8_t txid[32];
+    /*
+     Net amount for this account (positive = received, negative = sent)
+     */
+    int64_t net_amount;
+    /*
+     Block height if confirmed, 0 if unconfirmed
+     */
+    uint32_t height;
+    /*
+     Block hash if confirmed (32 bytes), all zeros if unconfirmed
+     */
+    uint8_t block_hash[32];
+    /*
+     Unix timestamp
+     */
+    uint64_t timestamp;
+    /*
+     Fee if known, 0 if unknown
+     */
+    uint64_t fee;
+    /*
+     Whether this is our transaction
+     */
+    bool is_ours;
+} FFITransactionRecord;
+
+/*
  C-compatible summary of all accounts in a managed collection
 
  This struct provides Swift with structured data about all accounts
@@ -2493,6 +2527,35 @@ FFIAccountType managed_account_get_account_type(const FFIManagedAccount *account
  unsigned int managed_account_get_utxo_count(const FFIManagedAccount *account) ;
 
 /*
+ Get all transactions from a managed account
+
+ Returns an array of FFITransactionRecord structures.
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `transactions_out` must be a valid pointer to receive the transactions array pointer
+ - `count_out` must be a valid pointer to receive the count
+ - The caller must free the returned array using `managed_account_free_transactions`
+ */
+
+bool managed_account_get_transactions(const FFIManagedAccount *account,
+                                      FFITransactionRecord **transactions_out,
+                                      size_t *count_out)
+;
+
+/*
+ Free transactions array returned by managed_account_get_transactions
+
+ # Safety
+
+ - `transactions` must be a pointer returned by `managed_account_get_transactions`
+ - `count` must be the count returned by `managed_account_get_transactions`
+ - This function must only be called once per allocation
+ */
+ void managed_account_free_transactions(FFITransactionRecord *transactions, size_t count) ;
+
+/*
  Free a managed account handle
 
  # Safety
@@ -3791,6 +3854,31 @@ FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
                                                      unsigned int account_index,
                                                      const char *xpub_string)
 ;
+
+/*
+ Describe the wallet manager for a given network and return a newly
+ allocated C string.
+
+ # Safety
+ - `manager` must be a valid pointer to an `FFIWalletManager`
+ - Callers must free the returned string with `wallet_manager_free_string`
+ */
+
+char *wallet_manager_describe(const FFIWalletManager *manager,
+                              FFINetwork network,
+                              FFIError *error)
+;
+
+/*
+ Free a string previously returned by wallet manager APIs.
+
+ # Safety
+ - `value` must be either null or a pointer obtained from
+   `wallet_manager_describe` (or other wallet manager FFI helpers that
+   specify this free function).
+ - The pointer must not be used after this call returns.
+ */
+ void wallet_manager_free_string(char *value) ;
 
 /*
  Create a new wallet manager

@@ -1,4 +1,19 @@
 //! Common type definitions for the Dash SPV client.
+//!
+//! # Architecture Note
+//! This file has grown to 1,065 lines and should be split into:
+//! - types/chain.rs - ChainState, CachedHeader
+//! - types/sync.rs - SyncProgress, SyncStage
+//! - types/events.rs - SpvEvent, MempoolRemovalReason
+//! - types/stats.rs - SpvStats, PeerInfo
+//! - types/balances.rs - AddressBalance, UnconfirmedTransaction
+//!
+//! # Thread Safety
+//! Many types here are wrapped in Arc<RwLock> or Arc<Mutex> when used.
+//! Always acquire locks in consistent order to prevent deadlocks:
+//! 1. state (ChainState)
+//! 2. stats (SpvStats)
+//! 3. mempool_state (MempoolState)
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -8,9 +23,81 @@ use dashcore::{
     Txid,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Shared, mutex-protected set of filter heights used across components.
+///
+/// # Why Arc<Mutex<HashSet>>?
+/// - Arc: Shared ownership between FilterSyncManager and SpvStats
+/// - Mutex: Interior mutability for concurrent updates from filter download tasks
+/// - HashSet: Fast O(1) membership testing for gap detection
+///
+/// # Performance Note
+/// Consider Arc<RwLock> if read contention becomes an issue (most operations are reads).
 pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>;
+
+/// A block header with its cached hash to avoid expensive X11 recomputation.
+///
+/// During header sync, each header's hash is computed multiple times:
+/// - For existence checks in storage
+/// - For validation logging
+/// - For chain continuity validation
+/// - For storage indexing
+///
+/// This wrapper caches the hash after first computation, providing ~4-6x reduction
+/// in X11 hashing operations per header.
+#[derive(Debug, Clone)]
+pub struct CachedHeader {
+    /// The block header
+    header: BlockHeader,
+    /// Cached hash (computed lazily and stored in Arc for cheap clones)
+    hash: Arc<std::sync::OnceLock<BlockHash>>,
+}
+
+impl CachedHeader {
+    /// Create a new cached header from a block header
+    pub fn new(header: BlockHeader) -> Self {
+        Self {
+            header,
+            hash: Arc::new(std::sync::OnceLock::new()),
+        }
+    }
+
+    /// Get the block header
+    pub fn header(&self) -> &BlockHeader {
+        &self.header
+    }
+
+    /// Get the cached block hash (computes once, returns cached value thereafter)
+    pub fn block_hash(&self) -> BlockHash {
+        *self.hash.get_or_init(|| self.header.block_hash())
+    }
+
+    /// Convert back to a plain BlockHeader
+    pub fn into_inner(self) -> BlockHeader {
+        self.header
+    }
+}
+
+impl From<BlockHeader> for CachedHeader {
+    fn from(header: BlockHeader) -> Self {
+        Self::new(header)
+    }
+}
+
+impl AsRef<BlockHeader> for CachedHeader {
+    fn as_ref(&self) -> &BlockHeader {
+        &self.header
+    }
+}
+
+impl std::ops::Deref for CachedHeader {
+    type Target = BlockHeader;
+
+    fn deref(&self) -> &Self::Target {
+        &self.header
+    }
+}
 
 /// Unique identifier for a peer connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,15 +124,6 @@ pub struct SyncProgress {
     /// Total number of peers connected.
     pub peer_count: u32,
 
-    /// Whether header sync is complete.
-    pub headers_synced: bool,
-
-    /// Whether filter headers sync is complete.
-    pub filter_headers_synced: bool,
-
-    /// Whether masternode list is synced.
-    pub masternodes_synced: bool,
-
     /// Whether filter sync is available (peers support it).
     pub filter_sync_available: bool,
 
@@ -70,9 +148,6 @@ impl Default for SyncProgress {
             filter_header_height: 0,
             masternode_height: 0,
             peer_count: 0,
-            headers_synced: false,
-            filter_headers_synced: false,
-            masternodes_synced: false,
             filter_sync_available: false,
             filters_downloaded: 0,
             last_synced_filter_height: None,
@@ -85,8 +160,8 @@ impl Default for SyncProgress {
 /// Detailed sync progress with performance metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetailedSyncProgress {
-    /// Current state
-    pub current_height: u32,
+    /// Snapshot of the core sync metrics for quick consumption.
+    pub sync_progress: SyncProgress,
     pub peer_best_height: u32,
     pub percentage: f64,
 
@@ -97,7 +172,6 @@ pub struct DetailedSyncProgress {
 
     /// Detailed status
     pub sync_stage: SyncStage,
-    pub connected_peers: usize,
     pub total_headers_processed: u64,
     pub total_bytes_downloaded: u64,
 
@@ -121,6 +195,17 @@ pub enum SyncStage {
     StoringHeaders {
         batch_size: usize,
     },
+    DownloadingFilterHeaders {
+        current: u32,
+        target: u32,
+    },
+    DownloadingFilters {
+        completed: u32,
+        total: u32,
+    },
+    DownloadingBlocks {
+        pending: usize,
+    },
     Complete,
     Failed(String),
 }
@@ -130,7 +215,8 @@ impl DetailedSyncProgress {
         if self.peer_best_height == 0 {
             return 0.0;
         }
-        ((self.current_height as f64 / self.peer_best_height as f64) * 100.0).min(100.0)
+        let current_height = self.sync_progress.header_height;
+        ((current_height as f64 / self.peer_best_height as f64) * 100.0).min(100.0)
     }
 
     pub fn calculate_eta(&self) -> Option<Duration> {
@@ -138,7 +224,8 @@ impl DetailedSyncProgress {
             return None;
         }
 
-        let remaining = self.peer_best_height.saturating_sub(self.current_height);
+        let current_height = self.sync_progress.header_height;
+        let remaining = self.peer_best_height.saturating_sub(current_height);
         if remaining == 0 {
             return Some(Duration::from_secs(0));
         }
@@ -149,6 +236,22 @@ impl DetailedSyncProgress {
 }
 
 /// Chain state maintained by the SPV client.
+///
+/// # CRITICAL: This is the heart of the SPV client's state
+///
+/// ## Thread Safety
+/// Almost always wrapped in Arc<RwLock<ChainState>> for shared access.
+/// Multiple readers can access simultaneously, but writes are exclusive.
+///
+/// ## Checkpoint Sync
+/// When syncing from a checkpoint (not genesis), `sync_base_height` is non-zero.
+/// The `headers` vector contains headers starting from the checkpoint, not from genesis.
+/// Use `tip_height()` to get the absolute blockchain height.
+///
+/// ## Memory Considerations
+/// - headers: ~80 bytes per header
+/// - filter_headers: 32 bytes per filter header
+/// - At 2M blocks: ~160MB for headers, ~64MB for filter headers
 #[derive(Clone, Default)]
 pub struct ChainState {
     /// Block headers indexed by height.
@@ -785,23 +888,6 @@ pub enum SpvEvent {
         /// Target block height.
         target_height: u32,
         /// Progress percentage.
-        percentage: f64,
-    },
-
-    /// Filter headers progress update.
-    ///
-    /// Carries absolute blockchain heights for both the current filter header tip
-    /// and the current block header tip, along with a convenience percentage
-    /// (filter_header_height / header_height * 100), clamped to [0, 100].
-    ///
-    /// Consumers who sync from a checkpoint may prefer to recompute a
-    /// checkpoint-relative percentage using their base height.
-    FilterHeadersProgress {
-        /// Current absolute height of synchronized filter headers.
-        filter_header_height: u32,
-        /// Current absolute height of synchronized block headers.
-        header_height: u32,
-        /// Convenience percentage in [0, 100].
         percentage: f64,
     },
 

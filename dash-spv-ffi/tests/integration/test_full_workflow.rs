@@ -196,7 +196,6 @@ mod tests {
                 on_mempool_transaction_removed: None,
                 on_compact_filter_matched: None,
                 on_wallet_transaction: None,
-                on_filter_headers_progress: None,
                 user_data: &ctx as *const _ as *mut c_void,
             };
             

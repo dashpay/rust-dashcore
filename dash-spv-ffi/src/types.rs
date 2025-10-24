@@ -4,6 +4,16 @@ use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
+/// Opaque handle to the wallet manager owned by the SPV client.
+///
+/// This is intentionally zero-sized so it can be used purely as an FFI handle
+/// while still allowing Rust to cast to the underlying key-wallet manager
+/// implementation when necessary.
+#[repr(C)]
+pub struct FFIWalletManager {
+    _private: [u8; 0],
+}
+
 #[repr(C)]
 pub struct FFIString {
     pub ptr: *mut c_char,
@@ -38,9 +48,6 @@ pub struct FFISyncProgress {
     pub filter_header_height: u32,
     pub masternode_height: u32,
     pub peer_count: u32,
-    pub headers_synced: bool,
-    pub filter_headers_synced: bool,
-    pub masternodes_synced: bool,
     pub filter_sync_available: bool,
     pub filters_downloaded: u32,
     pub last_synced_filter_height: u32,
@@ -53,9 +60,6 @@ impl From<SyncProgress> for FFISyncProgress {
             filter_header_height: progress.filter_header_height,
             masternode_height: progress.masternode_height,
             peer_count: progress.peer_count,
-            headers_synced: progress.headers_synced,
-            filter_headers_synced: progress.filter_headers_synced,
-            masternodes_synced: progress.masternodes_synced,
             filter_sync_available: progress.filter_sync_available,
             filters_downloaded: progress.filters_downloaded as u32,
             last_synced_filter_height: progress.last_synced_filter_height.unwrap_or(0),
@@ -71,8 +75,11 @@ pub enum FFISyncStage {
     Downloading = 2,
     Validating = 3,
     Storing = 4,
-    Complete = 5,
-    Failed = 6,
+    DownloadingFilterHeaders = 5,
+    DownloadingFilters = 6,
+    DownloadingBlocks = 7,
+    Complete = 8,
+    Failed = 9,
 }
 
 impl From<SyncStage> for FFISyncStage {
@@ -89,6 +96,15 @@ impl From<SyncStage> for FFISyncStage {
             SyncStage::StoringHeaders {
                 ..
             } => FFISyncStage::Storing,
+            SyncStage::DownloadingFilterHeaders {
+                ..
+            } => FFISyncStage::DownloadingFilterHeaders,
+            SyncStage::DownloadingFilters {
+                ..
+            } => FFISyncStage::DownloadingFilters,
+            SyncStage::DownloadingBlocks {
+                ..
+            } => FFISyncStage::DownloadingBlocks,
             SyncStage::Complete => FFISyncStage::Complete,
             SyncStage::Failed(_) => FFISyncStage::Failed,
         }
@@ -97,14 +113,13 @@ impl From<SyncStage> for FFISyncStage {
 
 #[repr(C)]
 pub struct FFIDetailedSyncProgress {
-    pub current_height: u32,
     pub total_height: u32,
     pub percentage: f64,
     pub headers_per_second: f64,
     pub estimated_seconds_remaining: i64, // -1 if unknown
     pub stage: FFISyncStage,
     pub stage_message: FFIString,
-    pub connected_peers: u32,
+    pub overview: FFISyncProgress,
     pub total_headers: u64,
     pub sync_start_timestamp: i64,
 }
@@ -126,12 +141,24 @@ impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
             SyncStage::StoringHeaders {
                 batch_size,
             } => format!("Storing {} headers", batch_size),
+            SyncStage::DownloadingFilterHeaders {
+                current,
+                target,
+            } => format!("Downloading filter headers {} / {}", current, target),
+            SyncStage::DownloadingFilters {
+                completed,
+                total,
+            } => format!("Downloading filters {} / {}", completed, total),
+            SyncStage::DownloadingBlocks {
+                pending,
+            } => format!("Downloading blocks ({} pending)", pending),
             SyncStage::Complete => "Synchronization complete".to_string(),
             SyncStage::Failed(err) => err.clone(),
         };
 
+        let overview = FFISyncProgress::from(progress.sync_progress.clone());
+
         FFIDetailedSyncProgress {
-            current_height: progress.current_height,
             total_height: progress.peer_best_height,
             percentage: progress.percentage,
             headers_per_second: progress.headers_per_second,
@@ -141,7 +168,7 @@ impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
                 .unwrap_or(-1),
             stage: progress.sync_stage.into(),
             stage_message: FFIString::new(&stage_message),
-            connected_peers: progress.connected_peers as u32,
+            overview,
             total_headers: progress.total_headers_processed,
             sync_start_timestamp: progress
                 .sync_start_time

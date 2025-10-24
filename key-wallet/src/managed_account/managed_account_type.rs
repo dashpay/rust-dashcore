@@ -1,5 +1,10 @@
 use crate::account::account_collection::{DashpayContactIdentityId, DashpayOurUserIdentityId};
 use crate::account::StandardAccountType;
+use crate::gap_limit::{
+    DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
+    DEFAULT_SPECIAL_GAP_LIMIT,
+};
+
 use crate::{AccountType, AddressPool, DerivationPath};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
@@ -423,7 +428,7 @@ impl ManagedAccountType {
                 let external_pool = AddressPool::new(
                     external_path,
                     AddressPoolType::External,
-                    20,
+                    DEFAULT_EXTERNAL_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -433,7 +438,7 @@ impl ManagedAccountType {
                 let internal_pool = AddressPool::new(
                     internal_path,
                     AddressPoolType::Internal,
-                    20,
+                    DEFAULT_INTERNAL_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -451,8 +456,13 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool =
-                    AddressPool::new(path, AddressPoolType::Absent, 20, network, key_source)?;
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_COINJOIN_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
 
                 Ok(Self::CoinJoin {
                     index,
@@ -463,8 +473,13 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool =
-                    AddressPool::new(path, AddressPoolType::Absent, 20, network, key_source)?;
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
 
                 Ok(Self::IdentityRegistration {
                     addresses: pool,
@@ -476,8 +491,13 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool =
-                    AddressPool::new(path, AddressPoolType::Absent, 20, network, key_source)?;
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
 
                 Ok(Self::IdentityTopUp {
                     registration_index,
@@ -488,8 +508,13 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool =
-                    AddressPool::new(path, AddressPoolType::Absent, 20, network, key_source)?;
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
 
                 Ok(Self::IdentityTopUpNotBoundToIdentity {
                     addresses: pool,
@@ -499,8 +524,13 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool =
-                    AddressPool::new(path, AddressPoolType::Absent, 20, network, key_source)?;
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
 
                 Ok(Self::IdentityInvitation {
                     addresses: pool,
@@ -510,8 +540,13 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool =
-                    AddressPool::new(path, AddressPoolType::Absent, 20, network, key_source)?;
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
 
                 Ok(Self::ProviderVotingKeys {
                     addresses: pool,
@@ -521,8 +556,13 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool =
-                    AddressPool::new(path, AddressPoolType::Absent, 20, network, key_source)?;
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
 
                 Ok(Self::ProviderOwnerKeys {
                     addresses: pool,
@@ -532,8 +572,13 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool =
-                    AddressPool::new(path, AddressPoolType::Absent, 20, network, key_source)?;
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
 
                 Ok(Self::ProviderOperatorKeys {
                     addresses: pool,
@@ -546,7 +591,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::AbsentHardened,
-                    20,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
                     key_source,
                 )?;

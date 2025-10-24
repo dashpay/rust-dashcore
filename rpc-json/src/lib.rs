@@ -83,15 +83,15 @@ pub struct GetNetworkInfoResult {
     #[serde(rename = "networkactive")]
     pub network_active: bool,
     pub connections: usize,
-    #[serde(rename = "inboundconnections")]
+    #[serde(rename = "connections_in")]
     pub inbound_connections: usize,
-    #[serde(rename = "outboundconnections")]
+    #[serde(rename = "connections_out")]
     pub outbound_connections: usize,
-    #[serde(rename = "mnconnections")]
+    #[serde(rename = "connections_mn")]
     pub mn_connections: usize,
-    #[serde(rename = "inboundmnconnections")]
+    #[serde(rename = "connections_mn_in")]
     pub inbound_mn_connections: usize,
-    #[serde(rename = "outboundmnconnections")]
+    #[serde(rename = "connections_mn_out")]
     pub outbound_mn_connections: usize,
     #[serde(rename = "socketevents")]
     pub socket_events: String,
