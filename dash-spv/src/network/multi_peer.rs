@@ -1050,7 +1050,37 @@ impl NetworkManager for MultiPeerNetworkManager {
 
                 Ok(())
             }
+        } // end match
+    } // end send_message
+
+    async fn penalize_last_message_peer(
+        &self,
+        score_change: i32,
+        reason: &str,
+    ) -> NetworkResult<()> {
+        // Get the last peer that sent us a message
+        if let Some(addr) = self.get_last_message_peer().await {
+            self.reputation_manager.update_reputation(addr, score_change, reason).await;
         }
+        Ok(())
+    }
+
+    async fn penalize_last_message_peer_invalid_chainlock(
+        &self,
+        reason: &str,
+    ) -> NetworkResult<()> {
+        if let Some(addr) = self.get_last_message_peer().await {
+            // Apply misbehavior score and a short temporary ban
+            self.reputation_manager
+                .update_reputation(addr, misbehavior_scores::INVALID_CHAINLOCK, reason)
+                .await;
+
+            // Short ban: 10 minutes for relaying invalid ChainLock
+            self.reputation_manager
+                .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
+                .await;
+        }
+        Ok(())
     }
 
     async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
