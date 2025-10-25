@@ -37,10 +37,16 @@ impl<
         let chain_state = self.state.read().await;
         {
             let mut storage = self.storage.lock().await;
-            self.chainlock_manager
+            if let Err(e) = self
+                .chainlock_manager
                 .process_chain_lock(chainlock.clone(), &chain_state, &mut *storage)
                 .await
-                .map_err(SpvError::Validation)?;
+            {
+                // Penalize the peer that relayed the invalid ChainLock
+                let reason = format!("Invalid ChainLock: {}", e);
+                let _ = self.network.penalize_last_message_peer_invalid_chainlock(&reason).await;
+                return Err(SpvError::Validation(e));
+            }
         }
         drop(chain_state);
 

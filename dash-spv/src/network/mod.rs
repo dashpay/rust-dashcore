@@ -154,6 +154,28 @@ pub trait NetworkManager: Send + Sync {
 
         Ok(())
     }
+
+    /// Penalize the last peer that sent us a message by adjusting reputation.
+    /// Default implementation is a no-op for managers without reputation.
+    async fn penalize_last_message_peer(
+        &self,
+        _score_change: i32,
+        _reason: &str,
+    ) -> NetworkResult<()> {
+        Ok(())
+    }
+
+    /// Convenience: penalize last peer for an invalid ChainLock.
+    async fn penalize_last_message_peer_invalid_chainlock(
+        &self,
+        reason: &str,
+    ) -> NetworkResult<()> {
+        self.penalize_last_message_peer(
+            crate::network::reputation::misbehavior_scores::INVALID_CHAINLOCK,
+            reason,
+        )
+        .await
+    }
 }
 
 /// TCP-based network manager implementation.
