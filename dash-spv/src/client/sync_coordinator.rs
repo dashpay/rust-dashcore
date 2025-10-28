@@ -612,8 +612,16 @@ impl<
                             self.process_chainlock(clsig.clone()).await?;
                         }
                         NetworkMessage::ISLock(islock_msg) => {
-                            // Additional client-level InstantLock processing
-                            self.process_instantsendlock(islock_msg.clone()).await?;
+                            // Only process InstantLocks when fully synced and masternode engine is available
+                            if self.sync_manager.is_synced()
+                                && self.sync_manager.get_masternode_engine().is_some()
+                            {
+                                self.process_instantsendlock(islock_msg.clone()).await?;
+                            } else {
+                                tracing::debug!(
+                                    "Skipping InstantLock processing - not fully synced or masternode engine unavailable"
+                                );
+                            }
                         }
                         _ => {}
                     }
