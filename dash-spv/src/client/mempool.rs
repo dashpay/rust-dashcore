@@ -38,7 +38,6 @@ impl<
             // TODO: Get monitored addresses from wallet
             self.mempool_filter = Some(Arc::new(MempoolFilter::new(
                 self.config.mempool_strategy,
-                Duration::from_secs(self.config.recent_send_window_secs),
                 self.config.max_mempool_transactions,
                 self.mempool_state.clone(),
                 HashSet::new(), // Will be populated from wallet's monitored addresses
@@ -147,19 +146,11 @@ impl<
         // For now, create empty filter until wallet integration is complete
         self.mempool_filter = Some(Arc::new(MempoolFilter::new(
             self.config.mempool_strategy,
-            Duration::from_secs(self.config.recent_send_window_secs),
             self.config.max_mempool_transactions,
             self.mempool_state.clone(),
             HashSet::new(), // Will be populated from wallet's monitored addresses
             self.config.network,
         )));
         tracing::info!("Updated mempool filter (wallet integration pending)");
-    }
-
-    /// Record a transaction send for mempool filtering.
-    pub async fn record_transaction_send(&self, txid: dashcore::Txid) {
-        if let Some(ref mempool_filter) = self.mempool_filter {
-            mempool_filter.record_send(txid).await;
-        }
     }
 }

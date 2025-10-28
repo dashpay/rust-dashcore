@@ -1474,7 +1474,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
                 }
             }
         };
-        spv_client.record_transaction_send(txid).await;
         let mut guard = inner.lock().unwrap();
         *guard = Some(spv_client);
         Ok(())
