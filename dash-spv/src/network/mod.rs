@@ -176,6 +176,18 @@ pub trait NetworkManager: Send + Sync {
         )
         .await
     }
+
+    /// Convenience: penalize last peer for an invalid InstantLock.
+    async fn penalize_last_message_peer_invalid_instantlock(
+        &self,
+        reason: &str,
+    ) -> NetworkResult<()> {
+        self.penalize_last_message_peer(
+            crate::network::reputation::misbehavior_scores::INVALID_INSTANTLOCK,
+            reason,
+        )
+        .await
+    }
 }
 
 /// TCP-based network manager implementation.

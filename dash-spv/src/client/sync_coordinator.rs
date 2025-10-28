@@ -53,11 +53,11 @@ impl<
         self.update_status_display().await;
 
         tracing::info!(
-            "✅ Initial sync requests sent! Current state - Headers: {}, Filter headers: {}",
+            "✅ Prepared initial sync state - Headers: {}, Filter headers: {}",
             result.header_height,
             result.filter_header_height
         );
-        tracing::info!("📊 Actual sync will complete asynchronously through monitoring loop");
+        tracing::info!("📊 Sync requests will be sent by the monitoring loop");
 
         Ok(result)
     }

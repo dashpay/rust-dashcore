@@ -95,19 +95,38 @@ impl<
     ) -> Result<()> {
         tracing::info!("Processing InstantSendLock for tx {}", islock.txid);
 
-        // TODO: Implement InstantSendLock validation
-        // - Verify BLS signature against known quorum
-        // - Check if all inputs are locked
-        // - Mark transaction as instantly confirmed
-        // - Store InstantSendLock for future reference
+        // Get the masternode engine from sync manager for proper quorum verification
+        let masternode_engine = self.sync_manager.get_masternode_engine().ok_or_else(|| {
+            SpvError::Validation(crate::error::ValidationError::MasternodeVerification(
+                "Masternode engine not available for InstantLock verification".to_string(),
+            ))
+        })?;
 
-        // For now, just log the InstantSendLock details
+        // Validate the InstantLock (structure + BLS signature)
+        // This is REQUIRED for security - never accept InstantLocks without signature verification
+        let validator = crate::validation::instantlock::InstantLockValidator::new();
+        if let Err(e) = validator.validate(&islock, masternode_engine) {
+            // Penalize the peer that relayed the invalid InstantLock
+            let reason = format!("Invalid InstantLock: {}", e);
+            tracing::warn!("{}", reason);
+
+            // Ban the peer using the reputation system
+            let _ = self.network.penalize_last_message_peer_invalid_instantlock(&reason).await;
+
+            return Err(SpvError::Validation(e));
+        }
+
         tracing::info!(
-            "InstantSendLock validated: txid={}, inputs={}, signature={:?}",
+            "✅ InstantSendLock validated successfully: txid={}, inputs={}",
             islock.txid,
-            islock.inputs.len(),
-            islock.signature.to_string().chars().take(20).collect::<String>()
+            islock.inputs.len()
         );
+
+        // Emit InstantLock event
+        self.emit_event(SpvEvent::InstantLockReceived {
+            txid: islock.txid,
+            inputs: islock.inputs.clone(),
+        });
 
         Ok(())
     }

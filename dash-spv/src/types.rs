@@ -899,6 +899,14 @@ pub enum SpvEvent {
         hash: dashcore::BlockHash,
     },
 
+    /// InstantLock received and validated.
+    InstantLockReceived {
+        /// Transaction ID locked by this InstantLock.
+        txid: Txid,
+        /// Transaction inputs locked by this InstantLock.
+        inputs: Vec<dashcore::OutPoint>,
+    },
+
     /// Unconfirmed transaction added to mempool.
     MempoolTransactionAdded {
         /// Transaction ID.

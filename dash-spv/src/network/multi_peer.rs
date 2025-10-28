@@ -1083,6 +1083,24 @@ impl NetworkManager for MultiPeerNetworkManager {
         Ok(())
     }
 
+    async fn penalize_last_message_peer_invalid_instantlock(
+        &self,
+        reason: &str,
+    ) -> NetworkResult<()> {
+        if let Some(addr) = self.get_last_message_peer().await {
+            // Apply misbehavior score and a short temporary ban
+            self.reputation_manager
+                .update_reputation(addr, misbehavior_scores::INVALID_INSTANTLOCK, reason)
+                .await;
+
+            // Short ban: 10 minutes for relaying invalid InstantLock
+            self.reputation_manager
+                .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
+                .await;
+        }
+        Ok(())
+    }
+
     async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
         let mut rx = self.message_rx.lock().await;
 

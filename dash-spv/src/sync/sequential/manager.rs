@@ -227,6 +227,15 @@ impl<
         self.masternode_sync.engine()
     }
 
+    /// Get a quorum manager populated from the masternode engine.
+    /// Returns an empty quorum manager if masternodes are disabled or not initialized.
+    pub fn get_quorum_manager(&self) -> crate::validation::quorum::QuorumManager {
+        // TODO: Populate quorum manager from masternode engine
+        // For now, return an empty manager
+        // This will be enhanced when quorum extraction from masternode list is implemented
+        crate::validation::quorum::QuorumManager::new()
+    }
+
     /// Get a reference to the filter sync manager.
     pub fn filter_sync(&self) -> &FilterSyncManager<S, N> {
         &self.filter_sync

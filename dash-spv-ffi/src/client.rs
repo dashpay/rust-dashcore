@@ -296,6 +296,12 @@ impl FFIDashSpvClient {
                     dash_spv::types::SpvEvent::ChainLockReceived {
                         ..
                     } => {}
+                    dash_spv::types::SpvEvent::InstantLockReceived {
+                        ..
+                    } => {
+                        // InstantLock received and validated
+                        // TODO: Add FFI callback if needed for instant lock notifications
+                    }
                     dash_spv::types::SpvEvent::MempoolTransactionAdded {
                         ref txid,
                         amount,

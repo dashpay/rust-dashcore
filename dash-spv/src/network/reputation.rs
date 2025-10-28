@@ -41,6 +41,9 @@ pub mod misbehavior_scores {
     /// Invalid ChainLock
     pub const INVALID_CHAINLOCK: i32 = 40;
 
+    /// Invalid InstantLock
+    pub const INVALID_INSTANTLOCK: i32 = 35;
+
     /// Duplicate message
     pub const DUPLICATE_MESSAGE: i32 = 5;
 

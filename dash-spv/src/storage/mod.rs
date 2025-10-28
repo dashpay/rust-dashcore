@@ -216,19 +216,6 @@ pub trait StorageManager: Send + Sync {
         end_height: u32,
     ) -> StorageResult<Vec<(u32, dashcore::ChainLock)>>;
 
-    /// Store an instant lock.
-    async fn store_instant_lock(
-        &mut self,
-        txid: dashcore::Txid,
-        instant_lock: &dashcore::InstantLock,
-    ) -> StorageResult<()>;
-
-    /// Load an instant lock by transaction ID.
-    async fn load_instant_lock(
-        &self,
-        txid: dashcore::Txid,
-    ) -> StorageResult<Option<dashcore::InstantLock>>;
-
     // Mempool storage methods
     /// Store an unconfirmed transaction.
     async fn store_mempool_transaction(

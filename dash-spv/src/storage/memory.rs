@@ -557,36 +557,6 @@ impl StorageManager for MemoryStorageManager {
         Ok(chain_locks)
     }
 
-    async fn store_instant_lock(
-        &mut self,
-        txid: dashcore::Txid,
-        instant_lock: &dashcore::InstantLock,
-    ) -> StorageResult<()> {
-        let key = format!("islock_{}", txid);
-        self.metadata.insert(
-            key,
-            bincode::serialize(instant_lock).map_err(|e| {
-                StorageError::WriteFailed(format!("Failed to serialize instant lock: {}", e))
-            })?,
-        );
-        Ok(())
-    }
-
-    async fn load_instant_lock(
-        &self,
-        txid: dashcore::Txid,
-    ) -> StorageResult<Option<dashcore::InstantLock>> {
-        let key = format!("islock_{}", txid);
-        if let Some(data) = self.metadata.get(&key) {
-            let instant_lock = bincode::deserialize(data).map_err(|e| {
-                StorageError::ReadFailed(format!("Failed to deserialize instant lock: {}", e))
-            })?;
-            Ok(Some(instant_lock))
-        } else {
-            Ok(None)
-        }
-    }
-
     // Mempool storage methods
     async fn store_mempool_transaction(
         &mut self,
