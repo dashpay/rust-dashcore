@@ -69,7 +69,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
     /// Calculate the start height of a CFHeaders batch.
     fn calculate_batch_start_height(cf_headers: &CFHeaders, stop_height: u32) -> u32 {
-        stop_height.saturating_sub(cf_headers.filter_hashes.len() as u32 - 1)
+        let count = cf_headers.filter_hashes.len() as u32;
+        let offset = count.saturating_sub(1);
+        stop_height.saturating_sub(offset)
     }
 
     /// Get the height range for a CFHeaders batch.
