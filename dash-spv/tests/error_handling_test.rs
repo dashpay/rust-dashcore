@@ -495,26 +495,7 @@ impl StorageManager for MockStorageManager {
         Ok(vec![])
     }
 
-    async fn store_instant_lock(
-        &mut self,
-        _txid: dashcore::Txid,
-        _instant_lock: &dashcore::InstantLock,
-    ) -> StorageResult<()> {
-        if self.fail_on_write {
-            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
-        }
-        Ok(())
-    }
-
-    async fn load_instant_lock(
-        &self,
-        _txid: dashcore::Txid,
-    ) -> StorageResult<Option<dashcore::InstantLock>> {
-        if self.fail_on_read {
-            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
-        }
-        Ok(None)
-    }
+    // InstantLock storage methods removed from trait; no-op here
 
     async fn store_mempool_transaction(
         &mut self,

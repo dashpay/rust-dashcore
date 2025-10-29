@@ -162,10 +162,9 @@ mod multi_peer_tests {
             max_filter_gap_sync_size: 50000,
             // Mempool fields
             enable_mempool_tracking: false,
-            mempool_strategy: crate::client::config::MempoolStrategy::Selective,
+            mempool_strategy: crate::client::config::MempoolStrategy::BloomFilter,
             max_mempool_transactions: 1000,
             mempool_timeout_secs: 3600,
-            recent_send_window_secs: 300,
             fetch_mempool_transactions: true,
             persist_mempool: false,
             // Request control fields

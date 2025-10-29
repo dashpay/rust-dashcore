@@ -133,7 +133,7 @@ mod tests {
 
         // Enable mempool tracking to initialize mempool_filter
         client
-            .enable_mempool_tracking(crate::client::config::MempoolStrategy::Selective)
+            .enable_mempool_tracking(crate::client::config::MempoolStrategy::BloomFilter)
             .await
             .expect("enable mempool tracking must succeed");
 
