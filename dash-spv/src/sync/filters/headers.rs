@@ -13,11 +13,13 @@
 //! - Filter header chain verification
 //! - Stability checking before declaring sync complete
 
+use dashcore::hash_types::FilterHeader;
 use dashcore::{
     network::message::NetworkMessage,
     network::message_filter::{CFHeaders, GetCFHeaders},
     BlockHash,
 };
+use dashcore_hashes::{sha256d, Hash};
 
 use super::types::*;
 use crate::error::{SyncError, SyncResult};
@@ -69,7 +71,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
     /// Calculate the start height of a CFHeaders batch.
     fn calculate_batch_start_height(cf_headers: &CFHeaders, stop_height: u32) -> u32 {
-        stop_height.saturating_sub(cf_headers.filter_hashes.len() as u32 - 1)
+        let count = cf_headers.filter_hashes.len() as u32;
+        let offset = count.saturating_sub(1);
+        stop_height.saturating_sub(offset)
     }
 
     /// Get the height range for a CFHeaders batch.
@@ -1120,91 +1124,90 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         expected_start_height: u32,
         storage: &mut S,
     ) -> SyncResult<(usize, u32)> {
-        // Get the height range for this batch
-        let (batch_start_height, stop_height, _header_tip_height) =
+        // Get the original height range for this CFHeaders batch
+        let (original_start_height, _stop_height, _header_tip_height) =
             self.get_batch_height_range(cf_headers, storage).await?;
-        let skip_count = expected_start_height.saturating_sub(batch_start_height) as usize;
+
+        // Determine how many headers overlap with what we already have
+        let headers_to_skip = expected_start_height.saturating_sub(original_start_height) as usize;
 
         // Complete overlap case - all headers already processed
-        if skip_count >= cf_headers.filter_hashes.len() {
+        if headers_to_skip >= cf_headers.filter_hashes.len() {
             tracing::info!(
                 "✅ All {} headers in batch already processed, skipping",
                 cf_headers.filter_hashes.len()
             );
             return Ok((0, expected_start_height));
         }
-
-        // Find connection point in our chain
-        let current_filter_tip = storage
-            .get_filter_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
-            .unwrap_or(0);
-
-        let mut connection_height = None;
-        for check_height in (0..=current_filter_tip).rev() {
-            if let Ok(Some(stored_header)) = storage.get_filter_header(check_height).await {
-                if stored_header == cf_headers.previous_filter_header {
-                    connection_height = Some(check_height);
-                    break;
-                }
-            }
+        // Compute filter headers for the entire batch WITHOUT verifying against local chain yet.
+        // This lets us compare continuity precisely at the overlap boundary rather than the
+        // batch's original start (which may precede our local tip).
+        let mut computed_headers: Vec<FilterHeader> =
+            Vec::with_capacity(cf_headers.filter_hashes.len());
+        let mut prev_header = cf_headers.previous_filter_header;
+        for filter_hash in &cf_headers.filter_hashes {
+            let mut data = [0u8; 64];
+            data[..32].copy_from_slice(filter_hash.as_byte_array());
+            data[32..].copy_from_slice(prev_header.as_byte_array());
+            let header = FilterHeader::from_byte_array(sha256d::Hash::hash(&data).to_byte_array());
+            computed_headers.push(header);
+            prev_header = header;
         }
 
-        let connection_height = match connection_height {
-            Some(height) => height,
+        // Verify continuity exactly at the expected overlap boundary: expected_start_height - 1
+        let expected_prev_height = match expected_start_height.checked_sub(1) {
+            Some(h) => h,
             None => {
-                // Special-case: checkpoint overlap where peer starts at checkpoint height
-                // and we expect to start at checkpoint+1. We don't store the checkpoint's
-                // filter header in storage, but CFHeaders provides previous_filter_header
-                // for (checkpoint-1), allowing us to compute from checkpoint onward and skip one.
-                if self.sync_base_height > 0
-                    && (
-                        // Case A: peer starts at checkpoint, we expect checkpoint+1
-                        (batch_start_height == self.sync_base_height
-                            && expected_start_height == self.sync_base_height + 1)
-                            ||
-                        // Case B: peer starts one before checkpoint, we expect checkpoint
-                        (batch_start_height + 1 == self.sync_base_height
-                            && expected_start_height == self.sync_base_height)
-                    )
-                {
-                    tracing::debug!(
-                        "Overlap at checkpoint: synthesizing connection at height {}",
-                        self.sync_base_height - 1
-                    );
-                    self.sync_base_height - 1
-                } else {
-                    // No connection found - check if this is overlapping data we can safely ignore
-                    let overlap_end = expected_start_height.saturating_sub(1);
-                    if batch_start_height <= overlap_end && overlap_end <= current_filter_tip {
-                        tracing::warn!(
-                            "📋 Ignoring overlapping headers from different peer view (range {}-{})",
-                            batch_start_height,
-                            stop_height
-                        );
-                        return Ok((0, expected_start_height));
-                    } else {
-                        return Err(SyncError::Validation(
-                            "Cannot find connection point for overlapping headers".to_string(),
-                        ));
-                    }
-                }
+                // Should not happen since expected_start_height > 0 in overlap handling
+                return Ok((0, expected_start_height));
             }
         };
 
-        // Process all filter headers from the connection point
-        let batch_start_height = connection_height + 1;
-        let all_filter_headers =
-            self.process_filter_headers(cf_headers, batch_start_height, storage).await?;
+        // Determine the computed header at expected_prev_height using the batch data
+        let steps_to_expected_prev = expected_start_height.saturating_sub(original_start_height);
+        let computed_prev_at_expected = if steps_to_expected_prev == 0 {
+            cf_headers.previous_filter_header
+        } else {
+            // steps_to_expected_prev >= 1 implies index exists
+            computed_headers[(steps_to_expected_prev - 1) as usize]
+        };
 
-        // Extract only the new headers we need
-        let headers_to_skip = expected_start_height.saturating_sub(batch_start_height) as usize;
-        if headers_to_skip >= all_filter_headers.len() {
+        // Load our local header at expected_prev_height
+        let local_prev_at_expected = match storage.get_filter_header(expected_prev_height).await {
+            Ok(Some(h)) => h,
+            Ok(None) => {
+                tracing::warn!(
+                    "Missing local filter header at height {} while handling overlap; skipping batch",
+                    expected_prev_height
+                );
+                return Ok((0, expected_start_height));
+            }
+            Err(e) => {
+                return Err(SyncError::Storage(format!(
+                    "Failed to read local filter header at height {}: {}",
+                    expected_prev_height, e
+                )));
+            }
+        };
+
+        // If continuity at the overlap boundary doesn't match, ignore this overlapping batch
+        if computed_prev_at_expected != local_prev_at_expected {
+            tracing::warn!(
+                "Overlapping CFHeaders batch does not connect at height {}: computed={:?}, local={:?}. Ignoring batch.",
+                expected_prev_height,
+                computed_prev_at_expected,
+                local_prev_at_expected
+            );
             return Ok((0, expected_start_height));
         }
 
-        let new_filter_headers = all_filter_headers[headers_to_skip..].to_vec();
+        // Store only the non-overlapping suffix starting at expected_start_height
+        let start_index = steps_to_expected_prev as usize;
+        let new_filter_headers = if start_index < computed_headers.len() {
+            computed_headers[start_index..].to_vec()
+        } else {
+            Vec::new()
+        };
 
         if !new_filter_headers.is_empty() {
             storage.store_filter_headers(&new_filter_headers).await.map_err(|e| {

@@ -753,20 +753,7 @@ impl StorageManager for MockStorageManager {
         Ok(vec![])
     }
 
-    async fn store_instant_lock(
-        &mut self,
-        _txid: Txid,
-        _instant_lock: &dashcore::InstantLock,
-    ) -> dash_spv::error::StorageResult<()> {
-        Ok(())
-    }
-
-    async fn load_instant_lock(
-        &self,
-        _txid: Txid,
-    ) -> dash_spv::error::StorageResult<Option<dashcore::InstantLock>> {
-        Ok(None)
-    }
+    // InstantLock storage methods removed from trait; no-op here
 
     async fn store_mempool_transaction(
         &mut self,

@@ -503,13 +503,13 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
 ///
 /// # Safety
 /// - `config` must be a valid pointer to an FFIClientConfig or null
-/// - If null, returns FFIMempoolStrategy::Selective as default
+/// - If null, returns FFIMempoolStrategy::FetchAll as default
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
     config: *const FFIClientConfig,
 ) -> FFIMempoolStrategy {
     if config.is_null() {
-        return FFIMempoolStrategy::Selective;
+        return FFIMempoolStrategy::FetchAll;
     }
 
     let config = unsafe { &*((*config).inner as *const ClientConfig) };

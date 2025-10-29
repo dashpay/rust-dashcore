@@ -296,6 +296,12 @@ impl FFIDashSpvClient {
                     dash_spv::types::SpvEvent::ChainLockReceived {
                         ..
                     } => {}
+                    dash_spv::types::SpvEvent::InstantLockReceived {
+                        ..
+                    } => {
+                        // InstantLock received and validated
+                        // TODO: Add FFI callback if needed for instant lock notifications
+                    }
                     dash_spv::types::SpvEvent::MempoolTransactionAdded {
                         ref txid,
                         amount,
@@ -1445,7 +1451,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
         }
     };
 
-    let txid = match Txid::from_str(txid_str) {
+    let _txid = match Txid::from_str(txid_str) {
         Ok(t) => t,
         Err(e) => {
             set_last_error(&format!("Invalid txid: {}", e));
@@ -1468,7 +1474,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
                 }
             }
         };
-        spv_client.record_transaction_send(txid).await;
         let mut guard = inner.lock().unwrap();
         *guard = Some(spv_client);
         Ok(())

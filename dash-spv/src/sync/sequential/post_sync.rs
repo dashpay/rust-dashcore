@@ -353,12 +353,9 @@ impl<
                         stop_height
                     );
                 } else {
-                    // Start from the lesser of filter_tip and (stop_height - 1)
-                    let mut start_height = stop_height.saturating_sub(1);
-                    if filter_tip < start_height {
-                        // normal case: request from tip up to stop
-                        start_height = filter_tip;
-                    }
+                    // Request from the first missing height after our current filter tip
+                    // We already verified filter_tip < stop_height above
+                    let start_height = filter_tip.saturating_add(1);
 
                     tracing::info!(
                         "📋 Requesting filter headers up to height {} (start: {}, stop: {})",

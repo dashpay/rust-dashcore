@@ -19,7 +19,6 @@ namespace dash_spv_ffi {
 typedef enum FFIMempoolStrategy {
   FetchAll = 0,
   BloomFilter = 1,
-  Selective = 2,
 } FFIMempoolStrategy;
 
 typedef enum FFISyncStage {
@@ -817,7 +816,7 @@ int32_t dash_spv_ffi_config_set_persist_mempool(struct FFIClientConfig *config,
  *
  * # Safety
  * - `config` must be a valid pointer to an FFIClientConfig or null
- * - If null, returns FFIMempoolStrategy::Selective as default
+ * - If null, returns FFIMempoolStrategy::FetchAll as default
  */
 
 enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FFIClientConfig *config)

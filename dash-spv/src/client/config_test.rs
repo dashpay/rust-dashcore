@@ -33,11 +33,10 @@ mod tests {
         assert_eq!(config.filter_request_delay_ms, 0);
 
         // Mempool defaults
-        assert!(!config.enable_mempool_tracking);
-        assert_eq!(config.mempool_strategy, MempoolStrategy::Selective);
+        assert!(config.enable_mempool_tracking);
+        assert_eq!(config.mempool_strategy, MempoolStrategy::FetchAll);
         assert_eq!(config.max_mempool_transactions, 1000);
         assert_eq!(config.mempool_timeout_secs, 3600);
-        assert_eq!(config.recent_send_window_secs, 300);
         assert!(config.fetch_mempool_transactions);
         assert!(!config.persist_mempool);
     }
@@ -74,7 +73,6 @@ mod tests {
             .with_mempool_tracking(MempoolStrategy::BloomFilter)
             .with_max_mempool_transactions(500)
             .with_mempool_timeout(7200)
-            .with_recent_send_window(600)
             .with_mempool_persistence(true)
             .with_start_height(100000);
 
@@ -93,7 +91,6 @@ mod tests {
         assert_eq!(config.mempool_strategy, MempoolStrategy::BloomFilter);
         assert_eq!(config.max_mempool_transactions, 500);
         assert_eq!(config.mempool_timeout_secs, 7200);
-        assert_eq!(config.recent_send_window_secs, 600);
         assert!(config.persist_mempool);
         assert_eq!(config.start_from_height, Some(100000));
     }
@@ -200,22 +197,7 @@ mod tests {
         assert_eq!(result.unwrap_err(), "mempool_timeout_secs must be > 0");
     }
 
-    #[test]
-    fn test_validation_invalid_selective_strategy() {
-        let config = ClientConfig {
-            enable_mempool_tracking: true,
-            mempool_strategy: MempoolStrategy::Selective,
-            recent_send_window_secs: 0,
-            ..Default::default()
-        };
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "recent_send_window_secs must be > 0 for Selective strategy"
-        );
-    }
+    // Removed selective strategy validation test; Selective variant no longer exists
 
     #[test]
     fn test_cfheader_gap_settings() {

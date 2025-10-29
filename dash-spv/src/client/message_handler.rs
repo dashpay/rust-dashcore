@@ -403,8 +403,18 @@ impl<
                     chainlocks_to_request.push(item);
                 }
                 Inventory::InstantSendLock(islock_hash) => {
-                    tracing::info!("⚡ Inventory: New InstantSendLock {}", islock_hash);
-                    islocks_to_request.push(item);
+                    // Only fetch InstantSendLocks when we're fully synced and have masternode data
+                    if self.sync_manager.is_synced()
+                        && self.sync_manager.get_masternode_engine().is_some()
+                    {
+                        tracing::info!("⚡ Inventory: New InstantSendLock {}", islock_hash);
+                        islocks_to_request.push(item);
+                    } else {
+                        tracing::debug!(
+                            "Skipping InstantSendLock {} fetch - not fully synced or masternode engine unavailable",
+                            islock_hash
+                        );
+                    }
                 }
                 Inventory::Transaction(txid) => {
                     tracing::debug!("💸 Inventory: New transaction {}", txid);
@@ -444,7 +454,7 @@ impl<
             self.network.send_message(getdata).await.map_err(SpvError::Network)?;
         }
 
-        // Auto-request InstantLocks
+        // Auto-request InstantLocks (only when synced and masternodes available; gated above)
         if !islocks_to_request.is_empty() {
             tracing::info!("Requesting {} InstantLocks", islocks_to_request.len());
             let getdata = NetworkMessage::GetData(islocks_to_request);

@@ -86,6 +86,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("no-mempool")
+                .long("no-mempool")
+                .help("Disable mempool transaction tracking")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("validation-mode")
                 .long("validation-mode")
                 .value_name("MODE")
@@ -182,6 +188,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches.get_flag("no-masternodes") {
         config = config.without_masternodes();
+    }
+    if matches.get_flag("no-mempool") {
+        config.enable_mempool_tracking = false;
     }
 
     // Set start height if specified

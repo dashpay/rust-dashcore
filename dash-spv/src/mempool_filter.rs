@@ -14,8 +14,6 @@ use crate::types::{MempoolState, UnconfirmedTransaction};
 pub struct MempoolFilter {
     /// Mempool strategy to use.
     strategy: MempoolStrategy,
-    /// Recent send window duration.
-    recent_send_window: Duration,
     /// Maximum number of transactions to track.
     max_transactions: usize,
     /// Mempool state.
@@ -30,7 +28,6 @@ impl MempoolFilter {
     /// Create a new mempool filter.
     pub fn new(
         strategy: MempoolStrategy,
-        recent_send_window: Duration,
         max_transactions: usize,
         mempool_state: Arc<RwLock<MempoolState>>,
         watched_addresses: HashSet<Address>,
@@ -38,7 +35,6 @@ impl MempoolFilter {
     ) -> Self {
         Self {
             strategy,
-            recent_send_window,
             max_transactions,
             mempool_state,
             watched_addresses: watched_addresses.into_iter().collect(),
@@ -47,7 +43,7 @@ impl MempoolFilter {
     }
 
     /// Check if we should fetch a transaction based on its txid.
-    pub async fn should_fetch_transaction(&self, txid: &Txid) -> bool {
+    pub async fn should_fetch_transaction(&self, _txid: &Txid) -> bool {
         match self.strategy {
             MempoolStrategy::FetchAll => {
                 // Check if we're at capacity
@@ -58,11 +54,6 @@ impl MempoolFilter {
                 // For bloom filter strategy, we would check the bloom filter
                 // This is handled by the network layer
                 true
-            }
-            MempoolStrategy::Selective => {
-                // Check if this was a recent send
-                let state = self.mempool_state.read().await;
-                state.is_recent_send(txid, self.recent_send_window)
             }
         }
     }
@@ -169,12 +160,6 @@ impl MempoolFilter {
             addresses,
             net_amount,
         ))
-    }
-
-    /// Record that we sent a transaction.
-    pub async fn record_send(&self, txid: Txid) {
-        let mut state = self.mempool_state.write().await;
-        state.record_send(txid);
     }
 
     /// Prune expired transactions.
@@ -364,38 +349,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_selective_strategy() {
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        let filter = MempoolFilter::new(
-            MempoolStrategy::Selective,
-            Duration::from_secs(300),
-            1000,
-            mempool_state.clone(),
-            HashSet::new(),
-            Network::Dash,
-        );
-
-        // Generate a test txid
-        let txid =
-            Txid::from_str("0101010101010101010101010101010101010101010101010101010101010101")
-                .unwrap();
-
-        // Should not fetch unknown transaction
-        assert!(!filter.should_fetch_transaction(&txid).await);
-
-        // Record as recent send
-        filter.record_send(txid).await;
-
-        // Should fetch recent send
-        assert!(filter.should_fetch_transaction(&txid).await);
-    }
-
-    #[tokio::test]
     async fn test_fetch_all_strategy() {
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let filter = MempoolFilter::new(
             MempoolStrategy::FetchAll,
-            Duration::from_secs(300),
             2, // Small limit for testing
             mempool_state.clone(),
             HashSet::new(),
@@ -461,8 +418,7 @@ mod tests {
         let watched_addresses = vec![addr1.clone()].into_iter().collect();
 
         let filter = MempoolFilter::new(
-            MempoolStrategy::Selective,
-            Duration::from_secs(300),
+            MempoolStrategy::FetchAll,
             1000,
             mempool_state,
             watched_addresses,
@@ -491,8 +447,7 @@ mod tests {
         let watched_addresses = vec![addr.clone()].into_iter().collect();
 
         let filter = MempoolFilter::new(
-            MempoolStrategy::Selective,
-            Duration::from_secs(300),
+            MempoolStrategy::FetchAll,
             1000,
             mempool_state,
             watched_addresses,
@@ -520,8 +475,7 @@ mod tests {
         let watched_addresses = vec![addr.clone()].into_iter().collect();
 
         let filter = MempoolFilter::new(
-            MempoolStrategy::Selective,
-            Duration::from_secs(300),
+            MempoolStrategy::FetchAll,
             1000,
             mempool_state,
             watched_addresses,
@@ -562,7 +516,6 @@ mod tests {
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let filter = MempoolFilter::new(
             MempoolStrategy::FetchAll,
-            Duration::from_secs(300),
             3, // Very small limit
             mempool_state.clone(),
             HashSet::new(),
@@ -607,8 +560,7 @@ mod tests {
     async fn test_prune_expired() {
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let filter = MempoolFilter::new(
-            MempoolStrategy::Selective,
-            Duration::from_secs(300),
+            MempoolStrategy::FetchAll,
             1000,
             mempool_state.clone(),
             HashSet::new(),
@@ -681,7 +633,6 @@ mod tests {
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let filter = MempoolFilter::new(
             MempoolStrategy::BloomFilter,
-            Duration::from_secs(300),
             1000,
             mempool_state,
             HashSet::new(),
@@ -712,8 +663,7 @@ mod tests {
             .collect();
 
         let filter = MempoolFilter::new(
-            MempoolStrategy::Selective,
-            Duration::from_secs(300),
+            MempoolStrategy::FetchAll,
             1000,
             mempool_state,
             watched_addresses,
@@ -758,8 +708,7 @@ mod tests {
             .collect();
 
         let filter = MempoolFilter::new(
-            MempoolStrategy::Selective,
-            Duration::from_secs(300),
+            MempoolStrategy::FetchAll,
             1000,
             mempool_state,
             watched_addresses,

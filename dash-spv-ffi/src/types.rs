@@ -395,7 +395,6 @@ pub unsafe extern "C" fn dash_spv_ffi_string_array_destroy(arr: *mut FFIArray) {
 pub enum FFIMempoolStrategy {
     FetchAll = 0,
     BloomFilter = 1,
-    Selective = 2,
 }
 
 impl From<MempoolStrategy> for FFIMempoolStrategy {
@@ -403,7 +402,6 @@ impl From<MempoolStrategy> for FFIMempoolStrategy {
         match strategy {
             MempoolStrategy::FetchAll => FFIMempoolStrategy::FetchAll,
             MempoolStrategy::BloomFilter => FFIMempoolStrategy::BloomFilter,
-            MempoolStrategy::Selective => FFIMempoolStrategy::Selective,
         }
     }
 }
@@ -413,7 +411,6 @@ impl From<FFIMempoolStrategy> for MempoolStrategy {
         match strategy {
             FFIMempoolStrategy::FetchAll => MempoolStrategy::FetchAll,
             FFIMempoolStrategy::BloomFilter => MempoolStrategy::BloomFilter,
-            FFIMempoolStrategy::Selective => MempoolStrategy::Selective,
         }
     }
 }

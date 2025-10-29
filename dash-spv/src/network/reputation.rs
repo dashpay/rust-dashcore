@@ -41,6 +41,9 @@ pub mod misbehavior_scores {
     /// Invalid ChainLock
     pub const INVALID_CHAINLOCK: i32 = 40;
 
+    /// Invalid InstantLock
+    pub const INVALID_INSTANTLOCK: i32 = 35;
+
     /// Duplicate message
     pub const DUPLICATE_MESSAGE: i32 = 5;
 
@@ -311,6 +314,24 @@ impl PeerReputationManager {
         } else {
             0
         }
+    }
+
+    /// Temporarily ban a peer for a specified duration, regardless of score.
+    /// This can be used for critical protocol violations (e.g., invalid ChainLocks).
+    pub async fn temporary_ban_peer(&self, peer: SocketAddr, duration: Duration, reason: &str) {
+        let mut reputations = self.reputations.write().await;
+        let reputation = reputations.entry(peer).or_default();
+
+        reputation.banned_until = Some(Instant::now() + duration);
+        reputation.ban_count += 1;
+
+        log::warn!(
+            "Peer {} temporarily banned for {:?} (ban #{}, reason: {})",
+            peer,
+            duration,
+            reputation.ban_count,
+            reason
+        );
     }
 
     /// Record a connection attempt
