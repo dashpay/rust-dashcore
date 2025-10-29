@@ -1070,6 +1070,24 @@ impl NetworkManager for MultiPeerNetworkManager {
         reason: &str,
     ) -> NetworkResult<()> {
         if let Some(addr) = self.get_last_message_peer().await {
+            match self.disconnect_peer(&addr, reason).await {
+                Ok(()) => {
+                    log::warn!(
+                        "Peer {} disconnected for invalid ChainLock enforcement: {}",
+                        addr,
+                        reason
+                    );
+                }
+                Err(err) => {
+                    log::error!(
+                        "Failed to disconnect peer {} after invalid ChainLock enforcement ({}): {}",
+                        addr,
+                        reason,
+                        err
+                    );
+                }
+            }
+
             // Apply misbehavior score and a short temporary ban
             self.reputation_manager
                 .update_reputation(addr, misbehavior_scores::INVALID_CHAINLOCK, reason)
@@ -1097,6 +1115,24 @@ impl NetworkManager for MultiPeerNetworkManager {
             self.reputation_manager
                 .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
                 .await;
+
+            match self.disconnect_peer(&addr, reason).await {
+                Ok(()) => {
+                    log::warn!(
+                        "Peer {} disconnected for invalid InstantLock enforcement: {}",
+                        addr,
+                        reason
+                    );
+                }
+                Err(err) => {
+                    log::error!(
+                        "Failed to disconnect peer {} after invalid InstantLock enforcement ({}): {}",
+                        addr,
+                        reason,
+                        err
+                    );
+                }
+            }
         }
         Ok(())
     }
