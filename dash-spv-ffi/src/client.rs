@@ -1451,7 +1451,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
         }
     };
 
-    let txid = match Txid::from_str(txid_str) {
+    let _txid = match Txid::from_str(txid_str) {
         Ok(t) => t,
         Err(e) => {
             set_last_error(&format!("Invalid txid: {}", e));

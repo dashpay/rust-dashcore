@@ -1125,7 +1125,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         storage: &mut S,
     ) -> SyncResult<(usize, u32)> {
         // Get the original height range for this CFHeaders batch
-        let (original_start_height, stop_height, _header_tip_height) =
+        let (original_start_height, _stop_height, _header_tip_height) =
             self.get_batch_height_range(cf_headers, storage).await?;
 
         // Determine how many headers overlap with what we already have

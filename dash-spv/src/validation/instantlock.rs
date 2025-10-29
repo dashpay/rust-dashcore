@@ -152,8 +152,7 @@ impl InstantLockValidator {
 mod tests {
     use super::*;
     use dashcore::blockdata::constants::COIN_VALUE;
-    use dashcore::bls_sig_utils::BLSPublicKey;
-    use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
+    use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
     use dashcore_hashes::{sha256d, Hash};
 
     /// Helper to create a test transaction

@@ -10,7 +10,6 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::chain::ChainLockManager;
