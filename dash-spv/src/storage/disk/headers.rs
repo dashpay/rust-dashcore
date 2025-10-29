@@ -265,7 +265,7 @@ impl DiskStorageManager {
         drop(cached_tip);
 
         // Save dirty segments periodically (every 1000 headers)
-        if headers.len() >= 1000 || blockchain_height % 1000 == 0 {
+        if headers.len() >= 1000 || blockchain_height.is_multiple_of(1000) {
             super::segments::save_dirty_segments(self).await?;
         }
 
