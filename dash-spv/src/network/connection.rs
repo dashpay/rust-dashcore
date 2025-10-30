@@ -542,7 +542,22 @@ impl TcpConnection {
                     state.framing_buffer[22],
                     state.framing_buffer[23],
                 ];
-                let total_len = HEADER_LEN + length_le;
+                // Validate announced length to prevent unbounded accumulation or overflow
+                if length_le > dashcore::network::message::MAX_MSG_SIZE {
+                    return Err(NetworkError::ProtocolError(format!(
+                        "Declared payload length {} exceeds MAX_MSG_SIZE {}",
+                        length_le,
+                        dashcore::network::message::MAX_MSG_SIZE
+                    )));
+                }
+                let total_len = match HEADER_LEN.checked_add(length_le) {
+                    Some(v) => v,
+                    None => {
+                        return Err(NetworkError::ProtocolError(
+                            "Message length overflow".to_string(),
+                        ));
+                    }
+                };
 
                 // Ensure full frame available
                 if state.framing_buffer.len() < total_len {
