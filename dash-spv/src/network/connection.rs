@@ -400,7 +400,7 @@ impl TcpConnection {
 
         let result = (|| -> NetworkResult<Option<NetworkMessage>> {
             // Helper: try to read some bytes into framing buffer
-            let mut read_some = |state: &mut ConnectionState| -> std::io::Result<usize> {
+            let read_some = |state: &mut ConnectionState| -> std::io::Result<usize> {
                 let mut tmp = [0u8; 8192];
                 match state.read_buffer.read(&mut tmp) {
                     Ok(0) => Ok(0),
