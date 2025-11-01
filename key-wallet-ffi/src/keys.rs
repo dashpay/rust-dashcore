@@ -991,13 +991,13 @@ pub unsafe extern "C" fn derivation_path_free(
     if !indices.is_null() && count > 0 {
         unsafe {
             // Reconstruct the boxed slice from the raw pointer and let it drop
-            let _ = Box::from_raw(std::slice::from_raw_parts_mut(indices, count));
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(indices, count));
         }
     }
     if !hardened.is_null() && count > 0 {
         unsafe {
             // Reconstruct the boxed slice from the raw pointer and let it drop
-            let _ = Box::from_raw(std::slice::from_raw_parts_mut(hardened, count));
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(hardened, count));
         }
     }
 }

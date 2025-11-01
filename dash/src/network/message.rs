@@ -481,7 +481,27 @@ impl Decodable for RawNetworkMessage {
     ) -> Result<Self, encode::Error> {
         let magic = Decodable::consensus_decode_from_finite_reader(r)?;
         let cmd = CommandString::consensus_decode_from_finite_reader(r)?;
-        let raw_payload = CheckedData::consensus_decode_from_finite_reader(r)?.0;
+        let raw_payload = match CheckedData::consensus_decode_from_finite_reader(r) {
+            Ok(cd) => cd.0,
+            Err(encode::Error::InvalidChecksum {
+                expected,
+                actual,
+            }) => {
+                // Include message command and magic in logging to aid diagnostics
+                log::warn!(
+                    "Invalid payload checksum for network message '{}' (magic {:#x}): expected {:02x?}, actual {:02x?}",
+                    cmd.0,
+                    magic,
+                    expected,
+                    actual
+                );
+                return Err(encode::Error::InvalidChecksum {
+                    expected,
+                    actual,
+                });
+            }
+            Err(e) => return Err(e),
+        };
 
         let mut mem_d = io::Cursor::new(raw_payload);
         let payload = match &cmd.0[..] {

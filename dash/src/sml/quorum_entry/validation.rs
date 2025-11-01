@@ -221,7 +221,7 @@ mod tests {
         #[test]
         fn test_verify_secure_with_real_operators() {
             // Real operator keys for testing verify_secure API
-            let operator_keys = vec![
+            let operator_keys = [
                 PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
                     &hex!("86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9"),
                     SerializationFormat::Modern

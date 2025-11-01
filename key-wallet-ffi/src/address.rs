@@ -44,7 +44,7 @@ pub unsafe extern "C" fn address_array_free(addresses: *mut *mut c_char, count: 
                 }
             }
             // Free the array itself
-            let _ = Box::from_raw(std::slice::from_raw_parts_mut(addresses, count));
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(addresses, count));
         }
     }
 }
