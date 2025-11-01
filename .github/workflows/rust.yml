@@ -20,7 +20,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4
@@ -140,7 +140,7 @@ jobs:
 
   key_wallet_tests:
     name: Key Wallet Components Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4
@@ -157,7 +157,7 @@ jobs:
 
   core_components_tests:
     name: Core Components Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4
@@ -178,7 +178,7 @@ jobs:
 
   clippy:
     name: Clippy (Non-strict)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4
@@ -201,7 +201,7 @@ jobs:
 
   strict-checks:
     name: Strict Warnings and Clippy Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4
@@ -298,7 +298,7 @@ jobs:
 
   fmt:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4
@@ -311,7 +311,7 @@ jobs:
 
   rpc_tests:
     name: RPC Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     strategy:
       matrix:
         include:
@@ -330,7 +330,7 @@ jobs:
   integrations_tests:
     name: Integration Tests
     if: ${{ false }} # Temporarily disabled
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     strategy:
       matrix:
         rust: [stable]
@@ -347,7 +347,7 @@ jobs:
 
   actionlint:
     name: Lint GitHub Actions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     permissions:
       contents: read
     steps:

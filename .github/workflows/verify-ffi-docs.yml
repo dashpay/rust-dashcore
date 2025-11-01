@@ -22,7 +22,7 @@ on:
 
 jobs:
   verify-key-wallet-docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -53,7 +53,7 @@ jobs:
           fi
 
   verify-dash-spv-docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -84,7 +84,7 @@ jobs:
           fi
 
   update-docs-comment:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     if: failure() && github.event_name == 'pull_request'
     needs:
       - verify-key-wallet-docs
