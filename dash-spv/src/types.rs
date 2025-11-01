@@ -510,22 +510,17 @@ impl std::fmt::Debug for ChainState {
 }
 
 /// Validation mode for the SPV client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ValidationMode {
     /// Validate only basic structure and signatures.
     Basic,
 
     /// Validate proof of work and chain rules.
+    #[default]
     Full,
 
     /// Skip most validation (useful for testing).
     None,
-}
-
-impl Default for ValidationMode {
-    fn default() -> Self {
-        Self::Full
-    }
 }
 
 /// Peer information.
