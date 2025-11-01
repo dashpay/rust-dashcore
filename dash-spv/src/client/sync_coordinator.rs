@@ -116,6 +116,7 @@ impl<
         let mut last_emitted_header_height: u32 = 0;
         let mut last_emitted_filter_header_height: u32 = 0;
         let mut last_emitted_filters_downloaded: u64 = 0;
+        let mut last_emitted_phase_name: Option<String> = None;
 
         loop {
             // Check if we should stop
@@ -363,10 +364,14 @@ impl<
                     sync_progress.filter_sync_available = self.config.enable_filters;
 
                     let filters_downloaded = sync_progress.filters_downloaded;
+                    let current_phase_name = phase_snapshot.name().to_string();
+                    let phase_changed =
+                        last_emitted_phase_name.as_ref() != Some(&current_phase_name);
 
                     if abs_header_height != last_emitted_header_height
                         || filter_header_height != last_emitted_filter_header_height
                         || filters_downloaded != last_emitted_filters_downloaded
+                        || phase_changed
                     {
                         let sync_stage =
                             Self::map_phase_to_stage(&phase_snapshot, &sync_progress, peer_best);
@@ -391,6 +396,7 @@ impl<
                         last_emitted_header_height = abs_header_height;
                         last_emitted_filter_header_height = filter_header_height;
                         last_emitted_filters_downloaded = filters_downloaded;
+                        last_emitted_phase_name = Some(current_phase_name.clone());
 
                         self.emit_progress(progress);
                     }
