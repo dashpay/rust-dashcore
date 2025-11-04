@@ -6,6 +6,7 @@ mod tests {
     use key_wallet_ffi::error::{FFIError, FFIErrorCode};
     use key_wallet_ffi::types::FFINetworks;
     use key_wallet_ffi::wallet_manager::*;
+    use std::os::raw::c_char;
     use std::ptr;
 
     #[test]
@@ -23,8 +24,8 @@ mod tests {
 
             let success = wallet_manager_add_wallet_from_mnemonic(
                 manager,
-                mnemonic.as_ptr() as *const i8,
-                passphrase.as_ptr() as *const i8,
+                mnemonic.as_ptr() as *const c_char,
+                passphrase.as_ptr() as *const c_char,
                 FFINetworks::DashFlag,
                 &mut error,
             );

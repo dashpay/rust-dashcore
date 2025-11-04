@@ -7,6 +7,7 @@ mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::mnemonic;
     use std::ffi::{CStr, CString};
+    use std::os::raw::c_char;
     use std::ptr;
 
     #[test]
@@ -180,14 +181,14 @@ mod tests {
         let success = derivation_bip44_account_path(
             FFINetwork::Testnet,
             0,
-            account_path.as_mut_ptr() as *mut i8,
+            account_path.as_mut_ptr() as *mut c_char,
             account_path.len(),
             &mut error,
         );
         assert!(success);
 
         let path_str =
-            unsafe { CStr::from_ptr(account_path.as_ptr() as *const i8) }.to_str().unwrap();
+            unsafe { CStr::from_ptr(account_path.as_ptr() as *const c_char) }.to_str().unwrap();
         assert_eq!(path_str, "m/44'/1'/0'");
 
         // Test BIP44 payment path
@@ -197,14 +198,14 @@ mod tests {
             0,     // account_index
             false, // is_change
             0,     // address_index
-            payment_path.as_mut_ptr() as *mut i8,
+            payment_path.as_mut_ptr() as *mut c_char,
             payment_path.len(),
             &mut error,
         );
         assert!(success);
 
         let path_str =
-            unsafe { CStr::from_ptr(payment_path.as_ptr() as *const i8) }.to_str().unwrap();
+            unsafe { CStr::from_ptr(payment_path.as_ptr() as *const c_char) }.to_str().unwrap();
         assert_eq!(path_str, "m/44'/1'/0'/0/0");
     }
 
@@ -217,7 +218,7 @@ mod tests {
         let success = derivation_coinjoin_path(
             FFINetwork::Testnet,
             0, // account_index
-            coinjoin_path.as_mut_ptr() as *mut i8,
+            coinjoin_path.as_mut_ptr() as *mut c_char,
             coinjoin_path.len(),
             &mut error,
         );
@@ -228,7 +229,7 @@ mod tests {
         let success = derivation_identity_registration_path(
             FFINetwork::Testnet,
             0, // identity_index
-            id_reg_path.as_mut_ptr() as *mut i8,
+            id_reg_path.as_mut_ptr() as *mut c_char,
             id_reg_path.len(),
             &mut error,
         );
@@ -240,7 +241,7 @@ mod tests {
             FFINetwork::Testnet,
             0, // identity_index
             2, // topup_index
-            id_topup_path.as_mut_ptr() as *mut i8,
+            id_topup_path.as_mut_ptr() as *mut c_char,
             id_topup_path.len(),
             &mut error,
         );
@@ -252,7 +253,7 @@ mod tests {
             FFINetwork::Testnet,
             0, // identity_index
             3, // key_index
-            id_auth_path.as_mut_ptr() as *mut i8,
+            id_auth_path.as_mut_ptr() as *mut c_char,
             id_auth_path.len(),
             &mut error,
         );
@@ -410,13 +411,14 @@ mod tests {
         let success = derivation_identity_registration_path(
             FFINetwork::Testnet,
             0, // identity_index
-            buffer.as_mut_ptr() as *mut i8,
+            buffer.as_mut_ptr() as *mut c_char,
             buffer.len(),
             &mut error,
         );
 
         assert!(success);
-        let path_str = unsafe { CStr::from_ptr(buffer.as_ptr() as *const i8) }.to_str().unwrap();
+        let path_str =
+            unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_str().unwrap();
         assert!(path_str.contains("m/"));
 
         // Test identity topup path
@@ -425,13 +427,14 @@ mod tests {
             FFINetwork::Testnet,
             0, // identity_index
             0, // topup_index
-            buffer.as_mut_ptr() as *mut i8,
+            buffer.as_mut_ptr() as *mut c_char,
             buffer.len(),
             &mut error,
         );
 
         assert!(success);
-        let path_str = unsafe { CStr::from_ptr(buffer.as_ptr() as *const i8) }.to_str().unwrap();
+        let path_str =
+            unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_str().unwrap();
         assert!(path_str.contains("m/"));
 
         // Test identity authentication path
@@ -440,13 +443,14 @@ mod tests {
             FFINetwork::Testnet,
             0, // identity_index
             0, // key_index
-            buffer.as_mut_ptr() as *mut i8,
+            buffer.as_mut_ptr() as *mut c_char,
             buffer.len(),
             &mut error,
         );
 
         assert!(success);
-        let path_str = unsafe { CStr::from_ptr(buffer.as_ptr() as *const i8) }.to_str().unwrap();
+        let path_str =
+            unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_str().unwrap();
         assert!(path_str.contains("m/"));
     }
 
@@ -527,11 +531,11 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test with very small buffer (should fail)
-        let mut small_buffer = [0i8; 5];
+        let mut small_buffer = [0u8; 5];
         let success = derivation_bip44_account_path(
             FFINetwork::Testnet,
             0,
-            small_buffer.as_mut_ptr(),
+            small_buffer.as_mut_ptr() as *mut c_char,
             small_buffer.len(),
             &mut error,
         );
@@ -544,7 +548,7 @@ mod tests {
             0,
             false,
             0,
-            small_buffer.as_mut_ptr(),
+            small_buffer.as_mut_ptr() as *mut c_char,
             small_buffer.len(),
             &mut error,
         );
@@ -770,13 +774,13 @@ mod tests {
     #[test]
     fn test_identity_path_functions_small_buffer() {
         let mut error = FFIError::success();
-        let mut small_buffer = [0i8; 5];
+        let mut small_buffer = [0u8; 5];
 
         // Test identity registration with small buffer
         let success = derivation_identity_registration_path(
             FFINetwork::Testnet,
             0,
-            small_buffer.as_mut_ptr(),
+            small_buffer.as_mut_ptr() as *mut c_char,
             small_buffer.len(),
             &mut error,
         );
@@ -788,7 +792,7 @@ mod tests {
             FFINetwork::Testnet,
             0,
             0,
-            small_buffer.as_mut_ptr(),
+            small_buffer.as_mut_ptr() as *mut c_char,
             small_buffer.len(),
             &mut error,
         );
@@ -800,7 +804,7 @@ mod tests {
             FFINetwork::Testnet,
             0,
             0,
-            small_buffer.as_mut_ptr(),
+            small_buffer.as_mut_ptr() as *mut c_char,
             small_buffer.len(),
             &mut error,
         );
@@ -818,7 +822,7 @@ mod tests {
         let success1 = derivation_bip44_account_path(
             FFINetwork::Testnet,
             0,
-            buffer1.as_mut_ptr() as *mut i8,
+            buffer1.as_mut_ptr() as *mut c_char,
             buffer1.len(),
             &mut error,
         );
@@ -827,14 +831,14 @@ mod tests {
         let success2 = derivation_bip44_account_path(
             FFINetwork::Testnet,
             5,
-            buffer2.as_mut_ptr() as *mut i8,
+            buffer2.as_mut_ptr() as *mut c_char,
             buffer2.len(),
             &mut error,
         );
         assert!(success2);
 
-        let path1 = unsafe { CStr::from_ptr(buffer1.as_ptr() as *const i8).to_str().unwrap() };
-        let path2 = unsafe { CStr::from_ptr(buffer2.as_ptr() as *const i8).to_str().unwrap() };
+        let path1 = unsafe { CStr::from_ptr(buffer1.as_ptr() as *const c_char).to_str().unwrap() };
+        let path2 = unsafe { CStr::from_ptr(buffer2.as_ptr() as *const c_char).to_str().unwrap() };
 
         assert_eq!(path1, "m/44'/1'/0'");
         assert_eq!(path2, "m/44'/1'/5'");
@@ -852,12 +856,13 @@ mod tests {
             0,     // account_index
             false, // is_change (receive)
             5,     // address_index
-            buffer.as_mut_ptr() as *mut i8,
+            buffer.as_mut_ptr() as *mut c_char,
             buffer.len(),
             &mut error,
         );
         assert!(success);
-        let path_str = unsafe { CStr::from_ptr(buffer.as_ptr() as *const i8) }.to_str().unwrap();
+        let path_str =
+            unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_str().unwrap();
         assert_eq!(path_str, "m/44'/1'/0'/0/5");
 
         // Test change address path
@@ -867,12 +872,13 @@ mod tests {
             0,    // account_index
             true, // is_change
             3,    // address_index
-            buffer.as_mut_ptr() as *mut i8,
+            buffer.as_mut_ptr() as *mut c_char,
             buffer.len(),
             &mut error,
         );
         assert!(success);
-        let path_str = unsafe { CStr::from_ptr(buffer.as_ptr() as *const i8) }.to_str().unwrap();
+        let path_str =
+            unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_str().unwrap();
         assert_eq!(path_str, "m/44'/1'/0'/1/3");
     }
 
