@@ -131,7 +131,7 @@ pub extern "C" fn derivation_bip44_account_path(
     }
 
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out as *mut u8, bytes.len());
+        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
 
     FFIError::set_success(error);
@@ -189,7 +189,7 @@ pub extern "C" fn derivation_bip44_payment_path(
     }
 
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out as *mut u8, bytes.len());
+        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
 
     FFIError::set_success(error);
@@ -244,7 +244,7 @@ pub extern "C" fn derivation_coinjoin_path(
     }
 
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out as *mut u8, bytes.len());
+        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
 
     FFIError::set_success(error);
@@ -299,7 +299,7 @@ pub extern "C" fn derivation_identity_registration_path(
     }
 
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out as *mut u8, bytes.len());
+        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
 
     FFIError::set_success(error);
@@ -356,7 +356,7 @@ pub extern "C" fn derivation_identity_topup_path(
     }
 
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out as *mut u8, bytes.len());
+        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
 
     FFIError::set_success(error);
@@ -417,7 +417,7 @@ pub extern "C" fn derivation_identity_authentication_path(
     }
 
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out as *mut u8, bytes.len());
+        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
 
     FFIError::set_success(error);
