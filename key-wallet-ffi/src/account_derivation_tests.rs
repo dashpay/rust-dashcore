@@ -9,6 +9,8 @@ mod tests {
     use crate::keys::{extended_private_key_free, private_key_free};
     use crate::types::{FFIAccountType, FFINetworks};
     use crate::wallet;
+    use std::ffi::CString;
+    use std::os::raw::c_char;
 
     const MNEMONIC: &str =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -215,7 +217,7 @@ mod tests {
     }
 
     // Helper to make C string pointers
-    fn c_str(s: &str) -> *const i8 {
+    fn c_str(s: &str) -> *const c_char {
         std::ffi::CString::new(s).unwrap().as_ptr()
     }
 }

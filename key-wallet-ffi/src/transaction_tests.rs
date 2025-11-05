@@ -6,6 +6,7 @@ mod transaction_tests {
     use crate::types::FFINetworks;
     use crate::wallet;
     use std::ffi::CString;
+    use std::os::raw::c_char;
     use std::ptr;
 
     #[test]
@@ -39,7 +40,7 @@ mod transaction_tests {
 
         // Clean up
         unsafe {
-            let _ = CString::from_raw(output.address as *mut i8);
+            let _ = CString::from_raw(output.address as *mut c_char);
         }
     }
 
@@ -204,7 +205,7 @@ mod transaction_tests {
 
         // Clean up
         unsafe {
-            let _ = CString::from_raw(output.address as *mut i8);
+            let _ = CString::from_raw(output.address as *mut c_char);
             wallet::wallet_free(wallet);
         }
     }
