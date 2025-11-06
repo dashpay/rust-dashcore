@@ -421,9 +421,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
         let size = serialized.len();
 
         // Allocate memory for the result
-        let tx_bytes = match Vec::<u8>::with_capacity(size).into_boxed_slice() {
-            bytes => Box::into_raw(bytes) as *mut u8,
-        };
+        let bytes = Vec::<u8>::with_capacity(size).into_boxed_slice();
+        let tx_bytes = Box::into_raw(bytes) as *mut u8;
 
         // Copy the serialized transaction
         ptr::copy_nonoverlapping(serialized.as_ptr(), tx_bytes, size);
