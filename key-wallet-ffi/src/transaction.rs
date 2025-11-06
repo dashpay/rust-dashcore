@@ -1,6 +1,6 @@
 //! Transaction building and management
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::slice;
@@ -12,6 +12,7 @@ use dashcore::{
 use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::error::{FFIError, FFIErrorCode};
+use crate::managed_wallet::FFIManagedWalletInfo;
 use crate::types::{FFINetwork, FFINetworks, FFITransactionContext, FFIWallet};
 
 // MARK: - Transaction Types
@@ -54,7 +55,10 @@ pub struct FFITxOutput {
     pub amount: u64,
 }
 
-/// Build a transaction
+/// Build a transaction (unsigned)
+///
+/// This creates an unsigned transaction. Use wallet_sign_transaction to sign it afterward.
+/// For a combined build+sign operation, use wallet_build_and_sign_transaction.
 ///
 /// # Safety
 ///
@@ -87,12 +91,13 @@ pub unsafe extern "C" fn wallet_build_transaction(
         let _account_index = account_index;
         let _fee_per_kb = fee_per_kb;
 
-        // Note: Transaction building would require implementing wallet transaction creation
-        // For now, return an error
+        // Note: This function creates unsigned transactions.
+        // A full implementation would require ManagedWalletInfo integration.
+        // For now, return an error directing users to the combined function.
         FFIError::set_error(
             error,
             FFIErrorCode::WalletError,
-            "Transaction building not yet implemented".to_string(),
+            "Use wallet_build_and_sign_transaction for transaction creation".to_string(),
         );
         false
     }
@@ -135,6 +140,299 @@ pub unsafe extern "C" fn wallet_sign_transaction(
             "Transaction signing not yet implemented".to_string(),
         );
         false
+    }
+}
+
+/// Build and sign a transaction using the wallet's managed info
+///
+/// This is the recommended way to build transactions. It handles:
+/// - UTXO selection using coin selection algorithms
+/// - Fee calculation
+/// - Change address generation
+/// - Transaction signing
+///
+/// # Safety
+///
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `network` must be a valid FFINetwork
+/// - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements
+/// - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer
+/// - `tx_len_out` must be a valid pointer to store the transaction length
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned transaction bytes must be freed with `transaction_bytes_free`
+#[no_mangle]
+pub unsafe extern "C" fn wallet_build_and_sign_transaction(
+    managed_wallet: *mut FFIManagedWalletInfo,
+    wallet: *const FFIWallet,
+    network: FFINetwork,
+    account_index: c_uint,
+    outputs: *const FFITxOutput,
+    outputs_count: usize,
+    fee_per_kb: u64,
+    current_height: u32,
+    tx_bytes_out: *mut *mut u8,
+    tx_len_out: *mut usize,
+    error: *mut FFIError,
+) -> bool {
+    // Validate inputs
+    if managed_wallet.is_null()
+        || wallet.is_null()
+        || outputs.is_null()
+        || tx_bytes_out.is_null()
+        || tx_len_out.is_null()
+    {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return false;
+    }
+
+    if outputs_count == 0 {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "At least one output required".to_string(),
+        );
+        return false;
+    }
+
+    unsafe {
+        use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
+        use key_wallet::wallet::managed_wallet_info::fee::{FeeLevel, FeeRate};
+        use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
+
+        let managed_wallet_ref = &mut *managed_wallet;
+        let wallet_ref = &*wallet;
+        let network_rust: Network = network.into();
+        let outputs_slice = slice::from_raw_parts(outputs, outputs_count);
+
+        // Get the managed account collection
+        let account_collection =
+            match managed_wallet_ref.inner_mut().accounts.get_mut(&network_rust) {
+                Some(collection) => collection,
+                None => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("No accounts found for network {:?}", network_rust),
+                    );
+                    return false;
+                }
+            };
+
+        // Get the managed account
+        let managed_account =
+            match account_collection.standard_bip44_accounts.get_mut(&account_index) {
+                Some(account) => account,
+                None => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Account {} not found", account_index),
+                    );
+                    return false;
+                }
+            };
+
+        // Get the wallet account (for getting extended keys)
+        let wallet_accounts = match wallet_ref.inner().accounts.get(&network_rust) {
+            Some(accounts) => accounts,
+            None => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("No wallet accounts for network {:?}", network_rust),
+                );
+                return false;
+            }
+        };
+
+        let wallet_account = match wallet_accounts.standard_bip44_accounts.get(&account_index) {
+            Some(account) => account,
+            None => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Wallet account {} not found", account_index),
+                );
+                return false;
+            }
+        };
+
+        // Convert FFI outputs to Rust outputs
+        let mut tx_builder = TransactionBuilder::new();
+
+        for output in outputs_slice {
+            // Convert address from C string
+            let address_str = match CStr::from_ptr(output.address).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidInput,
+                        "Invalid UTF-8 in output address".to_string(),
+                    );
+                    return false;
+                }
+            };
+
+            // Parse address using dashcore
+            use std::str::FromStr;
+            let address = match dashcore::Address::from_str(address_str) {
+                Ok(addr) => {
+                    // Verify network matches
+                    let addr_network = addr.require_network(network_rust).map_err(|e| {
+                        FFIError::set_error(
+                            error,
+                            FFIErrorCode::InvalidAddress,
+                            format!("Address network mismatch: {}", e),
+                        );
+                    });
+                    if addr_network.is_err() {
+                        return false;
+                    }
+                    addr_network.unwrap()
+                }
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidAddress,
+                        format!("Invalid address: {}", e),
+                    );
+                    return false;
+                }
+            };
+
+            // Add output
+            tx_builder = match tx_builder.add_output(&address, output.amount) {
+                Ok(builder) => builder,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Failed to add output: {}", e),
+                    );
+                    return false;
+                }
+            };
+        }
+
+        // Get change address (next internal address)
+        let xpub = wallet_account.extended_public_key();
+        let change_address = match managed_account.next_change_address(Some(&xpub), true) {
+            Ok(addr) => addr,
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to get change address: {}", e),
+                );
+                return false;
+            }
+        };
+
+        // Set change address and fee level
+        // Convert fee_per_kb to fee_per_byte (1 KB = 1000 bytes)
+        let fee_per_byte = fee_per_kb / 1000;
+        let fee_rate = FeeRate::from_duffs_per_byte(fee_per_byte);
+        tx_builder =
+            tx_builder.set_change_address(change_address).set_fee_level(FeeLevel::Custom(fee_rate));
+
+        // Get available UTXOs (collect owned UTXOs, not references)
+        let utxos: Vec<key_wallet::Utxo> = managed_account.utxos.values().cloned().collect();
+
+        // Get the wallet's root extended private key for signing
+        use key_wallet::wallet::WalletType;
+
+        let root_xpriv = match &wallet_ref.inner().wallet_type {
+            WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key,
+            WalletType::Seed {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key,
+            WalletType::ExtendedPrivKey(root_extended_private_key) => root_extended_private_key,
+            _ => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Cannot sign with watch-only wallet".to_string(),
+                );
+                return false;
+            }
+        };
+
+        // Build a map of address -> derivation path for all addresses in the account
+        use std::collections::HashMap;
+        let mut address_to_path: HashMap<dashcore::Address, key_wallet::DerivationPath> =
+            HashMap::new();
+
+        // Collect from all address pools (receive, change, etc.)
+        for pool in managed_account.account_type.address_pools() {
+            for addr_info in pool.addresses.values() {
+                address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
+            }
+        }
+
+        // Select inputs and build transaction
+        let tx_builder_with_inputs = match tx_builder.select_inputs(
+            &utxos,
+            SelectionStrategy::BranchAndBound,
+            current_height,
+            |utxo| {
+                // Look up the derivation path for this UTXO's address
+                let path = address_to_path.get(&utxo.address)?;
+
+                // Convert root key to ExtendedPrivKey and derive the child key
+                let root_ext_priv = root_xpriv.to_extended_priv_key(network_rust);
+                let secp = secp256k1::Secp256k1::new();
+                let derived_xpriv = root_ext_priv.derive_priv(&secp, path).ok()?;
+
+                Some(derived_xpriv.private_key)
+            },
+        ) {
+            Ok(builder) => builder,
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Coin selection failed: {}", e),
+                );
+                return false;
+            }
+        };
+
+        // Build and sign the transaction
+        let transaction = match tx_builder_with_inputs.build() {
+            Ok(tx) => tx,
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to build transaction: {}", e),
+                );
+                return false;
+            }
+        };
+
+        // Serialize the transaction
+        let serialized = consensus::serialize(&transaction);
+        let size = serialized.len();
+
+        // Allocate memory for the result
+        let tx_bytes = match Vec::<u8>::with_capacity(size).into_boxed_slice() {
+            bytes => Box::into_raw(bytes) as *mut u8,
+        };
+
+        // Copy the serialized transaction
+        ptr::copy_nonoverlapping(serialized.as_ptr(), tx_bytes, size);
+
+        *tx_bytes_out = tx_bytes;
+        *tx_len_out = size;
+
+        FFIError::set_success(error);
+        true
     }
 }
 
@@ -428,6 +726,66 @@ pub unsafe extern "C" fn transaction_get_txid(tx: *const FFITransaction, txid_ou
     let txid_bytes = txid.as_byte_array();
     ptr::copy_nonoverlapping(txid_bytes.as_ptr(), txid_out, 32);
     0
+}
+
+/// Get transaction ID from raw transaction bytes
+///
+/// # Safety
+/// - `tx_bytes` must be a valid pointer to transaction bytes
+/// - `tx_len` must be the correct length of the transaction
+/// - `error` must be a valid pointer to an FFIError
+///
+/// # Returns
+/// - Pointer to null-terminated hex string of TXID (must be freed with string_free)
+/// - NULL on error
+#[no_mangle]
+pub unsafe extern "C" fn transaction_get_txid_from_bytes(
+    tx_bytes: *const u8,
+    tx_len: usize,
+    error: *mut FFIError,
+) -> *mut c_char {
+    if tx_bytes.is_null() {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Transaction bytes is null".to_string(),
+        );
+        return ptr::null_mut();
+    }
+
+    let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
+
+    // Deserialize the transaction
+    let tx: Transaction = match consensus::deserialize(tx_slice) {
+        Ok(t) => t,
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::SerializationError,
+                format!("Failed to deserialize transaction: {}", e),
+            );
+            return ptr::null_mut();
+        }
+    };
+
+    // Get TXID and convert to hex string
+    let txid = tx.txid();
+    let txid_hex = txid.to_string();
+
+    match CString::new(txid_hex) {
+        Ok(c_str) => {
+            FFIError::set_success(error);
+            c_str.into_raw()
+        }
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::SerializationError,
+                "Failed to convert TXID to C string".to_string(),
+            );
+            ptr::null_mut()
+        }
+    }
 }
 
 /// Serialize a transaction
