@@ -150,7 +150,7 @@ impl<'a, S: StorageManager + Send + Sync + 'static, W: WalletInterface + Send + 
 
     /// Helper to try to get wallet balance if W implements Any.
     /// This is a wrapper that handles the case where W might not implement Any.
-    async fn try_get_balance_if_any(wallet: &W) -> Option<u64>
+    fn try_get_balance_if_any(wallet: &W) -> Option<u64>
     where
         W: 'static,
     {
@@ -276,7 +276,6 @@ impl<'a, S: StorageManager + Send + Sync + 'static, W: WalletInterface + Send + 
                 // We use a helper that requires W: Any, so we need to handle this carefully
                 // For now, we'll attempt to get balance only if possible
                 Self::try_get_balance_if_any(&*wallet_guard)
-                    .await
                     .map(|balance_sat| format!(" | Balance: {}", Self::format_balance(balance_sat)))
                     .unwrap_or_default()
             } else {
