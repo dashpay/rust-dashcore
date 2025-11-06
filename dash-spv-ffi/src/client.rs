@@ -846,8 +846,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                                                     );
                                                     // Destroy stage_message allocated in FFIDetailedSyncProgress::from
                                                     crate::types::dash_spv_ffi_string_destroy(stage_message);
-                                                    // Prevent Drop from running on the struct to avoid re-freeing
-                                                    std::mem::forget(ffi_progress);
+                                                    // ffi_progress will be dropped normally here; no Drop impl exists
                                                 }
                                             }
                                         }
