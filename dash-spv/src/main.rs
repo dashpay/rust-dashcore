@@ -244,7 +244,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create network manager
     let network_manager =
-        match dash_spv::network::multi_peer::MultiPeerNetworkManager::new(&config).await {
+        match dash_spv::network::manager::PeerNetworkManager::new(&config).await {
             Ok(nm) => nm,
             Err(e) => {
                 eprintln!("Failed to create network manager: {}", e);
@@ -317,7 +317,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static>(
     config: ClientConfig,
-    network_manager: dash_spv::network::multi_peer::MultiPeerNetworkManager,
+    network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
     enable_terminal_ui: bool,
@@ -328,7 +328,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     let mut client =
         match DashSpvClient::<
             WalletManager<ManagedWalletInfo>,
-            dash_spv::network::multi_peer::MultiPeerNetworkManager,
+            dash_spv::network::manager::PeerNetworkManager,
             S,
         >::new(config.clone(), network_manager, storage_manager, wallet.clone())
         .await

@@ -13,7 +13,7 @@
 //!
 //! ```no_run
 //! use dash_spv::{DashSpvClient, ClientConfig};
-//! use dash_spv::network::MultiPeerNetworkManager;
+//! use dash_spv::network::PeerNetworkManager;
 //! use dash_spv::storage::MemoryStorageManager;
 //! use dashcore::Network;
 //! use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -29,7 +29,7 @@
 //!         .with_log_level("info");
 //!
 //!     // Create the required components
-//!     let network = MultiPeerNetworkManager::new(&config).await?;
+//!     let network = PeerNetworkManager::new(&config).await?;
 //!     let storage = MemoryStorageManager::new().await?;
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 //!

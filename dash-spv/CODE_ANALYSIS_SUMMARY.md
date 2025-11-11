@@ -158,7 +158,7 @@
 ```
 
 **Largest Remaining Files:**
-- `network/multi_peer.rs` (1,322 lines) - Acceptable for complex peer management
+- `network/peer.rs` (1,322 lines) - Acceptable for complex peer management
 - `sync/headers_with_reorg.rs` (1,148 lines) - Acceptable for reorg handling
 - `types.rs` (1,064 lines) - Could be split but acceptable
 

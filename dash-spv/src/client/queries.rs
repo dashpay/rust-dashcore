@@ -42,11 +42,11 @@ impl<
 
     /// Disconnect a specific peer.
     pub async fn disconnect_peer(&self, addr: &std::net::SocketAddr, reason: &str) -> Result<()> {
-        // Cast network manager to MultiPeerNetworkManager to access disconnect_peer
+        // Cast network manager to PeerNetworkManager to access disconnect_peer
         let network = self
             .network
             .as_any()
-            .downcast_ref::<crate::network::multi_peer::MultiPeerNetworkManager>()
+            .downcast_ref::<crate::network::manager::PeerNetworkManager>()
             .ok_or_else(|| {
                 SpvError::Config("Network manager does not support peer disconnection".to_string())
             })?;

@@ -17,7 +17,7 @@ The Dash SPV client implements a comprehensive peer reputation system to protect
    - Individual peer reputation data structure
    - Tracks score, ban status, connection history, and behavior counts
 
-3. **Integration with MultiPeerNetworkManager**
+3. **Integration with PeerNetworkManager**
    - Reputation checks before connecting to peers
    - Automatic reputation updates based on peer behavior
    - Reputation-based peer selection for connections
@@ -196,7 +196,7 @@ The reputation system includes comprehensive tests:
    - Event tracking
 
 3. **Network Integration** (`tests/reputation_integration_test.rs`)
-   - Integration with MultiPeerNetworkManager
+   - Integration with PeerNetworkManager
    - Real network scenarios
 
 ## Future Enhancements

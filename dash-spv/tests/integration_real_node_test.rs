@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
-    network::{MultiPeerNetworkManager, NetworkManager},
+    network::{PeerNetworkManager, NetworkManager},
     storage::{MemoryStorageManager, StorageManager},
     types::ValidationMode,
 };
@@ -27,11 +27,11 @@ const HEADER_SYNC_TIMEOUT: Duration = Duration::from_secs(120); // 2 minutes for
 async fn create_test_client(
     config: ClientConfig,
 ) -> Result<
-    DashSpvClient<WalletManager<ManagedWalletInfo>, MultiPeerNetworkManager, MemoryStorageManager>,
+    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, MemoryStorageManager>,
     Box<dyn std::error::Error>,
 > {
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
     let storage_manager = MemoryStorageManager::new().await?;
@@ -79,7 +79,7 @@ async fn test_real_node_connectivity() {
 
     // Test basic network manager connectivity
     let mut network =
-        MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
+        PeerNetworkManager::new(&config).await.expect("Failed to create network manager");
 
     // Connect to the real node (this includes handshake)
     let start_time = Instant::now();

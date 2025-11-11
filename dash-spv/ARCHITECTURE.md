@@ -67,7 +67,7 @@
 |----------|-------|-------|
 | Total Files | 110+ | Well-organized module structure |
 | Total Lines | ~40,000 | All files appropriately sized |
-| Largest File | network/multi_peer.rs | 1,322 lines - Acceptable complexity |
+| Largest File | network/peer.rs | 1,322 lines - Acceptable complexity |
 | Module Count | 10+ | Well-separated concerns |
 | Test Coverage | 242/243 passing | 99.6% pass rate |
 | Major Modules Refactored | 4 | sync/filters/, sync/sequential/, client/, storage/disk/ |
@@ -665,9 +665,9 @@ The network module handles all P2P communication with the Dash network.
 
 **Refactoring needed**: ❌ None - exemplary trait design
 
-#### `src/network/multi_peer.rs` (1,322 lines) 🚨 **TOO LARGE**
+#### `src/network/peer.rs` (1,322 lines) 🚨 **TOO LARGE**
 
-**Purpose**: Multi-peer network manager implementation.
+**Purpose**: Peer network manager implementation.
 
 **What it does** (TOO MUCH):
 - Peer discovery via DNS seeds
@@ -699,10 +699,10 @@ The network module handles all P2P communication with the Dash network.
 
 **Refactoring needed**:
 - 🚨 **CRITICAL**: Split into:
-  - `network/multi_peer/manager.rs` - Main MultiPeerNetworkManager
-  - `network/multi_peer/discovery.rs` - DNS and peer discovery
-  - `network/multi_peer/routing.rs` - Message routing
-  - `network/multi_peer/health.rs` - Health monitoring
+  - `network/peer/manager.rs` - Main PeerNetworkManager
+  - `network/peer/discovery.rs` - DNS and peer discovery
+  - `network/peer/routing.rs` - Message routing
+  - `network/peer/health.rs` - Health monitoring
 - ⚠️ **HIGH**: Add connection limit configuration
 - ⚠️ **HIGH**: Add bandwidth throttling
 - ⚠️ **MEDIUM**: Document lock ordering
@@ -826,7 +826,7 @@ The network module handles all P2P communication with the Dash network.
 - `pool.rs` (143 lines) ✅ **GOOD** - Peer pool management
 
 **Overall Network Module Assessment**:
-- ⚠️ NEEDS: Breaking up large files (multi_peer.rs, connection.rs)
+- ⚠️ NEEDS: Breaking up large files (peer.rs, connection.rs)
 - ✅ GOOD: Strong abstractions
 - ⚠️ NEEDS: Better documentation of concurrent access patterns
 - ✅ GOOD: Comprehensive mock support
@@ -1429,7 +1429,7 @@ Validation module handles header validation, ChainLock verification, and Instant
     ```rust
     type StandardSpvClient = DashSpvClient<
         WalletManager,
-        MultiPeerNetworkManager,
+        PeerNetworkManager,
         DiskStorageManager
     >;
     ```
@@ -1458,7 +1458,7 @@ Validation module handles header validation, ChainLock verification, and Instant
 | sync/sequential/ | 11 modules (4,785 total) | ✅ EXCELLENT | Sequential sync pipeline modules |
 | client/ | 8 modules (2,895 total) | ✅ EXCELLENT | Client functionality modules |
 | storage/disk/ | 7 modules (2,458 total) | ✅ EXCELLENT | Persistent storage modules |
-| network/multi_peer.rs | 1,322 | ✅ ACCEPTABLE | Complex peer management logic |
+| network/peer.rs | 1,322 | ✅ ACCEPTABLE | Complex peer management logic |
 | sync/headers_with_reorg.rs | 1,148 | ✅ ACCEPTABLE | Reorg handling complexity justified |
 | types.rs | 1,064 | ✅ ACCEPTABLE | Core type definitions |
 | mempool_filter.rs | 793 | ✅ GOOD | Mempool management |
@@ -1507,7 +1507,7 @@ Validation module handles header validation, ChainLock verification, and Instant
    - Fix: Add checksums
 
 4. **No Connection Limits**
-   - File: `network/multi_peer.rs`
+   - File: `network/peer.rs`
    - Risk: DoS via connection exhaustion
    - Fix: Add configurable limits
 

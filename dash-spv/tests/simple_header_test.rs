@@ -2,7 +2,7 @@
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
-    network::MultiPeerNetworkManager,
+    network::PeerNetworkManager,
     storage::{MemoryStorageManager, StorageManager},
     types::ValidationMode,
 };
@@ -57,7 +57,7 @@ async fn test_simple_header_sync() {
 
     // Create network manager
     let network_manager =
-        MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
+        PeerNetworkManager::new(&config).await.expect("Failed to create network manager");
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));

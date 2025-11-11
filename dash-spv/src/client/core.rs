@@ -77,7 +77,7 @@ use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
 /// // Production configuration
 /// type StandardSpvClient = DashSpvClient<
 ///     WalletManager,
-///     MultiPeerNetworkManager,
+///     PeerNetworkManager,
 ///     DiskStorageManager,
 /// >;
 ///
