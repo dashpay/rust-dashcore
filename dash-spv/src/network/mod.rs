@@ -7,7 +7,6 @@ pub mod discovery;
 pub mod handshake;
 
 pub mod multi_peer;
-pub mod peer;
 pub mod persist;
 pub mod pool;
 pub mod reputation;
@@ -29,7 +28,6 @@ pub use connection::TcpConnection;
 pub use handshake::{HandshakeManager, HandshakeState};
 
 pub use multi_peer::MultiPeerNetworkManager;
-pub use peer::PeerManager;
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]
