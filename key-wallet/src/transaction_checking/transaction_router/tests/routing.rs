@@ -413,7 +413,7 @@ fn test_transaction_affects_multiple_accounts() {
 fn test_next_address_method_restrictions() {
     let network = Network::Testnet;
 
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
