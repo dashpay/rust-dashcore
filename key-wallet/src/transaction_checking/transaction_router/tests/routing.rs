@@ -44,8 +44,8 @@ fn test_standard_transaction_routing() {
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
 }
 
-#[test]
-fn test_transaction_routing_to_bip44_account() {
+#[tokio::test]
+async fn test_transaction_routing_to_bip44_account() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
@@ -91,13 +91,15 @@ fn test_transaction_routing_to_bip44_account() {
     };
 
     // Check the transaction using the managed wallet info
-    let result = managed_wallet_info.check_transaction(
-        &tx,
-        network,
-        context,
-        &mut wallet,
-        true, // update state
-    );
+    let result = managed_wallet_info
+        .check_transaction(
+            &tx,
+            network,
+            context,
+            &mut wallet,
+            true, // update state
+        )
+        .await;
 
     // The transaction should be recognized as relevant since it sends to our address
     assert!(result.is_relevant, "Transaction should be relevant to the wallet");
@@ -105,8 +107,8 @@ fn test_transaction_routing_to_bip44_account() {
     assert_eq!(result.total_received, 100000, "Should have received 100000 duffs");
 }
 
-#[test]
-fn test_transaction_routing_to_bip32_account() {
+#[tokio::test]
+async fn test_transaction_routing_to_bip32_account() {
     let network = Network::Testnet;
 
     // Create a wallet with BIP32 accounts
@@ -160,7 +162,8 @@ fn test_transaction_routing_to_bip32_account() {
     };
 
     // Check with update_state = false
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false).await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Transaction should be relevant to the BIP32 account");
@@ -178,21 +181,23 @@ fn test_transaction_routing_to_bip32_account() {
     }
 
     // Now check with update_state = true
-    let result = managed_wallet_info.check_transaction(
-        &tx,
-        network,
-        context,
-        &mut wallet,
-        true, // update state
-    );
+    let result = managed_wallet_info
+        .check_transaction(
+            &tx,
+            network,
+            context,
+            &mut wallet,
+            true, // update state
+        )
+        .await;
 
     assert!(result.is_relevant, "Transaction should still be relevant");
     // Note: Balance update may not work without proper UTXO tracking implementation
     // This test may fail - that's expected, and we want to find such issues
 }
 
-#[test]
-fn test_transaction_routing_to_coinjoin_account() {
+#[tokio::test]
+async fn test_transaction_routing_to_coinjoin_account() {
     let network = Network::Testnet;
 
     // Create a wallet and add a CoinJoin account
@@ -278,7 +283,8 @@ fn test_transaction_routing_to_coinjoin_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     // This test may fail if CoinJoin detection is not properly implemented
     println!(
@@ -287,8 +293,8 @@ fn test_transaction_routing_to_coinjoin_account() {
     );
 }
 
-#[test]
-fn test_transaction_affects_multiple_accounts() {
+#[tokio::test]
+async fn test_transaction_affects_multiple_accounts() {
     let network = Network::Testnet;
 
     // Create a wallet with multiple accounts
@@ -380,13 +386,15 @@ fn test_transaction_affects_multiple_accounts() {
     };
 
     // Check the transaction
-    let result = managed_wallet_info.check_transaction(
-        &tx,
-        network,
-        context,
-        &mut wallet,
-        true, // update state
-    );
+    let result = managed_wallet_info
+        .check_transaction(
+            &tx,
+            network,
+            context,
+            &mut wallet,
+            true, // update state
+        )
+        .await;
 
     // Transaction should be relevant and total should be sum of all outputs
     assert!(result.is_relevant, "Transaction should be relevant to multiple accounts");
@@ -401,7 +409,8 @@ fn test_transaction_affects_multiple_accounts() {
     println!("Multi-account transaction result: accounts_affected={:?}", result.affected_accounts);
 
     // Test with update_state = false to ensure state isn't modified
-    let result2 = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false);
+    let result2 =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false).await;
 
     assert_eq!(
         result2.total_received, result.total_received,

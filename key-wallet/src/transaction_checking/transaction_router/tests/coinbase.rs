@@ -60,8 +60,8 @@ fn create_basic_transaction() -> Transaction {
     }
 }
 
-#[test]
-fn test_coinbase_transaction_routing_to_bip44_receive_address() {
+#[tokio::test]
+async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
@@ -109,13 +109,15 @@ fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     };
 
     // Check the coinbase transaction
-    let result = managed_wallet_info.check_transaction(
-        &coinbase_tx,
-        network,
-        context,
-        &mut wallet,
-        true, // update state
-    );
+    let result = managed_wallet_info
+        .check_transaction(
+            &coinbase_tx,
+            network,
+            context,
+            &mut wallet,
+            true, // update state
+        )
+        .await;
 
     // The coinbase transaction should be recognized as relevant
     assert!(result.is_relevant, "Coinbase transaction to BIP44 receive address should be relevant");
@@ -136,8 +138,8 @@ fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     );
 }
 
-#[test]
-fn test_coinbase_transaction_routing_to_bip44_change_address() {
+#[tokio::test]
+async fn test_coinbase_transaction_routing_to_bip44_change_address() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
@@ -185,13 +187,15 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
     };
 
     // Check the coinbase transaction
-    let result = managed_wallet_info.check_transaction(
-        &coinbase_tx,
-        network,
-        context,
-        &mut wallet,
-        true, // update state
-    );
+    let result = managed_wallet_info
+        .check_transaction(
+            &coinbase_tx,
+            network,
+            context,
+            &mut wallet,
+            true, // update state
+        )
+        .await;
 
     // The coinbase transaction should be recognized as relevant even to change address
     assert!(result.is_relevant, "Coinbase transaction to BIP44 change address should be relevant");
@@ -212,8 +216,8 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
     );
 }
 
-#[test]
-fn test_update_state_flag_behavior() {
+#[tokio::test]
+async fn test_update_state_flag_behavior() {
     let network = Network::Testnet;
 
     let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
@@ -257,7 +261,8 @@ fn test_update_state_flag_behavior() {
     };
 
     // First check with update_state = false
-    let result1 = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false);
+    let result1 =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false).await;
 
     assert!(result1.is_relevant);
 
@@ -278,13 +283,15 @@ fn test_update_state_flag_behavior() {
     }
 
     // Now check with update_state = true
-    let result2 = managed_wallet_info.check_transaction(
-        &tx,
-        network,
-        context,
-        &mut wallet,
-        true, // update state
-    );
+    let result2 = managed_wallet_info
+        .check_transaction(
+            &tx,
+            network,
+            context,
+            &mut wallet,
+            true, // update state
+        )
+        .await;
 
     assert!(result2.is_relevant);
     assert_eq!(
@@ -346,8 +353,8 @@ fn test_coinbase_routing() {
     assert!(!accounts.contains(&AccountTypeToCheck::ProviderOwnerKeys));
 }
 
-#[test]
-fn test_coinbase_transaction_with_payload_routing() {
+#[tokio::test]
+async fn test_coinbase_transaction_with_payload_routing() {
     // Test coinbase with special payload routing to BIP44 account
     let network = Network::Testnet;
     let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
@@ -402,8 +409,9 @@ fn test_coinbase_transaction_with_payload_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result =
-        managed_wallet_info.check_transaction(&coinbase_tx, network, context, &mut wallet, true);
+    let result = managed_wallet_info
+        .check_transaction(&coinbase_tx, network, context, &mut wallet, true)
+        .await;
 
     assert!(result.is_relevant, "Coinbase with payload should be relevant");
     assert_eq!(result.total_received, 5000000000, "Should have received block reward");

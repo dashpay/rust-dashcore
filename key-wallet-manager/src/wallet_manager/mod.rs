@@ -502,7 +502,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Check a transaction against all wallets and update their states if relevant
-    pub fn check_transaction_in_all_wallets(
+    pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,
         network: Network,
@@ -521,13 +521,9 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             let wallet_info_opt = self.wallet_infos.get_mut(&wallet_id);
 
             if let (Some(wallet), Some(wallet_info)) = (wallet_opt, wallet_info_opt) {
-                let result = wallet_info.check_transaction(
-                    tx,
-                    network,
-                    context,
-                    wallet,
-                    update_state_if_found,
-                );
+                let result = wallet_info
+                    .check_transaction(tx, network, context, wallet, update_state_if_found)
+                    .await;
 
                 // If the transaction is relevant
                 if result.is_relevant {

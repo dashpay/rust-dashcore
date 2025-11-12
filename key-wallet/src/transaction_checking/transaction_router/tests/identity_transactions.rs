@@ -53,8 +53,8 @@ fn test_identity_registration() {
     assert!(accounts.contains(&AccountTypeToCheck::IdentityTopUp));
 }
 
-#[test]
-fn test_identity_registration_account_routing() {
+#[tokio::test]
+async fn test_identity_registration_account_routing() {
     let network = Network::Testnet;
 
     let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::None)
@@ -144,7 +144,8 @@ fn test_identity_registration_account_routing() {
     };
 
     // First check without updating state
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     println!(
         "Identity registration transaction result: is_relevant={}, received={}, credit_conversion={}",
@@ -174,8 +175,8 @@ fn test_identity_registration_account_routing() {
     );
 }
 
-#[test]
-fn test_normal_payment_to_identity_address_not_detected() {
+#[tokio::test]
+async fn test_normal_payment_to_identity_address_not_detected() {
     let network = Network::Testnet;
 
     let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
@@ -219,13 +220,15 @@ fn test_normal_payment_to_identity_address_not_detected() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(
-        &normal_tx,
-        network,
-        context,
-        &mut wallet,
-        true, // update state
-    );
+    let result = managed_wallet_info
+        .check_transaction(
+            &normal_tx,
+            network,
+            context,
+            &mut wallet,
+            true, // update state
+        )
+        .await;
 
     // A normal transaction to an identity registration address should NOT be detected
     // Identity addresses are only for special transactions (AssetLock)
