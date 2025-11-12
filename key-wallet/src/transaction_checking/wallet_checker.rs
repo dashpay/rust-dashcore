@@ -9,6 +9,7 @@ use crate::wallet::immature_transaction::ImmatureTransaction;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet};
+use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::BlockHash;
 use dashcore::{Address as DashAddress, OutPoint};
@@ -34,6 +35,7 @@ pub enum TransactionContext {
 }
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
+#[async_trait]
 pub trait WalletTransactionChecker {
     /// Check if a transaction belongs to this wallet with optimized routing
     /// Only checks relevant account types based on transaction type
@@ -46,7 +48,7 @@ pub trait WalletTransactionChecker {
     ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
-    fn check_transaction(
+    async fn check_transaction(
         &mut self,
         tx: &Transaction,
         network: Network,
@@ -56,8 +58,9 @@ pub trait WalletTransactionChecker {
     ) -> TransactionCheckResult;
 }
 
+#[async_trait]
 impl WalletTransactionChecker for ManagedWalletInfo {
-    fn check_transaction(
+    async fn check_transaction(
         &mut self,
         tx: &Transaction,
         network: Network,
@@ -446,8 +449,8 @@ mod tests {
     }
 
     /// Test wallet checker with no accounts for the network
-    #[test]
-    fn test_wallet_checker_no_accounts_for_network() {
+    #[tokio::test]
+    async fn test_wallet_checker_no_accounts_for_network() {
         let network = Network::Testnet;
         let other_network = Network::Dash;
 
@@ -470,8 +473,9 @@ mod tests {
         // Check transaction on different network (should have no accounts)
         // Note: Even though we don't have accounts on this network, we still need to pass wallet
         let mut wallet_mut = wallet;
-        let result =
-            managed_wallet.check_transaction(&tx, other_network, context, &mut wallet_mut, true);
+        let result = managed_wallet
+            .check_transaction(&tx, other_network, context, &mut wallet_mut, true)
+            .await;
 
         // Should return default result with no relevance
         assert!(!result.is_relevant);
@@ -481,8 +485,8 @@ mod tests {
     }
 
     /// Test wallet checker with different account types to cover error branches
-    #[test]
-    fn test_wallet_checker_different_account_types() {
+    #[tokio::test]
+    async fn test_wallet_checker_different_account_types() {
         let network = Network::Testnet;
 
         // Create wallet with multiple account types
@@ -556,7 +560,8 @@ mod tests {
             };
 
             // This should exercise BIP32 account branch in the update logic
-            let result = managed_wallet.check_transaction(&tx, network, context, &mut wallet, true);
+            let result =
+                managed_wallet.check_transaction(&tx, network, context, &mut wallet, true).await;
 
             // Should be relevant since it's our address
             assert!(result.is_relevant);
@@ -595,7 +600,8 @@ mod tests {
             };
 
             // This should exercise CoinJoin account branch in the update logic
-            let result = managed_wallet.check_transaction(&tx, network, context, &mut wallet, true);
+            let result =
+                managed_wallet.check_transaction(&tx, network, context, &mut wallet, true).await;
 
             // Since this is not a coinjoin looking transaction, we should not pick up on it.
             assert!(!result.is_relevant);
@@ -604,8 +610,8 @@ mod tests {
     }
 
     /// Test coinbase transaction handling for immature transaction logic
-    #[test]
-    fn test_wallet_checker_coinbase_immature_handling() {
+    #[tokio::test]
+    async fn test_wallet_checker_coinbase_immature_handling() {
         let network = Network::Testnet;
         let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
@@ -652,8 +658,9 @@ mod tests {
             timestamp: Some(1234567890),
         };
 
-        let result =
-            managed_wallet.check_transaction(&coinbase_tx, network, context, &mut wallet, true);
+        let result = managed_wallet
+            .check_transaction(&coinbase_tx, network, context, &mut wallet, true)
+            .await;
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -680,8 +687,8 @@ mod tests {
     }
 
     /// Test that spending a wallet-owned UTXO without creating change is detected
-    #[test]
-    fn test_wallet_checker_detects_spend_only_transaction() {
+    #[tokio::test]
+    async fn test_wallet_checker_detects_spend_only_transaction() {
         let network = Network::Testnet;
         let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
@@ -709,13 +716,9 @@ mod tests {
             timestamp: Some(1_650_000_000),
         };
 
-        let funding_result = managed_wallet.check_transaction(
-            &funding_tx,
-            network,
-            funding_context,
-            &mut wallet,
-            true,
-        );
+        let funding_result = managed_wallet
+            .check_transaction(&funding_tx, network, funding_context, &mut wallet, true)
+            .await;
         assert!(funding_result.is_relevant, "Funding transaction must be relevant");
         assert_eq!(funding_result.total_received, funding_value);
 
@@ -749,8 +752,9 @@ mod tests {
             timestamp: Some(1_650_000_100),
         };
 
-        let spend_result =
-            managed_wallet.check_transaction(&spend_tx, network, spend_context, &mut wallet, true);
+        let spend_result = managed_wallet
+            .check_transaction(&spend_tx, network, spend_context, &mut wallet, true)
+            .await;
 
         assert!(spend_result.is_relevant, "Spend transaction should be detected");
         assert_eq!(spend_result.total_received, 0);
@@ -775,8 +779,8 @@ mod tests {
     }
 
     /// Test that immature coinbase transactions are properly stored and processed
-    #[test]
-    fn test_wallet_checker_immature_transaction_flow() {
+    #[tokio::test]
+    async fn test_wallet_checker_immature_transaction_flow() {
         use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
         let network = Network::Testnet;
@@ -826,8 +830,9 @@ mod tests {
         };
 
         // Process the coinbase transaction
-        let result =
-            managed_wallet.check_transaction(&coinbase_tx, network, context, &mut wallet, true);
+        let result = managed_wallet
+            .check_transaction(&coinbase_tx, network, context, &mut wallet, true)
+            .await;
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -902,8 +907,8 @@ mod tests {
     }
 
     /// Test mempool context for timestamp/height handling
-    #[test]
-    fn test_wallet_checker_mempool_context() {
+    #[tokio::test]
+    async fn test_wallet_checker_mempool_context() {
         let network = Network::Testnet;
         let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
@@ -928,7 +933,8 @@ mod tests {
         // Test with Mempool context
         let context = TransactionContext::Mempool;
 
-        let result = managed_wallet.check_transaction(&tx, network, context, &mut wallet, true);
+        let result =
+            managed_wallet.check_transaction(&tx, network, context, &mut wallet, true).await;
 
         // Should be relevant
         assert!(result.is_relevant);

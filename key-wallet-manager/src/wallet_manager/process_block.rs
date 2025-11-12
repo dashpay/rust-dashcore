@@ -31,9 +31,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 timestamp: Some(timestamp),
             };
 
-            let affected_wallets = self.check_transaction_in_all_wallets(
-                tx, network, context, true, // update state
-            );
+            let affected_wallets = self
+                .check_transaction_in_all_wallets(
+                    tx, network, context, true, // update state
+                )
+                .await;
 
             if !affected_wallets.is_empty() {
                 relevant_txids.push(tx.txid());
@@ -54,7 +56,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         // Check transaction against all wallets
         self.check_transaction_in_all_wallets(
             tx, network, context, true, // update state
-        );
+        )
+        .await;
     }
 
     async fn handle_reorg(

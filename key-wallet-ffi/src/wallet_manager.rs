@@ -791,7 +791,9 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     // Process the transaction using async runtime
     let relevant_wallets = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
-        manager_guard.check_transaction_in_all_wallets(&tx, network, context, update_state_if_found)
+        manager_guard
+            .check_transaction_in_all_wallets(&tx, network, context, update_state_if_found)
+            .await
     });
 
     FFIError::set_success(error);

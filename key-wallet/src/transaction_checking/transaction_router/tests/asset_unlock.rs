@@ -67,8 +67,8 @@ fn test_asset_unlock_classification() {
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
 }
 
-#[test]
-fn test_asset_unlock_transaction_routing() {
+#[tokio::test]
+async fn test_asset_unlock_transaction_routing() {
     let network = Network::Testnet;
     let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
@@ -134,7 +134,8 @@ fn test_asset_unlock_transaction_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction should be recognized as relevant");
@@ -155,8 +156,8 @@ fn test_asset_unlock_transaction_routing() {
     );
 }
 
-#[test]
-fn test_asset_unlock_routing_to_bip32_account() {
+#[tokio::test]
+async fn test_asset_unlock_routing_to_bip32_account() {
     // Test AssetUnlock routing to BIP32 accounts
     let network = Network::Testnet;
 
@@ -214,7 +215,8 @@ fn test_asset_unlock_routing_to_bip32_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     // Should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction to BIP32 account should be relevant");

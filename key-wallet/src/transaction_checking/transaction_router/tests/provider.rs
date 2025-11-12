@@ -120,8 +120,8 @@ fn test_provider_registration_routing() {
     assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
 }
 
-#[test]
-fn test_provider_registration_transaction_routing_check_owner_only() {
+#[tokio::test]
+async fn test_provider_registration_transaction_routing_check_owner_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
@@ -229,7 +229,8 @@ fn test_provider_registration_transaction_routing_check_owner_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     println!(
         "Provider registration transaction result: is_relevant={}, received={}",
@@ -256,8 +257,8 @@ fn test_provider_registration_transaction_routing_check_owner_only() {
     );
 }
 
-#[test]
-fn test_provider_registration_transaction_routing_check_voting_only() {
+#[tokio::test]
+async fn test_provider_registration_transaction_routing_check_voting_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
@@ -365,7 +366,8 @@ fn test_provider_registration_transaction_routing_check_voting_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     println!(
         "Provider registration transaction result (voting): is_relevant={}, received={}",
@@ -392,8 +394,8 @@ fn test_provider_registration_transaction_routing_check_voting_only() {
     );
 }
 
-#[test]
-fn test_provider_registration_transaction_routing_check_operator_only() {
+#[tokio::test]
+async fn test_provider_registration_transaction_routing_check_operator_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
@@ -502,7 +504,8 @@ fn test_provider_registration_transaction_routing_check_operator_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     println!(
         "Provider registration transaction result (operator): is_relevant={}, received={}",
@@ -574,8 +577,8 @@ fn test_provider_update_revocation_routing() {
     assert!(!accounts.contains(&AccountTypeToCheck::ProviderPlatformKeys));
 }
 
-#[test]
-fn test_provider_registration_transaction_routing_check_platform_only() {
+#[tokio::test]
+async fn test_provider_registration_transaction_routing_check_platform_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
@@ -706,7 +709,8 @@ fn test_provider_registration_transaction_routing_check_platform_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     println!(
         "Provider registration transaction result (platform): is_relevant={}, received={}",
@@ -777,8 +781,8 @@ fn test_provider_update_service_with_operator_key() {
     );
 }
 
-#[test]
-fn test_provider_update_registrar_with_voting_and_operator() {
+#[tokio::test]
+async fn test_provider_update_registrar_with_voting_and_operator() {
     // Test provider update registrar classification and routing
     let network = Network::Testnet;
     let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
@@ -828,7 +832,8 @@ fn test_provider_update_registrar_with_voting_and_operator() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     // Should be recognized as relevant due to voting and operator keys
     assert!(result.is_relevant, "Provider update registrar should be relevant");
@@ -849,8 +854,8 @@ fn test_provider_update_registrar_with_voting_and_operator() {
     );
 }
 
-#[test]
-fn test_provider_revocation_classification_and_routing() {
+#[tokio::test]
+async fn test_provider_revocation_classification_and_routing() {
     // Test that provider revocation transactions are properly classified and routed
     let network = Network::Testnet;
     let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
@@ -922,7 +927,8 @@ fn test_provider_revocation_classification_and_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
+    let result =
+        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
 
     // Should be recognized as relevant due to collateral return
     assert!(result.is_relevant, "Provider revocation with collateral return should be relevant");
