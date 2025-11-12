@@ -563,7 +563,7 @@ pub unsafe extern "C" fn wallet_add_dashpay_receiving_account(
         friend_identity_id: friend_id,
     };
     let network_rust: key_wallet::Network = network.into();
-    match wallet_mut.add_account(acct.clone(), network_rust, None) {
+    match wallet_mut.add_account(acct, network_rust, None) {
         Ok(()) => {
             if let Some(coll) = wallet_mut.accounts.get(&network_rust) {
                 if let Some(account) = coll.account_of_type(acct) {
@@ -637,7 +637,7 @@ pub unsafe extern "C" fn wallet_add_dashpay_external_account_with_xpub_bytes(
         friend_identity_id: friend_id,
     };
     let network_rust: key_wallet::Network = network.into();
-    match wallet_mut.add_account(acct.clone(), network_rust, Some(xpub)) {
+    match wallet_mut.add_account(acct, network_rust, Some(xpub)) {
         Ok(()) => {
             if let Some(coll) = wallet_mut.accounts.get(&network_rust) {
                 if let Some(account) = coll.account_of_type(acct) {
