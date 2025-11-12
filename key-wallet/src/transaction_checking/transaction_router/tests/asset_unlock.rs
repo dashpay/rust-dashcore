@@ -70,7 +70,7 @@ fn test_asset_unlock_classification() {
 #[test]
 fn test_asset_unlock_transaction_routing() {
     let network = Network::Testnet;
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -134,7 +134,7 @@ fn test_asset_unlock_transaction_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
+    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction should be recognized as relevant");
@@ -161,7 +161,7 @@ fn test_asset_unlock_routing_to_bip32_account() {
     let network = Network::Testnet;
 
     // Create wallet with default options (includes both BIP44 and BIP32)
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
     let mut managed_wallet_info =
@@ -214,7 +214,7 @@ fn test_asset_unlock_routing_to_bip32_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
+    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
 
     // Should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction to BIP32 account should be relevant");

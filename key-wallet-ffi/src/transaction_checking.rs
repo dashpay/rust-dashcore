@@ -100,7 +100,7 @@ pub unsafe extern "C" fn wallet_create_managed_wallet(
 /// # Safety
 ///
 /// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
-/// - `wallet` must be a valid pointer to an FFIWallet (needed for address generation)
+/// - `wallet` must be a valid pointer to an FFIWallet (needed for address generation and DashPay queries)
 /// - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
 /// - `result_out` must be a valid pointer to store the result
 /// - `error` must be a valid pointer to an FFIError
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn wallet_create_managed_wallet(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_check_transaction(
     managed_wallet: *mut FFIManagedWalletInfo,
-    wallet: *const FFIWallet,
+    wallet: *mut FFIWallet,
     network: FFINetwork,
     tx_bytes: *const u8,
     tx_len: usize,
@@ -187,15 +187,29 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
         }
     };
 
-    // Check the transaction
-    let update_wallet = if update_state && !wallet.is_null() {
-        Some(&(*wallet).inner())
-    } else {
-        None
-    };
+    // Check the transaction - wallet is now required
+    if wallet.is_null() {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Wallet pointer is required".to_string(),
+        );
+        return false;
+    }
 
+    let wallet_mut = match (*wallet).inner_mut() {
+        Some(w) => w,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InternalError,
+                "Cannot get mutable wallet reference (Arc has multiple owners)".to_string(),
+            );
+            return false;
+        }
+    };
     let check_result =
-        managed_wallet.check_transaction(&tx, network_rust, context, update_wallet.copied());
+        managed_wallet.check_transaction(&tx, network_rust, context, wallet_mut, update_state);
 
     // Convert the result to FFI format
     let affected_accounts = if check_result.affected_accounts.is_empty() {

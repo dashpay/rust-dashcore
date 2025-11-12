@@ -49,7 +49,7 @@ fn test_transaction_routing_to_bip44_account() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -95,7 +95,8 @@ fn test_transaction_routing_to_bip44_account() {
         &tx,
         network,
         context,
-        Some(&wallet), // update state
+        &mut wallet,
+        true, // update state
     );
 
     // The transaction should be recognized as relevant since it sends to our address
@@ -159,9 +160,7 @@ fn test_transaction_routing_to_bip32_account() {
     };
 
     // Check with update_state = false
-    let result = managed_wallet_info.check_transaction(
-        &tx, network, context, None, // don't update state
-    );
+    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false);
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Transaction should be relevant to the BIP32 account");
@@ -183,7 +182,8 @@ fn test_transaction_routing_to_bip32_account() {
         &tx,
         network,
         context,
-        Some(&wallet), // update state
+        &mut wallet,
+        true, // update state
     );
 
     assert!(result.is_relevant, "Transaction should still be relevant");
@@ -278,7 +278,7 @@ fn test_transaction_routing_to_coinjoin_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
+    let result = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true);
 
     // This test may fail if CoinJoin detection is not properly implemented
     println!(
@@ -384,7 +384,8 @@ fn test_transaction_affects_multiple_accounts() {
         &tx,
         network,
         context,
-        Some(&wallet), // update state
+        &mut wallet,
+        true, // update state
     );
 
     // Transaction should be relevant and total should be sum of all outputs
@@ -400,9 +401,7 @@ fn test_transaction_affects_multiple_accounts() {
     println!("Multi-account transaction result: accounts_affected={:?}", result.affected_accounts);
 
     // Test with update_state = false to ensure state isn't modified
-    let result2 = managed_wallet_info.check_transaction(
-        &tx, network, context, None, // don't update state
-    );
+    let result2 = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false);
 
     assert_eq!(
         result2.total_received, result.total_received,
@@ -414,7 +413,7 @@ fn test_transaction_affects_multiple_accounts() {
 fn test_next_address_method_restrictions() {
     let network = Network::Testnet;
 
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());

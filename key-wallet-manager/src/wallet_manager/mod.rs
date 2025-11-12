@@ -515,19 +515,24 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         let wallet_ids: Vec<WalletId> = self.wallets.keys().cloned().collect();
 
         for wallet_id in wallet_ids {
-            // Check the transaction for this wallet
-            if let Some(wallet_info) = self.wallet_infos.get_mut(&wallet_id) {
+            // Get mutable references to both wallet and wallet_info
+            // We need to use split borrowing to get around Rust's borrow checker
+            let wallet_opt = self.wallets.get_mut(&wallet_id);
+            let wallet_info_opt = self.wallet_infos.get_mut(&wallet_id);
+
+            if let (Some(wallet), Some(wallet_info)) = (wallet_opt, wallet_info_opt) {
                 let result = wallet_info.check_transaction(
                     tx,
                     network,
                     context,
-                    self.wallets.get(&wallet_id),
+                    wallet,
+                    update_state_if_found,
                 );
 
                 // If the transaction is relevant
                 if result.is_relevant {
                     relevant_wallets.push(wallet_id);
-                    // Note: balance update is already handled in check_transaction when update_state_if_found is true
+                    // Note: balance update is already handled in check_transaction
                 }
             }
         }

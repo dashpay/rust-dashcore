@@ -255,13 +255,20 @@ pub unsafe extern "C" fn wallet_check_transaction(
 
         let mut managed_info = ManagedWalletInfo::from_wallet(wallet.inner());
 
-        // Check the transaction
-        let wallet_opt = if update_state {
-            Some(wallet.inner())
-        } else {
-            None
+        // Check the transaction - wallet is always required now
+        let wallet_mut = match wallet.inner_mut() {
+            Some(w) => w,
+            None => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InternalError,
+                    "Cannot get mutable wallet reference (Arc has multiple owners)".to_string(),
+                );
+                return false;
+            }
         };
-        let check_result = managed_info.check_transaction(&tx, network_rust, context, wallet_opt);
+        let check_result =
+            managed_info.check_transaction(&tx, network_rust, context, wallet_mut, update_state);
 
         // If we updated state, we need to update the wallet's managed info
         // Note: This would require storing ManagedWalletInfo in FFIWallet

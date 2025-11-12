@@ -3477,7 +3477,7 @@ FFIManagedWalletInfo *wallet_create_managed_wallet(const FFIWallet *wallet,
  # Safety
 
  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
- - `wallet` must be a valid pointer to an FFIWallet (needed for address generation)
+ - `wallet` must be a valid pointer to an FFIWallet (needed for address generation and DashPay queries)
  - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
  - `result_out` must be a valid pointer to store the result
  - `error` must be a valid pointer to an FFIError
@@ -3485,7 +3485,7 @@ FFIManagedWalletInfo *wallet_create_managed_wallet(const FFIWallet *wallet,
  */
 
 bool managed_wallet_check_transaction(FFIManagedWalletInfo *managed_wallet,
-                                      const FFIWallet *wallet,
+                                      FFIWallet *wallet,
                                       FFINetwork network,
                                       const uint8_t *tx_bytes,
                                       size_t tx_len,

@@ -65,7 +65,7 @@ fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with BIP44 account for coinbase test");
 
     let mut managed_wallet_info =
@@ -113,7 +113,8 @@ fn test_coinbase_transaction_routing_to_bip44_receive_address() {
         &coinbase_tx,
         network,
         context,
-        Some(&wallet), // update state
+        &mut wallet,
+        true, // update state
     );
 
     // The coinbase transaction should be recognized as relevant
@@ -140,7 +141,7 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with BIP44 account for coinbase change test");
 
     let mut managed_wallet_info =
@@ -188,7 +189,8 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
         &coinbase_tx,
         network,
         context,
-        Some(&wallet), // update state
+        &mut wallet,
+        true, // update state
     );
 
     // The coinbase transaction should be recognized as relevant even to change address
@@ -214,7 +216,7 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
 fn test_update_state_flag_behavior() {
     let network = Network::Testnet;
 
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
@@ -255,9 +257,7 @@ fn test_update_state_flag_behavior() {
     };
 
     // First check with update_state = false
-    let result1 = managed_wallet_info.check_transaction(
-        &tx, network, context, None, // don't update state
-    );
+    let result1 = managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false);
 
     assert!(result1.is_relevant);
 
@@ -282,7 +282,8 @@ fn test_update_state_flag_behavior() {
         &tx,
         network,
         context,
-        Some(&wallet), // update state
+        &mut wallet,
+        true, // update state
     );
 
     assert!(result2.is_relevant);
@@ -349,7 +350,7 @@ fn test_coinbase_routing() {
 fn test_coinbase_transaction_with_payload_routing() {
     // Test coinbase with special payload routing to BIP44 account
     let network = Network::Testnet;
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
     let mut managed_wallet_info =
@@ -402,7 +403,7 @@ fn test_coinbase_transaction_with_payload_routing() {
     };
 
     let result =
-        managed_wallet_info.check_transaction(&coinbase_tx, network, context, Some(&wallet));
+        managed_wallet_info.check_transaction(&coinbase_tx, network, context, &mut wallet, true);
 
     assert!(result.is_relevant, "Coinbase with payload should be relevant");
     assert_eq!(result.total_received, 5000000000, "Should have received block reward");

@@ -107,6 +107,10 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         fee_level: FeeLevel,
         current_block_height: u32,
     ) -> Result<Transaction, TransactionError>;
+
+    /// Update chain state and process any matured transactions
+    /// This should be called when the chain tip advances to a new height
+    fn update_chain_height(&mut self, network: Network, current_height: u32);
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -350,5 +354,19 @@ impl WalletInfoInterface for ManagedWalletInfo {
             fee_level,
             current_block_height,
         )
+    }
+
+    fn update_chain_height(&mut self, network: Network, current_height: u32) {
+        // Process any matured transactions for this network
+        let matured = self.process_matured_transactions(network, current_height);
+
+        if !matured.is_empty() {
+            tracing::info!(
+                network = ?network,
+                current_height = current_height,
+                matured_count = matured.len(),
+                "Processed matured coinbase transactions"
+            );
+        }
     }
 }
