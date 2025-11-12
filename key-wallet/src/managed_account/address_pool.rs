@@ -305,6 +305,27 @@ impl AddressInfo {
         })
     }
 
+    /// Create new address info directly from an `Address` without a public key
+    pub fn new_from_address(address: Address, index: u32, path: DerivationPath) -> Self {
+        let script_pubkey = address.script_pubkey();
+        Self {
+            address,
+            script_pubkey,
+            public_key: None,
+            index,
+            path,
+            used: false,
+            generated_at: 0,
+            used_at: None,
+            tx_count: 0,
+            total_received: 0,
+            total_sent: 0,
+            balance: 0,
+            label: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+
     /// Mark this address as used
     fn mark_used(&mut self) {
         if !self.used {
@@ -428,6 +449,12 @@ impl AddressPool {
         Ok(new_addresses)
     }
 
+    fn full_path_for_index(&self, index: u32) -> Result<DerivationPath> {
+        let mut full_path = self.base_path.clone();
+        full_path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
+        Ok(full_path)
+    }
+
     /// Generate a specific address at an index
     pub(crate) fn generate_address_at_index(
         &mut self,
@@ -441,8 +468,7 @@ impl AddressPool {
         }
 
         // Build the full path for record keeping
-        let mut full_path = self.base_path.clone();
-        full_path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
+        let full_path = self.full_path_for_index(index)?;
 
         // For derivation, we need the relative path from where the key_source is
         // The key_source xpub is at account level (e.g., m/44'/1'/0')
@@ -530,6 +556,49 @@ impl AddressPool {
         }
 
         Ok(address)
+    }
+
+    /// Register externally derived addresses with the pool (useful for watch-only accounts)
+    pub fn register_known_addresses(&mut self, addresses: &[Address]) -> Result<usize> {
+        if addresses.is_empty() {
+            return Ok(0);
+        }
+
+        let mut added = 0;
+        for address in addresses {
+            if *address.network() != self.network {
+                return Err(Error::InvalidAddress(format!(
+                    "Address network {} does not match pool network {}",
+                    address.network(),
+                    self.network
+                )));
+            }
+
+            if self.address_index.contains_key(address) {
+                continue;
+            }
+
+            let mut index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
+            while self.addresses.contains_key(&index) {
+                index = index.saturating_add(1);
+            }
+
+            let path = self.full_path_for_index(index)?;
+            let info = AddressInfo::new_from_address(address.clone(), index, path);
+            let script_pubkey = info.script_pubkey.clone();
+
+            self.addresses.insert(index, info);
+            self.address_index.insert(address.clone(), index);
+            self.script_pubkey_index.insert(script_pubkey, index);
+
+            if self.highest_generated.map(|h| index > h).unwrap_or(true) {
+                self.highest_generated = Some(index);
+            }
+
+            added += 1;
+        }
+
+        Ok(added)
     }
 
     /// Get the next unused address

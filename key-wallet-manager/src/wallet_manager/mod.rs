@@ -777,6 +777,47 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         })
     }
 
+    /// Register externally derived addresses for a specific account type.
+    ///
+    /// This is primarily useful for watch-only wallets that need to monitor
+    /// hardened derivation paths (e.g., identity funding or provider accounts)
+    /// where xpub-based derivation is impossible.
+    pub fn register_known_addresses(
+        &mut self,
+        wallet_id: &WalletId,
+        network: Network,
+        account_type: AccountType,
+        addresses: Vec<Address>,
+    ) -> Result<usize, WalletError> {
+        if addresses.is_empty() {
+            return Ok(0);
+        }
+
+        // Ensure the wallet exists
+        if !self.wallets.contains_key(wallet_id) {
+            return Err(WalletError::WalletNotFound(*wallet_id));
+        }
+
+        let managed_info =
+            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        let collection = managed_info.accounts_mut(network).ok_or(WalletError::InvalidNetwork)?;
+
+        let account = collection.get_account_by_type_mut(&account_type).ok_or_else(|| {
+            WalletError::InvalidParameter(format!(
+                "Account {:?} does not exist for network {:?}",
+                account_type, network
+            ))
+        })?;
+
+        let added = account.register_known_addresses(&addresses).map_err(WalletError::from)?;
+
+        if added > 0 {
+            managed_info.update_last_synced(current_timestamp());
+        }
+
+        Ok(added)
+    }
+
     /// Get change address from a specific wallet and account
     pub fn get_change_address(
         &mut self,

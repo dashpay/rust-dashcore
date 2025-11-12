@@ -134,6 +134,52 @@ impl ManagedAccount {
         Self::new(managed_type, account.network, account.is_watch_only)
     }
 
+    /// Register externally derived addresses for account types that use a single address pool
+    pub fn register_known_addresses(
+        &mut self,
+        addresses: &[Address],
+    ) -> crate::error::Result<usize> {
+        if addresses.is_empty() {
+            return Ok(0);
+        }
+
+        match &mut self.account_type {
+            ManagedAccountType::IdentityRegistration {
+                addresses: pool,
+            }
+            | ManagedAccountType::IdentityTopUp {
+                addresses: pool,
+                ..
+            }
+            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                addresses: pool,
+            }
+            | ManagedAccountType::IdentityInvitation {
+                addresses: pool,
+            }
+            | ManagedAccountType::ProviderVotingKeys {
+                addresses: pool,
+            }
+            | ManagedAccountType::ProviderOwnerKeys {
+                addresses: pool,
+            }
+            | ManagedAccountType::ProviderOperatorKeys {
+                addresses: pool,
+            }
+            | ManagedAccountType::ProviderPlatformKeys {
+                addresses: pool,
+            }
+            | ManagedAccountType::CoinJoin {
+                addresses: pool,
+                ..
+            } => pool.register_known_addresses(addresses),
+            _ => Err(crate::error::Error::InvalidParameter(
+                "Registering known addresses is only supported for single-pool account types"
+                    .to_string(),
+            )),
+        }
+    }
+
     /// Get the account index
     pub fn index(&self) -> Option<u32> {
         self.account_type.index()

@@ -525,6 +525,37 @@ impl ManagedAccountCollection {
         None
     }
 
+    /// Get a mutable reference to an account by its [`AccountType`]
+    pub fn get_account_by_type_mut(
+        &mut self,
+        account_type: &AccountType,
+    ) -> Option<&mut ManagedAccount> {
+        use crate::account::StandardAccountType;
+
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => self.standard_bip44_accounts.get_mut(index),
+                StandardAccountType::BIP32Account => self.standard_bip32_accounts.get_mut(index),
+            },
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get_mut(index),
+            AccountType::IdentityRegistration => self.identity_registration.as_mut(),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => self.identity_topup.get_mut(registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_mut(),
+            AccountType::IdentityInvitation => self.identity_invitation.as_mut(),
+            AccountType::ProviderVotingKeys => self.provider_voting_keys.as_mut(),
+            AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_mut(),
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_mut(),
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_mut(),
+        }
+    }
+
     /// Remove an account from the collection
     pub fn remove(&mut self, index: u32) -> Option<ManagedAccount> {
         // Try standard BIP44 first

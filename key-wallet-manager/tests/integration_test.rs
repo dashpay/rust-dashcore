@@ -3,11 +3,23 @@
 //! These tests verify that the high-level wallet management functionality
 //! works correctly with the low-level key-wallet primitives.
 
+use dashcore::Address;
+use dashcore::PublicKey;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet::{mnemonic::Language, Mnemonic, Network};
+use key_wallet::{mnemonic::Language, AccountType, Mnemonic, Network};
 use key_wallet_manager::wallet_manager::{WalletError, WalletManager};
+use secp256k1::{Secp256k1, SecretKey};
+
+fn deterministic_testnet_address(seed: u8) -> Address {
+    let secp = Secp256k1::new();
+    let mut bytes = [0u8; 32];
+    bytes[0] = seed;
+    let sk = SecretKey::from_slice(&bytes).expect("valid secret key");
+    let pk = secp256k1::PublicKey::from_secret_key(&secp, &sk);
+    Address::p2pkh(&PublicKey::new(pk), Network::Testnet)
+}
 
 #[test]
 fn test_wallet_manager_creation() {
@@ -171,6 +183,33 @@ fn test_balance_calculation() {
     // Check global balance
     let total = manager.get_total_balance();
     assert_eq!(total, 0);
+}
+
+#[test]
+fn test_register_known_addresses() {
+    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+
+    let wallet_id = manager
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default, Network::Testnet)
+        .expect("wallet creation");
+
+    let addr1 = deterministic_testnet_address(1);
+    let addr2 = deterministic_testnet_address(2);
+
+    let added = manager
+        .register_known_addresses(
+            &wallet_id,
+            Network::Testnet,
+            AccountType::IdentityRegistration,
+            vec![addr1.clone(), addr2.clone()],
+        )
+        .expect("register addresses");
+
+    assert_eq!(added, 2);
+
+    let monitored = manager.monitored_addresses(Network::Testnet);
+    assert!(monitored.contains(&addr1));
+    assert!(monitored.contains(&addr2));
 }
 
 #[test]
