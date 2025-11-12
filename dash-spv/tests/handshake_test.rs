@@ -3,49 +3,41 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use dash_spv::network::{NetworkManager, TcpNetworkManager};
-use dash_spv::{ClientConfig, Network, ValidationMode};
+use dash_spv::client::config::MempoolStrategy;
+use dash_spv::network::{HandshakeManager, MultiPeerNetworkManager, NetworkManager, TcpConnection};
+use dash_spv::{ClientConfig, Network};
 
 #[tokio::test]
 async fn test_handshake_with_mainnet_peer() {
     // Initialize logging for test output
     let _ = env_logger::builder().filter_level(log::LevelFilter::Debug).is_test(true).try_init();
 
-    // Create configuration for mainnet with test peer
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(10));
-
-    config.peers.clear();
-    config.add_peer(peer_addr);
-
-    // Create network manager
-    let mut network =
-        TcpNetworkManager::new(&config).await.expect("Failed to create network manager");
-
-    // Attempt to connect and perform handshake
-    let result = network.connect().await;
+    let result =
+        TcpConnection::connect(peer_addr, 10, Duration::from_secs(10), Network::Dash).await;
 
     match result {
-        Ok(_) => {
+        Ok(mut connection) => {
+            let mut handshake_manager = HandshakeManager::new(
+                Network::Dash,
+                MempoolStrategy::BloomFilter,
+                Some("handshake_test".parse().unwrap()),
+            );
+            handshake_manager.perform_handshake(&mut connection).await.expect("Handshake failed");
             println!("✓ Handshake successful with peer {}", peer_addr);
             assert!(
-                network.is_connected(),
-                "Network should be connected after successful handshake"
+                connection.is_connected(),
+                "Peer should be connected after successful handshake"
             );
-            assert_eq!(network.peer_count(), 1, "Should have one connected peer");
 
             // Get peer info
-            let peer_info = network.peer_info();
-            assert_eq!(peer_info.len(), 1, "Should have one peer info");
-            assert_eq!(peer_info[0].address, peer_addr, "Peer address should match");
-            assert!(peer_info[0].connected, "Peer should be marked as connected");
+            let peer_info = connection.peer_info();
+            assert_eq!(peer_info.address, peer_addr, "Peer address should match");
+            assert!(peer_info.connected, "Peer should be marked as connected");
 
             // Clean disconnect
-            network.disconnect().await.expect("Failed to disconnect");
-            assert!(!network.is_connected(), "Network should be disconnected");
-            assert_eq!(network.peer_count(), 0, "Should have no connected peers");
+            connection.disconnect().await.expect("Failed to disconnect");
+            assert!(!connection.is_connected(), "Network should be disconnected");
         }
         Err(e) => {
             println!("✗ Handshake failed with peer {}: {}", peer_addr, e);
@@ -62,18 +54,8 @@ async fn test_handshake_timeout() {
     // Test connecting to a non-routable IP to verify timeout behavior
     // Using a non-routable IP that will cause the connection to hang
     let peer_addr: SocketAddr = "10.255.255.1:9999".parse().expect("Valid peer address");
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(2)); // Short timeout for test
-
-    config.peers.clear();
-    config.add_peer(peer_addr);
-
-    let mut network =
-        TcpNetworkManager::new(&config).await.expect("Failed to create network manager");
-
     let start = std::time::Instant::now();
-    let result = network.connect().await;
+    let result = TcpConnection::connect(peer_addr, 2, Duration::from_secs(2), Network::Dash).await;
     let elapsed = start.elapsed();
 
     assert!(result.is_err(), "Connection should fail for non-routable peer");
@@ -87,15 +69,12 @@ async fn test_handshake_timeout() {
         "Should not take excessively long beyond timeout (elapsed: {:?})",
         elapsed
     );
-
-    assert!(!network.is_connected(), "Network should not be connected");
-    assert_eq!(network.peer_count(), 0, "Should have no connected peers");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_network_manager_creation() {
     let config = ClientConfig::new(Network::Dash);
-    let network = TcpNetworkManager::new(&config).await;
+    let network = MultiPeerNetworkManager::new(&config).await;
 
     assert!(network.is_ok(), "Network manager creation should succeed");
     let network = network.unwrap();
@@ -108,31 +87,28 @@ async fn test_network_manager_creation() {
 #[tokio::test]
 async fn test_multiple_connect_disconnect_cycles() {
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(10));
-
-    config.peers.clear();
-    config.add_peer(peer_addr);
-
-    let mut network =
-        TcpNetworkManager::new(&config).await.expect("Failed to create network manager");
+    let mut connection = TcpConnection::new(
+        peer_addr,
+        Duration::from_secs(10),
+        Duration::from_secs(10),
+        Network::Dash,
+    );
 
     // Try multiple connect/disconnect cycles
     for i in 1..=3 {
         println!("Attempt {} to connect to {}", i, peer_addr);
 
-        let connect_result = network.connect().await;
+        let connect_result = connection.connect_instance().await;
         if connect_result.is_ok() {
-            assert!(network.is_connected(), "Should be connected after successful connect");
+            assert!(connection.is_connected(), "Should be connected after successful connect");
 
             // Brief delay
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             // Disconnect
-            let disconnect_result = network.disconnect().await;
+            let disconnect_result = connection.disconnect().await;
             assert!(disconnect_result.is_ok(), "Disconnect should succeed");
-            assert!(!network.is_connected(), "Should be disconnected after disconnect");
+            assert!(!connection.is_connected(), "Should be disconnected after disconnect");
 
             // Brief delay before next attempt
             tokio::time::sleep(Duration::from_millis(100)).await;

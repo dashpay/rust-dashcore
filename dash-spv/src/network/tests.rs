@@ -96,29 +96,6 @@ mod multi_peer_tests {
 }
 
 #[cfg(test)]
-mod tcp_network_manager_tests {
-    use crate::client::ClientConfig;
-    use crate::network::{NetworkManager, TcpNetworkManager};
-
-    #[tokio::test]
-    async fn test_dsq_preference_storage() {
-        let config = ClientConfig::default();
-        let mut network_manager = TcpNetworkManager::new(&config).await.unwrap();
-
-        // Initial state should be false
-        assert!(!network_manager.get_dsq_preference());
-
-        // Update to true
-        network_manager.update_peer_dsq_preference(true).await.unwrap();
-        assert!(network_manager.get_dsq_preference());
-
-        // Update back to false
-        network_manager.update_peer_dsq_preference(false).await.unwrap();
-        assert!(!network_manager.get_dsq_preference());
-    }
-}
-
-#[cfg(test)]
 mod connection_tests {
     use crate::network::connection::TcpConnection;
     use dashcore::Network;
