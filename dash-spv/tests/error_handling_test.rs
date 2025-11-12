@@ -28,7 +28,7 @@ use dashcore_hashes::Hash;
 use tokio::sync::{mpsc, RwLock};
 
 use dash_spv::error::*;
-use dash_spv::network::{NetworkManager, TcpConnection};
+use dash_spv::network::{NetworkManager, Peer};
 use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dash_spv::sync::sequential::phases::SyncPhase;
 use dash_spv::sync::sequential::recovery::{RecoveryManager, RecoveryStrategy};
@@ -567,7 +567,7 @@ async fn test_network_connection_failure() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9999);
 
     // Test connection timeout
-    let result = TcpConnection::connect(addr, 1, Network::Dash).await;
+    let result = Peer::connect(addr, 1, Network::Dash).await;
 
     match result {
         Err(NetworkError::ConnectionFailed(msg)) => {

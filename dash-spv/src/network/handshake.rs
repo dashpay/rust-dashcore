@@ -12,7 +12,7 @@ use dashcore::Network;
 
 use crate::client::config::MempoolStrategy;
 use crate::error::{NetworkError, NetworkResult};
-use crate::network::connection::TcpConnection;
+use crate::network::peer::Peer;
 
 /// Handshake state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +65,7 @@ impl HandshakeManager {
     }
 
     /// Perform the handshake with a peer.
-    pub async fn perform_handshake(&mut self, connection: &mut TcpConnection) -> NetworkResult<()> {
+    pub async fn perform_handshake(&mut self, connection: &mut Peer) -> NetworkResult<()> {
         use tokio::time::{timeout, Duration};
 
         // Send version message
@@ -145,7 +145,7 @@ impl HandshakeManager {
     /// Handle a handshake message.
     async fn handle_handshake_message(
         &mut self,
-        connection: &mut TcpConnection,
+        connection: &mut Peer,
         message: NetworkMessage,
     ) -> NetworkResult<Option<HandshakeState>> {
         match message {
@@ -238,7 +238,7 @@ impl HandshakeManager {
     }
 
     /// Send version message.
-    async fn send_version(&mut self, connection: &mut TcpConnection) -> NetworkResult<()> {
+    async fn send_version(&mut self, connection: &mut Peer) -> NetworkResult<()> {
         let version_message = self.build_version_message(connection.peer_info().address)?;
         connection.send_message(NetworkMessage::Version(version_message)).await?;
         tracing::debug!("Sent version message");
@@ -309,7 +309,7 @@ impl HandshakeManager {
     }
 
     /// Negotiate headers2 support with the peer after handshake completion.
-    async fn negotiate_headers2(&self, connection: &mut TcpConnection) -> NetworkResult<()> {
+    async fn negotiate_headers2(&self, connection: &mut Peer) -> NetworkResult<()> {
         // Headers2 is currently disabled due to protocol compatibility issues
         // Always send SendHeaders regardless of peer support
         tracing::info!("Headers2 is disabled - sending SendHeaders only");

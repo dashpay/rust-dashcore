@@ -1,11 +1,11 @@
 //! Network layer for the Dash SPV client.
 
 pub mod addrv2;
-pub mod connection;
 pub mod constants;
 pub mod discovery;
 pub mod handshake;
 pub mod manager;
+pub mod peer;
 pub mod persist;
 pub mod pool;
 pub mod reputation;
@@ -23,9 +23,9 @@ use crate::error::NetworkResult;
 use dashcore::network::message::NetworkMessage;
 use dashcore::BlockHash;
 
-pub use connection::TcpConnection;
 pub use handshake::{HandshakeManager, HandshakeState};
 pub use manager::PeerNetworkManager;
+pub use peer::Peer;
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]
