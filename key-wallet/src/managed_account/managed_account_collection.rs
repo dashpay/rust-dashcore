@@ -321,14 +321,14 @@ impl ManagedAccountCollection {
         // Convert DashPay receiving accounts
         for (key, account) in &account_collection.dashpay_receival_accounts {
             if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                managed_collection.dashpay_receival_accounts.insert(key.clone(), managed_account);
+                managed_collection.dashpay_receival_accounts.insert(*key, managed_account);
             }
         }
 
         // Convert DashPay external accounts
         for (key, account) in &account_collection.dashpay_external_accounts {
             if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                managed_collection.dashpay_external_accounts.insert(key.clone(), managed_account);
+                managed_collection.dashpay_external_accounts.insert(*key, managed_account);
             }
         }
 
