@@ -13,6 +13,7 @@ use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIAccountType, FFINetwork};
 use crate::wallet_manager::FFIWalletManager;
+use key_wallet::account::account_collection::DashpayAccountKey;
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::ManagedAccount;
 use key_wallet::AccountType;
@@ -171,6 +172,12 @@ pub unsafe extern "C" fn managed_wallet_get_account(
                 AccountType::ProviderPlatformKeys => {
                     managed_collection.provider_platform_keys.as_ref()
                 }
+                AccountType::DashpayReceivingFunds {
+                    ..
+                } => None,
+                AccountType::DashpayExternalAccount {
+                    ..
+                } => None,
             };
 
             match managed_account {
@@ -292,6 +299,143 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
     result
 }
 
+/// Get a managed DashPay receiving funds account by composite key
+///
+/// # Safety
+/// - `manager`, `wallet_id` must be valid
+/// - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+#[no_mangle]
+pub unsafe extern "C" fn managed_wallet_get_dashpay_receiving_account(
+    manager: *const FFIWalletManager,
+    wallet_id: *const u8,
+    network: FFINetwork,
+    account_index: c_uint,
+    user_identity_id: *const u8,
+    friend_identity_id: *const u8,
+) -> FFIManagedAccountResult {
+    if manager.is_null()
+        || wallet_id.is_null()
+        || user_identity_id.is_null()
+        || friend_identity_id.is_null()
+    {
+        return FFIManagedAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Null pointer provided".to_string(),
+        );
+    }
+    let mut user_id = [0u8; 32];
+    let mut friend_id = [0u8; 32];
+    core::ptr::copy_nonoverlapping(user_identity_id, user_id.as_mut_ptr(), 32);
+    core::ptr::copy_nonoverlapping(friend_identity_id, friend_id.as_mut_ptr(), 32);
+    let key = DashpayAccountKey {
+        index: account_index,
+        user_identity_id: user_id,
+        friend_identity_id: friend_id,
+    };
+
+    let mut error = FFIError::success();
+    let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
+        manager, wallet_id, &mut error,
+    );
+    if managed_wallet_ptr.is_null() {
+        return FFIManagedAccountResult::error(
+            error.code,
+            if error.message.is_null() {
+                "Failed to get managed wallet info".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(error.message).to_string_lossy().to_string()
+            },
+        );
+    }
+    let network_rust: key_wallet::Network = network.into();
+    let managed_wallet = &*managed_wallet_ptr;
+    let result = match managed_wallet.inner().accounts.get(&network_rust) {
+        Some(coll) => match coll.dashpay_receival_accounts.get(&key) {
+            Some(account) => FFIManagedAccountResult::success(Box::into_raw(Box::new(
+                FFIManagedAccount::new(account),
+            ))),
+            None => FFIManagedAccountResult::error(
+                FFIErrorCode::NotFound,
+                "Account not found".to_string(),
+            ),
+        },
+        None => FFIManagedAccountResult::error(
+            FFIErrorCode::NotFound,
+            "No accounts for network".to_string(),
+        ),
+    };
+    crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
+    result
+}
+
+/// Get a managed DashPay external account by composite key
+///
+/// # Safety
+/// - Pointers must be valid
+#[no_mangle]
+pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
+    manager: *const FFIWalletManager,
+    wallet_id: *const u8,
+    network: FFINetwork,
+    account_index: c_uint,
+    user_identity_id: *const u8,
+    friend_identity_id: *const u8,
+) -> FFIManagedAccountResult {
+    if manager.is_null()
+        || wallet_id.is_null()
+        || user_identity_id.is_null()
+        || friend_identity_id.is_null()
+    {
+        return FFIManagedAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Null pointer provided".to_string(),
+        );
+    }
+    let mut user_id = [0u8; 32];
+    let mut friend_id = [0u8; 32];
+    core::ptr::copy_nonoverlapping(user_identity_id, user_id.as_mut_ptr(), 32);
+    core::ptr::copy_nonoverlapping(friend_identity_id, friend_id.as_mut_ptr(), 32);
+    let key = DashpayAccountKey {
+        index: account_index,
+        user_identity_id: user_id,
+        friend_identity_id: friend_id,
+    };
+
+    let mut error = FFIError::success();
+    let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
+        manager, wallet_id, &mut error,
+    );
+    if managed_wallet_ptr.is_null() {
+        return FFIManagedAccountResult::error(
+            error.code,
+            if error.message.is_null() {
+                "Failed to get managed wallet info".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(error.message).to_string_lossy().to_string()
+            },
+        );
+    }
+    let network_rust: key_wallet::Network = network.into();
+    let managed_wallet = &*managed_wallet_ptr;
+    let result = match managed_wallet.inner().accounts.get(&network_rust) {
+        Some(coll) => match coll.dashpay_external_accounts.get(&key) {
+            Some(account) => FFIManagedAccountResult::success(Box::into_raw(Box::new(
+                FFIManagedAccount::new(account),
+            ))),
+            None => FFIManagedAccountResult::error(
+                FFIErrorCode::NotFound,
+                "Account not found".to_string(),
+            ),
+        },
+        None => FFIManagedAccountResult::error(
+            FFIErrorCode::NotFound,
+            "No accounts for network".to_string(),
+        ),
+    };
+    crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
+    result
+}
+
 /// Get the network of a managed account
 ///
 /// # Safety
@@ -377,6 +521,12 @@ pub unsafe extern "C" fn managed_account_get_account_type(
         AccountType::ProviderOwnerKeys => FFIAccountType::ProviderOwnerKeys,
         AccountType::ProviderOperatorKeys => FFIAccountType::ProviderOperatorKeys,
         AccountType::ProviderPlatformKeys => FFIAccountType::ProviderPlatformKeys,
+        AccountType::DashpayReceivingFunds {
+            ..
+        } => FFIAccountType::DashpayReceivingFunds,
+        AccountType::DashpayExternalAccount {
+            ..
+        } => FFIAccountType::DashpayExternalAccount,
     }
 }
 
@@ -851,6 +1001,14 @@ pub unsafe extern "C" fn managed_account_get_address_pool(
                 } => addresses,
                 ManagedAccountType::ProviderPlatformKeys {
                     addresses,
+                } => addresses,
+                ManagedAccountType::DashpayReceivingFunds {
+                    addresses,
+                    ..
+                } => addresses,
+                ManagedAccountType::DashpayExternalAccount {
+                    addresses,
+                    ..
                 } => addresses,
             };
 

@@ -93,6 +93,16 @@ pub enum AccountTypeMatch {
     ProviderPlatformKeys {
         involved_addresses: Vec<AddressInfo>,
     },
+    /// DashPay receiving funds account (single-pool)
+    DashpayReceivingFunds {
+        account_index: u32,
+        involved_addresses: Vec<AddressInfo>,
+    },
+    /// DashPay external account (single-pool)
+    DashpayExternalAccount {
+        account_index: u32,
+        involved_addresses: Vec<AddressInfo>,
+    },
 }
 
 impl AccountTypeMatch {
@@ -142,6 +152,14 @@ impl AccountTypeMatch {
             | AccountTypeMatch::ProviderPlatformKeys {
                 involved_addresses,
             } => involved_addresses.clone(),
+            AccountTypeMatch::DashpayReceivingFunds {
+                involved_addresses,
+                ..
+            }
+            | AccountTypeMatch::DashpayExternalAccount {
+                involved_addresses,
+                ..
+            } => involved_addresses.clone(),
         }
     }
 
@@ -161,6 +179,14 @@ impl AccountTypeMatch {
                 ..
             }
             | AccountTypeMatch::IdentityTopUp {
+                account_index,
+                ..
+            } => Some(*account_index),
+            AccountTypeMatch::DashpayReceivingFunds {
+                account_index,
+                ..
+            }
+            | AccountTypeMatch::DashpayExternalAccount {
                 account_index,
                 ..
             } => Some(*account_index),
@@ -204,6 +230,12 @@ impl AccountTypeMatch {
             AccountTypeMatch::ProviderPlatformKeys {
                 ..
             } => AccountTypeToCheck::ProviderPlatformKeys,
+            AccountTypeMatch::DashpayReceivingFunds {
+                ..
+            } => AccountTypeToCheck::DashpayReceivingFunds,
+            AccountTypeMatch::DashpayExternalAccount {
+                ..
+            } => AccountTypeToCheck::DashpayExternalAccount,
         }
     }
 }
@@ -316,6 +348,24 @@ impl ManagedAccountCollection {
                 })
                 .into_iter()
                 .collect(),
+            AccountTypeToCheck::DashpayReceivingFunds => {
+                let mut matches = Vec::new();
+                for (key, account) in &self.dashpay_receival_accounts {
+                    if let Some(m) = account.check_transaction_for_match(tx, Some(key.index)) {
+                        matches.push(m);
+                    }
+                }
+                matches
+            }
+            AccountTypeToCheck::DashpayExternalAccount => {
+                let mut matches = Vec::new();
+                for (key, account) in &self.dashpay_external_accounts {
+                    if let Some(m) = account.check_transaction_for_match(tx, Some(key.index)) {
+                        matches.push(m);
+                    }
+                }
+                matches
+            }
         }
     }
 
@@ -557,6 +607,18 @@ impl ManagedAccount {
                 ManagedAccountType::ProviderPlatformKeys {
                     ..
                 } => AccountTypeMatch::ProviderPlatformKeys {
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::DashpayReceivingFunds {
+                    ..
+                } => AccountTypeMatch::DashpayReceivingFunds {
+                    account_index: index.unwrap_or(0),
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::DashpayExternalAccount {
+                    ..
+                } => AccountTypeMatch::DashpayExternalAccount {
+                    account_index: index.unwrap_or(0),
                     involved_addresses: involved_other_addresses,
                 },
             };

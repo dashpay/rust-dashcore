@@ -156,6 +156,39 @@ pub const DASH_BIP44_PATH_TESTNET: IndexConstPath<2> = IndexConstPath {
     reference: DerivationPathReference::BIP44,
     path_type: DerivationPathType::CLEAR_FUNDS,
 };
+
+// DashPay Root Paths
+pub const DASHPAY_ROOT_PATH_MAINNET: IndexConstPath<3> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_DASHPAY,
+        },
+    ],
+    reference: DerivationPathReference::ContactBasedFunds,
+    path_type: DerivationPathType::CLEAR_FUNDS,
+};
+
+pub const DASHPAY_ROOT_PATH_TESTNET: IndexConstPath<3> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_DASHPAY,
+        },
+    ],
+    reference: DerivationPathReference::ContactBasedFunds,
+    path_type: DerivationPathType::CLEAR_FUNDS,
+};
 // CoinJoin Paths
 
 pub const COINJOIN_PATH_MAINNET: IndexConstPath<3> = IndexConstPath {

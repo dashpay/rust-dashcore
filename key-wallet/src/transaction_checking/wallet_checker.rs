@@ -37,8 +37,13 @@ pub enum TransactionContext {
 pub trait WalletTransactionChecker {
     /// Check if a transaction belongs to this wallet with optimized routing
     /// Only checks relevant account types based on transaction type
-    /// If update_state_if_found is Some, updates account state when transaction is found.
-    /// The wallet is needed to generate more addresses.
+    ///
+    /// The mutable wallet reference is required to support address generation and potential
+    /// platform queries (e.g., for DashPay transactions).
+    ///
+    /// If `update_state` is true, updates account state (transactions, UTXOs, balances, addresses).
+    /// If `update_state` is false, only checks relevance without modifying state (useful for previews).
+    ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
     fn check_transaction(
@@ -46,7 +51,8 @@ pub trait WalletTransactionChecker {
         tx: &Transaction,
         network: Network,
         context: TransactionContext,
-        update_state_with_wallet_if_found: Option<&Wallet>,
+        wallet: &mut Wallet,
+        update_state: bool,
     ) -> TransactionCheckResult;
 }
 
@@ -56,7 +62,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         tx: &Transaction,
         network: Network,
         context: TransactionContext,
-        update_state_with_wallet_if_found: Option<&Wallet>,
+        wallet: &mut Wallet,
+        update_state: bool,
     ) -> TransactionCheckResult {
         // Get the account collection for this network
         if let Some(collection) = self.accounts.get(&network) {
@@ -70,7 +77,16 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             let result = collection.check_transaction(tx, &relevant_types);
 
             // Update state if requested and transaction is relevant
-            if update_state_with_wallet_if_found.is_some() && result.is_relevant {
+            if update_state && result.is_relevant {
+                // Check if this is an immature coinbase transaction before processing accounts
+                let is_coinbase = tx.is_coin_base();
+                let needs_maturity = is_coinbase
+                    && matches!(
+                        context,
+                        TransactionContext::InBlock { .. }
+                            | TransactionContext::InChainLockedBlock { .. }
+                    );
+
                 if let Some(collection) = self.accounts.get_mut(&network) {
                     for account_match in &result.affected_accounts {
                         // Find and update the specific account
@@ -113,6 +129,15 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             AccountTypeMatch::ProviderPlatformKeys {
                                 ..
                             } => collection.provider_platform_keys.as_mut(),
+                            AccountTypeMatch::DashpayReceivingFunds {
+                                ..
+                            }
+                            | AccountTypeMatch::DashpayExternalAccount {
+                                ..
+                            } => {
+                                // DashPay managed accounts are not persisted here yet
+                                None
+                            }
                         };
 
                         if let Some(account) = account {
@@ -147,53 +172,21 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                 is_ours: net_amount < 0,
                             };
 
-                            // Check if this is an immature transaction (coinbase that needs maturity)
-                            let is_coinbase = tx.is_coin_base();
-                            let needs_maturity = is_coinbase
-                                && matches!(
-                                    context,
-                                    TransactionContext::InBlock { .. }
-                                        | TransactionContext::InChainLockedBlock { .. }
-                                );
-
-                            if needs_maturity {
-                                // Handle as immature transaction
-                                if let TransactionContext::InBlock {
-                                    height,
-                                    block_hash,
-                                    timestamp,
-                                }
-                                | TransactionContext::InChainLockedBlock {
-                                    height,
-                                    block_hash,
-                                    timestamp,
-                                } = context
-                                {
-                                    // Create immature transaction
-                                    let _immature_tx = ImmatureTransaction::new(
-                                        tx.clone(),
-                                        height,
-                                        block_hash.unwrap_or_else(BlockHash::all_zeros),
-                                        timestamp.unwrap_or(0) as u64,
-                                        100,  // Standard coinbase maturity
-                                        true, // is_coinbase
-                                    );
-
-                                    // todo!()
-                                    // Track in immature transactions instead of regular transactions
-                                    // This would need to be implemented in the account
-                                    // For now, we'll still add to regular transactions
-                                }
+                            // For immature transactions, skip adding to regular transactions
+                            // They will be added when they mature via process_matured_transactions
+                            if !needs_maturity {
+                                account.transactions.insert(tx.txid(), tx_record);
                             }
-
-                            account.transactions.insert(tx.txid(), tx_record);
 
                             // Ingest UTXOs for outputs that pay to our addresses and
                             // remove UTXOs that are spent by this transaction's inputs.
                             // Only apply for spendable account types (Standard, CoinJoin).
+                            // Skip UTXO creation for immature coinbase transactions.
                             match &mut account.account_type {
                                 crate::managed_account::managed_account_type::ManagedAccountType::Standard { .. }
-                                | crate::managed_account::managed_account_type::ManagedAccountType::CoinJoin { .. } => {
+                                | crate::managed_account::managed_account_type::ManagedAccountType::CoinJoin { .. }
+                                | crate::managed_account::managed_account_type::ManagedAccountType::DashpayReceivingFunds { .. }
+                                | crate::managed_account::managed_account_type::ManagedAccountType::DashpayExternalAccount { .. } => {
                                     // Build a set of addresses involved for fast membership tests
                                     let mut involved_addrs = alloc::collections::BTreeSet::new();
                                     for info in account_match.account_type_match.all_involved_addresses() {
@@ -207,26 +200,28 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                         | TransactionContext::InChainLockedBlock { height, .. } => (true, height),
                                     };
 
-                                    // Insert UTXOs for matching outputs
-                                    let txid = tx.txid();
-                                    for (vout, output) in tx.output.iter().enumerate() {
-                                        if let Ok(addr) = DashAddress::from_script(&output.script_pubkey, network) {
-                                            if involved_addrs.contains(&addr) {
-                                                let outpoint = OutPoint { txid, vout: vout as u32 };
-                                                // Construct TxOut clone explicitly to avoid trait assumptions
-                                                let txout = dashcore::TxOut {
-                                                    value: output.value,
-                                                    script_pubkey: output.script_pubkey.clone(),
-                                                };
-                                                let mut utxo = Utxo::new(
-                                                    outpoint,
-                                                    txout,
-                                                    addr,
-                                                    utxo_height,
-                                                    tx.is_coin_base(),
-                                                );
-                                                utxo.is_confirmed = is_confirmed;
-                                                account.utxos.insert(outpoint, utxo);
+                                    // Insert UTXOs for matching outputs (skip for immature coinbase)
+                                    if !needs_maturity {
+                                        let txid = tx.txid();
+                                        for (vout, output) in tx.output.iter().enumerate() {
+                                            if let Ok(addr) = DashAddress::from_script(&output.script_pubkey, network) {
+                                                if involved_addrs.contains(&addr) {
+                                                    let outpoint = OutPoint { txid, vout: vout as u32 };
+                                                    // Construct TxOut clone explicitly to avoid trait assumptions
+                                                    let txout = dashcore::TxOut {
+                                                        value: output.value,
+                                                        script_pubkey: output.script_pubkey.clone(),
+                                                    };
+                                                    let mut utxo = Utxo::new(
+                                                        outpoint,
+                                                        txout,
+                                                        addr,
+                                                        utxo_height,
+                                                        tx.is_coin_base(),
+                                                    );
+                                                    utxo.is_confirmed = is_confirmed;
+                                                    account.utxos.insert(outpoint, utxo);
+                                                }
                                             }
                                         }
                                     }
@@ -268,42 +263,105 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                 account.mark_address_used(&address_info.address);
                             }
 
-                            // Generate new addresses up to the gap limit if wallet is provided
-                            if let Some(wallet) = update_state_with_wallet_if_found {
-                                // Get the account's xpub from the wallet for address generation
-                                let account_type_to_check =
-                                    account_match.account_type_match.to_account_type_to_check();
-                                let xpub_opt = wallet.extended_public_key_for_account_type(
-                                    &account_type_to_check,
-                                    account_match.account_type_match.account_index(),
-                                    network,
-                                );
+                            // Generate new addresses up to the gap limit
+                            // Get the account's xpub from the wallet for address generation
+                            let account_type_to_check =
+                                account_match.account_type_match.to_account_type_to_check();
+                            let xpub_opt = wallet.extended_public_key_for_account_type(
+                                &account_type_to_check,
+                                account_match.account_type_match.account_index(),
+                                network,
+                            );
 
-                                // Maintain gap limit for the address pools
-                                if let Some(xpub) = xpub_opt {
-                                    let key_source =
-                                        crate::managed_account::address_pool::KeySource::Public(
-                                            xpub,
-                                        );
+                            // Maintain gap limit for the address pools
+                            if let Some(xpub) = xpub_opt {
+                                let key_source =
+                                    crate::managed_account::address_pool::KeySource::Public(xpub);
 
-                                    // For standard accounts, maintain gap limit on both pools
-                                    if let crate::managed_account::managed_account_type::ManagedAccountType::Standard {
-                                        external_addresses,
-                                        internal_addresses,
-                                        ..
-                                    } = &mut account.account_type {
-                                        // Maintain gap limit for external addresses
-                                        let _ = external_addresses.maintain_gap_limit(&key_source);
-                                        // Maintain gap limit for internal addresses  
-                                        let _ = internal_addresses.maintain_gap_limit(&key_source);
-                                    } else {
-                                        // For other account types, get the single address pool
-                                        for pool in account.account_type.address_pools_mut() {
-                                            let _ = pool.maintain_gap_limit(&key_source);
-                                        }
+                                // For standard accounts, maintain gap limit on both pools
+                                if let crate::managed_account::managed_account_type::ManagedAccountType::Standard {
+                                    external_addresses,
+                                    internal_addresses,
+                                    ..
+                                } = &mut account.account_type {
+                                    // Maintain gap limit for external addresses
+                                    let _ = external_addresses.maintain_gap_limit(&key_source);
+                                    // Maintain gap limit for internal addresses
+                                    let _ = internal_addresses.maintain_gap_limit(&key_source);
+                                } else {
+                                    // For other account types, get the single address pool
+                                    for pool in account.account_type.address_pools_mut() {
+                                        let _ = pool.maintain_gap_limit(&key_source);
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // Store immature transaction if this is a coinbase in a block
+                    if needs_maturity {
+                        if let TransactionContext::InBlock {
+                            height,
+                            block_hash,
+                            timestamp,
+                        }
+                        | TransactionContext::InChainLockedBlock {
+                            height,
+                            block_hash,
+                            timestamp,
+                        } = context
+                        {
+                            // Create immature transaction
+                            let mut immature_tx = ImmatureTransaction::new(
+                                tx.clone(),
+                                height,
+                                block_hash.unwrap_or_else(BlockHash::all_zeros),
+                                timestamp.unwrap_or(0) as u64,
+                                100,  // Standard coinbase maturity (100 blocks)
+                                true, // is_coinbase
+                            );
+
+                            // Populate affected accounts from result
+                            use super::account_checker::AccountTypeMatch;
+                            for account_match in &result.affected_accounts {
+                                match &account_match.account_type_match {
+                                    AccountTypeMatch::StandardBIP44 {
+                                        account_index,
+                                        ..
+                                    } => {
+                                        immature_tx.affected_accounts.add_bip44(*account_index);
+                                    }
+                                    AccountTypeMatch::StandardBIP32 {
+                                        account_index,
+                                        ..
+                                    } => {
+                                        immature_tx.affected_accounts.add_bip32(*account_index);
+                                    }
+                                    AccountTypeMatch::CoinJoin {
+                                        account_index,
+                                        ..
+                                    } => {
+                                        immature_tx.affected_accounts.add_coinjoin(*account_index);
+                                    }
+                                    _ => {
+                                        // Other account types don't track immature transactions
+                                    }
+                                }
+                            }
+
+                            // Set total received amount
+                            immature_tx.total_received = result.total_received;
+
+                            // Store in wallet's immature transaction collection
+                            self.add_immature_transaction(network, immature_tx);
+
+                            tracing::info!(
+                                txid = %tx.txid(),
+                                height = height,
+                                maturity_height = height + 100,
+                                received = result.total_received,
+                                "Coinbase transaction stored as immature"
+                            );
                         }
                     }
 
@@ -410,7 +468,10 @@ mod tests {
         let context = TransactionContext::Mempool;
 
         // Check transaction on different network (should have no accounts)
-        let result = managed_wallet.check_transaction(&tx, other_network, context, None);
+        // Note: Even though we don't have accounts on this network, we still need to pass wallet
+        let mut wallet_mut = wallet;
+        let result =
+            managed_wallet.check_transaction(&tx, other_network, context, &mut wallet_mut, true);
 
         // Should return default result with no relevance
         assert!(!result.is_relevant);
@@ -463,63 +524,82 @@ mod tests {
         let mut managed_wallet =
             ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
-        // Get addresses from different accounts to trigger different branches
-        let account_collection = wallet.accounts.get(&network).expect("Should have accounts");
-
-        // Get BIP32 account address
-        if let Some(bip32_account) = account_collection.standard_bip32_accounts.get(&0) {
-            let xpub = bip32_account.account_xpub;
-            if let Some(managed_account) = managed_wallet.first_bip32_managed_account_mut(network) {
-                let address = managed_account
-                    .next_receive_address(Some(&xpub), true)
-                    .expect("Should get BIP32 address");
-
-                let tx = create_transaction_to_address(&address, 50_000);
-
-                let context = TransactionContext::InBlock {
-                    height: 100000,
-                    block_hash: Some(
-                        BlockHash::from_slice(&[0u8; 32]).expect("Should create block hash"),
-                    ),
-                    timestamp: Some(1234567890),
-                };
-
-                // This should exercise BIP32 account branch in the update logic
-                let result = managed_wallet.check_transaction(&tx, network, context, Some(&wallet));
-
-                // Should be relevant since it's our address
-                assert!(result.is_relevant);
-                assert_eq!(result.total_received, 50_000);
+        // Get BIP32 account address - scope the immutable borrow
+        let (bip32_xpub, bip32_address) = {
+            let account_collection = wallet.accounts.get(&network).expect("Should have accounts");
+            if let Some(bip32_account) = account_collection.standard_bip32_accounts.get(&0) {
+                let xpub = bip32_account.account_xpub;
+                if let Some(managed_account) =
+                    managed_wallet.first_bip32_managed_account_mut(network)
+                {
+                    let address = managed_account
+                        .next_receive_address(Some(&xpub), true)
+                        .expect("Should get BIP32 address");
+                    (Some(xpub), Some(address))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
             }
+        };
+
+        if let (Some(_xpub), Some(address)) = (bip32_xpub, bip32_address) {
+            let tx = create_transaction_to_address(&address, 50_000);
+
+            let context = TransactionContext::InBlock {
+                height: 100000,
+                block_hash: Some(
+                    BlockHash::from_slice(&[0u8; 32]).expect("Should create block hash"),
+                ),
+                timestamp: Some(1234567890),
+            };
+
+            // This should exercise BIP32 account branch in the update logic
+            let result = managed_wallet.check_transaction(&tx, network, context, &mut wallet, true);
+
+            // Should be relevant since it's our address
+            assert!(result.is_relevant);
+            assert_eq!(result.total_received, 50_000);
         }
 
-        // Get CoinJoin account address
-        if let Some(coinjoin_account) = account_collection.coinjoin_accounts.get(&0) {
-            let xpub = coinjoin_account.account_xpub;
-            if let Some(managed_account) =
-                managed_wallet.first_coinjoin_managed_account_mut(network)
-            {
-                let address = managed_account
-                    .next_address(Some(&xpub), true)
-                    .expect("Should get CoinJoin address");
-
-                let tx = create_transaction_to_address(&address, 75_000);
-
-                let context = TransactionContext::InChainLockedBlock {
-                    height: 100001,
-                    block_hash: Some(
-                        BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
-                    ),
-                    timestamp: Some(1234567891),
-                };
-
-                // This should exercise CoinJoin account branch in the update logic
-                let result = managed_wallet.check_transaction(&tx, network, context, Some(&wallet));
-
-                // Since this is not a coinjoin looking transaction, we should not pick up on it.
-                assert!(!result.is_relevant);
-                assert_eq!(result.total_received, 0);
+        // Get CoinJoin account address - scope the immutable borrow
+        let (coinjoin_xpub, coinjoin_address) = {
+            let account_collection = wallet.accounts.get(&network).expect("Should have accounts");
+            if let Some(coinjoin_account) = account_collection.coinjoin_accounts.get(&0) {
+                let xpub = coinjoin_account.account_xpub;
+                if let Some(managed_account) =
+                    managed_wallet.first_coinjoin_managed_account_mut(network)
+                {
+                    let address = managed_account
+                        .next_address(Some(&xpub), true)
+                        .expect("Should get CoinJoin address");
+                    (Some(xpub), Some(address))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
             }
+        };
+
+        if let (Some(_xpub), Some(address)) = (coinjoin_xpub, coinjoin_address) {
+            let tx = create_transaction_to_address(&address, 75_000);
+
+            let context = TransactionContext::InChainLockedBlock {
+                height: 100001,
+                block_hash: Some(
+                    BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+                ),
+                timestamp: Some(1234567891),
+            };
+
+            // This should exercise CoinJoin account branch in the update logic
+            let result = managed_wallet.check_transaction(&tx, network, context, &mut wallet, true);
+
+            // Since this is not a coinjoin looking transaction, we should not pick up on it.
+            assert!(!result.is_relevant);
+            assert_eq!(result.total_received, 0);
         }
     }
 
@@ -527,7 +607,7 @@ mod tests {
     #[test]
     fn test_wallet_checker_coinbase_immature_handling() {
         let network = Network::Testnet;
-        let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+        let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
 
         let mut managed_wallet =
@@ -573,25 +653,37 @@ mod tests {
         };
 
         let result =
-            managed_wallet.check_transaction(&coinbase_tx, network, context, Some(&wallet));
+            managed_wallet.check_transaction(&coinbase_tx, network, context, &mut wallet, true);
 
         // Should be relevant
         assert!(result.is_relevant);
         assert_eq!(result.total_received, 5_000_000_000);
 
-        // The transaction should be stored even though it's immature
+        // The transaction should be stored in immature collection, not regular transactions
         let managed_account = managed_wallet
             .first_bip44_managed_account(network)
             .expect("Should have managed account");
 
-        assert!(managed_account.transactions.contains_key(&coinbase_tx.txid()));
+        // Should NOT be in regular transactions yet
+        assert!(
+            !managed_account.transactions.contains_key(&coinbase_tx.txid()),
+            "Immature coinbase should not be in regular transactions"
+        );
+
+        // Should be in immature collection
+        let immature_txs =
+            managed_wallet.immature_transactions(network).expect("Should have immature collection");
+        assert!(
+            immature_txs.contains(&coinbase_tx.txid()),
+            "Coinbase should be in immature collection"
+        );
     }
 
     /// Test that spending a wallet-owned UTXO without creating change is detected
     #[test]
     fn test_wallet_checker_detects_spend_only_transaction() {
         let network = Network::Testnet;
-        let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+        let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
 
         let mut managed_wallet =
@@ -617,8 +709,13 @@ mod tests {
             timestamp: Some(1_650_000_000),
         };
 
-        let funding_result =
-            managed_wallet.check_transaction(&funding_tx, network, funding_context, Some(&wallet));
+        let funding_result = managed_wallet.check_transaction(
+            &funding_tx,
+            network,
+            funding_context,
+            &mut wallet,
+            true,
+        );
         assert!(funding_result.is_relevant, "Funding transaction must be relevant");
         assert_eq!(funding_result.total_received, funding_value);
 
@@ -653,7 +750,7 @@ mod tests {
         };
 
         let spend_result =
-            managed_wallet.check_transaction(&spend_tx, network, spend_context, Some(&wallet));
+            managed_wallet.check_transaction(&spend_tx, network, spend_context, &mut wallet, true);
 
         assert!(spend_result.is_relevant, "Spend transaction should be detected");
         assert_eq!(spend_result.total_received, 0);
@@ -677,11 +774,138 @@ mod tests {
         assert_eq!(record.net_amount, -(funding_value as i64));
     }
 
+    /// Test that immature coinbase transactions are properly stored and processed
+    #[test]
+    fn test_wallet_checker_immature_transaction_flow() {
+        use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+
+        let network = Network::Testnet;
+        let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+            .expect("Should create wallet");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        // Get a wallet address
+        let account_collection = wallet.accounts.get(&network).expect("Should have accounts");
+        let account =
+            account_collection.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
+        let xpub = account.account_xpub;
+
+        let address = managed_wallet
+            .first_bip44_managed_account_mut(network)
+            .expect("Should have managed account")
+            .next_receive_address(Some(&xpub), true)
+            .expect("Should get address");
+
+        // Create a coinbase transaction
+        let coinbase_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::all_zeros(), // Coinbase has null previous output
+                    vout: 0xffffffff,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: 5_000_000_000, // 50 DASH block reward
+                script_pubkey: address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+
+        let block_height = 100000;
+        let context = TransactionContext::InBlock {
+            height: block_height,
+            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
+            timestamp: Some(1234567890),
+        };
+
+        // Process the coinbase transaction
+        let result =
+            managed_wallet.check_transaction(&coinbase_tx, network, context, &mut wallet, true);
+
+        // Should be relevant
+        assert!(result.is_relevant);
+        assert_eq!(result.total_received, 5_000_000_000);
+
+        // Verify transaction is NOT in regular transactions yet
+        let managed_account = managed_wallet
+            .first_bip44_managed_account(network)
+            .expect("Should have managed account");
+        assert!(
+            !managed_account.transactions.contains_key(&coinbase_tx.txid()),
+            "Immature coinbase should not be in regular transactions"
+        );
+
+        // Verify transaction IS in immature collection
+        let immature_txs =
+            managed_wallet.immature_transactions(network).expect("Should have immature collection");
+        assert!(
+            immature_txs.contains(&coinbase_tx.txid()),
+            "Coinbase should be in immature collection"
+        );
+
+        // Verify the immature transaction has correct data
+        let immature_tx = immature_txs.get(&coinbase_tx.txid()).expect("Should have immature tx");
+        assert_eq!(immature_tx.height, block_height);
+        assert_eq!(immature_tx.total_received, 5_000_000_000);
+        assert_eq!(immature_tx.maturity_confirmations, 100);
+        assert!(immature_tx.is_coinbase);
+        assert!(immature_tx.affected_accounts.bip44_accounts.contains(&0));
+
+        // Verify no UTXOs were created (since it's immature)
+        assert!(managed_account.utxos.is_empty(), "No UTXOs should exist for immature coinbase");
+
+        // Verify balance is still zero
+        assert_eq!(
+            managed_wallet.balance().total,
+            0,
+            "Balance should be zero while coinbase is immature"
+        );
+
+        // Verify immature balance is tracked
+        let immature_balance = managed_wallet.network_immature_balance(network);
+        assert_eq!(
+            immature_balance, 5_000_000_000,
+            "Immature balance should reflect the coinbase value"
+        );
+
+        // Now advance the chain height past maturity (100 blocks)
+        let mature_height = block_height + 100;
+        managed_wallet.update_chain_height(network, mature_height);
+
+        // Verify transaction moved from immature to regular
+        let managed_account = managed_wallet
+            .first_bip44_managed_account(network)
+            .expect("Should have managed account");
+        assert!(
+            managed_account.transactions.contains_key(&coinbase_tx.txid()),
+            "Matured coinbase should be in regular transactions"
+        );
+
+        // Verify transaction is no longer immature
+        let immature_txs =
+            managed_wallet.immature_transactions(network).expect("Should have immature collection");
+        assert!(
+            !immature_txs.contains(&coinbase_tx.txid()),
+            "Matured coinbase should not be in immature collection"
+        );
+
+        // Verify immature balance is now zero
+        let immature_balance = managed_wallet.network_immature_balance(network);
+        assert_eq!(immature_balance, 0, "Immature balance should be zero after maturity");
+    }
+
     /// Test mempool context for timestamp/height handling
     #[test]
     fn test_wallet_checker_mempool_context() {
         let network = Network::Testnet;
-        let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+        let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
 
         let mut managed_wallet =
@@ -704,7 +928,7 @@ mod tests {
         // Test with Mempool context
         let context = TransactionContext::Mempool;
 
-        let result = managed_wallet.check_transaction(&tx, network, context, Some(&wallet));
+        let result = managed_wallet.check_transaction(&tx, network, context, &mut wallet, true);
 
         // Should be relevant
         assert!(result.is_relevant);

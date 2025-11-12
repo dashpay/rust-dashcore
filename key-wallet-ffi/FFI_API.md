@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 238
+**Total Functions**: 242
 
 ## Table of Contents
 
@@ -68,7 +68,7 @@ Functions: 19
 
 ### Wallet Operations
 
-Functions: 58
+Functions: 62
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -90,6 +90,8 @@ Functions: 58
 | `managed_wallet_get_balance` | Get wallet balance from managed wallet info  Returns the balance breakdown in... | managed_wallet |
 | `managed_wallet_get_bip_44_external_address_range` | Get BIP44 external (receive) addresses in the specified range  Returns extern... | managed_wallet |
 | `managed_wallet_get_bip_44_internal_address_range` | Get BIP44 internal (change) addresses in the specified range  Returns interna... | managed_wallet |
+| `managed_wallet_get_dashpay_external_account` | Get a managed DashPay external account by composite key  # Safety - Pointers ... | managed_account |
+| `managed_wallet_get_dashpay_receiving_account` | Get a managed DashPay receiving funds account by composite key  # Safety - `m... | managed_account |
 | `managed_wallet_get_next_bip44_change_address` | Get the next unused change address  Generates the next unused change address ... | managed_wallet |
 | `managed_wallet_get_next_bip44_receive_address` | Get the next unused receive address  Generates the next unused receive addres... | managed_wallet |
 | `managed_wallet_get_top_up_account_with_registration_index` | Get a managed IdentityTopUp account with a specific registration index  This ... | managed_account |
@@ -100,6 +102,8 @@ Functions: 58
 | `wallet_add_account` | Add an account to the wallet without xpub  # Safety  This function dereferenc... | wallet |
 | `wallet_add_account_with_string_xpub` | Add an account to the wallet with xpub as string  # Safety  This function der... | wallet |
 | `wallet_add_account_with_xpub_bytes` | Add an account to the wallet with xpub as byte array  # Safety  This function... | wallet |
+| `wallet_add_dashpay_external_account_with_xpub_bytes` | Add a DashPay external (watch-only) account with xpub bytes  # Safety - `wall... | wallet |
+| `wallet_add_dashpay_receiving_account` | Add a DashPay receiving funds account  # Safety - `wallet` must be a valid po... | wallet |
 | `wallet_build_and_sign_transaction` | Build and sign a transaction using the wallet's managed info  This is the rec... | transaction |
 | `wallet_build_transaction` | Build a transaction (unsigned)  This creates an unsigned transaction | transaction |
 | `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  # Safet... | transaction |
@@ -815,14 +819,14 @@ Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't stor
 #### `managed_wallet_check_transaction`
 
 ```c
-managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
+managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *mut FFIWallet, network: FFINetwork, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Check if a transaction belongs to the wallet  This function checks a transaction against all relevant account types in the wallet and returns detailed information about which accounts are affected.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
+Check if a transaction belongs to the wallet  This function checks a transaction against all relevant account types in the wallet and returns detailed information about which accounts are affected.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation and DashPay queries) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation and DashPay queries) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
 
 **Module:** `transaction_checking`
 
@@ -969,6 +973,38 @@ Get BIP44 internal (change) addresses in the specified range  Returns internal a
 - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `addresses_out` must be a valid pointer to store the address array pointer - `count_out` must be a valid pointer to store the count - `error` must be a valid pointer to an FFIError - Free the result with address_array_free(addresses_out, count_out)
 
 **Module:** `managed_wallet`
+
+---
+
+#### `managed_wallet_get_dashpay_external_account`
+
+```c
+managed_wallet_get_dashpay_external_account(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
+```
+
+**Description:**
+Get a managed DashPay external account by composite key  # Safety - Pointers must be valid
+
+**Safety:**
+- Pointers must be valid
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_wallet_get_dashpay_receiving_account`
+
+```c
+managed_wallet_get_dashpay_receiving_account(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
+```
+
+**Description:**
+Get a managed DashPay receiving funds account by composite key  # Safety - `manager`, `wallet_id` must be valid - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Safety:**
+- `manager`, `wallet_id` must be valid - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Module:** `managed_account`
 
 ---
 
@@ -1127,6 +1163,38 @@ Add an account to the wallet with xpub as byte array  # Safety  This function de
 
 **Safety:**
 This function dereferences raw pointers. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The xpub_bytes pointer is either null or points to at least xpub_len bytes - The FFIWallet remains valid for the duration of this call
+
+**Module:** `wallet`
+
+---
+
+#### `wallet_add_dashpay_external_account_with_xpub_bytes`
+
+```c
+wallet_add_dashpay_external_account_with_xpub_bytes(wallet: *mut FFIWallet, network: FFINetwork, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8, xpub_bytes: *const u8, xpub_len: usize,) -> FFIAccountResult
+```
+
+**Description:**
+Add a DashPay external (watch-only) account with xpub bytes  # Safety - `wallet` must be valid, `xpub_bytes` must point to `xpub_len` bytes - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Safety:**
+- `wallet` must be valid, `xpub_bytes` must point to `xpub_len` bytes - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Module:** `wallet`
+
+---
+
+#### `wallet_add_dashpay_receiving_account`
+
+```c
+wallet_add_dashpay_receiving_account(wallet: *mut FFIWallet, network: FFINetwork, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIAccountResult
+```
+
+**Description:**
+Add a DashPay receiving funds account  # Safety - `wallet` must be a valid pointer - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Safety:**
+- `wallet` must be a valid pointer - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
 
 **Module:** `wallet`
 
