@@ -131,6 +131,14 @@ impl AccountType {
             }
             | Self::CoinJoin {
                 index,
+            }
+            | Self::DashpayReceivingFunds {
+                index,
+                ..
+            }
+            | Self::DashpayExternalAccount {
+                index,
+                ..
             } => Some(*index),
             // Identity and provider types don't have account indices
             Self::IdentityRegistration
@@ -142,13 +150,7 @@ impl AccountType {
             | Self::ProviderVotingKeys
             | Self::ProviderOwnerKeys
             | Self::ProviderOperatorKeys
-            | Self::ProviderPlatformKeys
-            | Self::DashpayReceivingFunds {
-                ..
-            }
-            | Self::DashpayExternalAccount {
-                ..
-            } => None,
+            | Self::ProviderPlatformKeys => None,
         }
     }
 
@@ -349,7 +351,7 @@ impl AccountType {
                 friend_identity_id,
                 ..
             } => {
-                // Base DashPay root + account 0' + user_id'/friend_id'
+                // Base DashPay root + account 0' + user_id/friend_id (non-hardened per DIP-14/DIP-15)
                 let mut path = match network {
                     Network::Dash => DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET),
                     Network::Testnet => {
@@ -358,10 +360,10 @@ impl AccountType {
                     _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
-                path.push(ChildNumber::Hardened256 {
+                path.push(ChildNumber::Normal256 {
                     index: *user_identity_id,
                 });
-                path.push(ChildNumber::Hardened256 {
+                path.push(ChildNumber::Normal256 {
                     index: *friend_identity_id,
                 });
                 Ok(path)
@@ -371,7 +373,7 @@ impl AccountType {
                 friend_identity_id,
                 ..
             } => {
-                // Base DashPay root + account 0' + friend_id'/user_id'
+                // Base DashPay root + account 0' + friend_id/user_id (non-hardened per DIP-14/DIP-15)
                 let mut path = match network {
                     Network::Dash => DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET),
                     Network::Testnet => {
@@ -380,10 +382,10 @@ impl AccountType {
                     _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
-                path.push(ChildNumber::Hardened256 {
+                path.push(ChildNumber::Normal256 {
                     index: *friend_identity_id,
                 });
-                path.push(ChildNumber::Hardened256 {
+                path.push(ChildNumber::Normal256 {
                     index: *user_identity_id,
                 });
                 Ok(path)
