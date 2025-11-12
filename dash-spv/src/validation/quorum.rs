@@ -2,9 +2,11 @@
 //!
 //! This module implements quorum tracking and validation according to DIP6/DIP7.
 
-use dashcore::{bls_sig_utils::BLSSignature, BlockHash};
+use blsful::Bls12381G2Impl;
+use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use dashcore::BlockHash;
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::error::{ValidationError, ValidationResult};
 use crate::types::ChainState;
@@ -139,8 +141,8 @@ impl QuorumManager {
     pub fn verify_signature(
         &self,
         quorum_type: QuorumType,
-        _message: &[u8],
-        _signature: &BLSSignature,
+        message: &[u8],
+        signature: &BLSSignature,
         signing_height: u32,
     ) -> ValidationResult<()> {
         // Get the appropriate quorum
@@ -152,15 +154,50 @@ impl QuorumManager {
                 ))
             })?;
 
-        debug!("Verifying {:?} signature with quorum from height {}", quorum_type, quorum.height);
+        debug!(
+            "Verifying {:?} signature with quorum from height {} (quorum hash: {:x})",
+            quorum_type, quorum.height, quorum.quorum_hash
+        );
 
-        // TODO: Implement actual BLS signature verification
-        // This requires:
-        // 1. Deserializing the quorum public key
-        // 2. Verifying the signature against the message
-        // 3. Ensuring the signature is valid
+        // Convert the quorum public key from Vec<u8> to BLSPublicKey
+        if quorum.public_key.len() != 48 {
+            return Err(ValidationError::InvalidSignature(format!(
+                "Invalid quorum public key length: expected 48 bytes, got {}",
+                quorum.public_key.len()
+            )));
+        }
 
-        warn!("BLS signature verification not implemented - accepting signature");
+        let mut pk_bytes = [0u8; 48];
+        pk_bytes.copy_from_slice(&quorum.public_key);
+        let bls_public_key = BLSPublicKey::from(pk_bytes);
+
+        // Convert BLSPublicKey to blsful::PublicKey
+        let public_key: blsful::PublicKey<Bls12381G2Impl> =
+            bls_public_key.try_into().map_err(|e| {
+                ValidationError::InvalidSignature(format!(
+                    "Failed to convert quorum public key: {}",
+                    e
+                ))
+            })?;
+
+        // Convert BLSSignature to blsful::Signature
+        let bls_signature: blsful::Signature<Bls12381G2Impl> =
+            signature.try_into().map_err(|e| {
+                ValidationError::InvalidSignature(format!("Failed to convert BLS signature: {}", e))
+            })?;
+
+        // Verify the signature
+        bls_signature.verify(&public_key, message).map_err(|e| {
+            ValidationError::InvalidSignature(format!(
+                "BLS signature verification failed for {:?} quorum at height {}: {}",
+                quorum_type, quorum.height, e
+            ))
+        })?;
+
+        debug!(
+            "Successfully verified {:?} signature with quorum at height {}",
+            quorum_type, quorum.height
+        );
 
         Ok(())
     }

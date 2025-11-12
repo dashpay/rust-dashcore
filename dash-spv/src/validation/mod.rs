@@ -59,12 +59,18 @@ impl ValidationManager {
         }
     }
 
-    /// Validate an InstantLock.
+    /// Validate an InstantLock (structural validation only).
+    ///
+    /// **WARNING**: This only performs structural validation without BLS signature
+    /// verification. For network messages, the caller must use the InstantLockValidator
+    /// directly with a masternode engine to ensure full security.
     pub fn validate_instantlock(&self, instantlock: &InstantLock) -> ValidationResult<()> {
         match self.mode {
             ValidationMode::None => Ok(()),
             ValidationMode::Basic | ValidationMode::Full => {
-                self.instantlock_validator.validate(instantlock)
+                // Only structural validation - signature verification requires masternode engine
+                // which should be passed by the caller when processing network messages
+                self.instantlock_validator.validate_structure(instantlock)
             }
         }
     }

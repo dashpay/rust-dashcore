@@ -210,10 +210,68 @@ impl<
 
     // ============ Storage Operations ============
 
-    /// Clear all persisted storage (headers, filters, state, sync state).
+    /// Clear all persisted storage (headers, filters, state, sync state) and reset in-memory state.
     pub async fn clear_storage(&mut self) -> Result<()> {
-        let mut storage = self.storage.lock().await;
-        storage.clear().await.map_err(SpvError::Storage)
+        // Wipe on-disk persistence fully
+        {
+            let mut storage = self.storage.lock().await;
+            storage.clear().await.map_err(SpvError::Storage)?;
+        }
+
+        // Reset in-memory chain state to a clean baseline for the current network
+        {
+            let mut state = self.state.write().await;
+            *state = ChainState::new_for_network(self.config.network);
+        }
+
+        // Reset sync manager filter state (headers/filters progress trackers)
+        self.sync_manager.filter_sync_mut().clear_filter_state().await;
+
+        // Reset in-memory statistics and received filter height tracking without
+        // replacing the SharedFilterHeights Arc (to keep existing references valid)
+        let received_heights = {
+            let stats = self.stats.read().await;
+            stats.received_filter_heights.clone()
+        };
+
+        {
+            use std::time::Duration;
+            let mut stats = self.stats.write().await;
+            stats.connected_peers = 0;
+            stats.total_peers = 0;
+            stats.header_height = 0;
+            stats.filter_height = 0;
+            stats.headers_downloaded = 0;
+            stats.filter_headers_downloaded = 0;
+            stats.filters_downloaded = 0;
+            stats.filters_matched = 0;
+            stats.blocks_with_relevant_transactions = 0;
+            stats.blocks_requested = 0;
+            stats.blocks_processed = 0;
+            stats.masternode_diffs_processed = 0;
+            stats.bytes_received = 0;
+            stats.bytes_sent = 0;
+            stats.uptime = Duration::default();
+            stats.filters_requested = 0;
+            stats.filters_received = 0;
+            stats.filter_sync_start_time = None;
+            stats.last_filter_received_time = None;
+            stats.active_filter_requests = 0;
+            stats.pending_filter_requests = 0;
+            stats.filter_request_timeouts = 0;
+            stats.filter_requests_retried = 0;
+        }
+
+        received_heights.lock().await.clear();
+
+        // Reset mempool tracking (state and bloom filter)
+        {
+            let mut mempool_state = self.mempool_state.write().await;
+            *mempool_state = MempoolState::default();
+        }
+        self.mempool_filter = None;
+
+        Ok(())
     }
 
     /// Clear only the persisted sync state snapshot (keep headers/filters).
@@ -295,11 +353,12 @@ impl<
 
     /// Helper to create a StatusDisplay instance.
     #[cfg(feature = "terminal-ui")]
-    pub(super) async fn create_status_display(&self) -> StatusDisplay<'_, S> {
+    pub(super) async fn create_status_display(&self) -> StatusDisplay<'_, S, W> {
         StatusDisplay::new(
             &self.state,
             &self.stats,
             self.storage.clone(),
+            Some(&self.wallet),
             &self.terminal_ui,
             &self.config,
         )
@@ -307,8 +366,15 @@ impl<
 
     /// Helper to create a StatusDisplay instance (without terminal UI).
     #[cfg(not(feature = "terminal-ui"))]
-    pub(super) async fn create_status_display(&self) -> StatusDisplay<'_, S> {
-        StatusDisplay::new(&self.state, &self.stats, self.storage.clone(), &None, &self.config)
+    pub(super) async fn create_status_display(&self) -> StatusDisplay<'_, S, W> {
+        StatusDisplay::new(
+            &self.state,
+            &self.stats,
+            self.storage.clone(),
+            Some(&self.wallet),
+            &None,
+            &self.config,
+        )
     }
 
     /// Update the status display.

@@ -510,22 +510,17 @@ impl std::fmt::Debug for ChainState {
 }
 
 /// Validation mode for the SPV client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ValidationMode {
     /// Validate only basic structure and signatures.
     Basic,
 
     /// Validate proof of work and chain rules.
+    #[default]
     Full,
 
     /// Skip most validation (useful for testing).
     None,
-}
-
-impl Default for ValidationMode {
-    fn default() -> Self {
-        Self::Full
-    }
 }
 
 /// Peer information.
@@ -897,6 +892,14 @@ pub enum SpvEvent {
         height: u32,
         /// Block hash of the ChainLock.
         hash: dashcore::BlockHash,
+    },
+
+    /// InstantLock received and validated.
+    InstantLockReceived {
+        /// Transaction ID locked by this InstantLock.
+        txid: Txid,
+        /// Transaction inputs locked by this InstantLock.
+        inputs: Vec<dashcore::OutPoint>,
     },
 
     /// Unconfirmed transaction added to mempool.

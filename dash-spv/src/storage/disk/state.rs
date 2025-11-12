@@ -332,50 +332,6 @@ impl DiskStorageManager {
         Ok(chain_locks)
     }
 
-    /// Store an InstantLock.
-    pub async fn store_instant_lock(
-        &mut self,
-        txid: Txid,
-        instant_lock: &dashcore::InstantLock,
-    ) -> StorageResult<()> {
-        let islocks_dir = self.base_path.join("islocks");
-        tokio::fs::create_dir_all(&islocks_dir).await?;
-
-        let path = islocks_dir.join(format!("islock_{}.bin", txid));
-        let data = bincode::serialize(instant_lock).map_err(|e| {
-            crate::error::StorageError::WriteFailed(format!(
-                "Failed to serialize instant lock: {}",
-                e
-            ))
-        })?;
-
-        tokio::fs::write(&path, &data).await?;
-        tracing::debug!("Stored instant lock for txid {}", txid);
-        Ok(())
-    }
-
-    /// Load an InstantLock.
-    pub async fn load_instant_lock(
-        &self,
-        txid: Txid,
-    ) -> StorageResult<Option<dashcore::InstantLock>> {
-        let path = self.base_path.join("islocks").join(format!("islock_{}.bin", txid));
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let data = tokio::fs::read(&path).await?;
-        let instant_lock = bincode::deserialize(&data).map_err(|e| {
-            crate::error::StorageError::ReadFailed(format!(
-                "Failed to deserialize instant lock: {}",
-                e
-            ))
-        })?;
-
-        Ok(Some(instant_lock))
-    }
-
     /// Store metadata.
     pub async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("state/{}.dat", key));
@@ -695,18 +651,6 @@ impl StorageManager for DiskStorageManager {
         end_height: u32,
     ) -> StorageResult<Vec<(u32, dashcore::ChainLock)>> {
         Self::get_chain_locks(self, start_height, end_height).await
-    }
-
-    async fn store_instant_lock(
-        &mut self,
-        txid: Txid,
-        instant_lock: &dashcore::InstantLock,
-    ) -> StorageResult<()> {
-        Self::store_instant_lock(self, txid, instant_lock).await
-    }
-
-    async fn load_instant_lock(&self, txid: Txid) -> StorageResult<Option<dashcore::InstantLock>> {
-        Self::load_instant_lock(self, txid).await
     }
 
     async fn store_mempool_transaction(

@@ -239,7 +239,14 @@ impl FFIDashSpvClient {
             return;
         };
         let callbacks = self.event_callbacks.lock().unwrap();
+        // Prevent flooding the UI/main thread by limiting events per drain call.
+        // Remaining events stay queued and will be drained on the next tick.
+        let max_events_per_call: usize = 500;
+        let mut processed: usize = 0;
         loop {
+            if processed >= max_events_per_call {
+                break;
+            }
             match rx.try_recv() {
                 Ok(event) => match event {
                     dash_spv::types::SpvEvent::BalanceUpdate {
@@ -296,6 +303,12 @@ impl FFIDashSpvClient {
                     dash_spv::types::SpvEvent::ChainLockReceived {
                         ..
                     } => {}
+                    dash_spv::types::SpvEvent::InstantLockReceived {
+                        ..
+                    } => {
+                        // InstantLock received and validated
+                        // TODO: Add FFI callback if needed for instant lock notifications
+                    }
                     dash_spv::types::SpvEvent::MempoolTransactionAdded {
                         ref txid,
                         amount,
@@ -348,6 +361,7 @@ impl FFIDashSpvClient {
                     break;
                 }
             }
+            processed += 1;
         }
     }
 }
@@ -798,8 +812,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                                         SyncStage::Complete | SyncStage::Failed(_)
                                     );
 
-                                    // Create FFI progress
-                                    let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));
+                                    // Create FFI progress (stack-allocated to avoid double-free issues)
+                                    let mut ffi_progress = FFIDetailedSyncProgress::from(progress);
 
                                     // Call the callback using the registry
                                     {
@@ -816,7 +830,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                                                 // SAFETY: The callback and user_data are safely stored in the registry
                                                 // and accessed through thread-safe mechanisms. The registry ensures
                                                 // proper lifetime management without raw pointer passing across threads.
-                                                callback(ffi_progress.as_ref(), *user_data);
+                                                callback(&ffi_progress, *user_data);
+
+                                                // Free any heap-allocated strings inside the progress struct
+                                                // to avoid leaking per-callback allocations (e.g., stage_message).
+                                                // Move stage_message out of the struct to avoid double-free.
+                                                unsafe {
+                                                    // Move stage_message out of the struct (not using ptr::read to avoid double-free)
+                                                    let stage_message = std::mem::replace(
+                                                        &mut ffi_progress.stage_message,
+                                                        crate::types::FFIString {
+                                                            ptr: std::ptr::null_mut(),
+                                                            length: 0,
+                                                        },
+                                                    );
+                                                    // Destroy stage_message allocated in FFIDetailedSyncProgress::from
+                                                    crate::types::dash_spv_ffi_string_destroy(stage_message);
+                                                    // ffi_progress will be dropped normally here; no Drop impl exists
+                                                }
                                             }
                                         }
                                     }
@@ -1445,7 +1476,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
         }
     };
 
-    let txid = match Txid::from_str(txid_str) {
+    let _txid = match Txid::from_str(txid_str) {
         Ok(t) => t,
         Err(e) => {
             set_last_error(&format!("Invalid txid: {}", e));
@@ -1468,7 +1499,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
                 }
             }
         };
-        spv_client.record_transaction_send(txid).await;
         let mut guard = inner.lock().unwrap();
         *guard = Some(spv_client);
         Ok(())

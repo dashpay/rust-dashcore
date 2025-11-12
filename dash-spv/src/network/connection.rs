@@ -1,7 +1,7 @@
 //! TCP connection management.
 
 use std::collections::HashMap;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -19,6 +19,8 @@ use crate::types::PeerInfo;
 struct ConnectionState {
     stream: TcpStream,
     read_buffer: BufReader<TcpStream>,
+    // Stateful message framing buffer to ensure full frames before decoding
+    framing_buffer: Vec<u8>,
 }
 
 /// TCP connection to a Dash peer
@@ -44,6 +46,8 @@ pub struct TcpConnection {
     peer_relay: Option<bool>,
     peer_prefers_headers2: bool,
     peer_sent_sendheaders2: bool,
+    // Basic telemetry for resync events
+    consecutive_resyncs: u32,
 }
 
 impl TcpConnection {
@@ -76,6 +80,7 @@ impl TcpConnection {
             peer_relay: None,
             peer_prefers_headers2: false,
             peer_sent_sendheaders2: false,
+            consecutive_resyncs: 0,
         }
     }
 
@@ -116,6 +121,7 @@ impl TcpConnection {
         let state = ConnectionState {
             stream,
             read_buffer: BufReader::new(read_stream),
+            framing_buffer: Vec::new(),
         };
 
         Ok(Self {
@@ -136,6 +142,7 @@ impl TcpConnection {
             peer_relay: None,
             peer_prefers_headers2: false,
             peer_sent_sendheaders2: false,
+            consecutive_resyncs: 0,
         })
     }
 
@@ -182,6 +189,7 @@ impl TcpConnection {
         let state = ConnectionState {
             stream,
             read_buffer: BufReader::new(read_stream),
+            framing_buffer: Vec::new(),
         };
 
         self.state = Some(Arc::new(Mutex::new(state)));
@@ -386,132 +394,294 @@ impl TcpConnection {
         // This ensures no concurrent access to the socket
         let mut state = state_arc.lock().await;
 
-        // Read message from the BufReader
-        // This handles buffering properly and avoids issues with partial reads
-        let result = match RawNetworkMessage::consensus_decode(&mut state.read_buffer) {
-            Ok(raw_message) => {
-                // Validate magic bytes match our network
-                if raw_message.magic != self.network.magic() {
-                    tracing::warn!(
-                        "Received message with wrong magic bytes: expected {:#x}, got {:#x}",
-                        self.network.magic(),
-                        raw_message.magic
-                    );
-                    return Err(NetworkError::ProtocolError(format!(
-                        "Wrong magic bytes: expected {:#x}, got {:#x}",
-                        self.network.magic(),
-                        raw_message.magic
-                    )));
+        // Buffered, stateful framing
+        const HEADER_LEN: usize = 24; // magic[4] + cmd[12] + length[4] + checksum[4]
+        const MAX_RESYNC_STEPS_PER_CALL: usize = 64;
+
+        let result = (|| -> NetworkResult<Option<NetworkMessage>> {
+            // Helper: try to read some bytes into framing buffer
+            let read_some = |state: &mut ConnectionState| -> std::io::Result<usize> {
+                let mut tmp = [0u8; 8192];
+                match state.read_buffer.read(&mut tmp) {
+                    Ok(0) => Ok(0),
+                    Ok(n) => {
+                        state.framing_buffer.extend_from_slice(&tmp[..n]);
+                        Ok(n)
+                    }
+                    Err(e) => Err(e),
                 }
+            };
 
-                // Message received successfully
-                tracing::trace!(
-                    "Successfully decoded message from {}: {:?}",
-                    self.address,
-                    raw_message.payload.cmd()
-                );
+            let magic_bytes = self.network.magic().to_le_bytes();
+            let mut resync_steps = 0usize;
 
-                // Special logging for headers2
-                if raw_message.payload.cmd() == "headers2" {
-                    tracing::info!("🎉 Received Headers2 message from {}!", self.address);
-                }
-
-                // Log block messages specifically for debugging
-                if let NetworkMessage::Block(ref block) = raw_message.payload {
-                    let block_hash = block.block_hash();
-                    tracing::info!(
-                        "Successfully decoded block {} from {}",
-                        block_hash,
-                        self.address
-                    );
-                }
-
-                // Log Headers2 messages for debugging
-                if let NetworkMessage::Headers2(ref headers2) = raw_message.payload {
-                    tracing::info!(
-                        "Successfully decoded Headers2 message from {} with {} compressed headers",
-                        self.address,
-                        headers2.headers.len()
-                    );
-                }
-
-                Ok(Some(raw_message.payload))
-            }
-            Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // Timeout from read operation - no data available
-                Ok(None)
-            }
-            Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::TimedOut => {
-                // Explicit timeout - no data available
-                Ok(None)
-            }
-            Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                // EOF means peer closed their side of connection
-                tracing::info!("Peer {} closed connection (EOF)", self.address);
-                Err(NetworkError::PeerDisconnected)
-            }
-            Err(encode::Error::Io(ref e))
-                if e.kind() == std::io::ErrorKind::ConnectionAborted
-                    || e.kind() == std::io::ErrorKind::ConnectionReset =>
-            {
-                tracing::info!("Peer {} connection reset/aborted", self.address);
-                Err(NetworkError::PeerDisconnected)
-            }
-            Err(encode::Error::InvalidChecksum {
-                expected,
-                actual,
-            }) => {
-                // Special handling for checksum errors - skip the message and return empty queue
-                tracing::warn!("Skipping message with invalid checksum from {}: expected {:02x?}, actual {:02x?}", 
-                              self.address, expected, actual);
-
-                // Check if this looks like a version message corruption by checking for all-zeros checksum
-                if actual == [0, 0, 0, 0] {
-                    tracing::warn!("All-zeros checksum detected from {}, likely corrupted version message - skipping", self.address);
-                }
-
-                // Return empty queue instead of failing the connection
-                Ok(None)
-            }
-            Err(e) => {
-                tracing::error!("Failed to decode message from {}: {}", self.address, e);
-
-                // Log more details about what we were trying to decode
-                if let encode::Error::Io(ref io_err) = e {
-                    tracing::error!("IO error details: {:?}", io_err);
-                }
-
-                // Check if this is the specific "unknown special transaction type" error
-                let error_msg = e.to_string();
-                if error_msg.contains("unknown special transaction type") {
-                    tracing::warn!(
-                        "Peer {} sent block with unsupported transaction type: {}",
-                        self.address,
-                        e
-                    );
-                    tracing::error!("BLOCK DECODE FAILURE - Error details: {}", error_msg);
-                } else if error_msg.contains("Failed to decode transactions for block") {
-                    // Extract block hash from the enhanced error message
-                    tracing::error!(
-                        "Peer {} sent block that failed transaction decoding: {}",
-                        self.address,
-                        e
-                    );
-                    if let Some(hash_start) = error_msg.find("block ") {
-                        if let Some(hash_end) = error_msg[hash_start + 6..].find(':') {
-                            let block_hash = &error_msg[hash_start + 6..hash_start + 6 + hash_end];
-                            tracing::error!("FAILING BLOCK HASH: {}", block_hash);
+            loop {
+                // Ensure header availability
+                if state.framing_buffer.len() < HEADER_LEN {
+                    match read_some(&mut state) {
+                        Ok(0) => {
+                            tracing::info!("Peer {} closed connection (EOF)", self.address);
+                            return Err(NetworkError::PeerDisconnected);
+                        }
+                        Ok(_) => {}
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            return Ok(None);
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            return Ok(None);
+                        }
+                        Err(ref e)
+                            if e.kind() == std::io::ErrorKind::ConnectionAborted
+                                || e.kind() == std::io::ErrorKind::ConnectionReset =>
+                        {
+                            tracing::info!("Peer {} connection reset/aborted", self.address);
+                            return Err(NetworkError::PeerDisconnected);
+                        }
+                        Err(e) => {
+                            return Err(NetworkError::ConnectionFailed(format!(
+                                "Read failed: {}",
+                                e
+                            )));
                         }
                     }
-                } else if error_msg.contains("IO error") {
-                    // This might be our wrapped error - log it prominently
-                    tracing::error!("BLOCK DECODE FAILURE - IO error (possibly unknown transaction type) from peer {}", self.address);
-                    tracing::error!("Raw error details: {:?}", e);
                 }
 
-                Err(NetworkError::Serialization(e))
+                // Align to magic
+                if state.framing_buffer.len() >= 4 && state.framing_buffer[..4] != magic_bytes {
+                    if let Some(pos) =
+                        state.framing_buffer.windows(4).position(|w| w == magic_bytes)
+                    {
+                        if pos > 0 {
+                            tracing::warn!(
+                                "{}: stream desync: skipping {} stray bytes before magic",
+                                self.address,
+                                pos
+                            );
+                            self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
+                            state.framing_buffer.drain(0..pos);
+                            resync_steps += 1;
+                            if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
+                                return Ok(None);
+                            }
+                            continue;
+                        }
+                    } else {
+                        // Keep last 3 bytes of potential magic prefix
+                        if state.framing_buffer.len() > 3 {
+                            let dropped = state.framing_buffer.len() - 3;
+                            tracing::warn!(
+                                "{}: stream desync: dropping {} bytes (no magic found)",
+                                self.address,
+                                dropped
+                            );
+                            self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
+                            state.framing_buffer.drain(0..dropped);
+                            resync_steps += 1;
+                            if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
+                                return Ok(None);
+                            }
+                        }
+                        // Need more data
+                        match read_some(&mut state) {
+                            Ok(0) => {
+                                tracing::info!("Peer {} closed connection (EOF)", self.address);
+                                return Err(NetworkError::PeerDisconnected);
+                            }
+                            Ok(_) => {}
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                return Ok(None);
+                            }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                                return Ok(None);
+                            }
+                            Err(e) => {
+                                return Err(NetworkError::ConnectionFailed(format!(
+                                    "Read failed: {}",
+                                    e
+                                )));
+                            }
+                        }
+                        continue;
+                    }
+                }
+
+                // Ensure full header
+                if state.framing_buffer.len() < HEADER_LEN {
+                    match read_some(&mut state) {
+                        Ok(0) => {
+                            tracing::info!("Peer {} closed connection (EOF)", self.address);
+                            return Err(NetworkError::PeerDisconnected);
+                        }
+                        Ok(_) => {}
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            return Ok(None);
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            return Ok(None);
+                        }
+                        Err(e) => {
+                            return Err(NetworkError::ConnectionFailed(format!(
+                                "Read failed: {}",
+                                e
+                            )));
+                        }
+                    }
+                    continue;
+                }
+
+                // Parse header fields
+                let length_le = u32::from_le_bytes([
+                    state.framing_buffer[16],
+                    state.framing_buffer[17],
+                    state.framing_buffer[18],
+                    state.framing_buffer[19],
+                ]) as usize;
+                let header_checksum = [
+                    state.framing_buffer[20],
+                    state.framing_buffer[21],
+                    state.framing_buffer[22],
+                    state.framing_buffer[23],
+                ];
+                // Validate announced length to prevent unbounded accumulation or overflow
+                if length_le > dashcore::network::message::MAX_MSG_SIZE {
+                    return Err(NetworkError::ProtocolError(format!(
+                        "Declared payload length {} exceeds MAX_MSG_SIZE {}",
+                        length_le,
+                        dashcore::network::message::MAX_MSG_SIZE
+                    )));
+                }
+                let total_len = match HEADER_LEN.checked_add(length_le) {
+                    Some(v) => v,
+                    None => {
+                        return Err(NetworkError::ProtocolError(
+                            "Message length overflow".to_string(),
+                        ));
+                    }
+                };
+
+                // Ensure full frame available
+                if state.framing_buffer.len() < total_len {
+                    match read_some(&mut state) {
+                        Ok(0) => {
+                            tracing::info!("Peer {} closed connection (EOF)", self.address);
+                            return Err(NetworkError::PeerDisconnected);
+                        }
+                        Ok(_) => {}
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            return Ok(None);
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            return Ok(None);
+                        }
+                        Err(e) => {
+                            return Err(NetworkError::ConnectionFailed(format!(
+                                "Read failed: {}",
+                                e
+                            )));
+                        }
+                    }
+                    continue;
+                }
+
+                // Verify checksum
+                let payload_slice = &state.framing_buffer[HEADER_LEN..total_len];
+                let expected = {
+                    let checksum = <dashcore_hashes::sha256d::Hash as dashcore_hashes::Hash>::hash(
+                        payload_slice,
+                    );
+                    [checksum[0], checksum[1], checksum[2], checksum[3]]
+                };
+                if expected != header_checksum {
+                    tracing::warn!(
+                        "Skipping message with invalid checksum from {}: expected {:02x?}, actual {:02x?}",
+                        self.address,
+                        expected,
+                        header_checksum
+                    );
+                    if header_checksum == [0, 0, 0, 0] {
+                        tracing::warn!(
+                            "All-zeros checksum detected from {}, likely corrupted stream - resyncing",
+                            self.address
+                        );
+                    }
+                    // Resync by dropping a byte and retrying
+                    state.framing_buffer.drain(0..1);
+                    self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
+                    resync_steps += 1;
+                    if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
+                        return Ok(None);
+                    }
+                    continue;
+                }
+
+                // Decode full RawNetworkMessage from the frame using existing decoder
+                let mut cursor = std::io::Cursor::new(&state.framing_buffer[..total_len]);
+                match RawNetworkMessage::consensus_decode(&mut cursor) {
+                    Ok(raw_message) => {
+                        // Consume bytes
+                        state.framing_buffer.drain(0..total_len);
+                        self.consecutive_resyncs = 0;
+
+                        // Validate magic matches our network
+                        if raw_message.magic != self.network.magic() {
+                            tracing::warn!(
+                                "Received message with wrong magic bytes: expected {:#x}, got {:#x}",
+                                self.network.magic(),
+                                raw_message.magic
+                            );
+                            return Err(NetworkError::ProtocolError(format!(
+                                "Wrong magic bytes: expected {:#x}, got {:#x}",
+                                self.network.magic(),
+                                raw_message.magic
+                            )));
+                        }
+
+                        tracing::trace!(
+                            "Successfully decoded message from {}: {:?}",
+                            self.address,
+                            raw_message.payload.cmd()
+                        );
+
+                        if raw_message.payload.cmd() == "headers2" {
+                            tracing::info!("🎉 Received Headers2 message from {}!", self.address);
+                        }
+
+                        if let NetworkMessage::Block(ref block) = raw_message.payload {
+                            let block_hash = block.block_hash();
+                            tracing::info!(
+                                "Successfully decoded block {} from {}",
+                                block_hash,
+                                self.address
+                            );
+                        }
+
+                        if let NetworkMessage::Headers2(ref headers2) = raw_message.payload {
+                            tracing::info!(
+                                "Successfully decoded Headers2 message from {} with {} compressed headers",
+                                self.address,
+                                headers2.headers.len()
+                            );
+                        }
+
+                        return Ok(Some(raw_message.payload));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "{}: decode error after framing ({}), attempting resync",
+                            self.address,
+                            e
+                        );
+                        state.framing_buffer.drain(0..1);
+                        self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
+                        resync_steps += 1;
+                        if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
+                            return Ok(None);
+                        }
+                        continue;
+                    }
+                }
             }
-        };
+        })();
 
         // Drop the lock before disconnecting
         drop(state);

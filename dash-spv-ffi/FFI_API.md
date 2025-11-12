@@ -303,10 +303,10 @@ dash_spv_ffi_config_get_mempool_strategy(config: *const FFIClientConfig,) -> FFI
 ```
 
 **Description:**
-Gets the mempool synchronization strategy  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::Selective as default
+Gets the mempool synchronization strategy  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::FetchAll as default
 
 **Safety:**
-- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::Selective as default
+- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::FetchAll as default
 
 **Module:** `config`
 

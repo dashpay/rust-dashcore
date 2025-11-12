@@ -3215,7 +3215,10 @@ bool mnemonic_to_seed(const char *mnemonic,
  void mnemonic_free(char *mnemonic) ;
 
 /*
- Build a transaction
+ Build a transaction (unsigned)
+
+ This creates an unsigned transaction. Use wallet_sign_transaction to sign it afterward.
+ For a combined build+sign operation, use wallet_build_and_sign_transaction.
 
  # Safety
 
@@ -3258,6 +3261,40 @@ bool wallet_sign_transaction(const FFIWallet *wallet,
                              uint8_t **signed_tx_out,
                              size_t *signed_len_out,
                              FFIError *error)
+;
+
+/*
+ Build and sign a transaction using the wallet's managed info
+
+ This is the recommended way to build transactions. It handles:
+ - UTXO selection using coin selection algorithms
+ - Fee calculation
+ - Change address generation
+ - Transaction signing
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
+ - `wallet` must be a valid pointer to an FFIWallet
+ - `network` must be a valid FFINetwork
+ - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements
+ - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer
+ - `tx_len_out` must be a valid pointer to store the transaction length
+ - `error` must be a valid pointer to an FFIError
+ - The returned transaction bytes must be freed with `transaction_bytes_free`
+ */
+
+bool wallet_build_and_sign_transaction(FFIManagedWalletInfo *managed_wallet,
+                                       const FFIWallet *wallet,
+                                       FFINetwork network,
+                                       unsigned int account_index,
+                                       const FFITxOutput *outputs,
+                                       size_t outputs_count,
+                                       uint64_t fee_per_kb,
+                                       uint32_t current_height,
+                                       uint8_t **tx_bytes_out,
+                                       size_t *tx_len_out,
+                                       FFIError *error)
 ;
 
 /*
@@ -3345,6 +3382,20 @@ bool wallet_check_transaction(FFIWallet *wallet,
  - -1 on error
  */
  int32_t transaction_get_txid(const FFITransaction *tx, uint8_t *txid_out) ;
+
+/*
+ Get transaction ID from raw transaction bytes
+
+ # Safety
+ - `tx_bytes` must be a valid pointer to transaction bytes
+ - `tx_len` must be the correct length of the transaction
+ - `error` must be a valid pointer to an FFIError
+
+ # Returns
+ - Pointer to null-terminated hex string of TXID (must be freed with string_free)
+ - NULL on error
+ */
+ char *transaction_get_txid_from_bytes(const uint8_t *tx_bytes, size_t tx_len, FFIError *error) ;
 
 /*
  Serialize a transaction

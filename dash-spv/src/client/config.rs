@@ -12,12 +12,10 @@ use crate::types::ValidationMode;
 /// Strategy for handling mempool (unconfirmed) transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MempoolStrategy {
-    /// Fetch all announced transactions (poor privacy, high bandwidth).
+    /// Fetch all announced transactions (high bandwidth, sees all transactions).
     FetchAll,
     /// Use BIP37 bloom filters (moderate privacy, good efficiency).
     BloomFilter,
-    /// Only fetch when recently sent or from known addresses (good privacy, default).
-    Selective,
 }
 
 /// Configuration for the Dash SPV client.
@@ -132,9 +130,6 @@ pub struct ClientConfig {
     /// Time after which unconfirmed transactions are pruned (seconds).
     pub mempool_timeout_secs: u64,
 
-    /// Time window for recent sends in selective mode (seconds).
-    pub recent_send_window_secs: u64,
-
     /// Whether to fetch transactions from INV messages immediately.
     pub fetch_mempool_transactions: bool,
 
@@ -232,11 +227,10 @@ impl Default for ClientConfig {
             max_filter_gap_restart_attempts: 5,
             max_filter_gap_sync_size: 50000,
             // Mempool defaults
-            enable_mempool_tracking: false,
-            mempool_strategy: MempoolStrategy::Selective,
+            enable_mempool_tracking: true,
+            mempool_strategy: MempoolStrategy::FetchAll,
             max_mempool_transactions: 1000,
-            mempool_timeout_secs: 3600,   // 1 hour
-            recent_send_window_secs: 300, // 5 minutes
+            mempool_timeout_secs: 3600, // 1 hour
             fetch_mempool_transactions: true,
             persist_mempool: false,
             // Request control defaults
@@ -388,12 +382,6 @@ impl ClientConfig {
         self
     }
 
-    /// Set recent send window for selective strategy.
-    pub fn with_recent_send_window(mut self, window_secs: u64) -> Self {
-        self.recent_send_window_secs = window_secs;
-        self
-    }
-
     /// Enable or disable mempool persistence.
     pub fn with_mempool_persistence(mut self, enabled: bool) -> Self {
         self.persist_mempool = enabled;
@@ -448,13 +436,6 @@ impl ClientConfig {
             }
             if self.mempool_timeout_secs == 0 {
                 return Err("mempool_timeout_secs must be > 0".to_string());
-            }
-            if self.mempool_strategy == MempoolStrategy::Selective
-                && self.recent_send_window_secs == 0
-            {
-                return Err(
-                    "recent_send_window_secs must be > 0 for Selective strategy".to_string()
-                );
             }
         }
 

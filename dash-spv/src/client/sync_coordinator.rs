@@ -53,11 +53,11 @@ impl<
         self.update_status_display().await;
 
         tracing::info!(
-            "✅ Initial sync requests sent! Current state - Headers: {}, Filter headers: {}",
+            "✅ Prepared initial sync state - Headers: {}, Filter headers: {}",
             result.header_height,
             result.filter_header_height
         );
-        tracing::info!("📊 Actual sync will complete asynchronously through monitoring loop");
+        tracing::info!("📊 Sync requests will be sent by the monitoring loop");
 
         Ok(result)
     }
@@ -116,6 +116,7 @@ impl<
         let mut last_emitted_header_height: u32 = 0;
         let mut last_emitted_filter_header_height: u32 = 0;
         let mut last_emitted_filters_downloaded: u64 = 0;
+        let mut last_emitted_phase_name: Option<String> = None;
 
         loop {
             // Check if we should stop
@@ -363,10 +364,14 @@ impl<
                     sync_progress.filter_sync_available = self.config.enable_filters;
 
                     let filters_downloaded = sync_progress.filters_downloaded;
+                    let current_phase_name = phase_snapshot.name().to_string();
+                    let phase_changed =
+                        last_emitted_phase_name.as_ref() != Some(&current_phase_name);
 
                     if abs_header_height != last_emitted_header_height
                         || filter_header_height != last_emitted_filter_header_height
                         || filters_downloaded != last_emitted_filters_downloaded
+                        || phase_changed
                     {
                         let sync_stage =
                             Self::map_phase_to_stage(&phase_snapshot, &sync_progress, peer_best);
@@ -391,6 +396,7 @@ impl<
                         last_emitted_header_height = abs_header_height;
                         last_emitted_filter_header_height = filter_header_height;
                         last_emitted_filters_downloaded = filters_downloaded;
+                        last_emitted_phase_name = Some(current_phase_name.clone());
 
                         self.emit_progress(progress);
                     }
@@ -612,8 +618,16 @@ impl<
                             self.process_chainlock(clsig.clone()).await?;
                         }
                         NetworkMessage::ISLock(islock_msg) => {
-                            // Additional client-level InstantLock processing
-                            self.process_instantsendlock(islock_msg.clone()).await?;
+                            // Only process InstantLocks when fully synced and masternode engine is available
+                            if self.sync_manager.is_synced()
+                                && self.sync_manager.get_masternode_engine().is_some()
+                            {
+                                self.process_instantsendlock(islock_msg.clone()).await?;
+                            } else {
+                                tracing::debug!(
+                                    "Skipping InstantLock processing - not fully synced or masternode engine unavailable"
+                                );
+                            }
                         }
                         _ => {}
                     }

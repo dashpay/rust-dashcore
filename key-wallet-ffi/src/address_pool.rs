@@ -975,14 +975,16 @@ pub unsafe extern "C" fn address_info_free(info: *mut FFIAddressInfo) {
 
         // Free the byte arrays
         if !info.script_pubkey.is_null() && info.script_pubkey_len > 0 {
-            let _ = Box::from_raw(std::slice::from_raw_parts_mut(
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
                 info.script_pubkey,
                 info.script_pubkey_len,
             ));
         }
         if !info.public_key.is_null() && info.public_key_len > 0 {
-            let _ =
-                Box::from_raw(std::slice::from_raw_parts_mut(info.public_key, info.public_key_len));
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                info.public_key,
+                info.public_key_len,
+            ));
         }
     }
 }
@@ -997,7 +999,7 @@ pub unsafe extern "C" fn address_info_free(info: *mut FFIAddressInfo) {
 #[no_mangle]
 pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo, count: usize) {
     if !infos.is_null() && count > 0 {
-        let array = Box::from_raw(std::slice::from_raw_parts_mut(infos, count));
+        let array = Box::from_raw(std::ptr::slice_from_raw_parts_mut(infos, count));
         for info_ptr in array.iter() {
             address_info_free(*info_ptr);
         }

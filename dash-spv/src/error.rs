@@ -142,6 +142,9 @@ pub enum ValidationError {
     #[error("Invalid InstantLock: {0}")]
     InvalidInstantLock(String),
 
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
+
     #[error("Invalid filter header chain: {0}")]
     InvalidFilterHeaderChain(String),
 
