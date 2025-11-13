@@ -33,11 +33,11 @@ async fn test_smart_fetch_state_initialization() {
     // Test that we can create the sync manager
     // Note: We can't access private fields, but we can verify the structure exists
     // Need to specify generic types for MasternodeSyncManager
-    use dash_spv::network::TcpNetworkManager;
+    use dash_spv::network::MultiPeerNetworkManager;
     use dash_spv::storage::MemoryStorageManager;
     let _sync_manager = dash_spv::sync::masternodes::MasternodeSyncManager::<
         MemoryStorageManager,
-        TcpNetworkManager,
+        MultiPeerNetworkManager,
     >::new(&config);
 
     // The state should be initialized when requesting diffs

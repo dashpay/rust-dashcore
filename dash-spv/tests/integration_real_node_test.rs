@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
-    network::{MultiPeerNetworkManager, NetworkManager, TcpNetworkManager},
+    network::{MultiPeerNetworkManager, NetworkManager},
     storage::{MemoryStorageManager, StorageManager},
     types::ValidationMode,
 };
@@ -79,7 +79,7 @@ async fn test_real_node_connectivity() {
 
     // Test basic network manager connectivity
     let mut network =
-        TcpNetworkManager::new(&config).await.expect("Failed to create network manager");
+        MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
 
     // Connect to the real node (this includes handshake)
     let start_time = Instant::now();
