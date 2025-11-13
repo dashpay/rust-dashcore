@@ -5,7 +5,7 @@ pub mod connection;
 pub mod constants;
 pub mod discovery;
 pub mod handshake;
-pub mod message_handler;
+
 pub mod multi_peer;
 pub mod peer;
 pub mod persist;
@@ -27,7 +27,7 @@ use dashcore::BlockHash;
 
 pub use connection::TcpConnection;
 pub use handshake::{HandshakeManager, HandshakeState};
-pub use message_handler::MessageHandler;
+
 pub use multi_peer::MultiPeerNetworkManager;
 pub use peer::PeerManager;
 
