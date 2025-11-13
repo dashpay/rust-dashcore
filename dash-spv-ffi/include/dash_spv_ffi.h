@@ -109,6 +109,48 @@ typedef struct FFISpvStats {
   uint64_t uptime;
 } FFISpvStats;
 
+/**
+ * A single compact block filter with its height.
+ *
+ * # Memory Management
+ *
+ * The `data` field is heap-allocated and must be freed using
+ * `dash_spv_ffi_compact_filter_destroy` when no longer needed.
+ */
+typedef struct FFICompactFilter {
+  /**
+   * Block height for this filter
+   */
+  uint32_t height;
+  /**
+   * Filter data bytes
+   */
+  uint8_t *data;
+  /**
+   * Length of filter data
+   */
+  uintptr_t data_len;
+} FFICompactFilter;
+
+/**
+ * Array of compact block filters.
+ *
+ * # Memory Management
+ *
+ * Both the array itself and each filter's data must be freed using
+ * `dash_spv_ffi_compact_filters_destroy` when no longer needed.
+ */
+typedef struct FFICompactFilters {
+  /**
+   * Pointer to array of filters
+   */
+  struct FFICompactFilter *filters;
+  /**
+   * Number of filters in the array
+   */
+  uintptr_t count;
+} FFICompactFilters;
+
 typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);
 
 typedef void (*TransactionCallback)(const uint8_t (*txid)[32],
@@ -170,6 +212,43 @@ typedef struct FFIEventCallbacks {
 typedef struct FFIWalletManager {
   uint8_t _private[0];
 } FFIWalletManager;
+
+/**
+ * A single filter match entry with height and wallet IDs.
+ */
+typedef struct FFIFilterMatchEntry {
+  /**
+   * Block height where filter matched
+   */
+  uint32_t height;
+  /**
+   * Array of wallet IDs (32 bytes each) that matched at this height
+   */
+  uint8_t (*wallet_ids)[32];
+  /**
+   * Number of wallet IDs
+   */
+  uintptr_t wallet_ids_count;
+} FFIFilterMatchEntry;
+
+/**
+ * Array of filter match entries.
+ *
+ * # Memory Management
+ *
+ * Both the array itself and each entry's wallet_ids must be freed using
+ * `dash_spv_ffi_filter_matches_destroy` when no longer needed.
+ */
+typedef struct FFIFilterMatches {
+  /**
+   * Pointer to array of match entries
+   */
+  struct FFIFilterMatchEntry *entries;
+  /**
+   * Number of entries in the array
+   */
+  uintptr_t count;
+} FFIFilterMatches;
 
 /**
  * Handle for Core SDK that can be passed to Platform SDK
@@ -474,6 +553,36 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *client) ;
 
 /**
+ * Load compact block filters in a given height range.
+ *
+ * Returns an `FFICompactFilters` struct containing all filters that exist in the range.
+ * Missing filters are skipped. The caller must free the result using
+ * `dash_spv_ffi_compact_filters_destroy`.
+ *
+ * # Parameters
+ * - `client`: Valid pointer to an FFIDashSpvClient
+ * - `start_height`: Starting block height (inclusive)
+ * - `end_height`: Ending block height (exclusive)
+ *
+ * # Limits
+ * - Maximum range size: 10,000 blocks
+ * - If `end_height - start_height > 10000`, an error is returned
+ *
+ * # Returns
+ * - Non-null pointer to FFICompactFilters on success
+ * - Null pointer on error (check `dash_spv_ffi_get_last_error`)
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer
+ * - Caller must call `dash_spv_ffi_compact_filters_destroy` on the returned pointer
+ */
+
+struct FFICompactFilters *dash_spv_ffi_client_load_filters(struct FFIDashSpvClient *client,
+                                                           uint32_t start_height,
+                                                           uint32_t end_height)
+;
+
+/**
  * Set event callbacks for the client.
  *
  * # Safety
@@ -570,6 +679,36 @@ int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *cli
  *   `dash_spv_ffi_client_get_wallet_manager`.
  */
  void dash_spv_ffi_wallet_manager_free(struct FFIWalletManager *manager) ;
+
+/**
+ * Get filter matched heights with wallet IDs in a given range.
+ *
+ * Returns an `FFIFilterMatches` struct containing all heights where filters matched
+ * and the wallet IDs that matched at each height. The caller must free the result using
+ * `dash_spv_ffi_filter_matches_destroy`.
+ *
+ * # Parameters
+ * - `client`: Valid pointer to an FFIDashSpvClient
+ * - `start_height`: Starting block height (inclusive)
+ * - `end_height`: Ending block height (exclusive)
+ *
+ * # Limits
+ * - Maximum range size: 10,000 blocks
+ * - If `end_height - start_height > 10000`, an error is returned
+ *
+ * # Returns
+ * - Non-null pointer to FFIFilterMatches on success
+ * - Null pointer on error (check `dash_spv_ffi_get_last_error`)
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer
+ * - Caller must call `dash_spv_ffi_filter_matches_destroy` on the returned pointer
+ */
+
+struct FFIFilterMatches *dash_spv_ffi_client_get_filter_matched_heights(struct FFIDashSpvClient *client,
+                                                                        uint32_t start_height,
+                                                                        uint32_t end_height)
+;
 
  struct FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network) ;
 
@@ -975,6 +1114,50 @@ void dash_spv_ffi_unconfirmed_transaction_destroy_addresses(struct FFIString *ad
  * - This function should only be called once per FFIUnconfirmedTransaction
  */
  void dash_spv_ffi_unconfirmed_transaction_destroy(struct FFIUnconfirmedTransaction *tx) ;
+
+/**
+ * Destroys a single compact filter.
+ *
+ * # Safety
+ *
+ * - `filter` must be a valid pointer to an FFICompactFilter
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per allocation
+ */
+ void dash_spv_ffi_compact_filter_destroy(struct FFICompactFilter *filter) ;
+
+/**
+ * Destroys an array of compact filters.
+ *
+ * # Safety
+ *
+ * - `filters` must be a valid pointer to an FFICompactFilters struct
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per allocation
+ */
+ void dash_spv_ffi_compact_filters_destroy(struct FFICompactFilters *filters) ;
+
+/**
+ * Destroys a single filter match entry.
+ *
+ * # Safety
+ *
+ * - `entry` must be a valid pointer to an FFIFilterMatchEntry
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per allocation
+ */
+ void dash_spv_ffi_filter_match_entry_destroy(struct FFIFilterMatchEntry *entry) ;
+
+/**
+ * Destroys an array of filter match entries.
+ *
+ * # Safety
+ *
+ * - `matches` must be a valid pointer to an FFIFilterMatches struct
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per allocation
+ */
+ void dash_spv_ffi_filter_matches_destroy(struct FFIFilterMatches *matches) ;
 
 /**
  * Initialize logging for the SPV library.

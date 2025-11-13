@@ -15,6 +15,7 @@
 //! 2. stats (SpvStats)
 //! 3. mempool_state (MempoolState)
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime};
 
 use dashcore::{
@@ -280,6 +281,10 @@ pub struct ChainState {
 
     /// Whether the chain was synced from a checkpoint rather than genesis.
     pub synced_from_checkpoint: bool,
+
+    /// Filter matches: height -> Vec of wallet IDs (32-byte arrays) that matched
+    /// This tracks which wallet IDs had transactions in blocks with matching compact filters.
+    pub filter_matches: BTreeMap<u32, Vec<[u8; 32]>>,
 }
 
 impl ChainState {
@@ -420,12 +425,58 @@ impl ChainState {
         self.last_chainlock_height
     }
 
-    /// Get filter matched heights (placeholder for now)
-    /// In a real implementation, this would track heights where filters matched wallet transactions
-    pub fn get_filter_matched_heights(&self) -> Option<Vec<u32>> {
-        // For now, return an empty vector as we don't track this yet
-        // This would typically be populated during filter sync when matches are found
-        Some(Vec::new())
+    /// Record a filter match at a specific height for a wallet ID.
+    ///
+    /// # Parameters
+    /// - `height`: The blockchain height where the filter matched
+    /// - `wallet_id`: The 32-byte wallet identifier that matched
+    pub fn record_filter_match(&mut self, height: u32, wallet_id: [u8; 32]) {
+        self.filter_matches.entry(height).or_insert_with(Vec::new).push(wallet_id);
+    }
+
+    /// Record multiple filter matches at a specific height.
+    ///
+    /// # Parameters
+    /// - `height`: The blockchain height where filters matched
+    /// - `wallet_ids`: Vec of wallet identifiers that matched
+    pub fn record_filter_matches(&mut self, height: u32, wallet_ids: Vec<[u8; 32]>) {
+        if wallet_ids.is_empty() {
+            return;
+        }
+
+        self.filter_matches.entry(height).or_insert_with(Vec::new).extend(wallet_ids);
+    }
+
+    /// Get filter matched heights with wallet IDs in a given range.
+    ///
+    /// Returns a BTreeMap of height -> Vec<wallet_id> for all matched filters in the range.
+    /// The range must not exceed 10,000 blocks.
+    ///
+    /// # Parameters
+    /// - `range`: The height range to query (start inclusive, end exclusive)
+    ///
+    /// # Returns
+    /// - `Ok(BTreeMap)`: Map of heights to wallet IDs that matched
+    /// - `Err(String)`: Error if range exceeds 10,000 blocks
+    pub fn get_filter_matched_heights(
+        &self,
+        range: std::ops::Range<u32>,
+    ) -> Result<BTreeMap<u32, Vec<[u8; 32]>>, String> {
+        const MAX_RANGE: u32 = 10_000;
+
+        let range_size = range.end.saturating_sub(range.start);
+        if range_size > MAX_RANGE {
+            return Err(format!(
+                "Range size {} exceeds maximum of {} blocks",
+                range_size, MAX_RANGE
+            ));
+        }
+
+        // Extract matches in the requested range
+        let matches: BTreeMap<u32, Vec<[u8; 32]>> =
+            self.filter_matches.range(range).map(|(k, v)| (*k, v.clone())).collect();
+
+        Ok(matches)
     }
 
     /// Calculate the total chain work up to the tip
@@ -1102,5 +1153,93 @@ impl MempoolState {
     /// Get total pending balance (regular + InstantSend).
     pub fn total_pending_balance(&self) -> i64 {
         self.pending_balance + self.pending_instant_balance
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_match_recording() {
+        let mut chain_state = ChainState::default();
+
+        // Record some filter matches
+        let wallet_id_1 = [1u8; 32];
+        let wallet_id_2 = [2u8; 32];
+        let wallet_id_3 = [3u8; 32];
+
+        chain_state.record_filter_match(100, wallet_id_1);
+        chain_state.record_filter_match(100, wallet_id_2);
+        chain_state.record_filter_match(200, wallet_id_3);
+
+        // Verify matches were recorded
+        assert_eq!(chain_state.filter_matches.len(), 2);
+        assert_eq!(chain_state.filter_matches.get(&100).unwrap().len(), 2);
+        assert_eq!(chain_state.filter_matches.get(&200).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_filter_match_bulk_recording() {
+        let mut chain_state = ChainState::default();
+
+        let wallet_ids = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+        chain_state.record_filter_matches(100, wallet_ids);
+
+        assert_eq!(chain_state.filter_matches.get(&100).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_get_filter_matched_heights_in_range() {
+        let mut chain_state = ChainState::default();
+
+        // Record matches at various heights
+        for height in 100..150 {
+            chain_state.record_filter_match(height, [height as u8; 32]);
+        }
+
+        // Query a range
+        let matches = chain_state.get_filter_matched_heights(110..120).unwrap();
+        assert_eq!(matches.len(), 10);
+        assert!(matches.contains_key(&110));
+        assert!(matches.contains_key(&119));
+        assert!(!matches.contains_key(&109));
+        assert!(!matches.contains_key(&120));
+    }
+
+    #[test]
+    fn test_get_filter_matched_heights_range_limit() {
+        let chain_state = ChainState::default();
+
+        // Test exactly 10,000 blocks (should succeed)
+        let result = chain_state.get_filter_matched_heights(0..10_000);
+        assert!(result.is_ok());
+
+        // Test 10,001 blocks (should fail)
+        let result = chain_state.get_filter_matched_heights(0..10_001);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exceeds maximum"));
+
+        // Test very large range (should fail)
+        let result = chain_state.get_filter_matched_heights(0..100_000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_filter_matched_heights_empty_range() {
+        let mut chain_state = ChainState::default();
+
+        // Record some matches
+        chain_state.record_filter_match(100, [1u8; 32]);
+        chain_state.record_filter_match(200, [2u8; 32]);
+
+        // Query range with no matches
+        let matches = chain_state.get_filter_matched_heights(300..400).unwrap();
+        assert!(matches.is_empty());
+
+        // Query range that partially overlaps
+        let matches = chain_state.get_filter_matched_heights(150..250).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches.contains_key(&200));
     }
 }

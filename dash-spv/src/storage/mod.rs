@@ -145,6 +145,14 @@ pub trait StorageManager: Send + Sync {
     /// Load a compact filter by blockchain height.
     async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>>;
 
+    /// Load compact filters in the given blockchain height range.
+    /// Returns a vector of tuples (height, filter_data) for filters that exist in the range.
+    /// Missing filters are skipped (not included in the result).
+    ///
+    /// # Limits
+    /// The range must not exceed 10,000 blocks. Larger ranges will return an error.
+    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<(u32, Vec<u8>)>>;
+
     /// Store metadata.
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()>;
 

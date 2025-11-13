@@ -5,7 +5,7 @@ use std::ops::Range;
 use dashcore::hash_types::FilterHeader;
 use dashcore_hashes::Hash;
 
-use crate::error::StorageResult;
+use crate::error::{StorageError, StorageResult};
 
 use super::manager::DiskStorageManager;
 use super::segments::SegmentState;
@@ -198,6 +198,34 @@ impl DiskStorageManager {
 
         let data = tokio::fs::read(path).await?;
         Ok(Some(data))
+    }
+
+    /// Load compact filters in a range.
+    /// Returns a vector of tuples (height, filter_data) for filters that exist in the range.
+    /// Missing filters are skipped (not included in the result).
+    ///
+    /// # Limits
+    /// The range must not exceed 10,000 blocks. Larger ranges will return an error.
+    pub async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<(u32, Vec<u8>)>> {
+        const MAX_RANGE: u32 = 10_000;
+
+        let range_size = range.end.saturating_sub(range.start);
+        if range_size > MAX_RANGE {
+            return Err(StorageError::InvalidInput(format!(
+                "Range size {} exceeds maximum of {} blocks",
+                range_size, MAX_RANGE
+            )));
+        }
+
+        let mut result = Vec::new();
+
+        for height in range {
+            if let Some(filter) = self.load_filter(height).await? {
+                result.push((height, filter));
+            }
+        }
+
+        Ok(result)
     }
 
     /// Clear all filter data.

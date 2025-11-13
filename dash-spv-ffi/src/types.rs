@@ -550,3 +550,152 @@ pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy(
         // The Box will be dropped here, freeing the FFIUnconfirmedTransaction itself
     }
 }
+
+/// A single compact block filter with its height.
+///
+/// # Memory Management
+///
+/// The `data` field is heap-allocated and must be freed using
+/// `dash_spv_ffi_compact_filter_destroy` when no longer needed.
+#[repr(C)]
+pub struct FFICompactFilter {
+    /// Block height for this filter
+    pub height: u32,
+    /// Filter data bytes
+    pub data: *mut u8,
+    /// Length of filter data
+    pub data_len: usize,
+}
+
+/// Array of compact block filters.
+///
+/// # Memory Management
+///
+/// Both the array itself and each filter's data must be freed using
+/// `dash_spv_ffi_compact_filters_destroy` when no longer needed.
+#[repr(C)]
+pub struct FFICompactFilters {
+    /// Pointer to array of filters
+    pub filters: *mut FFICompactFilter,
+    /// Number of filters in the array
+    pub count: usize,
+}
+
+/// Destroys a single compact filter.
+///
+/// # Safety
+///
+/// - `filter` must be a valid pointer to an FFICompactFilter
+/// - The pointer must not be used after this function is called
+/// - This function should only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_compact_filter_destroy(filter: *mut FFICompactFilter) {
+    if !filter.is_null() {
+        let filter = Box::from_raw(filter);
+        if !filter.data.is_null() && filter.data_len > 0 {
+            drop(Vec::from_raw_parts(filter.data, filter.data_len, filter.data_len));
+        }
+    }
+}
+
+/// Destroys an array of compact filters.
+///
+/// # Safety
+///
+/// - `filters` must be a valid pointer to an FFICompactFilters struct
+/// - The pointer must not be used after this function is called
+/// - This function should only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_compact_filters_destroy(filters: *mut FFICompactFilters) {
+    if !filters.is_null() {
+        let filters = Box::from_raw(filters);
+        if !filters.filters.is_null() && filters.count > 0 {
+            // Free each filter's data
+            for i in 0..filters.count {
+                let filter = filters.filters.add(i);
+                if !(*filter).data.is_null() && (*filter).data_len > 0 {
+                    drop(Vec::from_raw_parts(
+                        (*filter).data,
+                        (*filter).data_len,
+                        (*filter).data_len,
+                    ));
+                }
+            }
+            // Free the filters array
+            drop(Vec::from_raw_parts(filters.filters, filters.count, filters.count));
+        }
+    }
+}
+
+/// A single filter match entry with height and wallet IDs.
+#[repr(C)]
+pub struct FFIFilterMatchEntry {
+    /// Block height where filter matched
+    pub height: u32,
+    /// Array of wallet IDs (32 bytes each) that matched at this height
+    pub wallet_ids: *mut [u8; 32],
+    /// Number of wallet IDs
+    pub wallet_ids_count: usize,
+}
+
+/// Array of filter match entries.
+///
+/// # Memory Management
+///
+/// Both the array itself and each entry's wallet_ids must be freed using
+/// `dash_spv_ffi_filter_matches_destroy` when no longer needed.
+#[repr(C)]
+pub struct FFIFilterMatches {
+    /// Pointer to array of match entries
+    pub entries: *mut FFIFilterMatchEntry,
+    /// Number of entries in the array
+    pub count: usize,
+}
+
+/// Destroys a single filter match entry.
+///
+/// # Safety
+///
+/// - `entry` must be a valid pointer to an FFIFilterMatchEntry
+/// - The pointer must not be used after this function is called
+/// - This function should only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_filter_match_entry_destroy(entry: *mut FFIFilterMatchEntry) {
+    if !entry.is_null() {
+        let entry = Box::from_raw(entry);
+        if !entry.wallet_ids.is_null() && entry.wallet_ids_count > 0 {
+            drop(Vec::from_raw_parts(
+                entry.wallet_ids,
+                entry.wallet_ids_count,
+                entry.wallet_ids_count,
+            ));
+        }
+    }
+}
+
+/// Destroys an array of filter match entries.
+///
+/// # Safety
+///
+/// - `matches` must be a valid pointer to an FFIFilterMatches struct
+/// - The pointer must not be used after this function is called
+/// - This function should only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_filter_matches_destroy(matches: *mut FFIFilterMatches) {
+    if !matches.is_null() {
+        let matches = Box::from_raw(matches);
+        if !matches.entries.is_null() && matches.count > 0 {
+            for i in 0..matches.count {
+                let entry = matches.entries.add(i);
+                if !(*entry).wallet_ids.is_null() && (*entry).wallet_ids_count > 0 {
+                    drop(Vec::from_raw_parts(
+                        (*entry).wallet_ids,
+                        (*entry).wallet_ids_count,
+                        (*entry).wallet_ids_count,
+                    ));
+                }
+            }
+            drop(Vec::from_raw_parts(matches.entries, matches.count, matches.count));
+        }
+    }
+}

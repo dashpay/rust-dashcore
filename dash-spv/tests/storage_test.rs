@@ -284,3 +284,69 @@ fn create_test_filter_headers(count: usize) -> Vec<dashcore::hash_types::FilterH
 
     filter_headers
 }
+
+#[tokio::test]
+async fn test_load_filters_range() {
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+
+    // Store some filters at various heights
+    storage.store_filter(100, &[1, 2, 3]).await.expect("Failed to store filter at 100");
+    storage.store_filter(101, &[4, 5, 6]).await.expect("Failed to store filter at 101");
+    storage.store_filter(103, &[7, 8, 9]).await.expect("Failed to store filter at 103"); // Skip 102
+    storage.store_filter(104, &[10, 11, 12]).await.expect("Failed to store filter at 104");
+
+    // Load filters in range 100..105
+    let filters = storage.load_filters(100..105).await.expect("Failed to load filters");
+
+    // Should get 4 filters (100, 101, 103, 104) - 102 is missing
+    assert_eq!(filters.len(), 4, "Should load 4 filters");
+    assert_eq!(filters[0], (100, vec![1, 2, 3]), "Filter at 100 mismatch");
+    assert_eq!(filters[1], (101, vec![4, 5, 6]), "Filter at 101 mismatch");
+    assert_eq!(filters[2], (103, vec![7, 8, 9]), "Filter at 103 mismatch");
+    assert_eq!(filters[3], (104, vec![10, 11, 12]), "Filter at 104 mismatch");
+
+    // Load smaller range
+    let filters =
+        storage.load_filters(101..103).await.expect("Failed to load filters in smaller range");
+    assert_eq!(filters.len(), 1, "Should load 1 filter"); // Only 101, not 103 (end is exclusive)
+    assert_eq!(filters[0], (101, vec![4, 5, 6]), "Filter at 101 mismatch in smaller range");
+
+    // Load empty range
+    let filters = storage.load_filters(200..205).await.expect("Failed to load empty range");
+    assert_eq!(filters.len(), 0, "Should load 0 filters from empty range");
+}
+
+#[tokio::test]
+async fn test_load_filters_range_limit() {
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+
+    // Store some filters
+    for i in 0..20 {
+        storage.store_filter(i, &[i as u8]).await.expect("Failed to store filter");
+    }
+
+    // Test maximum allowed range (10,000 blocks)
+    let result = storage.load_filters(0..10_000).await;
+    assert!(result.is_ok(), "Should allow exactly 10,000 block range");
+
+    // Test range exceeding limit (10,001 blocks)
+    let result = storage.load_filters(0..10_001).await;
+    assert!(result.is_err(), "Should reject range exceeding 10,000 blocks");
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("exceeds maximum") && error_msg.contains("10000"),
+        "Error message should mention the limit"
+    );
+
+    // Test large range with different start
+    let result = storage.load_filters(5000..15_001).await;
+    assert!(result.is_err(), "Should reject range of 10,001 blocks regardless of start");
+
+    // Test range just under limit (9,999 blocks) - should succeed
+    let result = storage.load_filters(0..9_999).await;
+    assert!(result.is_ok(), "Should allow 9,999 block range");
+
+    // Test very large range
+    let result = storage.load_filters(0..100_000).await;
+    assert!(result.is_err(), "Should reject very large range");
+}

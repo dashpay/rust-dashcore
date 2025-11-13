@@ -285,6 +285,26 @@ impl StorageManager for MemoryStorageManager {
         Ok(self.filters.get(&height).cloned())
     }
 
+    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<(u32, Vec<u8>)>> {
+        const MAX_RANGE: u32 = 10_000;
+
+        let range_size = range.end.saturating_sub(range.start);
+        if range_size > MAX_RANGE {
+            return Err(StorageError::InvalidInput(format!(
+                "Range size {} exceeds maximum of {} blocks",
+                range_size, MAX_RANGE
+            )));
+        }
+
+        let mut result = Vec::new();
+        for height in range {
+            if let Some(filter) = self.filters.get(&height) {
+                result.push((height, filter.clone()));
+            }
+        }
+        Ok(result)
+    }
+
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
         self.metadata.insert(key.to_string(), value.to_vec());
         Ok(())

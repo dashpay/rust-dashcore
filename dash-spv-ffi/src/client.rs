@@ -1284,6 +1284,111 @@ pub unsafe extern "C" fn dash_spv_ffi_client_is_filter_sync_available(
     })
 }
 
+/// Load compact block filters in a given height range.
+///
+/// Returns an `FFICompactFilters` struct containing all filters that exist in the range.
+/// Missing filters are skipped. The caller must free the result using
+/// `dash_spv_ffi_compact_filters_destroy`.
+///
+/// # Parameters
+/// - `client`: Valid pointer to an FFIDashSpvClient
+/// - `start_height`: Starting block height (inclusive)
+/// - `end_height`: Ending block height (exclusive)
+///
+/// # Limits
+/// - Maximum range size: 10,000 blocks
+/// - If `end_height - start_height > 10000`, an error is returned
+///
+/// # Returns
+/// - Non-null pointer to FFICompactFilters on success
+/// - Null pointer on error (check `dash_spv_ffi_get_last_error`)
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer
+/// - Caller must call `dash_spv_ffi_compact_filters_destroy` on the returned pointer
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_load_filters(
+    client: *mut FFIDashSpvClient,
+    start_height: u32,
+    end_height: u32,
+) -> *mut crate::types::FFICompactFilters {
+    use crate::types::{FFICompactFilter, FFICompactFilters};
+
+    null_check!(client, std::ptr::null_mut());
+
+    // Validate range size
+    const MAX_RANGE: u32 = 10_000;
+    let range_size = end_height.saturating_sub(start_height);
+    if range_size > MAX_RANGE {
+        set_last_error(&format!(
+            "Range size {} exceeds maximum of {} blocks",
+            range_size, MAX_RANGE
+        ));
+        return std::ptr::null_mut();
+    }
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    set_last_error("Client not initialized");
+                    return None;
+                }
+            }
+        };
+
+        // Get the storage
+        let storage = spv_client.storage();
+        let storage_guard = storage.lock().await;
+
+        // Load filters in range
+        let filters_result = storage_guard.load_filters(start_height..end_height).await;
+
+        // Put the client back
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+
+        match filters_result {
+            Ok(filters) => {
+                // Convert to FFI format
+                let mut ffi_filters = Vec::with_capacity(filters.len());
+                for (height, data) in filters {
+                    let mut data_vec = data;
+                    let data_ptr = data_vec.as_mut_ptr();
+                    let data_len = data_vec.len();
+                    std::mem::forget(data_vec); // Transfer ownership to FFI
+
+                    ffi_filters.push(FFICompactFilter {
+                        height,
+                        data: data_ptr,
+                        data_len,
+                    });
+                }
+
+                let filters_ptr = ffi_filters.as_mut_ptr();
+                let count = ffi_filters.len();
+                std::mem::forget(ffi_filters); // Transfer ownership to FFI
+
+                Some(Box::into_raw(Box::new(FFICompactFilters {
+                    filters: filters_ptr,
+                    count,
+                })))
+            }
+            Err(e) => {
+                set_last_error(&format!("Failed to load filters: {}", e));
+                None
+            }
+        }
+    });
+
+    result.unwrap_or(std::ptr::null_mut())
+}
+
 /// Set event callbacks for the client.
 ///
 /// # Safety
@@ -1569,4 +1674,110 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_manager_free(manager: *mut FFIWalle
     }
 
     key_wallet_ffi::wallet_manager::wallet_manager_free(manager as *mut KeyWalletFFIWalletManager);
+}
+
+/// Get filter matched heights with wallet IDs in a given range.
+///
+/// Returns an `FFIFilterMatches` struct containing all heights where filters matched
+/// and the wallet IDs that matched at each height. The caller must free the result using
+/// `dash_spv_ffi_filter_matches_destroy`.
+///
+/// # Parameters
+/// - `client`: Valid pointer to an FFIDashSpvClient
+/// - `start_height`: Starting block height (inclusive)
+/// - `end_height`: Ending block height (exclusive)
+///
+/// # Limits
+/// - Maximum range size: 10,000 blocks
+/// - If `end_height - start_height > 10000`, an error is returned
+///
+/// # Returns
+/// - Non-null pointer to FFIFilterMatches on success
+/// - Null pointer on error (check `dash_spv_ffi_get_last_error`)
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer
+/// - Caller must call `dash_spv_ffi_filter_matches_destroy` on the returned pointer
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_filter_matched_heights(
+    client: *mut FFIDashSpvClient,
+    start_height: u32,
+    end_height: u32,
+) -> *mut crate::types::FFIFilterMatches {
+    use crate::types::{FFIFilterMatchEntry, FFIFilterMatches};
+
+    null_check!(client, std::ptr::null_mut());
+
+    // Validate range size
+    const MAX_RANGE: u32 = 10_000;
+    let range_size = end_height.saturating_sub(start_height);
+    if range_size > MAX_RANGE {
+        set_last_error(&format!(
+            "Range size {} exceeds maximum of {} blocks",
+            range_size, MAX_RANGE
+        ));
+        return std::ptr::null_mut();
+    }
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    set_last_error("Client not initialized");
+                    return None;
+                }
+            }
+        };
+
+        // Get the chain state
+        let chain_state = spv_client.chain_state().await;
+
+        // Get filter matches in range
+        let matches_result = chain_state.get_filter_matched_heights(start_height..end_height);
+
+        // Put the client back
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+
+        match matches_result {
+            Ok(matches) => {
+                // Convert BTreeMap to FFI format
+                let mut ffi_entries = Vec::with_capacity(matches.len());
+
+                for (height, wallet_ids) in matches {
+                    // Convert Vec<[u8; 32]> to FFI format
+                    let mut wallet_ids_vec = wallet_ids;
+                    let wallet_ids_ptr = wallet_ids_vec.as_mut_ptr();
+                    let wallet_ids_count = wallet_ids_vec.len();
+                    std::mem::forget(wallet_ids_vec); // Transfer ownership to FFI
+
+                    ffi_entries.push(FFIFilterMatchEntry {
+                        height,
+                        wallet_ids: wallet_ids_ptr,
+                        wallet_ids_count,
+                    });
+                }
+
+                let entries_ptr = ffi_entries.as_mut_ptr();
+                let count = ffi_entries.len();
+                std::mem::forget(ffi_entries); // Transfer ownership to FFI
+
+                Some(Box::into_raw(Box::new(FFIFilterMatches {
+                    entries: entries_ptr,
+                    count,
+                })))
+            }
+            Err(e) => {
+                set_last_error(&format!("Failed to get filter matched heights: {}", e));
+                None
+            }
+        }
+    });
+
+    result.unwrap_or(std::ptr::null_mut())
 }

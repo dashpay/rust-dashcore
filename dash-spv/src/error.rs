@@ -110,6 +110,9 @@ pub enum StorageError {
 
     #[error("Lock poisoned: {0}")]
     LockPoisoned(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 impl Clone for StorageError {
@@ -123,6 +126,7 @@ impl Clone for StorageError {
             StorageError::Serialization(s) => StorageError::Serialization(s.clone()),
             StorageError::InconsistentState(s) => StorageError::InconsistentState(s.clone()),
             StorageError::LockPoisoned(s) => StorageError::LockPoisoned(s.clone()),
+            StorageError::InvalidInput(s) => StorageError::InvalidInput(s.clone()),
         }
     }
 }

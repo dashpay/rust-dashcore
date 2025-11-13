@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::ops::Range;
 
 use dashcore::{block::Header as BlockHeader, BlockHash, Txid};
 #[cfg(test)]
@@ -568,6 +569,10 @@ impl StorageManager for DiskStorageManager {
 
     async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>> {
         Self::load_filter(self, height).await
+    }
+
+    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<(u32, Vec<u8>)>> {
+        Self::load_filters(self, range).await
     }
 
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
