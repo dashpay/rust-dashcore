@@ -1,4 +1,4 @@
-//! Multi-peer network manager for SPV client
+//! Peer network manager for SPV client
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -29,8 +29,8 @@ use crate::network::reputation::{
 use crate::network::{HandshakeManager, NetworkManager, TcpConnection};
 use crate::types::PeerInfo;
 
-/// Multi-peer network manager
-pub struct MultiPeerNetworkManager {
+/// Peer network manager
+pub struct PeerNetworkManager {
     /// Connection pool
     pool: Arc<ConnectionPool>,
     /// DNS discovery
@@ -74,8 +74,8 @@ pub struct MultiPeerNetworkManager {
     connected_peer_count: Arc<AtomicUsize>,
 }
 
-impl MultiPeerNetworkManager {
-    /// Create a new multi-peer network manager
+impl PeerNetworkManager {
+    /// Create a new peer network manager
     pub async fn new(config: &ClientConfig) -> Result<Self, Error> {
         let (message_tx, message_rx) = mpsc::channel(1000);
 
@@ -131,7 +131,7 @@ impl MultiPeerNetworkManager {
 
     /// Start the network manager
     pub async fn start(&self) -> Result<(), Error> {
-        log::info!("Starting multi-peer network manager for {:?}", self.network);
+        log::info!("Starting peer network manager for {:?}", self.network);
 
         let mut peer_addresses = self.initial_peers.clone();
 
@@ -947,7 +947,7 @@ impl MultiPeerNetworkManager {
 
     /// Shutdown the network manager
     pub async fn shutdown(&self) {
-        log::info!("Shutting down multi-peer network manager");
+        log::info!("Shutting down peer network manager");
         self.shutdown.store(true, Ordering::Relaxed);
 
         // Save known peers before shutdown
@@ -980,7 +980,7 @@ impl MultiPeerNetworkManager {
 }
 
 // Implement Clone for use in async closures
-impl Clone for MultiPeerNetworkManager {
+impl Clone for PeerNetworkManager {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
@@ -1010,7 +1010,7 @@ impl Clone for MultiPeerNetworkManager {
 
 // Implement NetworkManager trait
 #[async_trait]
-impl NetworkManager for MultiPeerNetworkManager {
+impl NetworkManager for PeerNetworkManager {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -1232,7 +1232,7 @@ impl NetworkManager for MultiPeerNetworkManager {
 
         tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
-                // Route message through the multi-peer logic
+                // Route message through the peer network logic
                 // For sync messages that require consistent responses, send to only one peer
                 match &message {
                     NetworkMessage::GetHeaders(_)

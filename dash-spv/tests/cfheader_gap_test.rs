@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 use dash_spv::{
     client::ClientConfig,
-    network::MultiPeerNetworkManager,
+    network::PeerNetworkManager,
     storage::{MemoryStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
 };
@@ -40,8 +40,8 @@ fn create_mock_filter_header() -> FilterHeader {
 async fn test_cfheader_gap_detection_no_gap() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
-        FilterSyncManager::<MemoryStorageManager, MultiPeerNetworkManager>::new(
+    let filter_sync: FilterSyncManager<MemoryStorageManager, PeerNetworkManager> =
+        FilterSyncManager::<MemoryStorageManager, PeerNetworkManager>::new(
             &config,
             received_heights,
         );
@@ -75,8 +75,8 @@ async fn test_cfheader_gap_detection_no_gap() {
 async fn test_cfheader_gap_detection_with_gap() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
-        FilterSyncManager::<MemoryStorageManager, MultiPeerNetworkManager>::new(
+    let filter_sync: FilterSyncManager<MemoryStorageManager, PeerNetworkManager> =
+        FilterSyncManager::<MemoryStorageManager, PeerNetworkManager>::new(
             &config,
             received_heights,
         );
@@ -113,8 +113,8 @@ async fn test_cfheader_gap_detection_with_gap() {
 async fn test_cfheader_gap_detection_filter_ahead() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
-        FilterSyncManager::<MemoryStorageManager, MultiPeerNetworkManager>::new(
+    let filter_sync: FilterSyncManager<MemoryStorageManager, PeerNetworkManager> =
+        FilterSyncManager::<MemoryStorageManager, PeerNetworkManager>::new(
             &config,
             received_heights,
         );
@@ -262,7 +262,7 @@ async fn test_cfheader_restart_cooldown() {
     // Network manager omitted until restart logic is implemented
 
     // Note: The following tests are skipped because MockNetworkManager doesn't implement
-    // the full MultiPeerNetworkManager interface required by maybe_restart_cfheader_sync_for_gap
+    // the full PeerNetworkManager interface required by maybe_restart_cfheader_sync_for_gap
     // First attempt should try to restart (and fail)
     // let result1 = filter_sync.maybe_restart_cfheader_sync_for_gap(&mut network, &mut storage).await;
     // assert!(result1.is_err(), "First restart attempt should fail with mock network");

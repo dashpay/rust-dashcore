@@ -1,4 +1,4 @@
-//! Integration tests for multi-peer networking
+//! Integration tests for peer networking
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tokio::time;
 
 use dash_spv::client::{ClientConfig, DashSpvClient};
-use dash_spv::network::MultiPeerNetworkManager;
+use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::{DiskStorageManager, MemoryStorageManager};
 use dash_spv::types::ValidationMode;
 use dashcore::Network;
@@ -30,7 +30,7 @@ fn create_test_config(network: Network, data_dir: Option<TempDir>) -> ClientConf
 
 #[tokio::test]
 #[ignore] // Requires network access
-async fn test_multi_peer_connection() {
+async fn test_peer_connection() {
     let _ = env_logger::builder().is_test(true).try_init();
 
     let temp_dir = TempDir::new().unwrap();
@@ -38,7 +38,7 @@ async fn test_multi_peer_connection() {
     let config = create_test_config(Network::Testnet, Some(temp_dir));
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
     let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
@@ -85,7 +85,7 @@ async fn test_peer_persistence() {
         let config = create_test_config(Network::Testnet, Some(temp_dir));
 
         // Create network manager
-        let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+        let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
         // Create storage manager
         let storage_manager = DiskStorageManager::new(temp_path.clone()).await.unwrap();
@@ -111,7 +111,7 @@ async fn test_peer_persistence() {
         config.storage_path = Some(temp_path.clone());
 
         // Create network manager
-        let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+        let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
         // Create storage manager - reuse same path
         let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
@@ -151,7 +151,7 @@ async fn test_peer_disconnection() {
     config.peers = vec!["127.0.0.1:19899".parse().unwrap(), "127.0.0.1:19898".parse().unwrap()];
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
     let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
@@ -186,7 +186,7 @@ async fn test_max_peer_limit() {
     config.peers = vec!["127.0.0.1:19999".parse().unwrap()];
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
     let storage_manager = MemoryStorageManager::new().await.unwrap();

@@ -396,7 +396,7 @@ impl MempoolFilter {
 }
 ```
 
-### 5. Network Integration (`dash-spv/src/network/peer.rs` modifications)
+### 5. Network Integration (`dash-spv/src/network/manager.rs` modifications)
 
 ```rust
 // Add to Peer struct

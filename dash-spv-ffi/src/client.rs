@@ -115,7 +115,7 @@ type InnerClient = DashSpvClient<
     key_wallet_manager::wallet_manager::WalletManager<
         key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
     >,
-    dash_spv::network::MultiPeerNetworkManager,
+    dash_spv::network::PeerNetworkManager,
     DiskStorageManager,
 >;
 type SharedClient = Arc<Mutex<Option<InnerClient>>>;
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 
     let client_result = runtime.block_on(async move {
         // Construct concrete implementations for generics
-        let network = dash_spv::network::MultiPeerNetworkManager::new(&client_config).await;
+        let network = dash_spv::network::PeerNetworkManager::new(&client_config).await;
         let storage = DiskStorageManager::new(storage_path.clone()).await;
         let wallet = key_wallet_manager::wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,

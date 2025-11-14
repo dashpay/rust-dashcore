@@ -1,9 +1,9 @@
 //! Unit tests for network module
 
 #[cfg(test)]
-mod multi_peer_tests {
+mod peer_network_manager_tests {
     use crate::client::ClientConfig;
-    use crate::network::multi_peer::MultiPeerNetworkManager;
+    use crate::network::manager::PeerNetworkManager;
     use crate::network::NetworkManager;
     use dashcore::Network;
     use std::time::Duration;
@@ -72,9 +72,9 @@ mod multi_peer_tests {
     }
 
     #[tokio::test]
-    async fn test_multi_peer_manager_creation() {
+    async fn test_peer_network_manager_creation() {
         let config = create_test_config();
-        let manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+        let manager = PeerNetworkManager::new(&config).await.unwrap();
 
         // Should start with zero peers
         assert_eq!(manager.peer_count_async().await, 0);
@@ -85,11 +85,11 @@ mod multi_peer_tests {
     #[tokio::test]
     async fn test_as_any_downcast() {
         let config = create_test_config();
-        let manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+        let manager = PeerNetworkManager::new(&config).await.unwrap();
 
         // Test that we can downcast through the trait
         let network_manager: &dyn NetworkManager = &manager;
-        let downcasted = network_manager.as_any().downcast_ref::<MultiPeerNetworkManager>();
+        let downcasted = network_manager.as_any().downcast_ref::<PeerNetworkManager>();
 
         assert!(downcasted.is_some());
     }

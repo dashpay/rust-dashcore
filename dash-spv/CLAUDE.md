@@ -119,7 +119,7 @@ TCP-based networking with proper Dash protocol implementation:
 - Connection management via `TcpConnection`
 - Handshake handling via `HandshakeManager`
 - Message routing via `MessageHandler`
-- Multi-peer support via `MultiPeerManager`
+- Peer support via `PeerNetworkManager`
 
 ### Validation Modes
 - `ValidationMode::None`: No validation (fast)
