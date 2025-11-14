@@ -10,6 +10,7 @@
 //! - `progress.rs` - Sync progress calculation and reporting
 //! - `mempool.rs` - Mempool tracking and coordination
 //! - `queries.rs` - Peer, masternode, and balance queries
+//! - `transactions.rs` - Transaction operations (e.g., broadcast)
 //! - `chainlock.rs` - ChainLock and InstantLock processing
 //! - `sync_coordinator.rs` - Sync orchestration and network monitoring (the largest module)
 //!
@@ -48,6 +49,7 @@ mod mempool;
 mod progress;
 mod queries;
 mod sync_coordinator;
+mod transactions;
 
 // Re-export public types from extracted modules
 pub use block_processor::{BlockProcessingTask, BlockProcessor};
