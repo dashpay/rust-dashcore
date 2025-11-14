@@ -13,8 +13,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
-) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, MemoryStorageManager>
-{
+) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, MemoryStorageManager> {
     let config = ClientConfig::testnet().without_filters().without_masternodes();
 
     // Create network manager

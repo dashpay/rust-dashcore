@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
-    network::{PeerNetworkManager, NetworkManager},
+    network::{NetworkManager, PeerNetworkManager},
     storage::{MemoryStorageManager, StorageManager},
     types::ValidationMode,
 };

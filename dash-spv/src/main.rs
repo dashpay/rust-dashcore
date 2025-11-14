@@ -243,14 +243,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
 
     // Create network manager
-    let network_manager =
-        match dash_spv::network::manager::PeerNetworkManager::new(&config).await {
-            Ok(nm) => nm,
-            Err(e) => {
-                eprintln!("Failed to create network manager: {}", e);
-                process::exit(1);
-            }
-        };
+    let network_manager = match dash_spv::network::manager::PeerNetworkManager::new(&config).await {
+        Ok(nm) => nm,
+        Err(e) => {
+            eprintln!("Failed to create network manager: {}", e);
+            process::exit(1);
+        }
+    };
 
     // Create and start the client based on storage type
     if config.enable_persistence {

@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use dash_spv::client::config::MempoolStrategy;
-use dash_spv::network::{HandshakeManager, PeerNetworkManager, NetworkManager, TcpConnection};
+use dash_spv::network::{HandshakeManager, NetworkManager, PeerNetworkManager, TcpConnection};
 use dash_spv::{ClientConfig, Network};
 
 #[tokio::test]
