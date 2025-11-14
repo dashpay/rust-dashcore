@@ -75,6 +75,15 @@ pub struct DiskStorageManager {
 }
 
 impl DiskStorageManager {
+    /// Force-save the reverse header index to disk synchronously.
+    pub(super) async fn flush_header_index(&self) -> StorageResult<()> {
+        let index = self.header_hash_index.read().await.clone();
+        let path = self.base_path.join("headers/index.dat");
+        super::io::save_index_to_disk(&path, &index).await?;
+        *self.last_index_save_count.write().await = index.len();
+        Ok(())
+    }
+
     /// Create a new disk storage manager with segmented storage.
     pub async fn new(base_path: PathBuf) -> StorageResult<Self> {
         use std::fs;

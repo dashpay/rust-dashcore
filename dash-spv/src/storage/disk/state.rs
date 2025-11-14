@@ -434,6 +434,9 @@ impl DiskStorageManager {
         // Save all dirty segments
         super::segments::save_dirty_segments(self).await?;
 
+        // Ensure the reverse index reflects every stored header before we exit
+        self.flush_header_index().await?;
+
         // Shutdown background worker
         if let Some(tx) = self.worker_tx.take() {
             let _ = tx.send(super::manager::WorkerCommand::Shutdown).await;
@@ -701,6 +704,29 @@ mod tests {
     use dashcore::{block::Version, pow::CompactTarget};
     use tempfile::TempDir;
 
+    fn build_headers(count: usize) -> Vec<BlockHeader> {
+        let mut headers = Vec::with_capacity(count);
+        let mut prev_hash = BlockHash::from_byte_array([0u8; 32]);
+
+        for i in 0..count {
+            let header = BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: prev_hash,
+                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array(
+                    [(i % 255) as u8; 32],
+                )
+                .into(),
+                time: 1 + i as u32,
+                bits: CompactTarget::from_consensus(0x1d00ffff),
+                nonce: i as u32,
+            };
+            prev_hash = header.block_hash();
+            headers.push(header);
+        }
+
+        headers
+    }
+
     #[tokio::test]
     async fn test_sentinel_headers_not_returned() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
@@ -856,6 +882,30 @@ mod tests {
             "Header at base blockchain height should exist after reload"
         );
         assert_eq!(header_after_reload.unwrap(), headers[0]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_flushes_index() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_path_buf();
+        let headers = build_headers(11_000);
+        let last_hash = headers.last().unwrap().block_hash();
+
+        {
+            let mut storage = DiskStorageManager::new(base_path.clone()).await?;
+
+            storage.store_headers(&headers[..10_000]).await?;
+            super::super::segments::save_dirty_segments(&storage).await?;
+
+            storage.store_headers(&headers[10_000..]).await?;
+            storage.shutdown().await?;
+        }
+
+        let storage = DiskStorageManager::new(base_path).await?;
+        let height = storage.get_header_height_by_hash(&last_hash).await?;
+        assert_eq!(height, Some(10_999));
 
         Ok(())
     }
