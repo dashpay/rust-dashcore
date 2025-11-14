@@ -138,6 +138,13 @@ impl<
         mempool_state.transactions.len()
     }
 
+    /// Record that we attempted to send a transaction (for UX/heuristics).
+    pub async fn record_send(&self, txid: dashcore::Txid) -> Result<()> {
+        let mut mempool_state = self.mempool_state.write().await;
+        mempool_state.record_send(txid);
+        Ok(())
+    }
+
     /// Update mempool filter with wallet's monitored addresses.
     #[allow(dead_code)]
     pub(super) async fn update_mempool_filter(&mut self) {
