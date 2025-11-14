@@ -1331,10 +1331,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_load_filters(
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
+        // Get storage reference without taking the client
+        let storage = {
+            let guard = inner.lock().unwrap();
+            match guard.as_ref() {
+                Some(client) => client.storage(),
                 None => {
                     set_last_error("Client not initialized");
                     return None;
@@ -1342,16 +1343,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_load_filters(
             }
         };
 
-        // Get the storage
-        let storage = spv_client.storage();
+        // Access storage directly - works even during sync
         let storage_guard = storage.lock().await;
-
-        // Load filters in range
         let filters_result = storage_guard.load_filters(start_height..end_height).await;
-
-        // Put the client back
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
+        drop(storage_guard);
 
         match filters_result {
             Ok(filters) => {
@@ -1723,10 +1718,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_filter_matched_heights(
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
+        // Get chain state without taking the client
+        let chain_state = {
+            let guard = inner.lock().unwrap();
+            match guard.as_ref() {
+                Some(client) => client.chain_state().await,
                 None => {
                     set_last_error("Client not initialized");
                     return None;
@@ -1734,15 +1730,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_filter_matched_heights(
             }
         };
 
-        // Get the chain state
-        let chain_state = spv_client.chain_state().await;
-
-        // Get filter matches in range
+        // Get filter matches in range - works even during sync
         let matches_result = chain_state.get_filter_matched_heights(start_height..end_height);
-
-        // Put the client back
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
 
         match matches_result {
             Ok(matches) => {
