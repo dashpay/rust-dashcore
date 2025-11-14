@@ -1,6 +1,6 @@
 //! Simple header synchronization example.
 
-use dash_spv::network::MultiPeerNetworkManager;
+use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::MemoryStorageManager;
 use dash_spv::{init_logging, ClientConfig, DashSpvClient};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .without_masternodes(); // Skip masternode sync for this example
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
     let storage_manager = MemoryStorageManager::new().await?;

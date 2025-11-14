@@ -5,8 +5,7 @@ pub mod connection;
 pub mod constants;
 pub mod discovery;
 pub mod handshake;
-
-pub mod multi_peer;
+pub mod manager;
 pub mod persist;
 pub mod pool;
 pub mod reputation;
@@ -26,8 +25,7 @@ use dashcore::BlockHash;
 
 pub use connection::TcpConnection;
 pub use handshake::{HandshakeManager, HandshakeState};
-
-pub use multi_peer::MultiPeerNetworkManager;
+pub use manager::PeerNetworkManager;
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]

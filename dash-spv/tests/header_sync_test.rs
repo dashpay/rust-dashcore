@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
-    network::MultiPeerNetworkManager,
+    network::PeerNetworkManager,
     storage::{MemoryStorageManager, StorageManager},
     sync::headers::HeaderSyncManager,
     types::{ChainState, ValidationMode},
@@ -299,7 +299,7 @@ async fn test_header_sync_with_client_integration() {
 
     // Create network manager
     let network_manager =
-        MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
+        PeerNetworkManager::new(&config).await.expect("Failed to create network manager");
 
     // Create storage manager
     let storage_manager =
