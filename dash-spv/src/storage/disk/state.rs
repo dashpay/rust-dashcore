@@ -701,6 +701,29 @@ mod tests {
     use dashcore::{block::Version, pow::CompactTarget};
     use tempfile::TempDir;
 
+    fn build_headers(count: usize) -> Vec<BlockHeader> {
+        let mut headers = Vec::with_capacity(count);
+        let mut prev_hash = BlockHash::from_byte_array([0u8; 32]);
+
+        for i in 0..count {
+            let header = BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: prev_hash,
+                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array(
+                    [(i % 255) as u8; 32],
+                )
+                .into(),
+                time: 1 + i as u32,
+                bits: CompactTarget::from_consensus(0x1d00ffff),
+                nonce: i as u32,
+            };
+            prev_hash = header.block_hash();
+            headers.push(header);
+        }
+
+        headers
+    }
+
     #[tokio::test]
     async fn test_sentinel_headers_not_returned() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
@@ -768,6 +791,43 @@ mod tests {
         // Load headers - should only get the 3 we stored
         let loaded_headers = storage2.load_headers(0..super::super::HEADERS_PER_SEGMENT).await?;
         assert_eq!(loaded_headers.len(), 3);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_stale_index_rebuilt_on_startup() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_path_buf();
+        let headers = build_headers(120);
+
+        {
+            let mut storage = DiskStorageManager::new(base_path.clone()).await?;
+            storage.store_headers(&headers).await?;
+            storage.shutdown().await?;
+        }
+
+        let index_path = base_path.join("headers/index.dat");
+        let mut index = super::super::io::load_index_from_file(&index_path).await?;
+        let missing_hashes: Vec<BlockHash> =
+            headers[headers.len() - 5..].iter().map(|header| header.block_hash()).collect();
+        for hash in &missing_hashes {
+            index.remove(hash);
+        }
+        super::super::io::save_index_to_disk(&index_path, &index).await?;
+
+        // Re-open storage. During initialization it should detect the truncated index and rebuild it.
+        let storage = DiskStorageManager::new(base_path.clone()).await?;
+
+        for (offset, hash) in missing_hashes.iter().enumerate() {
+            let expected_height = (headers.len() - missing_hashes.len() + offset) as u32;
+            let height = storage.get_header_height_by_hash(hash).await?;
+            assert_eq!(
+                height,
+                Some(expected_height),
+                "Rebuilt index should provide height for hash at tip"
+            );
+        }
 
         Ok(())
     }

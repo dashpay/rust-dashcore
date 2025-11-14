@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
+use serde::Deserialize;
 
 use crate::error::{StorageError, StorageResult};
 use crate::types::{MempoolState, UnconfirmedTransaction};
@@ -75,6 +76,85 @@ pub struct DiskStorageManager {
 }
 
 impl DiskStorageManager {
+    /// Read the persisted sync_base_height from chain state metadata without loading full state.
+    async fn read_persisted_sync_base_height(&self) -> u32 {
+        #[derive(Deserialize)]
+        struct ChainStateDiskMetadata {
+            #[serde(default)]
+            sync_base_height: Option<u32>,
+        }
+
+        let path = self.base_path.join("state/chain.json");
+        if !path.exists() {
+            return 0;
+        }
+
+        match tokio::fs::read_to_string(&path).await {
+            Ok(content) => match serde_json::from_str::<ChainStateDiskMetadata>(&content) {
+                Ok(meta) => meta.sync_base_height.unwrap_or(0),
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to parse chain state metadata for sync_base_height: {}",
+                        err
+                    );
+                    0
+                }
+            },
+            Err(err) => {
+                tracing::warn!("Failed to read chain state metadata for sync_base_height: {}", err);
+                0
+            }
+        }
+    }
+
+    /// Rebuild the header hash index from all on-disk header segments.
+    async fn rebuild_header_index_from_segments(
+        &self,
+        sync_base_height: u32,
+        segment_ids: &[u32],
+    ) -> StorageResult<()> {
+        if segment_ids.is_empty() {
+            self.header_hash_index.write().await.clear();
+            *self.last_index_save_count.write().await = 0;
+            return Ok(());
+        }
+
+        let mut rebuilt_index = HashMap::new();
+
+        for segment_id in segment_ids {
+            let segment_path =
+                self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
+            if !segment_path.exists() {
+                continue;
+            }
+
+            let headers = super::io::load_headers_from_file(&segment_path).await?;
+            let storage_start = segment_id * HEADERS_PER_SEGMENT;
+
+            for (offset, header) in headers.iter().enumerate() {
+                let storage_index = storage_start + offset as u32;
+                let blockchain_height = sync_base_height + storage_index;
+                rebuilt_index.insert(header.block_hash(), blockchain_height);
+            }
+        }
+
+        let entry_count = rebuilt_index.len();
+        super::io::save_index_to_disk(&self.base_path.join("headers/index.dat"), &rebuilt_index)
+            .await?;
+
+        *self.header_hash_index.write().await = rebuilt_index;
+        *self.last_index_save_count.write().await = entry_count;
+
+        tracing::info!(
+            "Rebuilt header index from {} segments ({} entries, sync_base_height={})",
+            segment_ids.len(),
+            entry_count,
+            sync_base_height
+        );
+
+        Ok(())
+    }
+
     /// Create a new disk storage manager with segmented storage.
     pub async fn new(base_path: PathBuf) -> StorageResult<Self> {
         use std::fs;
@@ -278,6 +358,9 @@ impl DiskStorageManager {
     async fn load_segment_metadata(&mut self) -> StorageResult<()> {
         use std::fs;
 
+        let persisted_sync_base_height = self.read_persisted_sync_base_height().await;
+        *self.sync_base_height.write().await = persisted_sync_base_height;
+
         // Load header index if it exists
         let index_path = self.base_path.join("headers/index.dat");
         let mut index_loaded = false;
@@ -307,45 +390,17 @@ impl DiskStorageManager {
                 }
             }
 
+            all_segment_ids.sort();
+
             // If index wasn't loaded but we have segments, rebuild it
             if !index_loaded && !all_segment_ids.is_empty() {
                 tracing::info!("Index file not found, rebuilding from segments...");
-
-                // Load chain state to get sync_base_height for proper height calculation
-                let sync_base_height = if let Ok(Some(chain_state)) = self.load_chain_state().await
-                {
-                    chain_state.sync_base_height
-                } else {
-                    0 // Assume genesis sync if no chain state
-                };
-
-                let mut new_index = HashMap::new();
-
-                // Sort segment IDs to process in order
-                all_segment_ids.sort();
-
-                for segment_id in all_segment_ids {
-                    let segment_path =
-                        self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
-                    if let Ok(headers) = super::io::load_headers_from_file(&segment_path).await {
-                        // Calculate the storage index range for this segment
-                        let storage_start = segment_id * HEADERS_PER_SEGMENT;
-                        for (offset, header) in headers.iter().enumerate() {
-                            // Convert storage index to blockchain height
-                            let storage_index = storage_start + offset as u32;
-                            let blockchain_height = sync_base_height + storage_index;
-                            let hash = header.block_hash();
-                            new_index.insert(hash, blockchain_height);
-                        }
-                    }
-                }
-
-                *self.header_hash_index.write().await = new_index;
-                tracing::info!(
-                    "Index rebuilt with {} entries (sync_base_height: {})",
-                    self.header_hash_index.read().await.len(),
-                    sync_base_height
-                );
+                self.rebuild_header_index_from_segments(
+                    persisted_sync_base_height,
+                    &all_segment_ids,
+                )
+                .await?;
+                index_loaded = true;
             }
 
             // Also check the filters directory for filter segments
@@ -363,6 +418,8 @@ impl DiskStorageManager {
                 }
             }
 
+            let mut tip_storage_index = None;
+
             // If we have segments, load the highest one to find tip
             if let Some(segment_id) = max_segment_id {
                 super::segments::ensure_segment_loaded(self, segment_id).await?;
@@ -371,6 +428,7 @@ impl DiskStorageManager {
                     let tip_height =
                         segment_id * HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
                     *self.cached_tip_height.write().await = Some(tip_height);
+                    tip_storage_index = Some(tip_height);
                 }
             }
 
@@ -392,6 +450,33 @@ impl DiskStorageManager {
                     };
 
                     *self.cached_filter_tip_height.write().await = Some(blockchain_height);
+                }
+            }
+
+            // Detect and repair stale header index files (e.g., if process exited before final save).
+            if index_loaded && !all_segment_ids.is_empty() {
+                if let Some(storage_tip_index) = tip_storage_index {
+                    let expected_tip_height = persisted_sync_base_height + storage_tip_index;
+                    let index_guard = self.header_hash_index.read().await;
+                    let max_index_height = index_guard.values().copied().max();
+                    drop(index_guard);
+
+                    let index_missing_tip = max_index_height
+                        .map(|max_height| max_height < expected_tip_height)
+                        .unwrap_or(true);
+
+                    if index_missing_tip {
+                        tracing::warn!(
+                            "Header hash index is stale (max_height={:?}, tip_height={}). Rebuilding from segments…",
+                            max_index_height,
+                            expected_tip_height
+                        );
+                        self.rebuild_header_index_from_segments(
+                            persisted_sync_base_height,
+                            &all_segment_ids,
+                        )
+                        .await?;
+                    }
                 }
             }
         }
