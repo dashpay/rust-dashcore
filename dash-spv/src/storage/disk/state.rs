@@ -833,6 +833,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_missing_hash_triggers_runtime_rebuild() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_path_buf();
+        let headers = build_headers(150);
+
+        {
+            let mut storage = DiskStorageManager::new(base_path.clone()).await?;
+            storage.store_headers(&headers).await?;
+            storage.shutdown().await?;
+        }
+
+        let target_hash = headers[42].block_hash();
+        let index_path = base_path.join("headers/index.dat");
+        let mut index = super::super::io::load_index_from_file(&index_path).await?;
+        index.remove(&target_hash);
+        index.insert(BlockHash::from_byte_array([0xAB; 32]), 999_999);
+        super::super::io::save_index_to_disk(&index_path, &index).await?;
+
+        let storage = DiskStorageManager::new(base_path.clone()).await?;
+        let height = storage.get_header_height_by_hash(&target_hash).await?;
+        assert_eq!(height, Some(42));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_checkpoint_storage_indexing() -> StorageResult<()> {
         use dashcore::TxMerkleNode;
         use tempfile::tempdir;

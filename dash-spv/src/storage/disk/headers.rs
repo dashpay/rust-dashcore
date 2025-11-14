@@ -420,6 +420,23 @@ impl DiskStorageManager {
 
     /// Get header height by hash.
     pub async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
+        if let Some(height) = self.header_hash_index.read().await.get(hash).copied() {
+            return Ok(Some(height));
+        }
+
+        tracing::warn!(
+            "Header hash {} not found in index – attempting to rebuild header index from disk",
+            hash
+        );
+
+        let segment_ids = self.collect_header_segment_ids().await?;
+        if segment_ids.is_empty() {
+            return Ok(None);
+        }
+
+        let sync_base_height = *self.sync_base_height.read().await;
+        self.rebuild_header_index_from_segments(sync_base_height, &segment_ids).await?;
+
         Ok(self.header_hash_index.read().await.get(hash).copied())
     }
 

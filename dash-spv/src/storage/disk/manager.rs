@@ -108,7 +108,7 @@ impl DiskStorageManager {
     }
 
     /// Rebuild the header hash index from all on-disk header segments.
-    async fn rebuild_header_index_from_segments(
+    pub(super) async fn rebuild_header_index_from_segments(
         &self,
         sync_base_height: u32,
         segment_ids: &[u32],
@@ -153,6 +153,29 @@ impl DiskStorageManager {
         );
 
         Ok(())
+    }
+
+    /// Collect all header segment IDs currently present on disk.
+    pub(super) async fn collect_header_segment_ids(&self) -> StorageResult<Vec<u32>> {
+        use std::fs;
+
+        let headers_dir = self.base_path.join("headers");
+        let mut segment_ids = Vec::new();
+
+        if let Ok(entries) = fs::read_dir(&headers_dir) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.starts_with("segment_") && name.ends_with(".dat") {
+                        if let Ok(id) = name[8..12].parse::<u32>() {
+                            segment_ids.push(id);
+                        }
+                    }
+                }
+            }
+        }
+
+        segment_ids.sort_unstable();
+        Ok(segment_ids)
     }
 
     /// Create a new disk storage manager with segmented storage.
@@ -457,19 +480,33 @@ impl DiskStorageManager {
             if index_loaded && !all_segment_ids.is_empty() {
                 if let Some(storage_tip_index) = tip_storage_index {
                     let expected_tip_height = persisted_sync_base_height + storage_tip_index;
-                    let index_guard = self.header_hash_index.read().await;
-                    let max_index_height = index_guard.values().copied().max();
-                    drop(index_guard);
+                    let expected_entries = storage_tip_index as usize + 1;
+                    let (actual_entries, max_index_height) = {
+                        let guard = self.header_hash_index.read().await;
+                        (guard.len(), guard.values().copied().max())
+                    };
 
-                    let index_missing_tip = max_index_height
+                    let mut rebuild_reason = None;
+
+                    if actual_entries < expected_entries {
+                        rebuild_reason = Some(format!(
+                            "index missing entries (actual={}, expected={})",
+                            actual_entries, expected_entries
+                        ));
+                    } else if max_index_height
                         .map(|max_height| max_height < expected_tip_height)
-                        .unwrap_or(true);
+                        .unwrap_or(true)
+                    {
+                        rebuild_reason = Some(format!(
+                            "index tip too low (max_height={:?}, expected_tip={})",
+                            max_index_height, expected_tip_height
+                        ));
+                    }
 
-                    if index_missing_tip {
+                    if let Some(reason) = rebuild_reason {
                         tracing::warn!(
-                            "Header hash index is stale (max_height={:?}, tip_height={}). Rebuilding from segments…",
-                            max_index_height,
-                            expected_tip_height
+                            "Header hash index is stale: {}. Rebuilding from segments…",
+                            reason
                         );
                         self.rebuild_header_index_from_segments(
                             persisted_sync_base_height,
