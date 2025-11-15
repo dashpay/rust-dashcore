@@ -19,7 +19,7 @@ impl<
         let network = self
             .network
             .as_any()
-            .downcast_ref::<crate::network::multi_peer::MultiPeerNetworkManager>()
+            .downcast_ref::<crate::network::manager::PeerNetworkManager>()
             .ok_or_else(|| {
                 SpvError::Config("Network manager does not support broadcasting".to_string())
             })?;
