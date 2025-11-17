@@ -23,17 +23,17 @@ use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
 use crate::network::persist::PeerStore;
-use crate::network::pool::ConnectionPool;
+use crate::network::pool::PeerPool;
 use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
-use crate::network::{HandshakeManager, NetworkManager, TcpConnection};
+use crate::network::{HandshakeManager, NetworkManager, Peer};
 use crate::types::PeerInfo;
 
 /// Peer network manager
 pub struct PeerNetworkManager {
-    /// Connection pool
-    pool: Arc<ConnectionPool>,
+    /// Peer pool
+    pool: Arc<PeerPool>,
     /// DNS discovery
     discovery: Arc<DnsDiscovery>,
     /// AddrV2 handler
@@ -104,7 +104,7 @@ impl PeerNetworkManager {
         let exclusive_mode = config.restrict_to_configured_peers || !config.peers.is_empty();
 
         Ok(Self {
-            pool: Arc::new(ConnectionPool::new()),
+            pool: Arc::new(PeerPool::new()),
             discovery: Arc::new(discovery),
             addrv2_handler: Arc::new(AddrV2Handler::new()),
             peer_store: Arc::new(peer_store),
@@ -216,12 +216,12 @@ impl PeerNetworkManager {
         tasks.spawn(async move {
             log::debug!("Attempting to connect to {}", addr);
 
-            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), network).await {
-                Ok(mut conn) => {
+            match Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network).await {
+                Ok(mut peer) => {
                     // Perform handshake
                     let mut handshake_manager =
                         HandshakeManager::new(network, mempool_strategy, user_agent);
-                    match handshake_manager.perform_handshake(&mut conn).await {
+                    match handshake_manager.perform_handshake(&mut peer).await {
                         Ok(_) => {
                             log::info!("Successfully connected to {}", addr);
 
@@ -229,8 +229,8 @@ impl PeerNetworkManager {
                             reputation_manager.record_successful_connection(addr).await;
 
                             // Add to pool
-                            if let Err(e) = pool.add_connection(addr, conn).await {
-                                log::error!("Failed to add connection to pool: {}", e);
+                            if let Err(e) = pool.add_peer(addr, peer).await {
+                                log::error!("Failed to add peer to pool: {}", e);
                                 return;
                             }
 
@@ -285,7 +285,7 @@ impl PeerNetworkManager {
     /// Start reading messages from a peer
     async fn start_peer_reader(
         addr: SocketAddr,
-        pool: Arc<ConnectionPool>,
+        pool: Arc<PeerPool>,
         message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
         addrv2_handler: Arc<AddrV2Handler>,
         shutdown_token: CancellationToken,
@@ -305,30 +305,30 @@ impl PeerNetworkManager {
                     break;
                 }
 
-                // Get connection
-                let conn = match pool.get_connection(&addr).await {
-                    Some(conn) => conn,
+                // Get peer
+                let peer = match pool.get_peer(&addr).await {
+                    Some(peer) => peer,
                     None => {
-                        log::warn!("Breaking peer reader loop for {} - connection no longer in pool (iteration {})", addr, loop_iteration);
+                        log::warn!("Breaking peer reader loop for {} - peer no longer in pool (iteration {})", addr, loop_iteration);
                         break;
                     }
                 };
 
                 // Read message with minimal lock time
                 let msg_result = {
-                    // Try to get a read lock first to check if connection is available
-                    let conn_guard = conn.read().await;
-                    if !conn_guard.is_connected() {
-                        log::warn!("Breaking peer reader loop for {} - connection no longer connected (iteration {})", addr, loop_iteration);
-                        drop(conn_guard);
+                    // Try to get a read lock first to check if peer is available
+                    let peer_guard = peer.read().await;
+                    if !peer_guard.is_connected() {
+                        log::warn!("Breaking peer reader loop for {} - peer no longer connected (iteration {})", addr, loop_iteration);
+                        drop(peer_guard);
                         break;
                     }
-                    drop(conn_guard);
+                    drop(peer_guard);
 
                     // Now get write lock only for the duration of the read
-                    let mut conn_guard = conn.write().await;
+                    let mut peer_guard = peer.write().await;
                     tokio::select! {
-                        message = conn_guard.receive_message() => {
+                        message = peer_guard.receive_message() => {
                             message
                         },
                         _ = shutdown_token.cancelled() => {
@@ -355,9 +355,9 @@ impl PeerNetworkManager {
                                     "Peer {} sent SendHeaders2 - they will send compressed headers",
                                     addr
                                 );
-                                let mut conn_guard = conn.write().await;
-                                conn_guard.set_peer_sent_sendheaders2(true);
-                                drop(conn_guard);
+                                let mut peer_guard = peer.write().await;
+                                peer_guard.set_peer_sent_sendheaders2(true);
+                                drop(peer_guard);
                                 continue; // Don't forward to client
                             }
                             NetworkMessage::AddrV2(addresses) => {
@@ -371,16 +371,16 @@ impl PeerNetworkManager {
                                 );
                                 // Send our known addresses
                                 let response = addrv2_handler.build_addr_response().await;
-                                let mut conn_guard = conn.write().await;
-                                if let Err(e) = conn_guard.send_message(response).await {
+                                let mut peer_guard = peer.write().await;
+                                if let Err(e) = peer_guard.send_message(response).await {
                                     log::error!("Failed to send addr response to {}: {}", addr, e);
                                 }
                                 continue; // Don't forward GetAddr to client
                             }
                             NetworkMessage::Ping(nonce) => {
                                 // Handle ping directly
-                                let mut conn_guard = conn.write().await;
-                                if let Err(e) = conn_guard.handle_ping(*nonce).await {
+                                let mut peer_guard = peer.write().await;
+                                if let Err(e) = peer_guard.handle_ping(*nonce).await {
                                     log::error!("Failed to handle ping from {}: {}", addr, e);
                                     // If we can't send pong, connection is likely broken
                                     if matches!(e, NetworkError::ConnectionFailed(_)) {
@@ -392,8 +392,8 @@ impl PeerNetworkManager {
                             }
                             NetworkMessage::Pong(nonce) => {
                                 // Handle pong directly
-                                let mut conn_guard = conn.write().await;
-                                if let Err(e) = conn_guard.handle_pong(*nonce) {
+                                let mut peer_guard = peer.write().await;
+                                if let Err(e) = peer_guard.handle_pong(*nonce) {
                                     log::error!("Failed to handle pong from {}: {}", addr, e);
                                 }
                                 continue; // Don't forward pong to client
@@ -423,15 +423,15 @@ impl PeerNetworkManager {
                                 // TODO: Re-enable this warning once headers2 is fixed
                                 // Currently suppressed since headers2 is disabled
                                 /*
-                                let conn_guard = conn.read().await;
-                                if conn_guard.peer_info().services.map(|s| {
+                                let peer_guard = peer.read().await;
+                                if peer_guard.peer_info().services.map(|s| {
                                     dashcore::network::constants::ServiceFlags::from(s).has(
                                         dashcore::network::constants::ServiceFlags::from(2048u64)
                                     )
                                 }).unwrap_or(false) {
                                     log::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
                                 }
-                                drop(conn_guard);
+                                drop(peer_guard);
                                 */
                                 // Forward to client
                             }
@@ -563,9 +563,9 @@ impl PeerNetworkManager {
 
             // Remove from pool
             log::warn!("Disconnecting from {} (peer reader loop ended)", addr);
-            let removed = pool.remove_connection(&addr).await;
+            let removed = pool.remove_peer(&addr).await;
             if removed.is_some() {
-                // Decrement connected peer counter when a connection is removed
+                // Decrement connected peer counter when a peer is removed
                 connected_peer_count.fetch_sub(1, Ordering::Relaxed);
             }
 
@@ -580,7 +580,7 @@ impl PeerNetworkManager {
         });
     }
 
-    /// Start connection maintenance loop
+    /// Start peer connection maintenance loop
     async fn start_maintenance_loop(&self) {
         let pool = self.pool.clone();
         let discovery = self.discovery.clone();
@@ -597,7 +597,7 @@ impl PeerNetworkManager {
         // Check if we're in exclusive mode (explicit flag or peers configured)
         let exclusive_mode = self.exclusive_mode;
 
-        // Clone self for connection callback
+        // Clone self for peer callback
         let connect_fn = {
             let this = self.clone();
             move |addr| {
@@ -612,7 +612,7 @@ impl PeerNetworkManager {
                 // Clean up disconnected peers
                 pool.cleanup_disconnected().await;
 
-                let count = pool.connection_count().await;
+                let count = pool.peer_count().await;
                 log::debug!("Connected peers: {}", count);
                 // Keep the cached counter in sync with actual pool count
                 connected_peer_count.store(count, Ordering::Relaxed);
@@ -672,7 +672,7 @@ impl PeerNetworkManager {
                         }
 
                         // If still need more, check if we can use DNS (after 10 second delay)
-                        let count = pool.connection_count().await;
+                        let count = pool.peer_count().await;
                         if count < MIN_PEERS {
                             let elapsed = SystemTime::now()
                                 .duration_since(search_time)
@@ -720,10 +720,10 @@ impl PeerNetworkManager {
                 }
 
                 // Send ping to all peers if needed
-                for (addr, conn) in pool.get_all_connections().await {
-                    let mut conn_guard = conn.write().await;
-                    if conn_guard.should_ping() {
-                        if let Err(e) = conn_guard.send_ping().await {
+                for (addr, peer) in pool.get_all_peers().await {
+                    let mut peer_guard = peer.write().await;
+                    if peer_guard.should_ping() {
+                        if let Err(e) = peer_guard.send_ping().await {
                             log::error!("Failed to ping {}: {}", addr, e);
                             // Update reputation for ping failure
                             reputation_manager.update_reputation(
@@ -733,7 +733,7 @@ impl PeerNetworkManager {
                             ).await;
                         }
                     }
-                    conn_guard.cleanup_old_pings();
+                    peer_guard.cleanup_old_pings();
                 }
 
                 // Only save known peers if not in exclusive mode
@@ -767,9 +767,9 @@ impl PeerNetworkManager {
 
     /// Send a message to a single peer (using sticky peer selection for sync consistency)
     async fn send_to_single_peer(&self, message: NetworkMessage) -> NetworkResult<()> {
-        let connections = self.pool.get_all_connections().await;
+        let peers = self.pool.get_all_peers().await;
 
-        if connections.is_empty() {
+        if peers.is_empty() {
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
 
@@ -780,10 +780,10 @@ impl PeerNetworkManager {
         let selected_peer = if requires_compact_filters {
             // Find a peer that supports compact filters
             let mut filter_peer = None;
-            for (addr, conn) in &connections {
-                let conn_guard = conn.read().await;
-                let peer_info = conn_guard.peer_info();
-                drop(conn_guard);
+            for (addr, peer) in &peers {
+                let peer_guard = peer.read().await;
+                let peer_info = peer_guard.peer_info();
+                drop(peer_guard);
 
                 if peer_info.supports_compact_filters() {
                     filter_peer = Some(*addr);
@@ -808,12 +808,12 @@ impl PeerNetworkManager {
             let mut current_sync_peer = self.current_sync_peer.lock().await;
             let selected = if let Some(current_addr) = *current_sync_peer {
                 // Check if current sync peer is still connected
-                if connections.iter().any(|(addr, _)| *addr == current_addr) {
+                if peers.iter().any(|(addr, _)| *addr == current_addr) {
                     // Keep using the same peer for sync consistency
                     current_addr
                 } else {
                     // Current sync peer disconnected, pick a new one
-                    let new_addr = connections[0].0;
+                    let new_addr = peers[0].0;
                     log::info!(
                         "Sync peer switched from {} to {} (previous peer disconnected)",
                         current_addr,
@@ -824,7 +824,7 @@ impl PeerNetworkManager {
                 }
             } else {
                 // No current sync peer, pick the first available
-                let new_addr = connections[0].0;
+                let new_addr = peers[0].0;
                 log::info!("Sync peer selected: {}", new_addr);
                 *current_sync_peer = Some(new_addr);
                 new_addr
@@ -833,8 +833,8 @@ impl PeerNetworkManager {
             selected
         };
 
-        // Find the connection for the selected peer
-        let (addr, conn) = connections
+        // Find the peer for the selected address
+        let (addr, peer) = peers
             .iter()
             .find(|(a, _)| *a == selected_peer)
             .ok_or_else(|| NetworkError::ConnectionFailed("Selected peer not found".to_string()))?;
@@ -863,8 +863,8 @@ impl PeerNetworkManager {
             }
         }
 
-        let mut conn_guard = conn.write().await;
-        conn_guard
+        let mut peer_guard = peer.write().await;
+        peer_guard
             .send_message(message)
             .await
             .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
@@ -872,11 +872,11 @@ impl PeerNetworkManager {
 
     /// Broadcast a message to all connected peers
     pub async fn broadcast(&self, message: NetworkMessage) -> Vec<Result<(), Error>> {
-        let connections = self.pool.get_all_connections().await;
+        let peers = self.pool.get_all_peers().await;
         let mut handles = Vec::new();
 
         // Spawn tasks for concurrent sending
-        for (addr, conn) in connections {
+        for (addr, peer) in peers {
             // Reduce verbosity for common sync messages
             match &message {
                 NetworkMessage::GetHeaders(_) | NetworkMessage::GetCFilters(_) => {
@@ -889,8 +889,8 @@ impl PeerNetworkManager {
             let msg = message.clone();
 
             let handle = tokio::spawn(async move {
-                let mut conn_guard = conn.write().await;
-                conn_guard.send_message(msg).await.map_err(Error::Network)
+                let mut peer_guard = peer.write().await;
+                peer_guard.send_message(msg).await.map_err(Error::Network)
             });
             handles.push(handle);
         }
@@ -913,15 +913,15 @@ impl PeerNetworkManager {
     pub async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Disconnecting peer {} - reason: {}", addr, reason);
 
-        // Remove the connection
-        self.pool.remove_connection(addr).await;
+        // Remove the peer
+        self.pool.remove_peer(addr).await;
 
         Ok(())
     }
 
     /// Get the number of connected peers (async version).
     pub async fn peer_count_async(&self) -> usize {
-        self.pool.connection_count().await
+        self.pool.peer_count().await
     }
 
     /// Get reputation information for all peers
@@ -1009,7 +1009,7 @@ impl PeerNetworkManager {
 
         // Disconnect all peers
         for addr in self.pool.get_connected_addresses().await {
-            self.pool.remove_connection(&addr).await;
+            self.pool.remove_peer(&addr).await;
         }
     }
 }
@@ -1216,11 +1216,11 @@ impl NetworkManager for PeerNetworkManager {
         let pool = self.pool.clone();
         tokio::task::block_in_place(move || {
             tokio::runtime::Handle::current().block_on(async {
-                let connections = pool.get_all_connections().await;
+                let peers = pool.get_all_peers().await;
                 let mut infos = Vec::new();
-                for (_, conn) in connections.iter() {
-                    let conn_guard = conn.read().await;
-                    infos.push(conn_guard.peer_info());
+                for (_, peer) in peers.iter() {
+                    let peer_guard = peer.read().await;
+                    infos.push(peer_guard.peer_info());
                 }
                 infos
             })
@@ -1229,15 +1229,15 @@ impl NetworkManager for PeerNetworkManager {
 
     async fn send_ping(&mut self) -> NetworkResult<u64> {
         // Send ping to all peers, return first nonce
-        let connections = self.pool.get_all_connections().await;
+        let peers = self.pool.get_all_peers().await;
 
-        if connections.is_empty() {
+        if peers.is_empty() {
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
 
-        let (_, conn) = &connections[0];
-        let mut conn_guard = conn.write().await;
-        conn_guard.send_ping().await
+        let (_, peer) = &peers[0];
+        let mut peer_guard = peer.write().await;
+        peer_guard.send_ping().await
     }
 
     async fn handle_ping(&mut self, _nonce: u64) -> NetworkResult<()> {
@@ -1251,12 +1251,12 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     fn should_ping(&self) -> bool {
-        // Individual connections handle their own ping timing
+        // Individual peers handle their own ping timing
         false
     }
 
     fn cleanup_old_pings(&mut self) {
-        // Individual connections handle their own ping cleanup
+        // Individual peers handle their own ping cleanup
     }
 
     fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage> {
@@ -1274,18 +1274,18 @@ impl NetworkManager for PeerNetworkManager {
                     | NetworkMessage::GetCFilters(_)
                     | NetworkMessage::GetData(_) => {
                         // Send to a single peer for sync messages including GetData for block downloads
-                        let connections = pool.get_all_connections().await;
-                        if let Some((_, conn)) = connections.first() {
-                            let mut conn_guard = conn.write().await;
-                            let _ = conn_guard.send_message(message).await;
+                        let peers = pool.get_all_peers().await;
+                        if let Some((_, peer)) = peers.first() {
+                            let mut peer_guard = peer.write().await;
+                            let _ = peer_guard.send_message(message).await;
                         }
                     }
                     _ => {
                         // Broadcast to all peers for other messages
-                        let connections = pool.get_all_connections().await;
-                        for (_, conn) in connections {
-                            let mut conn_guard = conn.write().await;
-                            let _ = conn_guard.send_message(message.clone()).await;
+                        let peers = pool.get_all_peers().await;
+                        for (_, peer) in peers {
+                            let mut peer_guard = peer.write().await;
+                            let _ = peer_guard.send_message(message.clone()).await;
                         }
                     }
                 }
@@ -1296,19 +1296,19 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
-        let connections = self.pool.get_all_connections().await;
+        let peers = self.pool.get_all_peers().await;
 
-        if connections.is_empty() {
-            log::debug!("get_peer_best_height: No connections available");
+        if peers.is_empty() {
+            log::debug!("get_peer_best_height: No peers available");
             return Ok(None);
         }
 
         let mut best_height = 0u32;
         let mut peer_count = 0;
 
-        for (addr, conn) in connections.iter() {
-            let conn_guard = conn.read().await;
-            let peer_info = conn_guard.peer_info();
+        for (addr, peer) in peers.iter() {
+            let peer_guard = peer.read().await;
+            let peer_info = peer_guard.peer_info();
             peer_count += 1;
 
             log::debug!(
@@ -1348,11 +1348,11 @@ impl NetworkManager for PeerNetworkManager {
         &self,
         service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool {
-        let connections = self.pool.get_all_connections().await;
+        let peers = self.pool.get_all_peers().await;
 
-        for (_, conn) in connections.iter() {
-            let conn_guard = conn.read().await;
-            let peer_info = conn_guard.peer_info();
+        for (_, peer) in peers.iter() {
+            let peer_guard = peer.read().await;
+            let peer_info = peer_guard.peer_info();
             if peer_info
                 .services
                 .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
@@ -1369,12 +1369,12 @@ impl NetworkManager for PeerNetworkManager {
         &self,
         service_flags: dashcore::network::constants::ServiceFlags,
     ) -> Vec<PeerInfo> {
-        let connections = self.pool.get_all_connections().await;
+        let peers = self.pool.get_all_peers().await;
         let mut matching_peers = Vec::new();
 
-        for (_, conn) in connections.iter() {
-            let conn_guard = conn.read().await;
-            let peer_info = conn_guard.peer_info();
+        for (_, peer) in peers.iter() {
+            let peer_guard = peer.read().await;
+            let peer_info = peer_guard.peer_info();
             if peer_info
                 .services
                 .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))

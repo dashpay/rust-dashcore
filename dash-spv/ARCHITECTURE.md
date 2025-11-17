@@ -680,7 +680,7 @@ The network module handles all P2P communication with the Dash network.
 - Graceful shutdown
 
 **Complex Types Used**:
-- `HashMap<PeerId, Arc<TcpConnection>>` - **JUSTIFIED**: Efficient peer lookup
+- `HashMap<PeerId, Arc<Peer>>` - **JUSTIFIED**: Efficient peer lookup
 - Multiple tokio::sync primitives - **JUSTIFIED**: Complex concurrent operations
 
 **Critical Issues**:
