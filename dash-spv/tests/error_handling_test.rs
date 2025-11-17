@@ -17,7 +17,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
 
 use dashcore::{
     block::{Header as BlockHeader, Version},
@@ -568,7 +567,7 @@ async fn test_network_connection_failure() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9999);
 
     // Test connection timeout
-    let result = TcpConnection::connect(addr, 1, Duration::from_millis(100), Network::Dash).await;
+    let result = TcpConnection::connect(addr, 1, Network::Dash).await;
 
     match result {
         Err(NetworkError::ConnectionFailed(msg)) => {
