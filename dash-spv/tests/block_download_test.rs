@@ -97,29 +97,6 @@ impl NetworkManager for MockNetworkManager {
         vec![]
     }
 
-    async fn send_ping(&mut self) -> dash_spv::error::NetworkResult<u64> {
-        Ok(12345)
-    }
-
-    async fn handle_ping(&mut self, _nonce: u64) -> dash_spv::error::NetworkResult<()> {
-        Ok(())
-    }
-
-    fn handle_pong(&mut self, _nonce: u64) -> dash_spv::error::NetworkResult<()> {
-        Ok(())
-    }
-
-    fn should_ping(&self) -> bool {
-        false
-    }
-
-    fn cleanup_old_pings(&mut self) {}
-
-    fn get_message_sender(&self) -> tokio::sync::mpsc::Sender<NetworkMessage> {
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        tx
-    }
-
     async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
         Ok(Some(100))
     }
@@ -129,13 +106,6 @@ impl NetworkManager for MockNetworkManager {
         _service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool {
         true
-    }
-
-    async fn get_peers_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> Vec<dash_spv::types::PeerInfo> {
-        vec![]
     }
 
     async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {

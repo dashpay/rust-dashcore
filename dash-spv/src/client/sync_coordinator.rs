@@ -127,21 +127,6 @@ impl<
             }
             drop(running);
 
-            // Check if we need to send a ping
-            if self.network.should_ping() {
-                match self.network.send_ping().await {
-                    Ok(nonce) => {
-                        tracing::trace!("Sent periodic ping with nonce {}", nonce);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to send periodic ping: {}", e);
-                    }
-                }
-            }
-
-            // Clean up old pending pings
-            self.network.cleanup_old_pings();
-
             // Check if we have connected peers and start initial sync operations (once)
             if !initial_sync_started && self.network.peer_count() > 0 {
                 tracing::info!("🚀 Peers connected, starting initial sync operations...");

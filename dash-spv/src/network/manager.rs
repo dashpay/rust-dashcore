@@ -919,11 +919,6 @@ impl PeerNetworkManager {
         Ok(())
     }
 
-    /// Get the number of connected peers (async version).
-    pub async fn peer_count_async(&self) -> usize {
-        self.pool.peer_count().await
-    }
-
     /// Get reputation information for all peers
     pub async fn get_peer_reputations(&self) -> HashMap<SocketAddr, (i32, bool)> {
         let reputations = self.reputation_manager.get_all_reputations().await;
@@ -1227,74 +1222,6 @@ impl NetworkManager for PeerNetworkManager {
         })
     }
 
-    async fn send_ping(&mut self) -> NetworkResult<u64> {
-        // Send ping to all peers, return first nonce
-        let peers = self.pool.get_all_peers().await;
-
-        if peers.is_empty() {
-            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
-        }
-
-        let (_, peer) = &peers[0];
-        let mut peer_guard = peer.write().await;
-        peer_guard.send_ping().await
-    }
-
-    async fn handle_ping(&mut self, _nonce: u64) -> NetworkResult<()> {
-        // This is handled in the peer reader
-        Ok(())
-    }
-
-    fn handle_pong(&mut self, _nonce: u64) -> NetworkResult<()> {
-        // This is handled in the peer reader
-        Ok(())
-    }
-
-    fn should_ping(&self) -> bool {
-        // Individual peers handle their own ping timing
-        false
-    }
-
-    fn cleanup_old_pings(&mut self) {
-        // Individual peers handle their own ping cleanup
-    }
-
-    fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage> {
-        // Create a sender that routes messages to our internal send_message logic
-        let (tx, mut rx) = mpsc::channel(1000);
-        let pool = Arc::clone(&self.pool);
-
-        tokio::spawn(async move {
-            while let Some(message) = rx.recv().await {
-                // Route message through the peer network logic
-                // For sync messages that require consistent responses, send to only one peer
-                match &message {
-                    NetworkMessage::GetHeaders(_)
-                    | NetworkMessage::GetCFHeaders(_)
-                    | NetworkMessage::GetCFilters(_)
-                    | NetworkMessage::GetData(_) => {
-                        // Send to a single peer for sync messages including GetData for block downloads
-                        let peers = pool.get_all_peers().await;
-                        if let Some((_, peer)) = peers.first() {
-                            let mut peer_guard = peer.write().await;
-                            let _ = peer_guard.send_message(message).await;
-                        }
-                    }
-                    _ => {
-                        // Broadcast to all peers for other messages
-                        let peers = pool.get_all_peers().await;
-                        for (_, peer) in peers {
-                            let mut peer_guard = peer.write().await;
-                            let _ = peer_guard.send_message(message.clone()).await;
-                        }
-                    }
-                }
-            }
-        });
-
-        tx
-    }
-
     async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
         let peers = self.pool.get_all_peers().await;
 
@@ -1363,28 +1290,6 @@ impl NetworkManager for PeerNetworkManager {
         }
 
         false
-    }
-
-    async fn get_peers_with_service(
-        &self,
-        service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> Vec<PeerInfo> {
-        let peers = self.pool.get_all_peers().await;
-        let mut matching_peers = Vec::new();
-
-        for (_, peer) in peers.iter() {
-            let peer_guard = peer.read().await;
-            let peer_info = peer_guard.peer_info();
-            if peer_info
-                .services
-                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
-                .unwrap_or(false)
-            {
-                matching_peers.push(peer_info);
-            }
-        }
-
-        matching_peers
     }
 
     async fn has_headers2_peer(&self) -> bool {
