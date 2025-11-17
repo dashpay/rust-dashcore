@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, Mutex};
@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::Network;
+use tokio_util::sync::CancellationToken;
 
 use crate::client::config::MempoolStrategy;
 use crate::client::ClientConfig;
@@ -43,8 +44,8 @@ pub struct PeerNetworkManager {
     reputation_manager: Arc<PeerReputationManager>,
     /// Network type
     network: Network,
-    /// Shutdown signal
-    shutdown: Arc<AtomicBool>,
+    /// Shutdown token
+    shutdown_token: CancellationToken,
     /// Channel for incoming messages
     message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
     message_rx: Arc<Mutex<mpsc::Receiver<(SocketAddr, NetworkMessage)>>>,
@@ -109,7 +110,7 @@ impl PeerNetworkManager {
             peer_store: Arc::new(peer_store),
             reputation_manager,
             network: config.network,
-            shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown_token: CancellationToken::new(),
             message_tx,
             message_rx: Arc::new(Mutex::new(message_rx)),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
@@ -204,7 +205,7 @@ impl PeerNetworkManager {
         let network = self.network;
         let message_tx = self.message_tx.clone();
         let addrv2_handler = self.addrv2_handler.clone();
-        let shutdown = self.shutdown.clone();
+        let shutdown_token = self.shutdown_token.clone();
         let reputation_manager = self.reputation_manager.clone();
         let mempool_strategy = self.mempool_strategy;
         let user_agent = self.user_agent.clone();
@@ -245,7 +246,7 @@ impl PeerNetworkManager {
                                 pool.clone(),
                                 message_tx,
                                 addrv2_handler,
-                                shutdown,
+                                shutdown_token,
                                 reputation_manager.clone(),
                                 connected_peer_count.clone(),
                             )
@@ -287,7 +288,7 @@ impl PeerNetworkManager {
         pool: Arc<ConnectionPool>,
         message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
         addrv2_handler: Arc<AddrV2Handler>,
-        shutdown: Arc<AtomicBool>,
+        shutdown_token: CancellationToken,
         reputation_manager: Arc<PeerReputationManager>,
         connected_peer_count: Arc<AtomicUsize>,
     ) {
@@ -295,11 +296,11 @@ impl PeerNetworkManager {
             log::debug!("Starting peer reader loop for {}", addr);
             let mut loop_iteration = 0;
 
-            while !shutdown.load(Ordering::Relaxed) {
+            loop {
                 loop_iteration += 1;
 
                 // Check shutdown signal first with detailed logging
-                if shutdown.load(Ordering::Relaxed) {
+                if shutdown_token.is_cancelled() {
                     log::info!("Breaking peer reader loop for {} - shutdown signal received (iteration {})", addr, loop_iteration);
                     break;
                 }
@@ -326,7 +327,15 @@ impl PeerNetworkManager {
 
                     // Now get write lock only for the duration of the read
                     let mut conn_guard = conn.write().await;
-                    conn_guard.receive_message().await
+                    tokio::select! {
+                        message = conn_guard.receive_message() => {
+                            message
+                        },
+                        _ = shutdown_token.cancelled() => {
+                            log::info!("Breaking peer reader loop for {} - shutdown signal received while reading (iteration {})", addr, loop_iteration);
+                            break;
+                        }
+                    }
                 };
 
                 match msg_result {
@@ -576,7 +585,7 @@ impl PeerNetworkManager {
         let pool = self.pool.clone();
         let discovery = self.discovery.clone();
         let network = self.network;
-        let shutdown = self.shutdown.clone();
+        let shutdown_token = self.shutdown_token.clone();
         let addrv2_handler = self.addrv2_handler.clone();
         let peer_store = self.peer_store.clone();
         let reputation_manager = self.reputation_manager.clone();
@@ -599,7 +608,7 @@ impl PeerNetworkManager {
 
         let mut tasks = self.tasks.lock().await;
         tasks.spawn(async move {
-            while !shutdown.load(Ordering::Relaxed) {
+            while !shutdown_token.is_cancelled() {
                 // Clean up disconnected peers
                 pool.cleanup_disconnected().await;
 
@@ -612,7 +621,13 @@ impl PeerNetworkManager {
                     for addr in initial_peers.iter() {
                         if !pool.is_connected(addr).await && !pool.is_connecting(addr).await {
                             log::info!("Reconnecting to exclusive peer: {}", addr);
-                            connect_fn(*addr).await;
+                            tokio::select! {
+                                _= connect_fn(*addr) => {},
+                                _ = shutdown_token.cancelled() => {
+                                    log::info!("Maintenance loop shutting down during connection attempt (exclusive)");
+                                    break;
+                                }
+                            }
                         }
                     }
                 } else {
@@ -642,7 +657,13 @@ impl PeerNetworkManager {
 
                         for addr in best_peers {
                             if !pool.is_connected(&addr).await && !pool.is_connecting(&addr).await {
-                                connect_fn(addr).await;
+                                tokio::select! {
+                                    _= connect_fn(addr) => {},
+                                    _ = shutdown_token.cancelled() => {
+                                        log::info!("Maintenance loop shutting down during connection attempt (min peers)");
+                                        break;
+                                    }
+                                }
                                 attempted += 1;
                                 if attempted >= needed {
                                     break;
@@ -661,11 +682,23 @@ impl PeerNetworkManager {
                                 });
                             if elapsed >= DNS_DISCOVERY_DELAY {
                                 log::info!("Using DNS discovery after {}s delay", elapsed.as_secs());
-                                let dns_peers = discovery.discover_peers(network).await;
+                                let dns_peers = tokio::select! {
+                                    peers = discovery.discover_peers(network) => peers,
+                                    _ = shutdown_token.cancelled() => {
+                                        log::info!("Maintenance loop shutting down during DNS discovery");
+                                        break;
+                                    }
+                                };
                                 let mut dns_attempted = 0;
                                 for addr in dns_peers.into_iter() {
                                     if !pool.is_connected(&addr).await && !pool.is_connecting(&addr).await {
-                                        connect_fn(addr).await;
+                                        tokio::select! {
+                                            _= connect_fn(addr) => {},
+                                            _ = shutdown_token.cancelled() => {
+                                                log::info!("Maintenance loop shutting down during connection attempt (dns)");
+                                                break;
+                                            }
+                                        }
                                         dns_attempted += 1;
                                         if dns_attempted >= needed {
                                             break;
@@ -719,7 +752,15 @@ impl PeerNetworkManager {
                     }
                 }
 
-                time::sleep(MAINTENANCE_INTERVAL).await;
+                tokio::select! {
+                    _ = time::sleep(MAINTENANCE_INTERVAL) => {
+                        log::debug!("Maintenance interval elapsed");
+                    }
+                    _ = shutdown_token.cancelled() => {
+                        log::info!("Maintenance loop shutting down");
+                        break;
+                    }
+                }
             }
         });
     }
@@ -942,7 +983,7 @@ impl PeerNetworkManager {
     /// Shutdown the network manager
     pub async fn shutdown(&self) {
         log::info!("Shutting down peer network manager");
-        self.shutdown.store(true, Ordering::Relaxed);
+        self.shutdown_token.cancel();
 
         // Save known peers before shutdown
         let addresses = self.addrv2_handler.get_addresses_for_peer(MAX_ADDR_TO_STORE).await;
@@ -983,7 +1024,7 @@ impl Clone for PeerNetworkManager {
             peer_store: self.peer_store.clone(),
             reputation_manager: self.reputation_manager.clone(),
             network: self.network,
-            shutdown: self.shutdown.clone(),
+            shutdown_token: self.shutdown_token.clone(),
             message_tx: self.message_tx.clone(),
             message_rx: self.message_rx.clone(),
             tasks: self.tasks.clone(),
