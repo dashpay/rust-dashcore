@@ -95,38 +95,38 @@ mod peer_network_manager_tests {
 }
 
 #[cfg(test)]
-mod connection_tests {
-    use crate::network::connection::TcpConnection;
+mod peer_tests {
+    use crate::network::peer::Peer;
     use dashcore::Network;
     use std::time::Duration;
 
     #[test]
-    fn test_tcp_connection_creation() {
+    fn test_peer_creation() {
         let addr = "127.0.0.1:9999".parse().unwrap();
         let timeout = Duration::from_secs(30);
-        let conn = TcpConnection::new(addr, timeout, Network::Dash);
+        let peer = Peer::new(addr, timeout, Network::Dash);
 
-        assert!(!conn.is_connected());
-        assert_eq!(conn.peer_info().address, addr);
+        assert!(!peer.is_connected());
+        assert_eq!(peer.peer_info().address, addr);
     }
 }
 
 #[cfg(test)]
 mod pool_tests {
-    use crate::network::pool::ConnectionPool;
+    use crate::network::pool::PeerPool;
 
     #[tokio::test]
     async fn test_pool_limits() {
-        let pool = ConnectionPool::new();
+        let pool = PeerPool::new();
 
-        // Test needs_more_connections logic
-        assert!(pool.needs_more_connections().await);
+        // Test needs_more_peers logic
+        assert!(pool.needs_more_peers().await);
 
         // Can accept up to MAX_PEERS
-        assert!(pool.can_accept_connections().await);
+        assert!(pool.can_accept_peers().await);
 
-        // Test connection count
-        assert_eq!(pool.connection_count().await, 0);
+        // Test peer count
+        assert_eq!(pool.peer_count().await, 0);
 
         // Verify pool limits indirectly through methods; avoid constant assertions
     }

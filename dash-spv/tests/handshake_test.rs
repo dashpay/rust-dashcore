@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use dash_spv::client::config::MempoolStrategy;
-use dash_spv::network::{HandshakeManager, NetworkManager, PeerNetworkManager, TcpConnection};
+use dash_spv::network::{HandshakeManager, NetworkManager, Peer, PeerNetworkManager};
 use dash_spv::{ClientConfig, Network};
 
 #[tokio::test]
@@ -13,7 +13,7 @@ async fn test_handshake_with_mainnet_peer() {
     let _ = env_logger::builder().filter_level(log::LevelFilter::Debug).is_test(true).try_init();
 
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
-    let result = TcpConnection::connect(peer_addr, 10, Network::Dash).await;
+    let result = Peer::connect(peer_addr, 10, Network::Dash).await;
 
     match result {
         Ok(mut connection) => {
@@ -54,7 +54,7 @@ async fn test_handshake_timeout() {
     // Using a non-routable IP that will cause the connection to hang
     let peer_addr: SocketAddr = "10.255.255.1:9999".parse().expect("Valid peer address");
     let start = std::time::Instant::now();
-    let result = TcpConnection::connect(peer_addr, 2, Network::Dash).await;
+    let result = Peer::connect(peer_addr, 2, Network::Dash).await;
     let elapsed = start.elapsed();
 
     assert!(result.is_err(), "Connection should fail for non-routable peer");
@@ -86,7 +86,7 @@ async fn test_network_manager_creation() {
 #[tokio::test]
 async fn test_multiple_connect_disconnect_cycles() {
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
-    let mut connection = TcpConnection::new(peer_addr, Duration::from_secs(10), Network::Dash);
+    let mut connection = Peer::new(peer_addr, Duration::from_secs(10), Network::Dash);
 
     // Try multiple connect/disconnect cycles
     for i in 1..=3 {

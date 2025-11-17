@@ -198,7 +198,7 @@ async fn test_max_peer_limit() {
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
 
     // The client should never connect to more than MAX_PEERS
-    // This is enforced in the ConnectionPool
+    // This is enforced in the PeerPool
     println!("Maximum peer limit is set to: {}", MAX_PEERS);
     assert_eq!(MAX_PEERS, 3, "Default max peers should be 12");
 }
@@ -208,17 +208,17 @@ mod unit_tests {
     use super::*;
     use dash_spv::network::addrv2::AddrV2Handler;
     use dash_spv::network::discovery::DnsDiscovery;
-    use dash_spv::network::pool::ConnectionPool;
+    use dash_spv::network::pool::PeerPool;
     use dashcore::network::constants::ServiceFlags;
 
     #[tokio::test]
     async fn test_connection_pool_limits() {
-        let pool = ConnectionPool::new();
+        let pool = PeerPool::new();
 
         // Should start empty
-        assert_eq!(pool.connection_count().await, 0);
-        assert!(pool.needs_more_connections().await);
-        assert!(pool.can_accept_connections().await);
+        assert_eq!(pool.peer_count().await, 0);
+        assert!(pool.needs_more_peers().await);
+        assert!(pool.can_accept_peers().await);
 
         // Test marking as connecting
         let addr1: SocketAddr = "127.0.0.1:9999".parse().unwrap();

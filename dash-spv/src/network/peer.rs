@@ -1,4 +1,4 @@
-//! TCP connection management.
+//! Dash peer connection management.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -23,8 +23,8 @@ struct ConnectionState {
     framing_buffer: Vec<u8>,
 }
 
-/// TCP connection to a Dash peer
-pub struct TcpConnection {
+/// Dash P2P peer
+pub struct Peer {
     address: SocketAddr,
     // Use a single mutex to protect both the write stream and read buffer
     // This ensures no concurrent access to the underlying socket
@@ -38,23 +38,23 @@ pub struct TcpConnection {
     last_pong_received: Option<SystemTime>,
     pending_pings: HashMap<u64, SystemTime>, // nonce -> sent_time
     // Peer information from Version message
-    peer_version: Option<u32>,
-    peer_services: Option<u64>,
-    peer_user_agent: Option<String>,
-    peer_best_height: Option<u32>,
-    peer_relay: Option<bool>,
-    peer_prefers_headers2: bool,
-    peer_sent_sendheaders2: bool,
+    version: Option<u32>,
+    services: Option<u64>,
+    user_agent: Option<String>,
+    best_height: Option<u32>,
+    relay: Option<bool>,
+    prefers_headers2: bool,
+    sent_sendheaders2: bool,
     // Basic telemetry for resync events
     consecutive_resyncs: u32,
 }
 
-impl TcpConnection {
+impl Peer {
     /// Get the remote peer socket address.
     pub fn address(&self) -> SocketAddr {
         self.address
     }
-    /// Create a new TCP connection to the given address.
+    /// Create a new peer.
     pub fn new(address: SocketAddr, timeout: Duration, network: Network) -> Self {
         Self {
             address,
@@ -66,13 +66,13 @@ impl TcpConnection {
             last_ping_sent: None,
             last_pong_received: None,
             pending_pings: HashMap::new(),
-            peer_version: None,
-            peer_services: None,
-            peer_user_agent: None,
-            peer_best_height: None,
-            peer_relay: None,
-            peer_prefers_headers2: false,
-            peer_sent_sendheaders2: false,
+            version: None,
+            services: None,
+            user_agent: None,
+            best_height: None,
+            relay: None,
+            prefers_headers2: false,
+            sent_sendheaders2: false,
             consecutive_resyncs: 0,
         }
     }
@@ -113,13 +113,13 @@ impl TcpConnection {
             last_ping_sent: None,
             last_pong_received: None,
             pending_pings: HashMap::new(),
-            peer_version: None,
-            peer_services: None,
-            peer_user_agent: None,
-            peer_best_height: None,
-            peer_relay: None,
-            peer_prefers_headers2: false,
-            peer_sent_sendheaders2: false,
+            version: None,
+            services: None,
+            user_agent: None,
+            best_height: None,
+            relay: None,
+            prefers_headers2: false,
+            sent_sendheaders2: false,
             consecutive_resyncs: 0,
         })
     }
@@ -249,11 +249,11 @@ impl TcpConnection {
         }
 
         // All validations passed, update peer info
-        self.peer_version = Some(version_msg.version);
-        self.peer_services = Some(version_msg.services.as_u64());
-        self.peer_user_agent = Some(version_msg.user_agent.clone());
-        self.peer_best_height = Some(version_msg.start_height as u32);
-        self.peer_relay = Some(version_msg.relay);
+        self.version = Some(version_msg.version);
+        self.services = Some(version_msg.services.as_u64());
+        self.user_agent = Some(version_msg.user_agent.clone());
+        self.best_height = Some(version_msg.start_height as u32);
+        self.relay = Some(version_msg.relay);
 
         tracing::info!(
             "Updated peer info for {}: height={}, version={}, services={:?}",
@@ -690,11 +690,11 @@ impl TcpConnection {
             address: self.address,
             connected: self.is_connected(),
             last_seen: self.connected_at.unwrap_or(SystemTime::UNIX_EPOCH),
-            version: self.peer_version,
-            services: self.peer_services,
-            user_agent: self.peer_user_agent.clone(),
-            best_height: self.peer_best_height,
-            wants_dsq_messages: None, // We don't track this in TcpConnection yet
+            version: self.version,
+            services: self.services,
+            user_agent: self.user_agent.clone(),
+            best_height: self.best_height,
+            wants_dsq_messages: None, // We don't track this yet
             has_sent_headers2: false, // Will be tracked by the connection pool
         }
     }
@@ -803,7 +803,7 @@ impl TcpConnection {
 
     /// Set that peer prefers headers2.
     pub fn set_prefers_headers2(&mut self, prefers: bool) {
-        self.peer_prefers_headers2 = prefers;
+        self.prefers_headers2 = prefers;
         if prefers {
             tracing::info!("Peer {} prefers headers2 compression", self.address);
         }
@@ -811,12 +811,12 @@ impl TcpConnection {
 
     /// Check if peer prefers headers2.
     pub fn prefers_headers2(&self) -> bool {
-        self.peer_prefers_headers2
+        self.prefers_headers2
     }
 
     /// Set that peer sent us SendHeaders2.
     pub fn set_peer_sent_sendheaders2(&mut self, sent: bool) {
-        self.peer_sent_sendheaders2 = sent;
+        self.sent_sendheaders2 = sent;
         if sent {
             tracing::info!(
                 "Peer {} sent SendHeaders2 - they will send compressed headers",
@@ -827,7 +827,7 @@ impl TcpConnection {
 
     /// Check if peer sent us SendHeaders2.
     pub fn peer_sent_sendheaders2(&self) -> bool {
-        self.peer_sent_sendheaders2
+        self.sent_sendheaders2
     }
 
     /// Check if we can request headers2 from this peer.
@@ -835,7 +835,7 @@ impl TcpConnection {
         // We can request headers2 if peer has the service flag for headers2 support
         // Note: We don't wait for SendHeaders2 from peer as that creates a race condition
         // during initial sync. The service flag is sufficient to know they support headers2.
-        if let Some(services) = self.peer_services {
+        if let Some(services) = self.services {
             dashcore::network::constants::ServiceFlags::from(services)
                 .has(dashcore::network::constants::NODE_HEADERS_COMPRESSED)
         } else {
