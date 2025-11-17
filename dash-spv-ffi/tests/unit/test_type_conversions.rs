@@ -172,6 +172,7 @@ mod tests {
             last_masternode_diff_height: None,
             sync_base_height: 0,
             synced_from_checkpoint: false,
+            filter_matches: std::collections::BTreeMap::new(),
         };
 
         let ffi_state = FFIChainState::from(state);

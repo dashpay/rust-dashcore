@@ -51,18 +51,22 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         block_hash: &BlockHash,
         wallet: &mut W,
         network: dashcore::Network,
-    ) -> SyncResult<bool> {
+    ) -> SyncResult<Vec<[u8; 32]>> {
         // Create the BlockFilter from the raw data
         let filter = dashcore::bip158::BlockFilter::new(filter_data);
 
-        // Use wallet's check_compact_filter method
-        let matches = wallet.check_compact_filter(&filter, block_hash, network).await;
-        if matches {
-            tracing::info!("🎯 Filter match found for block {}", block_hash);
-            Ok(true)
-        } else {
-            Ok(false)
+        // Use wallet's check_compact_filter method to get matching wallet IDs
+        let matched_wallet_ids = wallet.check_compact_filter(&filter, block_hash, network).await;
+
+        if !matched_wallet_ids.is_empty() {
+            tracing::info!(
+                "🎯 Filter match found for block {} ({} wallet(s) matched)",
+                block_hash,
+                matched_wallet_ids.len()
+            );
         }
+
+        Ok(matched_wallet_ids)
     }
 
     /// Check if filter matches any of the provided scripts using BIP158 GCS filter.

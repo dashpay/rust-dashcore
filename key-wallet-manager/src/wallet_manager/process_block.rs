@@ -89,40 +89,37 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         filter: &BlockFilter,
         block_hash: &BlockHash,
         network: Network,
-    ) -> bool {
-        // Check if we've already evaluated this filter
-        if let Some(network_cache) = self.filter_matches.get(&network) {
-            if let Some(&matched) = network_cache.get(block_hash) {
-                return matched;
-            }
-        }
+    ) -> Vec<[u8; 32]> {
+        let mut matched_wallet_ids = Vec::new();
 
-        // Collect all scripts we're watching
-        let mut script_bytes = Vec::new();
-
-        // Get all wallet addresses for this network
-        for info in self.wallet_infos.values() {
+        // Check each wallet individually to track which ones match
+        for (wallet_id, info) in &self.wallet_infos {
             let monitored = info.monitored_addresses(network);
-            for address in monitored {
-                script_bytes.push(address.script_pubkey().as_bytes().to_vec());
+
+            // Skip wallets with no monitored addresses for this network
+            if monitored.is_empty() {
+                continue;
+            }
+
+            // Collect script pubkeys for this specific wallet
+            let script_bytes: Vec<Vec<u8>> =
+                monitored.iter().map(|addr| addr.script_pubkey().as_bytes().to_vec()).collect();
+
+            // Check if this wallet's addresses match the filter
+            let hit = filter
+                .match_any(block_hash, &mut script_bytes.iter().map(|s| s.as_slice()))
+                .unwrap_or(false);
+
+            if hit {
+                matched_wallet_ids.push(*wallet_id);
             }
         }
 
-        // If we don't watch any scripts for this network, there can be no match.
-        // Note: BlockFilterReader::match_any returns true for an empty query set,
-        // so we must guard this case explicitly to avoid false positives.
-        let hit = if script_bytes.is_empty() {
-            false
-        } else {
-            filter
-                .match_any(block_hash, &mut script_bytes.iter().map(|s| s.as_slice()))
-                .unwrap_or(false)
-        };
+        // Cache the result (true if any wallet matched)
+        let any_match = !matched_wallet_ids.is_empty();
+        self.filter_matches.entry(network).or_default().insert(*block_hash, any_match);
 
-        // Cache the result
-        self.filter_matches.entry(network).or_default().insert(*block_hash, hit);
-
-        hit
+        matched_wallet_ids
     }
 
     async fn transaction_effect(

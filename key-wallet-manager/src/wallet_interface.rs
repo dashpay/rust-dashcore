@@ -32,14 +32,18 @@ pub trait WalletInterface: Send + Sync {
         network: Network,
     );
 
-    /// Check if a compact filter matches any watched items
-    /// Returns true if the block should be downloaded
+    /// Check if a compact filter matches any watched items.
+    ///
+    /// Returns a vector of 32-byte wallet IDs that matched the filter.
+    /// An empty vector means no matches (block should not be downloaded).
+    /// A non-empty vector means the block should be downloaded and indicates
+    /// which wallet(s) had matching addresses.
     async fn check_compact_filter(
         &mut self,
         filter: &BlockFilter,
         block_hash: &dashcore::BlockHash,
         network: Network,
-    ) -> bool;
+    ) -> alloc::vec::Vec<[u8; 32]>;
 
     /// Return the wallet's per-transaction net change and involved addresses if known.
     /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.

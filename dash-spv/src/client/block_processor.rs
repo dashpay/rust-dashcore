@@ -177,11 +177,17 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                 } => {
                     // Check compact filter with wallet
                     let mut wallet = self.wallet.write().await;
-                    let matches =
+                    let matched_wallet_ids =
                         wallet.check_compact_filter(&filter, &block_hash, self.network).await;
 
-                    if matches {
-                        tracing::info!("🎯 Compact filter matched for block {}", block_hash);
+                    let has_matches = !matched_wallet_ids.is_empty();
+
+                    if has_matches {
+                        tracing::info!(
+                            "🎯 Compact filter matched for block {} ({} wallet(s))",
+                            block_hash,
+                            matched_wallet_ids.len()
+                        );
                         drop(wallet);
                         // Emit event if filter matched
                         let _ = self.event_tx.send(SpvEvent::CompactFilterMatched {
@@ -196,7 +202,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                         drop(wallet);
                     }
 
-                    let _ = response_tx.send(Ok(matches));
+                    let _ = response_tx.send(Ok(has_matches));
                 }
             }
         }

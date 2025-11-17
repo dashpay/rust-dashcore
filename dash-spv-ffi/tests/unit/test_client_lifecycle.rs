@@ -241,4 +241,61 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    #[serial]
+    fn test_transaction_count_with_empty_wallet() {
+        unsafe {
+            let (config, _temp_dir) = create_test_config_with_dir();
+            let client = dash_spv_ffi_client_new(config);
+            assert!(!client.is_null(), "Client creation failed");
+
+            // Should return 0 for a new wallet with no transactions
+            let tx_count = dash_spv_ffi_client_get_transaction_count(client);
+            assert_eq!(tx_count, 0, "Expected 0 transactions for new wallet");
+
+            // Cleanup
+            dash_spv_ffi_client_destroy(client);
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_blocks_with_transactions_count_with_empty_wallet() {
+        unsafe {
+            let (config, _temp_dir) = create_test_config_with_dir();
+            let client = dash_spv_ffi_client_new(config);
+            assert!(!client.is_null(), "Client creation failed");
+
+            // Should return 0 for a new wallet with no transactions
+            let block_count = dash_spv_ffi_client_get_blocks_with_transactions_count(client);
+            assert_eq!(block_count, 0, "Expected 0 blocks for new wallet");
+
+            // Cleanup
+            dash_spv_ffi_client_destroy(client);
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_transaction_count_with_null_client() {
+        unsafe {
+            // Should handle null client gracefully
+            let tx_count = dash_spv_ffi_client_get_transaction_count(std::ptr::null_mut());
+            assert_eq!(tx_count, 0, "Expected 0 for null client");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_blocks_count_with_null_client() {
+        unsafe {
+            // Should handle null client gracefully
+            let block_count =
+                dash_spv_ffi_client_get_blocks_with_transactions_count(std::ptr::null_mut());
+            assert_eq!(block_count, 0, "Expected 0 for null client");
+        }
+    }
 }

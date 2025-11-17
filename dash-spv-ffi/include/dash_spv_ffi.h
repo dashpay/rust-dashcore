@@ -710,6 +710,44 @@ struct FFIFilterMatches *dash_spv_ffi_client_get_filter_matched_heights(struct F
                                                                         uint32_t end_height)
 ;
 
+/**
+ * Get the total count of transactions across all wallets.
+ *
+ * This returns the persisted transaction count from the wallet,
+ * not the ephemeral sync statistics. Use this to show how many
+ * blocks contained relevant transactions for the user's wallets.
+ *
+ * # Parameters
+ * - `client`: Valid pointer to an FFIDashSpvClient
+ *
+ * # Returns
+ * - Transaction count (0 or higher)
+ * - Returns 0 if client not initialized or wallet not available
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer
+ */
+ uintptr_t dash_spv_ffi_client_get_transaction_count(struct FFIDashSpvClient *client) ;
+
+/**
+ * Get the count of blocks that contained relevant transactions.
+ *
+ * This counts unique block heights from the wallet's transaction history,
+ * representing how many blocks actually had transactions for the user's wallets.
+ * This is a persistent metric that survives app restarts.
+ *
+ * # Parameters
+ * - `client`: Valid pointer to an FFIDashSpvClient
+ *
+ * # Returns
+ * - Count of blocks with transactions (0 or higher)
+ * - Returns 0 if client not initialized or wallet not available
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer
+ */
+ uintptr_t dash_spv_ffi_client_get_blocks_with_transactions_count(struct FFIDashSpvClient *client) ;
+
  struct FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network) ;
 
  struct FFIClientConfig *dash_spv_ffi_config_mainnet(void) ;

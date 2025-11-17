@@ -1770,3 +1770,104 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_filter_matched_heights(
 
     result.unwrap_or(std::ptr::null_mut())
 }
+
+/// Get the total count of transactions across all wallets.
+///
+/// This returns the persisted transaction count from the wallet,
+/// not the ephemeral sync statistics. Use this to show how many
+/// blocks contained relevant transactions for the user's wallets.
+///
+/// # Parameters
+/// - `client`: Valid pointer to an FFIDashSpvClient
+///
+/// # Returns
+/// - Transaction count (0 or higher)
+/// - Returns 0 if client not initialized or wallet not available
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_transaction_count(
+    client: *mut FFIDashSpvClient,
+) -> usize {
+    null_check!(client, 0);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        // Get wallet without taking the client
+        let guard = inner.lock().unwrap();
+        match guard.as_ref() {
+            Some(spv_client) => {
+                // Access wallet and get transaction count
+                let wallet = spv_client.wallet();
+                let wallet_guard = wallet.read().await;
+                let tx_history = wallet_guard.transaction_history();
+                tx_history.len()
+            }
+            None => {
+                tracing::warn!("Client not initialized when querying transaction count");
+                0
+            }
+        }
+    });
+
+    result
+}
+
+/// Get the count of blocks that contained relevant transactions.
+///
+/// This counts unique block heights from the wallet's transaction history,
+/// representing how many blocks actually had transactions for the user's wallets.
+/// This is a persistent metric that survives app restarts.
+///
+/// # Parameters
+/// - `client`: Valid pointer to an FFIDashSpvClient
+///
+/// # Returns
+/// - Count of blocks with transactions (0 or higher)
+/// - Returns 0 if client not initialized or wallet not available
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_blocks_with_transactions_count(
+    client: *mut FFIDashSpvClient,
+) -> usize {
+    null_check!(client, 0);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        // Get wallet without taking the client
+        let guard = inner.lock().unwrap();
+        match guard.as_ref() {
+            Some(spv_client) => {
+                // Access wallet and get unique block heights
+                let wallet = spv_client.wallet();
+                let wallet_guard = wallet.read().await;
+                let tx_history = wallet_guard.transaction_history();
+
+                // Count unique block heights (confirmed transactions only)
+                let mut unique_heights = std::collections::HashSet::new();
+                for tx in tx_history {
+                    if let Some(height) = tx.height {
+                        unique_heights.insert(height);
+                    }
+                }
+
+                unique_heights.len()
+            }
+            None => {
+                tracing::warn!(
+                    "Client not initialized when querying blocks with transactions count"
+                );
+                0
+            }
+        }
+    });
+
+    result
+}

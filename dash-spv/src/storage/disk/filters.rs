@@ -182,6 +182,66 @@ impl DiskStorageManager {
         Ok(*self.cached_filter_tip_height.read().await)
     }
 
+    /// Get the highest stored compact filter height by scanning the filters directory.
+    /// This checks which filters are actually persisted on disk, not just filter headers.
+    ///
+    /// Returns None if no filters are stored, otherwise returns the highest height found.
+    ///
+    /// Note: This only counts individual filter files ({height}.dat), not segment files.
+    pub async fn get_stored_filter_height(&self) -> StorageResult<Option<u32>> {
+        let filters_dir = self.base_path.join("filters");
+
+        // If filters directory doesn't exist, no filters are stored
+        if !filters_dir.exists() {
+            return Ok(None);
+        }
+
+        let mut max_height: Option<u32> = None;
+
+        // Read directory entries
+        let mut entries = tokio::fs::read_dir(&filters_dir).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+
+            // Skip if not a file
+            if !path.is_file() {
+                continue;
+            }
+
+            // Check if it's a .dat file
+            if let Some(extension) = path.extension() {
+                if extension == "dat" {
+                    // Extract height from filename (format: "{height}.dat")
+                    if let Some(filename) = path.file_stem() {
+                        if let Some(filename_str) = filename.to_str() {
+                            // Only parse if filename is PURELY numeric (not "filter_segment_0001")
+                            // This ensures we only count individual filter files, not segments
+                            if filename_str.chars().all(|c| c.is_ascii_digit()) {
+                                if let Ok(height) = filename_str.parse::<u32>() {
+                                    if height > 2_000_000 {
+                                        // Sanity check - testnet/mainnet should never exceed 2M blocks
+                                        tracing::warn!(
+                                            "Found suspiciously high filter file: {}.dat (height {}), ignoring",
+                                            filename_str,
+                                            height
+                                        );
+                                        continue;
+                                    }
+                                    max_height = Some(
+                                        max_height.map_or(height, |current| current.max(height)),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(max_height)
+    }
+
     /// Store a compact filter.
     pub async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("filters/{}.dat", height));

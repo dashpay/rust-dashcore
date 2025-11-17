@@ -68,9 +68,9 @@ mod tests {
             _filter: &dashcore::bip158::BlockFilter,
             _block_hash: &dashcore::BlockHash,
             _network: Network,
-        ) -> bool {
-            // Return true for all filters in test
-            true
+        ) -> Vec<[u8; 32]> {
+            // Return a test wallet ID for all filters in test
+            vec![[1u8; 32]]
         }
 
         async fn describe(&self, _network: Network) -> String {
@@ -291,9 +291,9 @@ mod tests {
                 _filter: &dashcore::bip158::BlockFilter,
                 _block_hash: &dashcore::BlockHash,
                 _network: Network,
-            ) -> bool {
-                // Always return false - filter doesn't match
-                false
+            ) -> Vec<[u8; 32]> {
+                // Return empty vector - filter doesn't match
+                Vec::new()
             }
 
             async fn describe(&self, _network: Network) -> String {

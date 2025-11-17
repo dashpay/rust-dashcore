@@ -610,7 +610,7 @@ impl<
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store filter: {}", e)))?;
 
-        let matches = self
+        let matched_wallet_ids = self
             .filter_sync
             .check_filter_for_matches(
                 &cfilter.filter,
@@ -622,14 +622,43 @@ impl<
 
         drop(wallet);
 
-        if matches {
+        if !matched_wallet_ids.is_empty() {
             // Update filter match statistics
             {
                 let mut stats = self.stats.write().await;
                 stats.filters_matched += 1;
             }
 
-            tracing::info!("🎯 Filter match found! Requesting block {}", cfilter.block_hash);
+            // Record the filter matches in ChainState for persistence
+            {
+                // Load current chain state from storage
+                let mut chain_state = storage
+                    .load_chain_state()
+                    .await
+                    .map_err(|e| SyncError::Storage(format!("Failed to load chain state: {}", e)))?
+                    .unwrap_or_else(|| crate::types::ChainState::new());
+
+                // Record the filter matches
+                chain_state.record_filter_matches(height, matched_wallet_ids.clone());
+
+                // Save ChainState to persist the filter matches
+                storage.store_chain_state(&chain_state).await.map_err(|e| {
+                    SyncError::Storage(format!("Failed to store chain state: {}", e))
+                })?;
+
+                tracing::debug!(
+                    "✅ Recorded {} wallet ID(s) matching at height {} to ChainState",
+                    matched_wallet_ids.len(),
+                    height
+                );
+            }
+
+            tracing::info!(
+                "🎯 Filter match found! Requesting block {} (matched {} wallet(s))",
+                cfilter.block_hash,
+                matched_wallet_ids.len()
+            );
+
             // Request the full block
             let inv = Inventory::Block(cfilter.block_hash);
             network
