@@ -22,7 +22,6 @@ mod tests {
         assert_eq!(config.connection_timeout, Duration::from_secs(30));
         assert_eq!(config.message_timeout, Duration::from_secs(60));
         assert_eq!(config.sync_timeout, Duration::from_secs(300));
-        assert_eq!(config.read_timeout, Duration::from_millis(100));
         assert!(config.enable_filters);
         assert!(config.enable_masternodes);
         assert_eq!(config.max_peers, 8);
@@ -65,7 +64,6 @@ mod tests {
             .with_storage_path(path.clone())
             .with_validation_mode(ValidationMode::Basic)
             .with_connection_timeout(Duration::from_secs(10))
-            .with_read_timeout(Duration::from_secs(5))
             .with_log_level("debug")
             .with_max_concurrent_filter_requests(32)
             .with_filter_flow_control(false)
@@ -80,7 +78,6 @@ mod tests {
         assert!(config.enable_persistence);
         assert_eq!(config.validation_mode, ValidationMode::Basic);
         assert_eq!(config.connection_timeout, Duration::from_secs(10));
-        assert_eq!(config.read_timeout, Duration::from_secs(5));
         assert_eq!(config.log_level, "debug");
         assert_eq!(config.max_concurrent_filter_requests, 32);
         assert!(!config.enable_filter_flow_control);

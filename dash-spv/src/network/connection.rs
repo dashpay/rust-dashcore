@@ -1,10 +1,11 @@
 //! TCP connection management.
 
 use std::collections::HashMap;
-use std::io::{BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
 use dashcore::consensus::{encode, Decodable};
@@ -18,7 +19,6 @@ use crate::types::PeerInfo;
 /// Internal state for the TCP connection
 struct ConnectionState {
     stream: TcpStream,
-    read_buffer: BufReader<TcpStream>,
     // Stateful message framing buffer to ensure full frames before decoding
     framing_buffer: Vec<u8>,
 }
@@ -30,7 +30,6 @@ pub struct TcpConnection {
     // This ensures no concurrent access to the underlying socket
     state: Option<Arc<Mutex<ConnectionState>>>,
     timeout: Duration,
-    read_timeout: Duration,
     connected_at: Option<SystemTime>,
     bytes_sent: u64,
     network: Network,
@@ -56,17 +55,11 @@ impl TcpConnection {
         self.address
     }
     /// Create a new TCP connection to the given address.
-    pub fn new(
-        address: SocketAddr,
-        timeout: Duration,
-        read_timeout: Duration,
-        network: Network,
-    ) -> Self {
+    pub fn new(address: SocketAddr, timeout: Duration, network: Network) -> Self {
         Self {
             address,
             state: None,
             timeout,
-            read_timeout,
             connected_at: None,
             bytes_sent: 0,
             network,
@@ -88,39 +81,25 @@ impl TcpConnection {
     pub async fn connect(
         address: SocketAddr,
         timeout_secs: u64,
-        read_timeout: Duration,
         network: Network,
     ) -> NetworkResult<Self> {
         let timeout = Duration::from_secs(timeout_secs);
 
-        let stream = TcpStream::connect_timeout(&address, timeout).map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", address, e))
-        })?;
+        let stream = tokio::time::timeout(timeout, TcpStream::connect(address))
+            .await
+            .map_err(|_| {
+                NetworkError::ConnectionFailed(format!("Connection to {} timed out", address))
+            })?
+            .map_err(|e| {
+                NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", address, e))
+            })?;
 
         stream.set_nodelay(true).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
 
-        // CRITICAL: Read timeout configuration affects message integrity
-        //
-        // WARNING: Timeout values below 100ms risk TCP partial reads causing
-        // corrupted message framing and checksum validation failures.
-        // See git commit 16d55f09 for historical context.
-        //
-        // Set a read timeout instead of non-blocking mode
-        // This allows us to return None when no data is available
-        stream.set_read_timeout(Some(read_timeout)).map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to set read timeout: {}", e))
-        })?;
-
-        // Clone the stream for the BufReader
-        let read_stream = stream.try_clone().map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to clone stream: {}", e))
-        })?;
-
         let state = ConnectionState {
             stream,
-            read_buffer: BufReader::new(read_stream),
             framing_buffer: Vec::new(),
         };
 
@@ -128,7 +107,6 @@ impl TcpConnection {
             address,
             state: Some(Arc::new(Mutex::new(state))),
             timeout,
-            read_timeout,
             connected_at: Some(SystemTime::now()),
             bytes_sent: 0,
             network,
@@ -148,47 +126,25 @@ impl TcpConnection {
 
     /// Connect to the peer (instance method for compatibility).
     pub async fn connect_instance(&mut self) -> NetworkResult<()> {
-        let stream = TcpStream::connect_timeout(&self.address, self.timeout).map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", self.address, e))
-        })?;
-
-        // Don't set socket timeouts - we handle timeouts at the application level
-        // and socket timeouts can interfere with async operations
+        let stream = tokio::time::timeout(self.timeout, TcpStream::connect(self.address))
+            .await
+            .map_err(|_| {
+                NetworkError::ConnectionFailed(format!("Connection to {} timed out", self.address))
+            })?
+            .map_err(|e| {
+                NetworkError::ConnectionFailed(format!(
+                    "Failed to connect to {}: {}",
+                    self.address, e
+                ))
+            })?;
 
         // Disable Nagle's algorithm for lower latency
         stream.set_nodelay(true).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
 
-        // CRITICAL: Read timeout configuration affects message integrity
-        //
-        // WARNING: DO NOT MODIFY TIMEOUT VALUES WITHOUT UNDERSTANDING THE IMPLICATIONS
-        //
-        // Previous bug (git commit 16d55f09): 15ms timeout caused TCP partial reads
-        // leading to corrupted message framing and checksum validation failures
-        // with debug output like: "CHECKSUM DEBUG: len=2, checksum=[15, 1d, fc, 66]"
-        //
-        // The timeout must be long enough to receive complete network messages
-        // but short enough to maintain responsiveness. 100ms is the tested value
-        // that balances performance with correctness.
-        //
-        // TODO: Future refactor should eliminate this duplication by having
-        // connect_instance() delegate to connect() or use a shared connection setup method
-        //
-        // Set a read timeout instead of non-blocking mode
-        // This allows us to return None when no data is available
-        stream.set_read_timeout(Some(self.read_timeout)).map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to set read timeout: {}", e))
-        })?;
-
-        // Clone stream for reading
-        let read_stream = stream.try_clone().map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to clone stream: {}", e))
-        })?;
-
         let state = ConnectionState {
             stream,
-            read_buffer: BufReader::new(read_stream),
             framing_buffer: Vec::new(),
         };
 
@@ -204,8 +160,8 @@ impl TcpConnection {
     pub async fn disconnect(&mut self) -> NetworkResult<()> {
         if let Some(state_arc) = self.state.take() {
             if let Ok(state_mutex) = Arc::try_unwrap(state_arc) {
-                let state = state_mutex.into_inner();
-                let _ = state.stream.shutdown(std::net::Shutdown::Both);
+                let mut state = state_mutex.into_inner();
+                let _ = state.stream.shutdown().await;
             }
         }
         self.connected_at = None;
@@ -316,6 +272,19 @@ impl TcpConnection {
         );
     }
 
+    /// Helper function to read some bytes into the framing buffer.
+    async fn read_some(state: &mut ConnectionState) -> std::io::Result<usize> {
+        let mut tmp = [0u8; 8192];
+        match state.stream.read(&mut tmp).await {
+            Ok(0) => Ok(0),
+            Ok(n) => {
+                state.framing_buffer.extend_from_slice(&tmp[..n]);
+                Ok(n)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Send a message to the peer.
     pub async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
         let state_arc = self
@@ -352,23 +321,15 @@ impl TcpConnection {
         let mut state = state_arc.lock().await;
 
         // Write with error handling
-        match state.stream.write_all(&serialized) {
+        match state.stream.write_all(&serialized).await {
             Ok(_) => {
                 // Flush to ensure data is sent immediately
-                if let Err(e) = state.stream.flush() {
-                    if e.kind() != std::io::ErrorKind::WouldBlock {
-                        tracing::warn!("Failed to flush socket {}: {}", self.address, e);
-                    }
+                if let Err(e) = state.stream.flush().await {
+                    tracing::warn!("Failed to flush socket {}: {}", self.address, e);
                 }
                 self.bytes_sent += serialized.len() as u64;
                 tracing::debug!("Sent message to {}: {:?}", self.address, raw_message.payload);
                 Ok(())
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // For non-blocking writes that would block, we could retry later
-                // For now, treat as a temporary failure
-                tracing::debug!("Write would block to {}, socket buffer may be full", self.address);
-                Err(NetworkError::Timeout)
             }
             Err(e) => {
                 tracing::warn!("Disconnecting {} due to write error: {}", self.address, e);
@@ -398,27 +359,14 @@ impl TcpConnection {
         const HEADER_LEN: usize = 24; // magic[4] + cmd[12] + length[4] + checksum[4]
         const MAX_RESYNC_STEPS_PER_CALL: usize = 64;
 
-        let result = (|| -> NetworkResult<Option<NetworkMessage>> {
-            // Helper: try to read some bytes into framing buffer
-            let read_some = |state: &mut ConnectionState| -> std::io::Result<usize> {
-                let mut tmp = [0u8; 8192];
-                match state.read_buffer.read(&mut tmp) {
-                    Ok(0) => Ok(0),
-                    Ok(n) => {
-                        state.framing_buffer.extend_from_slice(&tmp[..n]);
-                        Ok(n)
-                    }
-                    Err(e) => Err(e),
-                }
-            };
-
+        let result = async {
             let magic_bytes = self.network.magic().to_le_bytes();
             let mut resync_steps = 0usize;
 
             loop {
                 // Ensure header availability
                 if state.framing_buffer.len() < HEADER_LEN {
-                    match read_some(&mut state) {
+                    match Self::read_some(&mut state).await {
                         Ok(0) => {
                             tracing::info!("Peer {} closed connection (EOF)", self.address);
                             return Err(NetworkError::PeerDisconnected);
@@ -482,7 +430,7 @@ impl TcpConnection {
                             }
                         }
                         // Need more data
-                        match read_some(&mut state) {
+                        match Self::read_some(&mut state).await {
                             Ok(0) => {
                                 tracing::info!("Peer {} closed connection (EOF)", self.address);
                                 return Err(NetworkError::PeerDisconnected);
@@ -507,7 +455,7 @@ impl TcpConnection {
 
                 // Ensure full header
                 if state.framing_buffer.len() < HEADER_LEN {
-                    match read_some(&mut state) {
+                    match Self::read_some(&mut state).await {
                         Ok(0) => {
                             tracing::info!("Peer {} closed connection (EOF)", self.address);
                             return Err(NetworkError::PeerDisconnected);
@@ -561,7 +509,7 @@ impl TcpConnection {
 
                 // Ensure full frame available
                 if state.framing_buffer.len() < total_len {
-                    match read_some(&mut state) {
+                    match Self::read_some(&mut state).await {
                         Ok(0) => {
                             tracing::info!("Peer {} closed connection (EOF)", self.address);
                             return Err(NetworkError::PeerDisconnected);
@@ -681,7 +629,8 @@ impl TcpConnection {
                     }
                 }
             }
-        })();
+        }
+        .await;
 
         // Drop the lock before disconnecting
         drop(state);

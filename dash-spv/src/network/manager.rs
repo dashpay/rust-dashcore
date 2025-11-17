@@ -62,8 +62,6 @@ pub struct PeerNetworkManager {
     mempool_strategy: MempoolStrategy,
     /// Last peer that sent us a message
     last_message_peer: Arc<Mutex<Option<SocketAddr>>>,
-    /// Read timeout for TCP connections
-    read_timeout: Duration,
     /// Track which peers have sent us Headers2 messages
     peers_sent_headers2: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Optional user agent to advertise
@@ -121,7 +119,6 @@ impl PeerNetworkManager {
             data_dir,
             mempool_strategy: config.mempool_strategy,
             last_message_peer: Arc::new(Mutex::new(None)),
-            read_timeout: config.read_timeout,
             peers_sent_headers2: Arc::new(Mutex::new(HashSet::new())),
             user_agent: config.user_agent.clone(),
             exclusive_mode,
@@ -210,7 +207,6 @@ impl PeerNetworkManager {
         let shutdown = self.shutdown.clone();
         let reputation_manager = self.reputation_manager.clone();
         let mempool_strategy = self.mempool_strategy;
-        let read_timeout = self.read_timeout;
         let user_agent = self.user_agent.clone();
         let connected_peer_count = self.connected_peer_count.clone();
 
@@ -219,9 +215,7 @@ impl PeerNetworkManager {
         tasks.spawn(async move {
             log::debug!("Attempting to connect to {}", addr);
 
-            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), read_timeout, network)
-                .await
-            {
+            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), network).await {
                 Ok(mut conn) => {
                     // Perform handshake
                     let mut handshake_manager =
@@ -999,7 +993,6 @@ impl Clone for PeerNetworkManager {
             data_dir: self.data_dir.clone(),
             mempool_strategy: self.mempool_strategy,
             last_message_peer: self.last_message_peer.clone(),
-            read_timeout: self.read_timeout,
             peers_sent_headers2: self.peers_sent_headers2.clone(),
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
