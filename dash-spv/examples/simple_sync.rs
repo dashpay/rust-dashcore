@@ -7,6 +7,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
+use tokio::signal;
 use tokio::sync::RwLock;
 
 #[tokio::main]
@@ -46,6 +47,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stats = client.stats().await?;
     println!("Headers downloaded: {}", stats.headers_downloaded);
     println!("Bytes received: {}", stats.bytes_received);
+
+    tokio::select! {
+        result = client.monitor_network() => {
+            println!("monitor_network result {:?}", result);
+        },
+        _ = signal::ctrl_c() => {
+            println!("monitor_network canceled");
+        }
+    }
 
     // Stop the client
     client.stop().await?;
