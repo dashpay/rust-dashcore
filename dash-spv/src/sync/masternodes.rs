@@ -552,19 +552,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         }
 
-        // Flush the header index to disk to ensure all block hash mappings are persisted
-        // This is critical for masternode sync because QRInfo processing builds many hash→height
-        // mappings in memory that need to be available on restart
-        if let Some(disk_storage) =
-            storage.as_any_mut().downcast_mut::<crate::storage::disk::DiskStorageManager>()
-        {
-            if let Err(e) = disk_storage.flush_header_index().await {
-                tracing::warn!("⚠️ Failed to flush header index after MNList sync: {}", e);
-            } else {
-                tracing::debug!("💾 Flushed header index after MNList sync completion");
-            }
-        }
-
         tracing::info!("✅ QRInfo processing completed successfully (unified path)");
     }
 

@@ -391,6 +391,19 @@ impl<
         };
 
         if should_transition {
+            // Flush the header index to disk after headers phase completes
+            // This ensures all block hash→height mappings are persisted before moving to next phase
+            // Critical for masternode sync which relies on looking up block heights by hash
+            if let Some(disk_storage) =
+                storage.as_any_mut().downcast_mut::<crate::storage::disk::DiskStorageManager>()
+            {
+                if let Err(e) = disk_storage.flush_header_index().await {
+                    tracing::warn!("⚠️ Failed to flush header index after headers sync: {}", e);
+                } else {
+                    tracing::info!("💾 Flushed header index after headers sync completion");
+                }
+            }
+
             self.transition_to_next_phase(storage, network, "Headers sync complete").await?;
 
             // Execute the next phase
