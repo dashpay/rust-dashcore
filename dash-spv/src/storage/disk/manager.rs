@@ -400,7 +400,7 @@ impl DiskStorageManager {
     }
 
     /// Save the reverse header index to disk synchronously.
-    pub(super) async fn flush_header_index(&self) -> StorageResult<()> {
+    pub async fn flush_header_index(&self) -> StorageResult<()> {
         let index = self.header_hash_index.read().await.clone();
         let path = self.base_path.join("headers/index.dat");
         super::io::save_index_to_disk(&path, &index).await?;
