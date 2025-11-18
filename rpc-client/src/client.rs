@@ -16,8 +16,6 @@ use std::str::FromStr;
 use std::{fmt, result};
 
 use crate::dashcore;
-use jsonrpc;
-use serde;
 use serde_json::{self, Value};
 
 use crate::Error::UnexpectedStructure;
@@ -56,11 +54,11 @@ impl From<OutPoint> for JsonOutPoint {
     }
 }
 
-impl Into<OutPoint> for JsonOutPoint {
-    fn into(self) -> OutPoint {
+impl From<JsonOutPoint> for OutPoint {
+    fn from(val: JsonOutPoint) -> Self {
         OutPoint {
-            txid: self.txid,
-            vout: self.vout,
+            txid: val.txid,
+            vout: val.vout,
         }
     }
 }
