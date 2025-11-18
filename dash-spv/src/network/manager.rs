@@ -331,8 +331,8 @@ impl PeerNetworkManager {
                         message = peer_guard.receive_message() => {
                             message
                         },
-                        _ = tokio::time::sleep(MESSAGE_RECEIVE_TIMEOUT) => {
-                            Err(NetworkError::Timeout)
+                        _ = tokio::time::sleep(MESSAGE_POLL_INTERVAL) => {
+                            Ok(None)
                         },
                         _ = shutdown_token.cancelled() => {
                             log::info!("Breaking peer reader loop for {} - shutdown signal received while reading (iteration {})", addr, loop_iteration);
