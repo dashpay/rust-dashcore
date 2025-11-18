@@ -13,13 +13,13 @@
 
 use std::time::{Duration, Instant, SystemTime};
 
+use super::{BlockProcessingTask, DashSpvClient, MessageHandler};
 use crate::error::{Result, SpvError};
+use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::{DetailedSyncProgress, SyncProgress};
 use key_wallet_manager::wallet_interface::WalletInterface;
-
-use super::{BlockProcessingTask, DashSpvClient, MessageHandler};
 
 impl<
         W: WalletInterface + Send + Sync + 'static,
@@ -491,7 +491,7 @@ impl<
             }
 
             // Handle network messages with timeout for responsiveness
-            match tokio::time::timeout(Duration::from_millis(1000), self.network.receive_message())
+            match tokio::time::timeout(MESSAGE_RECEIVE_TIMEOUT, self.network.receive_message())
                 .await
             {
                 Ok(msg_result) => match msg_result {
