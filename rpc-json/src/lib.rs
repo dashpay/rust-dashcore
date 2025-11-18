@@ -17,9 +17,6 @@
 #![crate_type = "rlib"]
 
 pub use dashcore;
-use serde;
-use serde_json;
-use serde_with;
 
 use bincode::{Decode, Encode};
 use serde_repr::*;
