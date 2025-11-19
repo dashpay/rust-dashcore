@@ -584,21 +584,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         self.error = Some("MnListDiff requests timed out after retry".to_string());
 
                         // Still persist what we have
-                        match storage.get_tip_height().await {
-                            Ok(Some(tip_height)) => {
-                                let state = crate::storage::MasternodeState {
-                                    last_height: tip_height,
-                                    engine_state: Vec::new(),
-                                    last_update: std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .map(|d| d.as_secs())
-                                        .unwrap_or(0),
-                                };
-                                if let Err(e) = storage.store_masternode_state(&state).await {
-                                    tracing::warn!("⚠️ Failed to store masternode state: {}", e);
-                                }
+                        if let Ok(Some(tip_height)) = storage.get_tip_height().await {
+                            let state = crate::storage::MasternodeState {
+                                last_height: tip_height,
+                                engine_state: Vec::new(),
+                                last_update: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0),
+                            };
+                            if let Err(e) = storage.store_masternode_state(&state).await {
+                                tracing::warn!("⚠️ Failed to store masternode state: {}", e);
                             }
-                            _ => {}
                         }
                     }
                 }
