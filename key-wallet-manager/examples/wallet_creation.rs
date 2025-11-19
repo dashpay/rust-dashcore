@@ -5,7 +5,6 @@
 //! - Creating wallets from mnemonics
 //! - Managing wallet accounts and addresses
 
-use hex;
 use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;

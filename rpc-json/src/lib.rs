@@ -3270,10 +3270,10 @@ mod tests {
         }
 
         let json = r#"{"field": 1}"#;
-        let result: Test = serde_json::from_str(&json).unwrap();
+        let result: Test = serde_json::from_str(json).unwrap();
         assert_eq!(result.field, Some(1));
         let json = r#"{"field": -1}"#;
-        let result: Test = serde_json::from_str(&json).unwrap();
+        let result: Test = serde_json::from_str(json).unwrap();
         assert_eq!(result.field, None);
     }
 
@@ -3294,7 +3294,7 @@ mod tests {
         let result: ExtendedQuorumListResult =
             serde_json::from_str(json_list).expect("expected to deserialize json");
         let first_type = result.quorums_by_type.get(&QuorumType::Llmq50_60).unwrap();
-        let first_quorum = first_type.into_iter().nth(0).unwrap();
+        let first_quorum = first_type.iter().next().unwrap();
 
         assert_eq!(
             first_quorum.0.to_byte_array(),
@@ -3424,7 +3424,7 @@ mod tests {
               ]
             }"#;
         let result: MasternodeListDiff =
-            serde_json::from_str(&json).expect("expected to deserialize json");
+            serde_json::from_str(json).expect("expected to deserialize json");
         println!("{:#?}", result);
         assert_eq!(32, result.added_mns[0].pro_tx_hash.as_byte_array().len());
 
