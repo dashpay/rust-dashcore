@@ -603,7 +603,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     );
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to read tip height to persist masternode state: {}", e);
+                    tracing::warn!(
+                        "⚠️ Failed to read tip height to persist masternode state: {}",
+                        e
+                    );
                 }
             }
         } else {
