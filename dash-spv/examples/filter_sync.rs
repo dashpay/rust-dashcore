@@ -8,6 +8,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::signal;
 use tokio::sync::RwLock;
 
 #[tokio::main]
@@ -44,7 +45,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Full sync including filters
     let progress = client.sync_to_tip().await?;
 
-    println!("Synchronization completed!");
+    tokio::select! {
+        result = client.monitor_network() => {
+            println!("monitor_network result {:?}", result);
+        },
+        _ = signal::ctrl_c() => {
+            println!("monitor_network canceled");
+        }
+    }
+
     println!("Headers synced: {}", progress.header_height);
     println!("Filter headers synced: {}", progress.filter_header_height);
 
