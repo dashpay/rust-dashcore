@@ -1,0 +1,28 @@
+[default]
+extend-ignore-re = [
+    # Dash addresses and hex strings contain random character sequences
+    # that may match typo patterns (e.g., "nce", "Ue", "LAF", "BA")
+    # These are intentionally excluded as they are valid cryptographic data
+    ".*[XYy][a-zA-Z0-9]{33}.*",  # Dash addresses (base58)
+    ".*tb1q[a-z0-9]{58}.*",       # Testnet bech32 addresses
+    "0x[0-9a-fA-F]+",             # Hex strings with 0x prefix
+    '"[0-9a-fA-F]+"',             # Quoted hex strings in code
+    '[0-9a-fA-F]{5,}',            # Hex strings (5+ chars to catch "BA70D")
+    'b"[^"]*"',                   # Byte strings - never check these for typos
+    "b'[^']*'",                   # Byte strings with single quotes
+]
+
+[default.extend-words]
+# Technical acronyms and abbreviations
+FPR = "FPR"  # False Positive Rate (bloom filter metric)
+
+[files]
+# Exclude test data and binary files
+extend-exclude = [
+    "*.hex",
+    "*.snap",
+    "*.lock",
+    "fuzz/hfuzz_input/**",
+    "dash/tests/data/**",
+    "key-wallet/tests/data/**",
+]

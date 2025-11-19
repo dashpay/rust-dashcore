@@ -77,13 +77,78 @@ Prerequisites that a PR must satisfy for merging into the `master` branch:
 * include inline docs for newly introduced APIs and pass doc tests;
 * be based on the recent tip of the target branch in this repository.
 
-Reviewers may run additional scripts; passing CI is necessary but may not be sufficient for merge. To mirror CI locally:
-```bash
-# Full suite with optional knobs
-DO_COV=true DO_LINT=true DO_FMT=true ./contrib/test.sh
+### Pre-commit Hooks
 
-# Or workspace-wide checks
-cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --all-features
+Reviewers may run additional scripts; passing CI is necessary but may not be sufficient for merge. This repo integrates
+[pre-commit](https://pre-commit.com/) to mirror CI locally to run automated checks before commits and pushes.
+This catches formatting issues, typos, and linting problems early before CI runs.
+
+#### Quick Setup
+
+```bash
+# 1. Install pre-commit (one-time)
+pip install pre-commit
+# or: brew install pre-commit (macOS)
+# or: pipx install pre-commit (isolated install)
+
+# 2. Install git hooks (in this repo)
+pre-commit install                    # Runs on every commit
+pre-commit install --hook-type pre-push  # Runs on every push
+```
+
+That's it! Hooks run automatically from now on.
+
+#### What Runs Automatically
+
+**On every commit** (~2-5 seconds):
+- `cargo fmt` — Rust code formatting (auto-fixes)
+- `typos` — Spell checking in code/comments (auto-fixes)
+- `actionlint` — GitHub Actions workflow validation
+- File checks — Trailing whitespace, EOF newlines, YAML/JSON/TOML syntax (auto-fixes)
+
+**On git push** (~30-90 seconds additional):
+- `cargo clippy` — Strict linting on entire workspace
+- `verify-ffi-headers` — Ensures FFI C headers are up to date
+- `verify-ffi-docs` — Ensures FFI API documentation is current
+
+**Note:** CI runs the exact same checks, so passing locally = passing in CI.
+
+#### Bash Aliases (Optional)
+
+Add these to your `~/.bashrc`, `~/.zshrc`, or `~/.bash_aliases`:
+
+```bash
+# Pre-commit shortcuts
+alias checks='pre-commit run --all-files'
+alias checks-all='pre-commit run --all-files --hook-stage push'
+alias checks-on='pre-commit install && pre-commit install --hook-type pre-push'
+alias checks-off='pre-commit uninstall && pre-commit uninstall --hook-type pre-push'
+```
+
+**Usage:**
+```bash
+checks          # Quick check before committing
+checks-all      # Full check (same as CI runs)
+checks-on       # Enable hooks
+checks-off      # Disable hooks
+```
+
+#### Bypassing Hooks (When You Need To)
+
+Sometimes you need to bypass checks (e.g., work-in-progress commits, fixing pre-commit itself):
+
+```bash
+# Skip commit checks
+git commit --no-verify
+
+# Skip push checks
+git push --no-verify
+
+# Temporarily disable all hooks
+checks-off # or: pre-commit uninstall --hook-type pre-commit --hook-type pre-push
+
+# Re-enable later
+checks-on  # or: pre-commit install && pre-commit install --hook-type pre-push
 ```
 
 ### Peer review
