@@ -59,7 +59,7 @@ use crate::taproot::{LeafVersion, TapLeafHash, TapNodeHash};
 /// ## Memory safety
 ///
 /// The type is `#[repr(transparent)]` for internal purposes only!
-/// No consumer crate may rely on the represenation of the struct!
+/// No consumer crate may rely on the representation of the struct!
 ///
 /// ## References
 ///

@@ -63,7 +63,7 @@ Functions: 19
 | `wallet_manager_get_wallet_ids` | Get wallet IDs  # Safety  - `manager` must be a valid pointer to an FFIWallet... | wallet_manager |
 | `wallet_manager_import_wallet_from_bytes` | No description | wallet_manager |
 | `wallet_manager_process_transaction` | Process a transaction through all wallets  Checks a transaction against all w... | wallet_manager |
-| `wallet_manager_update_height` | Update block height for a network  # Safety  - `manager` must be a valid poin... | wallet_manager |
+| `wallet_manager_update_height` | Update block height for a network  # Safety  - `manager` must be a valid point... | wallet_manager |
 | `wallet_manager_wallet_count` | Get wallet count  # Safety  - `manager` must be a valid pointer to an FFIWall... | wallet_manager |
 
 ### Wallet Operations
@@ -82,7 +82,7 @@ Functions: 62
 | `managed_account_get_parent_wallet_id` | Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't s... | managed_account |
 | `managed_wallet_check_transaction` | Check if a transaction belongs to the wallet  This function checks a transact... | transaction_checking |
 | `managed_wallet_free` | Free managed wallet info  # Safety  - `managed_wallet` must be a valid pointe... | managed_wallet |
-| `managed_wallet_generate_addresses_to_index` | Generate addresses up to a specific index in a pool  This ensures that addres... | address_pool |
+| `managed_wallet_generate_addresses_to_index` | Generate addresses up to a specific index in a pool  This ensures that address... | address_pool |
 | `managed_wallet_get_account` | Get a managed account from a managed wallet  This function gets a ManagedAcco... | managed_account |
 | `managed_wallet_get_account_collection` | Get managed account collection for a specific network from wallet manager  # ... | managed_account_collection |
 | `managed_wallet_get_account_count` | Get number of accounts in a managed wallet  # Safety  - `manager` must be a v... | managed_account |
@@ -93,11 +93,11 @@ Functions: 62
 | `managed_wallet_get_dashpay_external_account` | Get a managed DashPay external account by composite key  # Safety - Pointers ... | managed_account |
 | `managed_wallet_get_dashpay_receiving_account` | Get a managed DashPay receiving funds account by composite key  # Safety - `m... | managed_account |
 | `managed_wallet_get_next_bip44_change_address` | Get the next unused change address  Generates the next unused change address ... | managed_wallet |
-| `managed_wallet_get_next_bip44_receive_address` | Get the next unused receive address  Generates the next unused receive addres... | managed_wallet |
+| `managed_wallet_get_next_bip44_receive_address` | Get the next unused receive address  Generates the next unused receive address... | managed_wallet |
 | `managed_wallet_get_top_up_account_with_registration_index` | Get a managed IdentityTopUp account with a specific registration index  This ... | managed_account |
 | `managed_wallet_get_utxos` | Get all UTXOs from managed wallet info  # Safety  - `managed_info` must be a ... | utxo |
 | `managed_wallet_info_free` | Free managed wallet info returned by wallet_manager_get_managed_wallet_info  ... | managed_wallet |
-| `managed_wallet_mark_address_used` | Mark an address as used in the pool  This updates the pool's tracking of whic... | address_pool |
+| `managed_wallet_mark_address_used` | Mark an address as used in the pool  This updates the pool's tracking of which... | address_pool |
 | `managed_wallet_set_gap_limit` | Set the gap limit for an address pool  The gap limit determines how many unus... | address_pool |
 | `wallet_add_account` | Add an account to the wallet without xpub  # Safety  This function dereferenc... | wallet |
 | `wallet_add_account_with_string_xpub` | Add an account to the wallet with xpub as string  # Safety  This function der... | wallet |
@@ -172,13 +172,13 @@ Functions: 94
 | `account_derive_extended_private_key_from_mnemonic` | Derive an extended private key from a mnemonic + optional passphrase at the g... | account_derivation |
 | `account_derive_extended_private_key_from_seed` | Derive an extended private key from a raw seed buffer at the given index | account_derivation |
 | `account_derive_private_key_as_wif_at` | Derive a private key from an account at a given chain/index and return as WIF... | account_derivation |
-| `account_derive_private_key_at` | Derive a private key (secp256k1) from an account at a given chain/index, usin... | account_derivation |
+| `account_derive_private_key_at` | Derive a private key (secp256k1) from an account at a given chain/index, using... | account_derivation |
 | `account_derive_private_key_from_mnemonic` | Derive a private key from a mnemonic + optional passphrase at the given index | account_derivation |
 | `account_derive_private_key_from_seed` | Derive a private key from a raw seed buffer at the given index | account_derivation |
 | `account_free` | Free an account handle  # Safety  - `account` must be a valid pointer to an F... | account |
 | `account_get_account_type` | Get the account type of an account  # Safety  - `account` must be a valid poi... | account |
 | `account_get_extended_public_key_as_string` | Get the extended public key of an account as a string  # Safety  - `account` ... | account |
-| `account_get_is_watch_only` | Check if an account is watch-only  # Safety  - `account` must be a valid poin... | account |
+| `account_get_is_watch_only` | Check if an account is watch-only  # Safety  - `account` must be a valid point... | account |
 | `account_get_network` | Get the network of an account  # Safety  - `account` must be a valid pointer ... | account |
 | `bls_account_derive_private_key_from_mnemonic` | No description | account_derivation |
 | `bls_account_derive_private_key_from_seed` | No description | account_derivation |
@@ -219,7 +219,7 @@ Functions: 94
 | `managed_account_collection_has_provider_owner_keys` | Check if provider owner keys account exists in managed collection  # Safety  ... | managed_account_collection |
 | `managed_account_collection_has_provider_platform_keys` | Check if provider platform keys account exists in managed collection  # Safet... | managed_account_collection |
 | `managed_account_collection_has_provider_voting_keys` | Check if provider voting keys account exists in managed collection  # Safety ... | managed_account_collection |
-| `managed_account_collection_summary` | Get a human-readable summary of all accounts in the managed collection  Retur... | managed_account_collection |
+| `managed_account_collection_summary` | Get a human-readable summary of all accounts in the managed collection  Return... | managed_account_collection |
 | `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection  Return... | managed_account_collection |
 | `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  # Saf... | managed_account_collection |
 | `managed_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer ... | managed_account |

@@ -1490,7 +1490,7 @@ pub struct GetBlockTemplateResult {
     pub min_time: u64,
     /// List of things that may be changed by the client before submitting a
     /// block
-    pub mutable: Vec<GetBlockTemplateResulMutations>,
+    pub mutable: Vec<GetBlockTemplateResultMutations>,
     // TODO figure out what is the data is represented to value
     // pub value:
     /// A range of valid nonces
@@ -1573,7 +1573,7 @@ pub enum GetBlockTemplateResultRules {
 /// but not implemented in the getblocktemplate implementation of Bitcoin Core.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum GetBlockTemplateResulMutations {
+pub enum GetBlockTemplateResultMutations {
     /// The client is allowed to modify the time in the header of the block
     Time,
     /// The client is allowed to add transactions to the block

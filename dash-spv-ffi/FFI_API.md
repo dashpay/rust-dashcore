@@ -39,7 +39,7 @@ Functions: 27
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_update_config` | Update the running client's configuration | client |
-| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts either a full socket addres... | config |
+| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts either a full socket address... | config |
 | `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must be... | config |
 | `dash_spv_ffi_config_get_data_dir` | Gets the data directory path from the configuration  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_get_mempool_strategy` | Gets the mempool synchronization strategy  # Safety - `config` must be a vali... | config |

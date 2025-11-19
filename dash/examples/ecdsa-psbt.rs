@@ -53,7 +53,7 @@ const INPUT_UTXO_TXID: &str = "295f06639cde6039bf0c3dbf4827f0e3f2b2c2b476408e2f9
 const INPUT_UTXO_VOUT: u32 = 0;
 const INPUT_UTXO_SCRIPT_PUBKEY: &str = "00149891eeb8891b3e80a2a1ade180f143add23bf5de";
 const INPUT_UTXO_VALUE: &str = "50 BTC";
-// Get this from the desciptor,
+// Get this from the descriptor,
 // "wpkh([97f17dca/0'/0'/0']02749483607dafb30c66bd93ece4474be65745ce538c2d70e8e246f17e7a4e0c0c)#m9n56cx0".
 const INPUT_UTXO_DERIVATION_PATH: &str = "m/0h/0h/0h";
 
@@ -181,7 +181,7 @@ impl WatchOnly {
         }
     }
 
-    /// Creates the PSBT, in BIP174 parlance this is the 'Creater'.
+    /// Creates the PSBT, in BIP174 parlance this is the 'Creator'.
     fn create_psbt<C: Verification>(&self, secp: &Secp256k1<C>) -> Result<Psbt> {
         let to_address = Address::from_str(RECEIVE_ADDRESS)?.require_network(Network::Regtest)?;
         let to_amount = Amount::from_str(OUTPUT_AMOUNT_BTC)?;
