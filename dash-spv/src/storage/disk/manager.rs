@@ -398,13 +398,4 @@ impl DiskStorageManager {
 
         Ok(())
     }
-
-    /// Save the reverse header index to disk synchronously.
-    pub async fn flush_header_index(&self) -> StorageResult<()> {
-        let index = self.header_hash_index.read().await.clone();
-        let path = self.base_path.join("headers/index.dat");
-        super::io::save_index_to_disk(&path, &index).await?;
-        *self.last_index_save_count.write().await = index.len();
-        Ok(())
-    }
 }

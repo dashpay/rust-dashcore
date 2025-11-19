@@ -434,11 +434,15 @@ impl DiskStorageManager {
         // Save all dirty segments
         super::segments::save_dirty_segments(self).await?;
 
-        // Ensure the reverse index reflects every stored header before we exit
-        self.flush_header_index().await?;
-
         // Shutdown background worker
         if let Some(tx) = self.worker_tx.take() {
+            // Save the header index before shutdown
+            let index = self.header_hash_index.read().await.clone();
+            let _ = tx
+                .send(super::manager::WorkerCommand::SaveIndex {
+                    index,
+                })
+                .await;
             let _ = tx.send(super::manager::WorkerCommand::Shutdown).await;
         }
 
