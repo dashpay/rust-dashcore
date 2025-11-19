@@ -22,4 +22,3 @@ do
     HFUZZ_RUN_ARGS="-i hfuzz_workspace/$targetName/input/ -P -M" chrt -i 0 cargo hfuzz run "$targetName"
   done
 done
-

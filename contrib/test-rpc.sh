@@ -81,4 +81,3 @@ else
   cargo test --verbose
   cargo build --verbose --examples
 fi
-
