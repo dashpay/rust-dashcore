@@ -16,7 +16,7 @@ struct Clipboard {
         pasteboard.setString(string, forType: .string)
         #endif
     }
-    
+
     static func paste() -> String? {
         #if os(iOS)
         return UIPasteboard.general.string
@@ -30,17 +30,17 @@ struct CopyButton: View {
     let text: String
     let label: String
     @State private var copied = false
-    
+
     init(_ text: String, label: String = "Copy") {
         self.text = text
         self.label = label
     }
-    
+
     var body: some View {
         Button(action: {
             Clipboard.copy(text)
             copied = true
-            
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 copied = false
             }

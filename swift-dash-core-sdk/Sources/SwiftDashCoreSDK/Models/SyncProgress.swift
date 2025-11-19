@@ -16,7 +16,7 @@ public struct SyncProgress: Sendable, Equatable {
     public let peerCount: UInt32
     public let filtersDownloaded: UInt32
     public let lastSyncedFilterHeight: UInt32
-    
+
     public init(
         currentHeight: UInt32,
         totalHeight: UInt32,
@@ -44,7 +44,7 @@ public struct SyncProgress: Sendable, Equatable {
         self.filtersDownloaded = filtersDownloaded
         self.lastSyncedFilterHeight = lastSyncedFilterHeight
     }
-    
+
     internal init(ffiProgress: FFISyncProgress) {
         self.currentHeight = ffiProgress.header_height
         self.totalHeight = 0 // FFISyncProgress doesn't provide total height
@@ -59,23 +59,23 @@ public struct SyncProgress: Sendable, Equatable {
         self.filtersDownloaded = ffiProgress.filters_downloaded
         self.lastSyncedFilterHeight = ffiProgress.last_synced_filter_height
     }
-    
+
     public var blocksRemaining: UInt32 {
         guard totalHeight > currentHeight else { return 0 }
         return totalHeight - currentHeight
     }
-    
+
     public var isComplete: Bool {
         return currentHeight >= totalHeight || progress >= 1.0
     }
-    
+
     public var percentageComplete: Int {
         return Int(progress * 100)
     }
-    
+
     public var formattedTimeRemaining: String? {
         guard let eta = estimatedTimeRemaining else { return nil }
-        
+
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.hour, .minute, .second]
         formatter.unitsStyle = .abbreviated
@@ -91,7 +91,7 @@ public enum SyncStatus: String, Codable, Sendable {
     case scanning = "scanning"
     case synced = "synced"
     case error = "error"
-    
+
     internal init?(ffiStatus: UInt32) {
         switch ffiStatus {
         case 0:
@@ -112,7 +112,7 @@ public enum SyncStatus: String, Codable, Sendable {
             return nil
         }
     }
-    
+
     public var description: String {
         switch self {
         case .idle:
@@ -131,7 +131,7 @@ public enum SyncStatus: String, Codable, Sendable {
             return "Sync error"
         }
     }
-    
+
     public var isActive: Bool {
         switch self {
         case .idle, .synced, .error:

@@ -16,10 +16,10 @@ public final class Transaction {
     public var raw: Data
     public var size: UInt32
     public var version: UInt32
-    
+
     // Inverse relationship to WatchedAddress
     @Relationship(inverse: \WatchedAddress.transactions) public var watchedAddress: WatchedAddress?
-    
+
     public init(
         txid: String,
         height: UInt32? = nil,
@@ -45,7 +45,7 @@ public final class Transaction {
         self.version = version
         self.watchedAddress = watchedAddress
     }
-    
+
     internal convenience init(ffiTransaction: FFITransaction) {
         self.init(
             txid: String(cString: ffiTransaction.txid.ptr),
@@ -60,15 +60,15 @@ public final class Transaction {
             version: UInt32(ffiTransaction.version)
         )
     }
-    
+
     public var isConfirmed: Bool {
         return confirmations > 0
     }
-    
+
     public var isPending: Bool {
         return confirmations == 0 && !isInstantLocked
     }
-    
+
     public var status: TransactionStatus {
         if isInstantLocked {
             return .instantLocked
@@ -87,7 +87,7 @@ public enum TransactionStatus: Equatable {
     case confirming(UInt32)
     case confirmed
     case instantLocked
-    
+
     public var description: String {
         switch self {
         case .pending:
@@ -100,7 +100,7 @@ public enum TransactionStatus: Equatable {
             return "InstantSend"
         }
     }
-    
+
     public var isSettled: Bool {
         switch self {
         case .confirmed, .instantLocked:

@@ -1,9 +1,9 @@
 /**
  * Key Wallet FFI - C Header File
- * 
+ *
  * This header provides C-compatible function declarations for the key-wallet
  * Rust library FFI bindings.
- * 
+ *
  * AUTO-GENERATED FILE - DO NOT EDIT
  * Generated using cbindgen
  */

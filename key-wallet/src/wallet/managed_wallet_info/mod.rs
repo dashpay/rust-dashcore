@@ -37,7 +37,7 @@ pub struct ManagedWalletInfo {
     pub wallet_id: [u8; 32],
     /// Wallet name
     pub name: Option<String>,
-    /// Wallet description  
+    /// Wallet description
     pub description: Option<String>,
     /// Wallet metadata
     pub metadata: WalletMetadata,

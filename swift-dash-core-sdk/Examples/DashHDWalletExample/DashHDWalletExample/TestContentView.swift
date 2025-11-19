@@ -6,11 +6,11 @@ struct TestContentView: View {
             Text("Dash HD Wallet")
                 .font(.largeTitle)
                 .padding()
-            
+
             Text("iOS App is running!")
                 .font(.title2)
                 .foregroundColor(.green)
-            
+
             Spacer()
         }
         .padding()

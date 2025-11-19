@@ -464,7 +464,7 @@ impl PeerNetworkManager {
                                 payload,
                             } => {
                                 // Log unknown messages with more detail
-                                log::warn!("Received unknown message from {}: command='{}', payload_len={}", 
+                                log::warn!("Received unknown message from {}: command='{}', payload_len={}",
                                          addr, command, payload.len());
                                 // Still forward to client
                             }
@@ -850,7 +850,7 @@ impl PeerNetworkManager {
                 log::debug!("Sending {} to {}", message.cmd(), addr);
             }
             NetworkMessage::GetHeaders2(gh2) => {
-                log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}", 
+                log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}",
                     addr,
                     gh2.version,
                     gh2.locator_hashes.len(),

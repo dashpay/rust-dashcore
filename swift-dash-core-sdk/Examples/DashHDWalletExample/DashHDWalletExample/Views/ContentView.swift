@@ -6,11 +6,11 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var walletService: WalletService
     @Query private var wallets: [HDWallet]
-    
+
     @State private var showCreateWallet = false
     @State private var showImportWallet = false
     @State private var selectedWallet: HDWallet?
-    
+
     var body: some View {
         #if os(iOS)
         NavigationStack {
@@ -45,12 +45,12 @@ struct ContentView: View {
                             .tag(wallet)
                     }
                 }
-                
+
                 Section {
                     Button(action: { showCreateWallet = true }) {
                         Label("Create New Wallet", systemImage: "plus.circle")
                     }
-                    
+
                     Button(action: { showImportWallet = true }) {
                         Label("Import Wallet", systemImage: "square.and.arrow.down")
                     }
@@ -86,9 +86,9 @@ struct WalletListView: View {
     let wallets: [HDWallet]
     let onCreateWallet: () -> Void
     let onImportWallet: () -> Void
-    
+
     @State private var showingSettings = false
-    
+
     var body: some View {
         #if os(iOS)
         List {
@@ -98,11 +98,11 @@ struct WalletListView: View {
                         Image(systemName: "wallet.pass")
                             .font(.system(size: 50))
                             .foregroundColor(.secondary)
-                        
+
                         Text("No wallets yet")
                             .font(.headline)
                             .foregroundColor(.secondary)
-                        
+
                         Text("Create or import a wallet to get started")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -121,12 +121,12 @@ struct WalletListView: View {
                     }
                 }
             }
-            
+
             Section {
                 Button(action: onCreateWallet) {
                     Label("Create New Wallet", systemImage: "plus.circle")
                 }
-                
+
                 Button(action: onImportWallet) {
                     Label("Import Wallet", systemImage: "square.and.arrow.down")
                 }
@@ -154,12 +154,12 @@ struct WalletListView: View {
                         .tag(wallet)
                 }
             }
-            
+
             Section {
                 Button(action: onCreateWallet) {
                     Label("Create New Wallet", systemImage: "plus.circle")
                 }
-                
+
                 Button(action: onImportWallet) {
                     Label("Import Wallet", systemImage: "square.and.arrow.down")
                 }
@@ -175,25 +175,25 @@ struct WalletListView: View {
 
 struct WalletRowView: View {
     let wallet: HDWallet
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(wallet.name)
                     .font(.headline)
-                
+
                 Spacer()
-                
+
                 NetworkBadge(network: wallet.network)
             }
-            
+
             HStack {
                 Text("\(wallet.accounts.count) accounts")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 Spacer()
-                
+
                 Text(wallet.totalBalance.formattedTotal)
                     .font(.caption)
                     .monospacedDigit()
@@ -208,7 +208,7 @@ struct WalletRowView: View {
 
 struct NetworkBadge: View {
     let network: DashNetwork
-    
+
     var body: some View {
         Text(network.rawValue.capitalized)
             .font(.caption2)
@@ -219,7 +219,7 @@ struct NetworkBadge: View {
             .foregroundColor(.white)
             .cornerRadius(4)
     }
-    
+
     private var backgroundColor: Color {
         switch network {
         case .mainnet:
@@ -242,11 +242,11 @@ struct EmptyWalletView: View {
             Image(systemName: "wallet.pass")
                 .font(.system(size: 80))
                 .foregroundColor(.secondary)
-            
+
             Text("No Wallet Selected")
                 .font(.title2)
                 .foregroundColor(.secondary)
-            
+
             Text("Create or import a wallet to get started")
                 .font(.body)
                 .foregroundColor(.secondary)

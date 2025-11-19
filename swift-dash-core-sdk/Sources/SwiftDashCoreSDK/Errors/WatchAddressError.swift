@@ -7,7 +7,7 @@ public enum WatchAddressError: Error, LocalizedError {
     case networkError(String)
     case alreadyWatching(String)
     case unknownError(String)
-    
+
     public var errorDescription: String? {
         switch self {
         case .clientNotConnected:
@@ -24,7 +24,7 @@ public enum WatchAddressError: Error, LocalizedError {
             return "Unknown error: \(reason)"
         }
     }
-    
+
     public var isRecoverable: Bool {
         switch self {
         case .clientNotConnected, .networkError, .storageFailure:

@@ -13,9 +13,9 @@ final class HDWallet {
     var lastSynced: Date?
     var encryptedSeed: Data // Encrypted mnemonic seed
     var seedHash: String // For duplicate detection
-    
+
     @Relationship(deleteRule: .cascade) var accounts: [HDAccount]
-    
+
     init(name: String, network: DashNetwork, encryptedSeed: Data, seedHash: String) {
         self.id = UUID()
         self.name = name
@@ -25,7 +25,7 @@ final class HDWallet {
         self.seedHash = seedHash
         self.accounts = []
     }
-    
+
     var displayNetwork: String {
         switch network {
         case .mainnet:
@@ -38,7 +38,7 @@ final class HDWallet {
             return "Devnet"
         }
     }
-    
+
     var totalBalance: Balance {
         let balance = Balance()
         for account in accounts {
@@ -64,13 +64,13 @@ final class HDAccount {
     var lastUsedExternalIndex: UInt32
     var lastUsedInternalIndex: UInt32
     var gapLimit: UInt32
-    
+
     @Relationship var wallet: HDWallet?
     @Relationship(deleteRule: .cascade) var balance: Balance?
     @Relationship(deleteRule: .cascade) var addresses: [HDWatchedAddress]
     // Transaction IDs associated with this account (stored as comma-separated string)
     private var transactionIdsString: String = ""
-    
+
     var transactionIds: [String] {
         get {
             transactionIdsString.isEmpty ? [] : transactionIdsString.split(separator: ",").map(String.init)
@@ -79,7 +79,7 @@ final class HDAccount {
             transactionIdsString = newValue.joined(separator: ",")
         }
     }
-    
+
     init(
         accountIndex: UInt32,
         label: String,
@@ -96,25 +96,25 @@ final class HDAccount {
         self.gapLimit = gapLimit
         self.addresses = []
     }
-    
+
     var displayName: String {
         return label.isEmpty ? "Account #\(accountIndex)" : label
     }
-    
+
     var derivationPath: String {
         guard let wallet = wallet else { return "" }
         let coinType: UInt32 = wallet.network == .mainnet ? 5 : 1
         return "m/44'/\(coinType)'/\(accountIndex)'"
     }
-    
+
     var externalAddresses: [HDWatchedAddress] {
         addresses.filter { !$0.isChange }.sorted { $0.index < $1.index }
     }
-    
+
     var internalAddresses: [HDWatchedAddress] {
         addresses.filter { $0.isChange }.sorted { $0.index < $1.index }
     }
-    
+
     var receiveAddress: HDWatchedAddress? {
         // Find the first unused address or the next one to generate
         return externalAddresses.first { $0.transactionIds.isEmpty }
@@ -134,7 +134,7 @@ final class HDWatchedAddress {
     private var transactionIdsString: String = ""
     // UTXO outpoints associated with this address (stored as comma-separated string)
     private var utxoOutpointsString: String = ""
-    
+
     var transactionIds: [String] {
         get {
             transactionIdsString.isEmpty ? [] : transactionIdsString.split(separator: ",").map(String.init)
@@ -143,7 +143,7 @@ final class HDWatchedAddress {
             transactionIdsString = newValue.joined(separator: ",")
         }
     }
-    
+
     var utxoOutpoints: [String] {
         get {
             utxoOutpointsString.isEmpty ? [] : utxoOutpointsString.split(separator: ",").map(String.init)
@@ -152,13 +152,13 @@ final class HDWatchedAddress {
             utxoOutpointsString = newValue.joined(separator: ",")
         }
     }
-    
+
     // HD specific properties
     var index: UInt32
     var isChange: Bool
     var derivationPath: String
     @Relationship(inverse: \HDAccount.addresses) var account: HDAccount?
-    
+
     init(address: String, index: UInt32, isChange: Bool, derivationPath: String, label: String? = nil) {
         self.address = address
         self.index = index
@@ -168,7 +168,7 @@ final class HDWatchedAddress {
         self.createdAt = Date()
         self.balance = nil
     }
-    
+
     var formattedBalance: String {
         guard let balance = balance else { return "0.00000000 DASH" }
         return balance.formattedTotal
@@ -206,7 +206,7 @@ final class SyncState {
     var lastError: String?
     var startTime: Date
     var estimatedCompletion: Date?
-    
+
     init(walletId: UUID) {
         self.walletId = walletId
         self.currentHeight = 0
@@ -215,13 +215,13 @@ final class SyncState {
         self.status = "idle"
         self.startTime = Date()
     }
-    
+
     func update(from syncProgress: SyncProgress) {
         self.currentHeight = syncProgress.currentHeight
         self.totalHeight = syncProgress.totalHeight
         self.progress = syncProgress.progress
         self.status = syncProgress.status.rawValue
-        
+
         if let eta = syncProgress.estimatedTimeRemaining {
             self.estimatedCompletion = Date().addingTimeInterval(eta)
         }

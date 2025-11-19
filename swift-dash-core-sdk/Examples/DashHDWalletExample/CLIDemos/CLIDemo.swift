@@ -20,12 +20,12 @@ struct Account {
     let label: String
     let xpub: String
     var addresses: [Address] = []
-    
+
     var derivationPath: String {
         let coinType = network == "mainnet" ? 5 : 1
         return "m/44'/\(coinType)'/\(index)'"
     }
-    
+
     let network: String
 }
 
@@ -65,7 +65,7 @@ for i in 0..<3 {
         xpub: "tpubMockXpub\(i)",
         network: wallet.network
     )
-    
+
     // Generate addresses
     for j in 0..<5 {
         let address = Address(
@@ -77,7 +77,7 @@ for i in 0..<3 {
         )
         account.addresses.append(address)
     }
-    
+
     wallet.accounts.append(account)
     print("✅ Created: \(account.label) (\(account.derivationPath))")
 }

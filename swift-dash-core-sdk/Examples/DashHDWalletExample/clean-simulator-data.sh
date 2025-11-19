@@ -13,10 +13,10 @@ if [ -d "$SIMULATOR_DIR" ]; then
     find "$SIMULATOR_DIR" -name "*.store" -type f -exec rm -f {} \; 2>/dev/null
     find "$SIMULATOR_DIR" -name "*.store-shm" -type f -exec rm -f {} \; 2>/dev/null
     find "$SIMULATOR_DIR" -name "*.store-wal" -type f -exec rm -f {} \; 2>/dev/null
-    
+
     # Remove SwiftData directories
     find "$SIMULATOR_DIR" -name "SwiftData" -type d -exec rm -rf {} \; 2>/dev/null
-    
+
     echo "✅ Cleanup completed!"
     echo ""
     echo "Please rebuild and run your app in the simulator."

@@ -139,7 +139,7 @@ impl<
 
     /// Sync filters in coordination with the monitoring loop using flow control processing
     async fn sync_filters_coordinated(&mut self, start_height: u32, count: u32) -> Result<()> {
-        tracing::info!("Starting coordinated filter sync with flow control from height {} to {} ({} filters expected)", 
+        tracing::info!("Starting coordinated filter sync with flow control from height {} to {} ({} filters expected)",
                       start_height, start_height + count - 1, count);
 
         // Start tracking filter sync progress
@@ -163,7 +163,7 @@ impl<
 
         let (pending_count, active_count, flow_enabled) =
             self.sync_manager.filter_sync().get_flow_control_status();
-        tracing::info!("✅ Filter sync with flow control initiated (flow control enabled: {}, {} requests queued, {} active)", 
+        tracing::info!("✅ Filter sync with flow control initiated (flow control enabled: {}, {} requests queued, {} active)",
                       flow_enabled, pending_count, active_count);
 
         Ok(())

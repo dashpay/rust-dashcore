@@ -5,7 +5,7 @@ import SwiftDashCoreSDK
 @main
 struct DashHDWalletApp: App {
     let modelContainer: ModelContainer
-    
+
     init() {
         do {
             let schema = Schema([
@@ -17,14 +17,14 @@ struct DashHDWalletApp: App {
                 Balance.self,
                 SyncState.self
             ])
-            
+
             let modelConfiguration = ModelConfiguration(
                 schema: schema,
                 isStoredInMemoryOnly: false,
                 groupContainer: .automatic,
                 cloudKitDatabase: .none
             )
-            
+
             modelContainer = try ModelContainer(
                 for: schema,
                 configurations: [modelConfiguration]
@@ -33,7 +33,7 @@ struct DashHDWalletApp: App {
             fatalError("Could not create ModelContainer: \(error)")
         }
     }
-    
+
     var body: some Scene {
         WindowGroup {
             ContentView()

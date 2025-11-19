@@ -8,11 +8,11 @@ public final class WatchedAddress {
     public var createdAt: Date
     public var lastActivity: Date?
     public var isActive: Bool
-    
+
     @Relationship(deleteRule: .cascade) public var balance: Balance?
     @Relationship(deleteRule: .cascade) public var transactions: [Transaction]
     @Relationship(deleteRule: .cascade) public var utxos: [UTXO]
-    
+
     public init(
         address: String,
         label: String? = nil,
@@ -26,38 +26,38 @@ public final class WatchedAddress {
         self.transactions = []
         self.utxos = []
     }
-    
+
     public var displayName: String {
         return label ?? address
     }
-    
+
     public var shortAddress: String {
         guard address.count > 12 else { return address }
         let prefix = address.prefix(6)
         let suffix = address.suffix(4)
         return "\(prefix)...\(suffix)"
     }
-    
+
     public var totalReceived: UInt64 {
         return transactions
             .filter { $0.amount > 0 }
             .reduce(0) { $0 + UInt64($1.amount) }
     }
-    
+
     public var totalSent: UInt64 {
         return transactions
             .filter { $0.amount < 0 }
             .reduce(0) { $0 + UInt64(abs($1.amount)) }
     }
-    
+
     public var spendableUTXOs: [UTXO] {
         return utxos.filter { $0.isSpendable }
     }
-    
+
     public var pendingTransactions: [Transaction] {
         return transactions.filter { $0.isPending }
     }
-    
+
     public func updateActivity() {
         self.lastActivity = .now
     }
@@ -70,7 +70,7 @@ extension WatchedAddress {
         case balance = "balance"
         case activity = "activity"
         case created = "created"
-        
+
         public var description: String {
             switch self {
             case .label:

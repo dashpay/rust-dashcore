@@ -247,7 +247,7 @@ impl FFIEventCallbacks {
         is_instant_send: bool,
     ) {
         if let Some(callback) = self.on_mempool_transaction_added {
-            tracing::info!("🎯 Calling mempool transaction added callback: txid={}, amount={}, is_instant_send={}", 
+            tracing::info!("🎯 Calling mempool transaction added callback: txid={}, amount={}, is_instant_send={}",
                          txid, amount, is_instant_send);
             let txid_bytes = txid.as_byte_array();
             let addresses_str = addresses.join(",");

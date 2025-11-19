@@ -663,7 +663,7 @@ impl Peer {
             if let Ok(duration) = now.duration_since(last_pong) {
                 // If no pong in 10 minutes, consider unhealthy
                 if duration > Duration::from_secs(600) {
-                    tracing::warn!("Connection to {} marked unhealthy: no pong received for {} seconds (limit: 600)", 
+                    tracing::warn!("Connection to {} marked unhealthy: no pong received for {} seconds (limit: 600)",
                                   self.address, duration.as_secs());
                     return false;
                 }
@@ -673,7 +673,7 @@ impl Peer {
             if let Ok(duration) = now.duration_since(connected_at) {
                 // Give new connections 5 minutes before considering them unhealthy
                 if duration > Duration::from_secs(300) {
-                    tracing::warn!("Connection to {} marked unhealthy: no pong activity after {} seconds (limit: 300, last_ping_sent: {:?})", 
+                    tracing::warn!("Connection to {} marked unhealthy: no pong activity after {} seconds (limit: 300, last_ping_sent: {:?})",
                                   self.address, duration.as_secs(), self.last_ping_sent.is_some());
                     return false;
                 }

@@ -16,7 +16,7 @@ public final class UTXO {
     public var isSpent: Bool
     public var confirmations: UInt32
     public var isInstantLocked: Bool
-    
+
     public init(
         outpoint: String,
         txid: String,
@@ -40,12 +40,12 @@ public final class UTXO {
         self.confirmations = confirmations
         self.isInstantLocked = isInstantLocked
     }
-    
+
     internal convenience init(ffiUtxo: FFIUtxo) {
         let txidStr = String(cString: ffiUtxo.txid.ptr)
         let outpoint = "\(txidStr):\(ffiUtxo.vout)"
         let scriptData = Data(bytes: ffiUtxo.script_pubkey.ptr, count: strlen(ffiUtxo.script_pubkey.ptr))
-        
+
         self.init(
             outpoint: outpoint,
             txid: txidStr,
@@ -59,11 +59,11 @@ public final class UTXO {
             isInstantLocked: ffiUtxo.is_instantlocked
         )
     }
-    
+
     public var isSpendable: Bool {
         return !isSpent && (confirmations > 0 || isInstantLocked)
     }
-    
+
     public var formattedValue: String {
         let dash = Double(value) / 100_000_000.0
         return String(format: "%.8f DASH", dash)
@@ -74,7 +74,7 @@ extension UTXO {
     public static func createOutpoint(txid: String, vout: UInt32) -> String {
         return "\(txid):\(vout)"
     }
-    
+
     public func parseOutpoint() -> (txid: String, vout: UInt32)? {
         let components = outpoint.split(separator: ":")
         guard components.count == 2,

@@ -6,7 +6,7 @@ public enum DashNetwork: String, Codable, CaseIterable, Sendable {
     case testnet = "testnet"
     case regtest = "regtest"
     case devnet = "devnet"
-    
+
     public var defaultPort: UInt16 {
         switch self {
         case .mainnet:
@@ -19,15 +19,15 @@ public enum DashNetwork: String, Codable, CaseIterable, Sendable {
             return 29999
         }
     }
-    
+
     public var protocolVersion: UInt32 {
         return 70230
     }
-    
+
     public var name: String {
         return self.rawValue
     }
-    
+
     internal var ffiValue: FFINetwork {
         switch self {
         case .mainnet:
@@ -40,7 +40,7 @@ public enum DashNetwork: String, Codable, CaseIterable, Sendable {
             return FFINetwork(3)
         }
     }
-    
+
     internal init?(ffiNetwork: FFINetwork) {
         switch ffiNetwork {
         case FFINetwork(0):

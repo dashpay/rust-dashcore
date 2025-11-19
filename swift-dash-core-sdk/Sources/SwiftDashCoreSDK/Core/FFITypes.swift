@@ -19,7 +19,7 @@ enum FFIError: Error {
     case configError
     case runtimeError
     case unknown
-    
+
     init(code: FFIErrorCode) {
         switch code {
         case 0:

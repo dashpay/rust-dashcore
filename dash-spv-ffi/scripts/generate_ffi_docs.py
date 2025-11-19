@@ -138,10 +138,10 @@ def categorize_functions(functions: List[FFIFunction]) -> Dict[str, List[FFIFunc
         'Error Handling': [],
         'Utility Functions': [],
     }
-    
+
     for func in functions:
         name = func.name.lower()
-        
+
         if 'client_new' in name or 'client_start' in name or 'client_stop' in name or 'client_destroy' in name:
             categories['Client Management'].append(func)
         elif 'config' in name:
@@ -166,15 +166,15 @@ def categorize_functions(functions: List[FFIFunction]) -> Dict[str, List[FFIFunc
             categories['Error Handling'].append(func)
         else:
             categories['Utility Functions'].append(func)
-    
+
     # Remove empty categories
     return {k: v for k, v in categories.items() if v}
 
 def generate_markdown(functions: List[FFIFunction]) -> str:
     """Generate markdown documentation from FFI functions."""
-    
+
     categories = categorize_functions(functions)
-    
+
     md = []
     md.append("# Dash SPV FFI API Documentation")
     md.append("")
@@ -184,7 +184,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("")
     md.append(f"**Total Functions**: {len(functions)}")
     md.append("")
-    
+
     # Table of Contents
     md.append("## Table of Contents")
     md.append("")
@@ -192,45 +192,45 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
         anchor = category.lower().replace(' ', '-').replace('&', 'and')
         md.append(f"- [{category}](#{anchor})")
     md.append("")
-    
+
     # Function Reference
     md.append("## Function Reference")
     md.append("")
-    
+
     for category, funcs in categories.items():
         if not funcs:
             continue
-            
+
         anchor = category.lower().replace(' ', '-').replace('&', 'and')
         md.append(f"### {category}")
         md.append("")
         md.append(f"Functions: {len(funcs)}")
         md.append("")
-        
+
         # Create a table for each category
         md.append("| Function | Description | Module |")
         md.append("|----------|-------------|--------|")
-        
+
         for func in sorted(funcs, key=lambda f: f.name):
             desc = func.doc_comment.split('.')[0] if func.doc_comment else "No description"
             desc = desc.replace('|', '\\|')  # Escape pipes in description
             if len(desc) > 80:
                 desc = desc[:77] + "..."
             md.append(f"| `{func.name}` | {desc} | {func.module} |")
-        
+
         md.append("")
-    
+
     # Detailed Function Documentation
     md.append("## Detailed Function Documentation")
     md.append("")
-    
+
     for category, funcs in categories.items():
         if not funcs:
             continue
-            
+
         md.append(f"### {category} - Detailed")
         md.append("")
-        
+
         for func in sorted(funcs, key=lambda f: f.name):
             md.append(f"#### `{func.name}`")
             md.append("")
@@ -238,22 +238,22 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
             md.append(func.signature)
             md.append("```")
             md.append("")
-            
+
             if func.doc_comment:
                 md.append("**Description:**")
                 md.append(func.doc_comment)
                 md.append("")
-            
+
             if func.safety_comment:
                 md.append("**Safety:**")
                 md.append(func.safety_comment)
                 md.append("")
-            
+
             md.append(f"**Module:** `{func.module}`")
             md.append("")
             md.append("---")
             md.append("")
-    
+
     # Type Definitions
     md.append("## Type Definitions")
     md.append("")
@@ -269,7 +269,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("- `FFIEventCallbacks` - Event callback structure")
     md.append("- `CoreSDKHandle` - Platform SDK integration handle")
     md.append("")
-    
+
     md.append("### Enumerations")
     md.append("")
     md.append("- `FFINetwork` - Network type (Dash, Testnet, Regtest, Devnet)")
@@ -277,7 +277,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("- `FFIMempoolStrategy` - Mempool strategy (FetchAll, BloomFilter, Selective)")
     md.append("- `FFISyncStage` - Synchronization stage")
     md.append("")
-    
+
     # Memory Management
     md.append("## Memory Management")
     md.append("")
@@ -292,7 +292,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
         "that must be released with `dash_spv_ffi_wallet_manager_free()`"
     )
     md.append("")
-    
+
     # Usage Examples
     md.append("## Usage Examples")
     md.append("")
@@ -323,7 +323,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("dash_spv_ffi_config_destroy(config);")
     md.append("```")
     md.append("")
-    
+
     md.append("### Event Callbacks")
     md.append("")
     md.append("```c")
@@ -347,30 +347,30 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("dash_spv_ffi_client_set_event_callbacks(client, callbacks);")
     md.append("```")
     md.append("")
-    
+
     return '\n'.join(md)
 
 def main():
     # Find all Rust source files
     src_dir = Path(__file__).parent.parent / "src"
-    
+
     all_functions = []
-    
+
     for rust_file in src_dir.rglob("*.rs"):
         functions = extract_ffi_functions(rust_file)
         all_functions.extend(functions)
-    
+
     # Generate markdown
     markdown = generate_markdown(all_functions)
-    
+
     # Write to file
     output_file = Path(__file__).parent.parent / "FFI_API.md"
     with open(output_file, 'w') as f:
         f.write(markdown)
-    
+
     print(f"Generated FFI documentation with {len(all_functions)} functions")
     print(f"Output: {output_file}")
-    
+
     return 0
 
 if __name__ == "__main__":

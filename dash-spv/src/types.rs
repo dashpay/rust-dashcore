@@ -311,7 +311,7 @@ impl ChainState {
         // Add genesis header to the chain state
         state.headers.push(genesis_header);
 
-        tracing::debug!("Initialized ChainState with genesis block - network: {:?}, hash: {}, headers_count: {}", 
+        tracing::debug!("Initialized ChainState with genesis block - network: {:?}, hash: {}, headers_count: {}",
             network, genesis_header.block_hash(), state.headers.len());
 
         // Initialize masternode engine for the network

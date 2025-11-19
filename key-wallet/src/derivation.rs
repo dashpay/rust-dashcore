@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn test_special_derivation_paths() {
         let mnemonic = Mnemonic::from_phrase(
-            "upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow", 
+            "upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow",
             crate::mnemonic::Language::English
         ).unwrap();
 

@@ -4,11 +4,11 @@ import SwiftDashCoreSDK
 struct EnhancedSyncProgressView: View {
     @EnvironmentObject private var walletService: WalletService
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var hasStarted = false
     @State private var showStatistics = false
     @State private var useCallbackSync = true
-    
+
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
@@ -32,7 +32,7 @@ struct EnhancedSyncProgressView: View {
                         .progressViewStyle(.circular)
                         .scaleEffect(1.5)
                 }
-                
+
                 // Filter Sync Status Warning (if not available)
                 if let syncProgress = walletService.syncProgress,
                    !syncProgress.filterSyncAvailable {
@@ -48,7 +48,7 @@ struct EnhancedSyncProgressView: View {
                     .background(Color.orange.opacity(0.1))
                     .cornerRadius(8)
                 }
-                
+
                 // Statistics Toggle
                 if walletService.detailedSyncProgress != nil {
                     Button(showStatistics ? "Hide Statistics" : "Show Statistics") {
@@ -58,7 +58,7 @@ struct EnhancedSyncProgressView: View {
                     }
                     .buttonStyle(.bordered)
                 }
-                
+
                 // Detailed Statistics
                 if showStatistics, !walletService.syncStatistics.isEmpty {
                     DetailedStatisticsView(statistics: walletService.syncStatistics)
@@ -80,7 +80,7 @@ struct EnhancedSyncProgressView: View {
                         dismiss()
                     }
                 }
-                
+
                 if walletService.isSyncing {
                     ToolbarItem(placement: .primaryAction) {
                         Menu {
@@ -88,7 +88,7 @@ struct EnhancedSyncProgressView: View {
                                 // Future: Implement pause functionality
                             }
                             .disabled(true)
-                            
+
                             Button("Cancel Sync", systemImage: "xmark.circle") {
                                 walletService.stopSync()
                             }
@@ -105,7 +105,7 @@ struct EnhancedSyncProgressView: View {
         .frame(width: 700, height: showStatistics ? 700 : 600)
         #endif
     }
-    
+
     private func startSync() {
         hasStarted = true
         Task {
@@ -126,7 +126,7 @@ struct EnhancedSyncProgressView: View {
 
 struct DetailedProgressContent: View {
     let progress: DetailedSyncProgress
-    
+
     var body: some View {
         VStack(spacing: 24) {
             // Stage Icon and Status
@@ -134,17 +134,17 @@ struct DetailedProgressContent: View {
                 Text(progress.stage.icon)
                     .font(.system(size: 80))
                     .symbolEffect(.pulse, isActive: progress.stage.isActive)
-                
+
                 Text(progress.stage.description)
                     .font(.title2)
                     .fontWeight(.semibold)
-                
+
                 Text(progress.stageMessage)
                     .font(.body)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
             }
-            
+
             // Progress Circle
             CircularProgressView(
                 progress: progress.percentage / 100.0,
@@ -152,7 +152,7 @@ struct DetailedProgressContent: View {
                 speed: progress.formattedSpeed
             )
             .frame(width: 200, height: 200)
-            
+
             // Block Progress
             VStack(spacing: 16) {
                 HStack(spacing: 30) {
@@ -161,20 +161,20 @@ struct DetailedProgressContent: View {
                         value: "\(progress.currentHeight)",
                         icon: "arrow.up.square"
                     )
-                    
+
                     ProgressStatView(
                         title: "Target Height",
                         value: "\(progress.totalHeight)",
                         icon: "flag.checkered"
                     )
-                    
+
                     ProgressStatView(
                         title: "Connected Peers",
                         value: "\(progress.connectedPeers)",
                         icon: "network"
                     )
                 }
-                
+
                 // ETA and Duration
                 HStack(spacing: 30) {
                     VStack(spacing: 4) {
@@ -185,7 +185,7 @@ struct DetailedProgressContent: View {
                             .font(.headline)
                             .monospacedDigit()
                     }
-                    
+
                     VStack(spacing: 4) {
                         Label("Sync Duration", systemImage: "timer")
                             .font(.caption)
@@ -209,13 +209,13 @@ struct CircularProgressView: View {
     let progress: Double
     let formattedPercentage: String
     let speed: String
-    
+
     var body: some View {
         ZStack {
             // Background circle
             Circle()
                 .stroke(Color.gray.opacity(0.2), lineWidth: 20)
-            
+
             // Progress circle
             Circle()
                 .trim(from: 0, to: progress)
@@ -229,14 +229,14 @@ struct CircularProgressView: View {
                 )
                 .rotationEffect(.degrees(-90))
                 .animation(.easeInOut(duration: 0.5), value: progress)
-            
+
             // Center content
             VStack(spacing: 8) {
                 Text(formattedPercentage)
                     .font(.largeTitle)
                     .fontWeight(.bold)
                     .monospacedDigit()
-                
+
                 Text(speed)
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -251,17 +251,17 @@ struct ProgressStatView: View {
     let title: String
     let value: String
     let icon: String
-    
+
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.title2)
                 .foregroundColor(.accentColor)
-            
+
             Text(value)
                 .font(.headline)
                 .monospacedDigit()
-            
+
             Text(title)
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -274,32 +274,32 @@ struct ProgressStatView: View {
 struct StartSyncContent: View {
     @Binding var useCallbackSync: Bool
     let onStart: () -> Void
-    
+
     var body: some View {
         VStack(spacing: 30) {
             Image(systemName: "arrow.triangle.2.circlepath.circle")
                 .font(.system(size: 100))
                 .foregroundColor(.accentColor)
                 .symbolEffect(.pulse)
-            
+
             VStack(spacing: 12) {
                 Text("Ready to Sync")
                     .font(.largeTitle)
                     .fontWeight(.bold)
-                
+
                 Text("Synchronize your wallet with the Dash blockchain to see your latest balance and transactions")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 400)
             }
-            
+
             // Sync Method Toggle
             VStack(spacing: 12) {
                 Toggle("Use Callback-based Sync", isOn: $useCallbackSync)
                     .toggleStyle(.switch)
                     .frame(width: 250)
-                
+
                 Text(useCallbackSync ? "Real-time updates via callbacks" : "Stream-based async iteration")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -307,7 +307,7 @@ struct StartSyncContent: View {
             .padding()
             .background(Color(PlatformColor.secondarySystemBackground))
             .cornerRadius(8)
-            
+
             Button(action: onStart) {
                 Label("Start Sync", systemImage: "play.circle.fill")
                     .font(.headline)
@@ -322,7 +322,7 @@ struct StartSyncContent: View {
 
 struct LegacyProgressContent: View {
     let progress: SyncProgress
-    
+
     var body: some View {
         VStack(spacing: 20) {
             // Status Icon
@@ -330,23 +330,23 @@ struct LegacyProgressContent: View {
                 .font(.system(size: 60))
                 .foregroundColor(statusColor(for: progress.status))
                 .symbolEffect(.pulse, isActive: progress.status.isActive)
-            
+
             // Status Text
             Text(progress.status.description)
                 .font(.title2)
                 .fontWeight(.medium)
-            
+
             // Progress Bar
             VStack(alignment: .leading, spacing: 8) {
                 ProgressView(value: progress.progress)
                     .progressViewStyle(.linear)
-                
+
                 HStack {
                     Text("\(progress.percentageComplete)%")
                         .monospacedDigit()
-                    
+
                     Spacer()
-                    
+
                     if let eta = progress.formattedTimeRemaining {
                         Text("ETA: \(eta)")
                     }
@@ -355,7 +355,7 @@ struct LegacyProgressContent: View {
                 .foregroundColor(.secondary)
             }
             .frame(maxWidth: 400)
-            
+
             // Message
             if let message = progress.message {
                 Text(message)
@@ -365,7 +365,7 @@ struct LegacyProgressContent: View {
             }
         }
     }
-    
+
     private func statusIcon(for status: SyncStatus) -> String {
         switch status {
         case .idle:
@@ -384,7 +384,7 @@ struct LegacyProgressContent: View {
             return "exclamationmark.triangle.fill"
         }
     }
-    
+
     private func statusColor(for status: SyncStatus) -> Color {
         switch status {
         case .idle:
@@ -403,13 +403,13 @@ struct LegacyProgressContent: View {
 
 struct DetailedStatisticsView: View {
     let statistics: [String: String]
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Detailed Statistics", systemImage: "chart.line.uptrend.xyaxis")
                 .font(.headline)
                 .padding(.bottom, 8)
-            
+
             LazyVGrid(columns: [
                 GridItem(.flexible()),
                 GridItem(.flexible()),
@@ -420,7 +420,7 @@ struct DetailedStatisticsView: View {
                         Text(key)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         Text(value)
                             .font(.body)
                             .fontWeight(.medium)

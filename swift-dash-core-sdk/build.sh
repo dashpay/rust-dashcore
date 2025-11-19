@@ -12,7 +12,7 @@ else
     echo "Building with Swift command line..."
     echo "Note: SwiftData models require Xcode for full functionality."
     echo "Command line builds will have limited SwiftData support."
-    
+
     # First build the Rust FFI library if needed
     if [ ! -f "../target/release/libdash_spv_ffi.a" ]; then
         echo "Building Rust FFI library first..."
@@ -20,7 +20,7 @@ else
         cargo build --release -p dash-spv-ffi
         cd swift-dash-core-sdk
     fi
-    
+
     # Build the Swift package
     swift build
 fi

@@ -58,23 +58,23 @@ extern void wallet_free(void* wallet);
 int main() {
     // Example mnemonic (DO NOT USE IN PRODUCTION)
     const char* mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    
+
     FFIError error = {0};
     FFINetwork network = Testnet;
-    
+
     // Create wallet
     void* wallet = wallet_create_from_mnemonic(mnemonic, NULL, network, &error);
     if (!wallet) {
         printf("Failed to create wallet: %s\n", error.message);
         return 1;
     }
-    
+
     printf("Wallet created successfully\n");
-    
+
     // Example transaction bytes (this would be a real transaction in practice)
     uint8_t tx_bytes[] = { /* ... transaction data ... */ };
     size_t tx_len = sizeof(tx_bytes);
-    
+
     // Check if transaction belongs to wallet
     FFITransactionCheckResult result = {0};
     bool success = wallet_check_transaction(
@@ -90,7 +90,7 @@ int main() {
         &result,
         &error
     );
-    
+
     if (success) {
         if (result.is_relevant) {
             printf("Transaction belongs to wallet!\n");
@@ -103,7 +103,7 @@ int main() {
     } else {
         printf("Failed to check transaction: %s\n", error.message);
     }
-    
+
     // Check a confirmed transaction
     uint8_t block_hash[32] = { /* ... block hash ... */ };
     success = wallet_check_transaction(
@@ -119,13 +119,13 @@ int main() {
         &result,
         &error
     );
-    
+
     if (success && result.is_relevant) {
         printf("Confirmed transaction processed and wallet state updated\n");
     }
-    
+
     // Clean up
     wallet_free(wallet);
-    
+
     return 0;
 }

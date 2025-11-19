@@ -36,13 +36,13 @@ cbindgen \
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ Header file generated successfully at include/key_wallet_ffi.h${NC}"
-    
+
     # Show statistics
     echo -e "${GREEN}Header file statistics:${NC}"
     echo "  Functions: $(grep -c "^[^/]*(" include/key_wallet_ffi.h 2>/dev/null || echo 0)"
     echo "  Structs:   $(grep -c "^typedef struct" include/key_wallet_ffi.h 2>/dev/null || echo 0)"
     echo "  Enums:     $(grep -c "^typedef enum" include/key_wallet_ffi.h 2>/dev/null || echo 0)"
-    
+
 else
     echo -e "${RED}✗ Failed to generate header file${NC}"
     exit 1
