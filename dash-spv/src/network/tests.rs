@@ -71,17 +71,6 @@ mod peer_network_manager_tests {
     }
 
     #[tokio::test]
-    async fn test_peer_network_manager_creation() {
-        let config = create_test_config();
-        let manager = PeerNetworkManager::new(&config).await.unwrap();
-
-        // Should start with zero peers
-        assert_eq!(manager.peer_count_async().await, 0);
-        // Note: is_connected() still uses sync approach, so we'll check async
-        assert_eq!(manager.peer_count_async().await, 0);
-    }
-
-    #[tokio::test]
     async fn test_as_any_downcast() {
         let config = create_test_config();
         let manager = PeerNetworkManager::new(&config).await.unwrap();

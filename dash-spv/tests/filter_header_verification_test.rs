@@ -85,29 +85,6 @@ impl NetworkManager for MockNetworkManager {
         vec![]
     }
 
-    fn should_ping(&self) -> bool {
-        false
-    }
-
-    async fn send_ping(&mut self) -> Result<u64, NetworkError> {
-        Ok(0)
-    }
-
-    fn cleanup_old_pings(&mut self) {}
-
-    async fn handle_ping(&mut self, _nonce: u64) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    fn handle_pong(&mut self, _nonce: u64) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    fn get_message_sender(&self) -> tokio::sync::mpsc::Sender<NetworkMessage> {
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        tx
-    }
-
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -121,13 +98,6 @@ impl NetworkManager for MockNetworkManager {
         _service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool {
         true
-    }
-
-    async fn get_peers_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> Vec<dash_spv::types::PeerInfo> {
-        vec![]
     }
 
     async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {

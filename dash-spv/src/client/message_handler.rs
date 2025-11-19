@@ -332,17 +332,9 @@ impl<
             }
             NetworkMessage::Ping(nonce) => {
                 tracing::debug!("Received ping with nonce {}", nonce);
-                // Automatically respond with pong
-                if let Err(e) = self.network.handle_ping(nonce).await {
-                    tracing::error!("Failed to send pong response: {}", e);
-                }
             }
             NetworkMessage::Pong(nonce) => {
                 tracing::debug!("Received pong with nonce {}", nonce);
-                // Validate the pong nonce
-                if let Err(e) = self.network.handle_pong(nonce) {
-                    tracing::warn!("Invalid pong received: {}", e);
-                }
             }
             NetworkMessage::CFilter(cfilter) => {
                 tracing::debug!("Received CFilter for block {}", cfilter.block_hash);
