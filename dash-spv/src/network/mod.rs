@@ -17,7 +17,6 @@ mod tests;
 pub mod mock;
 
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 
 use crate::error::NetworkResult;
 use dashcore::network::message::NetworkMessage;
@@ -54,24 +53,6 @@ pub trait NetworkManager: Send + Sync {
     /// Get peer information.
     fn peer_info(&self) -> Vec<crate::types::PeerInfo>;
 
-    /// Send a ping message.
-    async fn send_ping(&mut self) -> NetworkResult<u64>;
-
-    /// Handle a received ping message by sending a pong.
-    async fn handle_ping(&mut self, nonce: u64) -> NetworkResult<()>;
-
-    /// Handle a received pong message.
-    fn handle_pong(&mut self, nonce: u64) -> NetworkResult<()>;
-
-    /// Check if we should send a ping (2 minute timeout).
-    fn should_ping(&self) -> bool;
-
-    /// Clean up old pending pings.
-    fn cleanup_old_pings(&mut self);
-
-    /// Get a message sender channel for sending messages from other components.
-    fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage>;
-
     /// Get the best block height reported by connected peers.
     async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>>;
 
@@ -80,12 +61,6 @@ pub trait NetworkManager: Send + Sync {
         &self,
         service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool;
-
-    /// Get peers that support a specific service.
-    async fn get_peers_with_service(
-        &self,
-        service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> Vec<crate::types::PeerInfo>;
 
     /// Check if any connected peer supports headers2 compression.
     async fn has_headers2_peer(&self) -> bool {

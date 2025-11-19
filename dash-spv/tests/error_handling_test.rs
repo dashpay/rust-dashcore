@@ -25,14 +25,14 @@ use dashcore::{
     BlockHash, Network, OutPoint, Txid,
 };
 use dashcore_hashes::Hash;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 
 use dash_spv::error::*;
 use dash_spv::network::{NetworkManager, Peer};
 use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dash_spv::sync::sequential::phases::SyncPhase;
 use dash_spv::sync::sequential::recovery::{RecoveryManager, RecoveryStrategy};
-use dash_spv::types::{ChainState, MempoolState, PeerInfo, UnconfirmedTransaction};
+use dash_spv::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
 /// Mock network manager for testing error scenarios
 struct MockNetworkManager {
@@ -135,32 +135,6 @@ impl dash_spv::network::NetworkManager for MockNetworkManager {
         vec![]
     }
 
-    async fn send_ping(&mut self) -> NetworkResult<u64> {
-        let nonce = 1234u64;
-        self.send_message(dashcore::network::message::NetworkMessage::Ping(nonce)).await?;
-        Ok(nonce)
-    }
-
-    async fn handle_ping(&mut self, _nonce: u64) -> NetworkResult<()> {
-        Ok(())
-    }
-
-    fn handle_pong(&mut self, _nonce: u64) -> NetworkResult<()> {
-        Ok(())
-    }
-
-    fn should_ping(&self) -> bool {
-        false
-    }
-
-    fn cleanup_old_pings(&mut self) {}
-
-    fn get_message_sender(&self) -> mpsc::Sender<dashcore::network::message::NetworkMessage> {
-        // Create a dummy channel for testing
-        let (_tx, _rx) = mpsc::channel(1);
-        _tx
-    }
-
     async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
         Ok(Some(1000000))
     }
@@ -170,13 +144,6 @@ impl dash_spv::network::NetworkManager for MockNetworkManager {
         _service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool {
         true
-    }
-
-    async fn get_peers_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> Vec<PeerInfo> {
-        vec![]
     }
 
     async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
