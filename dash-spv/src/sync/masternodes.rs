@@ -450,7 +450,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
             // If this was the last pending request, mark sync as complete
             if self.pending_mnlistdiff_requests == 0 && self.sync_in_progress {
-                tracing::info!("✅ All MnListDiff requests completed, marking masternode sync as done");
+                tracing::info!(
+                    "✅ All MnListDiff requests completed, marking masternode sync as done"
+                );
                 self.sync_in_progress = false;
                 self.last_sync_time = Some(Instant::now());
 
@@ -475,7 +477,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         );
                     }
                     Err(e) => {
-                        tracing::warn!("⚠️ Failed to read tip height to persist masternode state: {}", e);
+                        tracing::warn!(
+                            "⚠️ Failed to read tip height to persist masternode state: {}",
+                            e
+                        );
                     }
                 }
             }
@@ -569,43 +574,45 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Update last successful QRInfo block for progressive sync
         self.last_qrinfo_block_hash = Some(block_hash);
 
-        // Only mark sync as completed if all pending MnListDiff requests have been processed
+        // Check if we need to wait for MnListDiff responses
         if self.pending_mnlistdiff_requests == 0 {
-            tracing::info!("✅ All MnListDiff requests completed, masternode sync phase is done");
+            // No additional requests were sent (edge case: no quorum validation needed)
+            // Mark sync as complete immediately
+            tracing::info!("✅ QRInfo processing completed with no additional requests, masternode sync phase is done");
             self.sync_in_progress = false;
             self.last_sync_time = Some(Instant::now());
+
+            // Persist masternode state so phase manager can detect completion
+            match storage.get_tip_height().await {
+                Ok(Some(tip_height)) => {
+                    let state = crate::storage::MasternodeState {
+                        last_height: tip_height,
+                        engine_state: Vec::new(),
+                        last_update: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    };
+                    if let Err(e) = storage.store_masternode_state(&state).await {
+                        tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        "⚠️ Storage returned no tip height when persisting masternode state"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to read tip height to persist masternode state: {}", e);
+                }
+            }
         } else {
             tracing::info!(
                 "⏳ Waiting for {} pending MnListDiff responses before completing masternode sync",
                 self.pending_mnlistdiff_requests
             );
             // Keep sync_in_progress = true so we don't transition to the next phase yet
-        }
-
-        // Persist masternode state so phase manager can detect completion
-        // We store the current header tip height as the masternode sync height.
-        match storage.get_tip_height().await {
-            Ok(Some(tip_height)) => {
-                let state = crate::storage::MasternodeState {
-                    last_height: tip_height,
-                    engine_state: Vec::new(),
-                    last_update: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0),
-                };
-                if let Err(e) = storage.store_masternode_state(&state).await {
-                    tracing::warn!("⚠️ Failed to store masternode state: {}", e);
-                }
-            }
-            Ok(None) => {
-                tracing::warn!(
-                    "⚠️ Storage returned no tip height when persisting masternode state"
-                );
-            }
-            Err(e) => {
-                tracing::warn!("⚠️ Failed to read tip height to persist masternode state: {}", e);
-            }
+            // Completion and state persistence will happen in handle_mnlistdiff_message
         }
 
         tracing::info!("✅ QRInfo processing completed successfully (unified path)");

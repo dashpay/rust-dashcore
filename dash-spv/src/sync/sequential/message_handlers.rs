@@ -406,8 +406,7 @@ impl<
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        let _continue_sync =
-            self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await?;
+        self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await?;
 
         // Update phase state
         if let SyncPhase::DownloadingMnList {
@@ -441,7 +440,7 @@ impl<
                     }
                 }
 
-                tracing::info!("🎉 All MnListDiff requests completed, transitioning to next phase");
+                tracing::info!("✅ All MnListDiff requests completed, transitioning to next phase");
                 self.transition_to_next_phase(storage, network, "Masternode sync complete").await?;
 
                 // Execute the next phase
@@ -495,7 +494,8 @@ impl<
                 tracing::info!("✅ QRInfo processing completed with all MnListDiff requests, masternode sync phase finished");
 
                 // Transition to next phase (filter headers)
-                self.transition_to_next_phase(storage, network, "QRInfo processing completed").await?;
+                self.transition_to_next_phase(storage, network, "QRInfo processing completed")
+                    .await?;
 
                 // Immediately execute the next phase so CFHeaders begins without delay
                 self.execute_current_phase(network, storage).await?;
