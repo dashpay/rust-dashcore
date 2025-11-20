@@ -48,6 +48,8 @@ mod lifecycle;
 mod mempool;
 mod progress;
 mod queries;
+mod quorum_lookup;
+mod sync;
 mod sync_coordinator;
 mod transactions;
 
@@ -56,6 +58,7 @@ pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
 pub use filter_sync::FilterSyncCoordinator;
 pub use message_handler::MessageHandler;
+pub use quorum_lookup::QuorumLookup;
 pub use status_display::StatusDisplay;
 
 // Re-export the main client struct
