@@ -203,7 +203,12 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
             desc = func.doc_comment.split('.')[0] if func.doc_comment else "No description"
             desc = desc.replace('|', '\\|')  # Escape pipes in description
             if len(desc) > 80:
-                desc = desc[:77] + "..."
+                # Truncate at last complete word before 77 chars to avoid mid-word breaks
+                truncate_pos = desc.rfind(' ', 0, 77)
+                if truncate_pos > 60:  # Only if we find a space reasonably close
+                    desc = desc[:truncate_pos] + "..."
+                else:
+                    desc = desc[:77] + "..."
             md.append(f"| `{func.name}` | {desc} | {func.module} |")
 
         md.append("")
