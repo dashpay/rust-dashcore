@@ -10,6 +10,8 @@ extend-ignore-re = [
     '[0-9a-fA-F]{5,}',            # Hex strings (5+ chars to catch "BA70D")
     'b"[^"]*"',                   # Byte strings - never check these for typos
     "b'[^']*'",                   # Byte strings with single quotes
+    # Support for inline spellchecker directives
+    "(?Rm)^.*(#|//)\\s*spellchecker:disable",  # Ignore lines with a "disable" marker
 ]
 
 [default.extend-words]
