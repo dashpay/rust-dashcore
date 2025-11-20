@@ -23,7 +23,7 @@ use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::{BlockProcessor, ClientConfig, DashSpvClient};
+use super::{BlockProcessor, ClientConfig, DashSpvClient, QuorumLookup};
 
 impl<
         W: WalletInterface + Send + Sync + 'static,
@@ -66,6 +66,9 @@ impl<
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
 
+        // Create quorum lookup component
+        let quorum_lookup = Arc::new(QuorumLookup::new());
+
         // Create block processing channel
         let (block_processor_tx, _block_processor_rx) = mpsc::unbounded_channel();
 
@@ -88,6 +91,7 @@ impl<
             sync_manager,
             validation,
             chainlock_manager,
+            quorum_lookup,
             running: Arc::new(RwLock::new(false)),
             #[cfg(feature = "terminal-ui")]
             terminal_ui: None,

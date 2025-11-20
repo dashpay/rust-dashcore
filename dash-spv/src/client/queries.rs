@@ -70,68 +70,38 @@ impl<
 
     /// Get a quorum entry by type and hash at a specific block height.
     /// Returns None if the quorum is not found.
+    ///
+    /// # Deprecated
+    ///
+    /// This method is now a synchronous wrapper that blocks on the async QuorumLookup.
+    /// For better performance and to avoid blocking, prefer using the async version:
+    ///
+    /// ```rust,no_run
+    /// # use dash_spv::client::DashSpvClient;
+    /// # async fn example(client: &DashSpvClient<
+    /// #     key_wallet_manager::wallet_manager::WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo>,
+    /// #     dash_spv::network::manager::PeerNetworkManager,
+    /// #     dash_spv::storage::DiskStorageManager
+    /// # >) {
+    /// let quorum_lookup = client.quorum_lookup();
+    /// if let Some(quorum) = quorum_lookup.get_quorum_at_height(100000, 1, &[0u8; 32]).await {
+    ///     println!("Found quorum!");
+    /// }
+    /// # }
+    /// ```
     pub fn get_quorum_at_height(
         &self,
         height: u32,
         quorum_type: u8,
         quorum_hash: &[u8; 32],
-    ) -> Option<&QualifiedQuorumEntry> {
-        use dashcore::sml::llmq_type::LLMQType;
-        use dashcore::QuorumHash;
-        use dashcore_hashes::Hash;
-
-        let llmq_type: LLMQType = LLMQType::from(quorum_type);
-        if llmq_type == LLMQType::LlmqtypeUnknown {
-            tracing::warn!("Invalid quorum type {} requested at height {}", quorum_type, height);
-            return None;
-        };
-
-        let qhash = QuorumHash::from_byte_array(*quorum_hash);
-
-        // First check if we have the masternode list at this height
-        match self.get_masternode_list_at_height(height) {
-            Some(ml) => {
-                // We have the masternode list, now look for the quorum
-                match ml.quorums.get(&llmq_type) {
-                    Some(quorums) => match quorums.get(&qhash) {
-                        Some(quorum) => {
-                            tracing::debug!(
-                                "Found quorum type {} at height {} with hash {}",
-                                quorum_type,
-                                height,
-                                hex::encode(quorum_hash)
-                            );
-                            Some(quorum)
-                        }
-                        None => {
-                            tracing::warn!(
-                                "Quorum not found: type {} at height {} with hash {} (masternode list exists with {} quorums of this type)",
-                                quorum_type,
-                                height,
-                                hex::encode(quorum_hash),
-                                quorums.len()
-                            );
-                            None
-                        }
-                    },
-                    None => {
-                        tracing::warn!(
-                            "No quorums of type {} found at height {} (masternode list exists)",
-                            quorum_type,
-                            height
-                        );
-                        None
-                    }
-                }
-            }
-            None => {
-                tracing::warn!(
-                    "No masternode list found at height {} - cannot retrieve quorum",
-                    height
-                );
-                None
-            }
-        }
+    ) -> Option<QualifiedQuorumEntry> {
+        // Delegate to the QuorumLookup component
+        // This requires blocking on the async call
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.quorum_lookup.get_quorum_at_height(height, quorum_type, quorum_hash).await
+            })
+        })
     }
 
     // ============ Balance Queries ============

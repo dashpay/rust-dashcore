@@ -25,7 +25,7 @@ use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, Spv
 use crate::validation::ValidationManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
+use super::{BlockProcessingTask, ClientConfig, QuorumLookup, StatusDisplay};
 
 /// Main Dash SPV client with generic trait-based architecture.
 ///
@@ -135,6 +135,14 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) sync_manager: SequentialSyncManager<S, N, W>,
     pub(super) validation: ValidationManager,
     pub(super) chainlock_manager: Arc<ChainLockManager>,
+    /// Thread-safe quorum and masternode lookup interface.
+    ///
+    /// This component provides shared access to masternode lists and quorum data
+    /// without requiring exclusive access to the sync_manager. Applications can
+    /// clone the Arc and perform queries from multiple threads.
+    ///
+    /// See `QuorumLookup` documentation for usage examples.
+    pub(super) quorum_lookup: Arc<QuorumLookup>,
     pub(super) running: Arc<RwLock<bool>>,
     #[cfg(feature = "terminal-ui")]
     pub(super) terminal_ui: Option<Arc<TerminalUI>>,
@@ -175,6 +183,38 @@ impl<
     /// Get reference to chainlock manager.
     pub fn chainlock_manager(&self) -> &Arc<ChainLockManager> {
         &self.chainlock_manager
+    }
+
+    /// Get reference to quorum lookup component.
+    ///
+    /// This component provides thread-safe access to masternode lists and quorum data.
+    /// The returned `Arc<QuorumLookup>` can be cheaply cloned and shared across threads.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use dash_spv::client::DashSpvClient;
+    /// # async fn example(client: &DashSpvClient<
+    /// #     key_wallet_manager::wallet_manager::WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo>,
+    /// #     dash_spv::network::manager::PeerNetworkManager,
+    /// #     dash_spv::storage::DiskStorageManager
+    /// # >) {
+    /// // Get the quorum lookup component
+    /// let quorum_lookup = client.quorum_lookup();
+    ///
+    /// // Clone for use in another thread/task
+    /// let lookup_clone = quorum_lookup.clone();
+    ///
+    /// // Use in async task
+    /// tokio::spawn(async move {
+    ///     if let Some(quorum) = lookup_clone.get_quorum_at_height(100000, 1, &[0u8; 32]).await {
+    ///         println!("Found quorum!");
+    ///     }
+    /// });
+    /// # }
+    /// ```
+    pub fn quorum_lookup(&self) -> &Arc<QuorumLookup> {
+        &self.quorum_lookup
     }
 
     /// Get mutable reference to sync manager (for testing).

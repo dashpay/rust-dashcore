@@ -137,11 +137,16 @@ impl<
     pub fn update_chainlock_validation(&self) -> Result<bool> {
         // Check if masternode sync has an engine available
         if let Some(engine) = self.sync_manager.get_masternode_engine() {
-            // Clone the engine for the ChainLockManager
+            // Clone the engine for the ChainLockManager and QuorumLookup
             let engine_arc = Arc::new(engine.clone());
-            self.chainlock_manager.set_masternode_engine(engine_arc);
 
+            // Update ChainLockManager for ChainLock validation
+            self.chainlock_manager.set_masternode_engine(engine_arc.clone());
             tracing::info!("Updated ChainLockManager with masternode engine for full validation");
+
+            // Update QuorumLookup for quorum queries
+            self.quorum_lookup.set_engine(engine_arc);
+            tracing::info!("Updated QuorumLookup with masternode engine for quorum queries");
 
             // Note: Pending ChainLocks will be validated when they are next processed
             // or can be triggered by calling validate_pending_chainlocks separately
