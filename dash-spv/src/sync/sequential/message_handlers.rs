@@ -392,8 +392,6 @@ impl<
 
         if should_transition {
             self.transition_to_next_phase(storage, network, "Headers sync complete").await?;
-
-            // Execute the next phase
             self.execute_current_phase(network, storage).await?;
         }
 
