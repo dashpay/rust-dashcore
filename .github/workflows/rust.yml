@@ -73,7 +73,7 @@ jobs:
               # Run test in isolation, single-threaded to improve determinism
               cargo test -p dash-spv --all-features -- --nocapture --test-threads=1 "$t" 2>&1 | tee -a segv_scan.log
               rc=${PIPESTATUS[0]}
-              if [ $rc -ne 0 ]; then
+              if [ "$rc" -ne 0 ]; then
                 if tail -n 200 segv_scan.log | grep -qE 'SIGSEGV|signal: 11'; then
                   FOUND_THIS_ATTEMPT+=("$t")
                   SEGV_TESTS+=("$t")
