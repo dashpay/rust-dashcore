@@ -338,7 +338,8 @@ impl<
                 // After checking timeout, see if sync completed (either normally or via timeout)
                 if !self.masternode_sync.is_syncing() {
                     tracing::info!("Masternode sync completed (detected in timeout check), transitioning to next phase");
-                    self.transition_to_next_phase(storage, network, "Masternode sync complete").await?;
+                    self.transition_to_next_phase(storage, network, "Masternode sync complete")
+                        .await?;
                     self.execute_current_phase(network, storage).await?;
                 }
             }
