@@ -223,8 +223,7 @@ impl QuorumLookup {
             None => {
                 warn!(
                     "No quorums of type {} found at height {} (masternode list exists)",
-                    quorum_type,
-                    height
+                    quorum_type, height
                 );
                 None
             }
@@ -244,9 +243,7 @@ impl QuorumLookup {
     ///
     /// This can be useful for monitoring sync progress or debugging.
     pub fn masternode_list_count(&self) -> usize {
-        self.engine()
-            .map(|engine| engine.masternode_lists.len())
-            .unwrap_or(0)
+        self.engine().map(|engine| engine.masternode_lists.len()).unwrap_or(0)
     }
 
     /// Get the height range of available masternode lists.
