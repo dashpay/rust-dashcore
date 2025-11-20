@@ -49,7 +49,6 @@ mod mempool;
 mod progress;
 mod queries;
 mod quorum_lookup;
-mod sync;
 mod sync_coordinator;
 mod transactions;
 

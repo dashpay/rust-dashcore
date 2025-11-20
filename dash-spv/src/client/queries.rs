@@ -6,7 +6,6 @@
 //! - Balance queries
 //! - Filter availability checks
 
-use crate::client::sync::block_on;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -98,13 +97,11 @@ impl<
     ) -> Option<QualifiedQuorumEntry> {
         // Delegate to the QuorumLookup component
         // This requires blocking on the async call
-        let quorum_lookup = self.quorum_lookup.clone();
-        let quorum_hash = quorum_hash.clone();
-        block_on(async move {
-            quorum_lookup.get_quorum_at_height(height, quorum_type, &quorum_hash).await
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.quorum_lookup.get_quorum_at_height(height, quorum_type, quorum_hash).await
+            })
         })
-        .ok()
-        .flatten()
     }
 
     // ============ Balance Queries ============
