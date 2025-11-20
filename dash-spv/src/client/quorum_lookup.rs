@@ -41,7 +41,7 @@
 //!     1, // LLMQ_TYPE_50_60
 //!     &[0u8; 32]
 //! ).await {
-//!     println!("Found quorum with {} members", quorum.quorum_public_key.len());
+//!     println!("Found quorum with {} members", quorum.quorum_entry.quorum_public_key.len());
 //! }
 //! # }
 //! ```
@@ -172,7 +172,7 @@ impl QuorumLookup {
     ///     1, // LLMQ_TYPE_50_60
     ///     &quorum_hash
     /// ).await {
-    ///     println!("Found quorum with public key: {:?}", quorum.quorum_public_key);
+    ///     println!("Found quorum with public key: {:?}", quorum.quorum_entry.quorum_public_key);
     /// } else {
     ///     println!("Quorum not found");
     /// }
