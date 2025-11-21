@@ -404,8 +404,7 @@ impl<
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        let continue_sync =
-            self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await?;
+        self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await?;
 
         // Update phase state
         if let SyncPhase::DownloadingMnList {
@@ -422,8 +421,9 @@ impl<
             *diffs_processed += 1;
             self.current_phase.update_progress();
 
-            // Check if phase is complete
-            if !continue_sync {
+            // Check if phase is complete by verifying masternode sync is no longer in progress
+            // This ensures we wait for all pending MnListDiff requests to be received
+            if !self.masternode_sync.is_syncing() {
                 // Masternode sync has completed - ensure phase state reflects this
                 // by updating target_height to match current_height before transition
                 if let SyncPhase::DownloadingMnList {
@@ -438,6 +438,7 @@ impl<
                     }
                 }
 
+                tracing::info!("✅ All MnListDiff requests completed, transitioning to next phase");
                 self.transition_to_next_phase(storage, network, "Masternode sync complete").await?;
 
                 // Execute the next phase
@@ -472,7 +473,7 @@ impl<
             return Err(SyncError::Validation(error.to_string()));
         }
 
-        // Update phase state - QRInfo processing should complete the masternode sync phase
+        // Update phase state
         if let SyncPhase::DownloadingMnList {
             current_height,
             diffs_processed,
@@ -486,13 +487,21 @@ impl<
             *diffs_processed += 1;
             self.current_phase.update_progress();
 
-            tracing::info!("✅ QRInfo processing completed, masternode sync phase finished");
+            // Check if masternode sync is complete (all pending MnListDiff requests received)
+            if !self.masternode_sync.is_syncing() {
+                tracing::info!("✅ QRInfo processing completed with all MnListDiff requests, masternode sync phase finished");
 
-            // Transition to next phase (filter headers)
-            self.transition_to_next_phase(storage, network, "QRInfo processing completed").await?;
+                // Transition to next phase (filter headers)
+                self.transition_to_next_phase(storage, network, "QRInfo processing completed")
+                    .await?;
 
-            // Immediately execute the next phase so CFHeaders begins without delay
-            self.execute_current_phase(network, storage).await?;
+                // Immediately execute the next phase so CFHeaders begins without delay
+                self.execute_current_phase(network, storage).await?;
+            } else {
+                tracing::info!(
+                    "⏳ QRInfo processing completed, waiting for pending MnListDiff responses before transitioning"
+                );
+            }
         }
 
         Ok(())
