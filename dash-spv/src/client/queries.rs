@@ -71,10 +71,10 @@ impl<
     /// Get a quorum entry by type and hash at a specific block height.
     /// Returns None if the quorum is not found.
     ///
-    /// # Deprecated
+    /// # Note
     ///
-    /// This method is now a synchronous wrapper that blocks on the async QuorumLookup.
-    /// For better performance and to avoid blocking, prefer using the async version:
+    /// This is a synchronous convenience wrapper that blocks on the async QuorumLookup.
+    /// For better performance and to avoid blocking, prefer using the async version directly:
     ///
     /// ```rust,no_run
     /// # use dash_spv::client::DashSpvClient;
