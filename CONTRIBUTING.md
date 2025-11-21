@@ -167,16 +167,6 @@ Pull request merge requirements:
 
 Follow idiomatic Rust and crate‑local patterns.
 
-### Formatting & Linting
-
-Run `cargo fmt --all` before submitting PRs. Use `cargo clippy --workspace --all-targets -- -D warnings` to catch issues early. Avoid large, unrelated reformatting to keep diffs focused and `git blame` useful.
-
-You may check the [discussion on the formatting](https://github.com/rust-bitcoin/rust-bitcoin/issues/172)
-and [how it is planned to coordinate it with crate refactoring](https://github.com/rust-bitcoin/rust-bitcoin/pull/525)
-
-For the new code it is recommended to follow style of the existing codebase and
-avoid any end-line space characters.
-
 ### MSRV
 
 The Minimal Supported Rust Version (MSRV) is 1.89; it is enforced by CI. Crates use mixed editions (2021/2024); consult `Cargo.toml` and README for details.
