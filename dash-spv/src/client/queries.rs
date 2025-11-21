@@ -76,6 +76,11 @@ impl<
     /// This is a synchronous convenience wrapper that blocks on the async QuorumLookup.
     /// For better performance and to avoid blocking, prefer using the async version directly:
     ///
+    /// Returns `None` if:
+    /// - No Tokio runtime is available (fails gracefully instead of panicking)
+    /// - The quorum is not found
+    /// - Masternode sync is not yet complete
+    ///
     /// ```rust,no_run
     /// # use dash_spv::client::DashSpvClient;
     /// # async fn example(client: &DashSpvClient<
@@ -98,8 +103,11 @@ impl<
     ) -> Option<QualifiedQuorumEntry> {
         // Delegate to the QuorumLookup component
         // This requires blocking on the async call
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
+        // Return None gracefully if no Tokio runtime is available
+        let handle = tokio::runtime::Handle::try_current().ok()?;
+
+        tokio::task::block_in_place(move || {
+            handle.block_on(async {
                 self.quorum_lookup.get_quorum_at_height(height, quorum_type, quorum_hash).await
             })
         })
