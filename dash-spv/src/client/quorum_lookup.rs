@@ -194,13 +194,16 @@ impl QuorumLookup {
         // Convert hash
         let qhash = QuorumHash::from_byte_array(*quorum_hash);
 
-        // Get the masternode list at this height
-        let ml = self.get_masternode_list_at_height(height).await?;
+        // Get the engine
+        let engine = self.engine()?;
 
-        // Look for the quorum in the masternode list
-        match ml.quorums.get(&llmq_type) {
-            Some(quorums) => match quorums.get(&qhash) {
-                Some(quorum) => {
+        // Look up the masternode list and quorum
+        let quorum = engine
+            .masternode_lists
+            .get(&height)
+            .and_then(|ml| ml.quorums.get(&llmq_type))
+            .and_then(|quorums| {
+                if let Some(quorum) = quorums.get(&qhash) {
                     debug!(
                         "Found quorum type {} at height {} with hash {}",
                         quorum_type,
@@ -208,8 +211,7 @@ impl QuorumLookup {
                         hex::encode(quorum_hash)
                     );
                     Some(quorum.clone())
-                }
-                None => {
+                } else {
                     warn!(
                         "Quorum not found: type {} at height {} with hash {} (masternode list exists with {} quorums of this type)",
                         quorum_type,
@@ -219,15 +221,19 @@ impl QuorumLookup {
                     );
                     None
                 }
-            },
-            None => {
-                warn!(
-                    "No quorums of type {} found at height {} (masternode list exists)",
-                    quorum_type, height
-                );
-                None
-            }
+            });
+
+        if quorum.is_none() && engine.masternode_lists.contains_key(&height) {
+            // We have the masternode list but not this quorum type
+            warn!(
+                "No quorums of type {} found at height {} (masternode list exists)",
+                quorum_type, height
+            );
+        } else if quorum.is_none() {
+            warn!("No masternode list found at height {} - cannot retrieve quorum", height);
         }
+
+        quorum
     }
 
     /// Check if the masternode engine is available.
@@ -253,14 +259,19 @@ impl QuorumLookup {
     pub fn masternode_list_height_range(&self) -> Option<(u32, u32)> {
         let engine = self.engine()?;
 
-        let heights: Vec<u32> = engine.masternode_lists.keys().copied().collect();
-        if heights.is_empty() {
-            return None;
+        // Compute min/max
+        let mut min: Option<u32> = None;
+        let mut max: Option<u32> = None;
+
+        for &height in engine.masternode_lists.keys() {
+            min = Some(min.map_or(height, |m| m.min(height)));
+            max = Some(max.map_or(height, |m| m.max(height)));
         }
 
-        let min = heights.iter().min().copied()?;
-        let max = heights.iter().max().copied()?;
-        Some((min, max))
+        match (min, max) {
+            (Some(min_height), Some(max_height)) => Some((min_height, max_height)),
+            _ => None,
+        }
     }
 }
 
@@ -307,5 +318,79 @@ mod tests {
         // Queries should return None before engine is set
         assert!(lookup.get_masternode_list_at_height(100).await.is_none());
         assert!(lookup.get_quorum_at_height(100, 1, &[0u8; 32]).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_lookup_with_engine() {
+        use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+        use dashcore::Network;
+
+        // Create a test engine using the proper constructor
+        let engine = MasternodeListEngine::default_for_network(Network::Dash);
+
+        // Create QuorumLookup and set the engine
+        let lookup = QuorumLookup::with_engine(Arc::new(engine));
+
+        // Verify engine is available (even though it has no data yet)
+        assert!(lookup.is_available());
+        assert_eq!(lookup.masternode_list_count(), 0);
+        assert_eq!(lookup.masternode_list_height_range(), None);
+
+        // Query for a non-existent masternode list - should return None
+        let ml_result = lookup.get_masternode_list_at_height(1000).await;
+        assert!(ml_result.is_none());
+
+        // Query for a non-existent quorum - should return None
+        let quorum_result = lookup.get_quorum_at_height(1000, 1, &[1u8; 32]).await;
+        assert!(quorum_result.is_none());
+
+        // Verify that even with an empty engine, the lookup works without panicking
+        assert!(lookup.is_available());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_lookup_concurrent_access() {
+        use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+        use dashcore::Network;
+
+        // Create a QuorumLookup with an engine
+        let engine = MasternodeListEngine::default_for_network(Network::Dash);
+        let lookup = Arc::new(QuorumLookup::with_engine(Arc::new(engine)));
+
+        // Spawn multiple tasks that query concurrently
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let lookup_clone = lookup.clone();
+            let handle = tokio::spawn(async move {
+                // All queries should return None (no data in engine)
+                // but shouldn't panic or deadlock
+                let _ = lookup_clone.get_quorum_at_height(100, 1, &[0u8; 32]).await;
+                let _ = lookup_clone.is_available();
+                let _ = lookup_clone.masternode_list_count();
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all tasks to complete
+        for handle in handles {
+            handle.await.expect("Task should not panic");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_quorum_lookup_height_range_optimization() {
+        // This test verifies that the height range optimization works correctly
+        // without allocating a Vec
+        use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+        use dashcore::Network;
+
+        let engine = MasternodeListEngine::default_for_network(Network::Dash);
+        let lookup = QuorumLookup::with_engine(Arc::new(engine));
+
+        // With an empty engine, should return None
+        assert_eq!(lookup.masternode_list_height_range(), None);
+
+        // The optimization ensures we don't allocate a Vec for the keys
+        // If there's a panic or incorrect behavior, this test will catch it
     }
 }

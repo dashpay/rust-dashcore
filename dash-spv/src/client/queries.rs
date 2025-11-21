@@ -84,7 +84,8 @@ impl<
     /// #     dash_spv::storage::DiskStorageManager
     /// # >) {
     /// let quorum_lookup = client.quorum_lookup();
-    /// if let Some(quorum) = quorum_lookup.get_quorum_at_height(100000, 1, &[0u8; 32]).await {
+    /// let quorum_hash = [0u8; 32]; // Placeholder - use actual hash
+    /// if let Some(quorum) = quorum_lookup.get_quorum_at_height(100000, 1, &quorum_hash).await {
     ///     println!("Found quorum!");
     /// }
     /// # }
