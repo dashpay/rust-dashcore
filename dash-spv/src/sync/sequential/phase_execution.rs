@@ -142,7 +142,7 @@ impl<
                 tracing::info!("📥 Starting filter download phase");
 
                 // Get the range of filters to download
-                // Note: get_filter_tip_height() now returns absolute blockchain height
+                // Note: get_filter_tip_height() returns absolute blockchain height
                 let filter_header_tip = storage
                     .get_filter_tip_height()
                     .await
@@ -150,9 +150,32 @@ impl<
                     .unwrap_or(0);
 
                 if filter_header_tip > 0 {
-                    // Download all filters for complete blockchain history
-                    // This ensures the wallet can find transactions from any point in history
-                    let start_height = self.header_sync.get_sync_base_height().max(1);
+                    // Determine the first block height that needs filters.
+                    // For checkpoint sync we can't verify the checkpoint block's filter because
+                    // the previous filter header (checkpoint - 1) is unavailable, so start one
+                    // block AFTER the checkpoint. For genesis sync we start at height 1.
+                    let sync_base_height = self.header_sync.get_sync_base_height();
+                    let start_height = if sync_base_height == 0 {
+                        1
+                    } else {
+                        sync_base_height.saturating_add(1)
+                    };
+
+                    // Handle cases where the tip is still below our start height (e.g., right after checkpoint)
+                    if filter_header_tip < start_height {
+                        tracing::info!(
+                            "Filter headers (tip {}) below start height {}, skipping filter download",
+                            filter_header_tip,
+                            start_height
+                        );
+                        self.transition_to_next_phase(
+                            storage,
+                            network,
+                            "No filter headers beyond checkpoint",
+                        )
+                        .await?;
+                        return Ok(());
+                    }
                     let count = filter_header_tip - start_height + 1;
 
                     tracing::info!(
