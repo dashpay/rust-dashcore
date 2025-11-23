@@ -38,6 +38,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Ok(true);
         }
 
+        if self.sync_base_height > 0 && height == self.sync_base_height {
+            tracing::debug!(
+                "Skipping cfilter verification at checkpoint height {} (trusted checkpoint filter)",
+                height
+            );
+            return Ok(true);
+        }
+
         // Load previous and expected headers
         let prev_header = storage.get_filter_header(height - 1).await.map_err(|e| {
             SyncError::Storage(format!("Failed to load previous filter header: {}", e))
