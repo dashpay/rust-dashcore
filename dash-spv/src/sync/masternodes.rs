@@ -154,16 +154,32 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Insert masternode list diff - direct translation of dash-evo-tool implementation
-    async fn insert_mn_list_diff(&mut self, mn_list_diff: &MnListDiff, storage: &S) {
+    async fn insert_mn_list_diff(
+        &mut self,
+        mn_list_diff: &MnListDiff,
+        storage: &S,
+        allow_missing_height: bool,
+    ) {
         let base_block_hash = mn_list_diff.base_block_hash;
         let base_height = match self.get_height_for_hash(&base_block_hash, storage).await {
             Ok(height) => height,
             Err(e) => {
-                let error_msg =
-                    format!("Failed to get height for base block hash {}: {}", base_block_hash, e);
-                tracing::error!("❌ MnListDiff insertion failed: {}", error_msg);
-                self.error = Some(error_msg);
-                return;
+                if allow_missing_height {
+                    tracing::warn!(
+                        "⚠️ Skipping optional MnListDiff: missing height for base block hash {} ({})",
+                        base_block_hash,
+                        e
+                    );
+                    return;
+                } else {
+                    let error_msg = format!(
+                        "Failed to get height for base block hash {}: {}",
+                        base_block_hash, e
+                    );
+                    tracing::error!("❌ MnListDiff insertion failed: {}", error_msg);
+                    self.error = Some(error_msg);
+                    return;
+                }
             }
         };
 
@@ -171,11 +187,20 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         let height = match self.get_height_for_hash(&block_hash, storage).await {
             Ok(height) => height,
             Err(e) => {
-                let error_msg =
-                    format!("Failed to get height for block hash {}: {}", block_hash, e);
-                tracing::error!("❌ MnListDiff insertion failed: {}", error_msg);
-                self.error = Some(error_msg);
-                return;
+                if allow_missing_height {
+                    tracing::warn!(
+                        "⚠️ Skipping optional MnListDiff: missing height for block hash {} ({})",
+                        block_hash,
+                        e
+                    );
+                    return;
+                } else {
+                    let error_msg =
+                        format!("Failed to get height for block hash {}: {}", block_hash, e);
+                    tracing::error!("❌ MnListDiff insertion failed: {}", error_msg);
+                    self.error = Some(error_msg);
+                    return;
+                }
             }
         };
 
@@ -316,15 +341,25 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             // Feed heights for all block hashes
             let mut fed_count = 0;
             for block_hash in block_hashes {
-                if let Ok(Some(height)) = storage.get_header_height_by_hash(&block_hash).await {
-                    engine.feed_block_height(height, block_hash);
-                    fed_count += 1;
-                    tracing::debug!("🔗 Fed height {} for block {}", height, block_hash);
-                } else {
-                    tracing::warn!(
-                        "⚠️ Could not find height for block hash {} in storage",
-                        block_hash
-                    );
+                match storage.get_header_height_by_hash(&block_hash).await {
+                    Ok(Some(height)) => {
+                        engine.feed_block_height(height, block_hash);
+                        fed_count += 1;
+                        tracing::debug!("🔗 Fed height {} for block {}", height, block_hash);
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            "⚠️ Missing height for block hash {} in storage (likely before checkpoint base)",
+                            block_hash
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "⚠️ Storage error looking up height for block hash {}: {}",
+                            block_hash,
+                            e
+                        );
+                    }
                 }
             }
 
@@ -447,7 +482,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         storage: &mut S,
         _network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        self.insert_mn_list_diff(&diff, storage).await;
+        self.insert_mn_list_diff(&diff, storage, true).await;
 
         // Decrement pending request counter if we were expecting this response
         if self.pending_mnlistdiff_requests > 0 {
@@ -637,20 +672,20 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         // Insert all masternode list diffs from QRInfo (dash-evo-tool pattern)
-        self.insert_mn_list_diff(&qr_info.mn_list_diff_tip, storage).await;
-        self.insert_mn_list_diff(&qr_info.mn_list_diff_h, storage).await;
-        self.insert_mn_list_diff(&qr_info.mn_list_diff_at_h_minus_c, storage).await;
-        self.insert_mn_list_diff(&qr_info.mn_list_diff_at_h_minus_2c, storage).await;
-        self.insert_mn_list_diff(&qr_info.mn_list_diff_at_h_minus_3c, storage).await;
+        self.insert_mn_list_diff(&qr_info.mn_list_diff_tip, storage, false).await;
+        self.insert_mn_list_diff(&qr_info.mn_list_diff_h, storage, false).await;
+        self.insert_mn_list_diff(&qr_info.mn_list_diff_at_h_minus_c, storage, false).await;
+        self.insert_mn_list_diff(&qr_info.mn_list_diff_at_h_minus_2c, storage, false).await;
+        self.insert_mn_list_diff(&qr_info.mn_list_diff_at_h_minus_3c, storage, false).await;
 
         if let Some((_, mn_list_diff_at_h_minus_4c)) =
             &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c
         {
-            self.insert_mn_list_diff(mn_list_diff_at_h_minus_4c, storage).await;
+            self.insert_mn_list_diff(mn_list_diff_at_h_minus_4c, storage, true).await;
         }
 
         for diff in &qr_info.mn_list_diff_list {
-            self.insert_mn_list_diff(diff, storage).await;
+            self.insert_mn_list_diff(diff, storage, true).await;
         }
 
         // Process quorum snapshots (comprehensive processing)
@@ -750,9 +785,43 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 })
             };
 
-            match engine.feed_qr_info(qr_info.clone(), true, true, Some(height_lookup)) {
+            let mut verify_rotated_quorums = true;
+            let mut feed_attempt = engine.feed_qr_info(
+                qr_info.clone(),
+                true,
+                verify_rotated_quorums,
+                Some(height_lookup),
+            );
+
+            if let Err(dashcore::sml::quorum_validation_error::QuorumValidationError::RequiredRotatedChainLockSigNotPresent(_, block_hash)) = &feed_attempt
+            {
+                tracing::warn!(
+                    "⚠️ Rotated ChainLock signature not yet available for block {}. Retrying without rotated-quorum verification.",
+                    block_hash
+                );
+                verify_rotated_quorums = false;
+                feed_attempt = engine.feed_qr_info::<fn(
+                    &BlockHash,
+                ) -> Result<
+                    u32,
+                    dashcore::sml::quorum_validation_error::ClientDataRetrievalError,
+                >>(
+                    qr_info.clone(),
+                    true,
+                    verify_rotated_quorums,
+                    None,
+                );
+            }
+
+            match feed_attempt {
                 Ok(()) => {
-                    tracing::info!("✅ Successfully fed QRInfo to masternode list engine");
+                    if verify_rotated_quorums {
+                        tracing::info!("✅ Successfully fed QRInfo to masternode list engine (with rotated quorum validation)");
+                    } else {
+                        tracing::info!(
+                            "✅ Successfully fed QRInfo to masternode list engine (rotated quorum validation deferred)"
+                        );
+                    }
                 }
                 Err(e) => {
                     let error_msg = format!("Failed to feed QRInfo to engine: {}", e);
