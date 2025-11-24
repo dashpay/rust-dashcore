@@ -52,6 +52,17 @@ pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
 
     // Checkpoint base height (0 when syncing from genesis)
     sync_base_height: u32,
+
+    // Track start-list backfills required before QRInfo can be processed
+    pending_start_list_backfills: HashMap<BlockHash, u32>,
+
+    // Deferred QRInfo that will be retried once missing start lists are backfilled
+    pending_qrinfo_retry: Option<QRInfo>,
+}
+
+enum QrInfoProcessResult {
+    Completed,
+    WaitingForStartList(BlockHash),
 }
 
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
@@ -122,6 +133,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             mnlistdiff_wait_start: None,
             mnlistdiff_retry_count: 0,
             sync_base_height: 0,
+            pending_start_list_backfills: HashMap::new(),
+            pending_qrinfo_retry: None,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         }
@@ -130,6 +143,103 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Set the checkpoint base height used when syncing from checkpoints.
     pub fn set_sync_base_height(&mut self, height: u32) {
         self.sync_base_height = height;
+    }
+
+    async fn schedule_start_list_backfill(
+        &mut self,
+        missing_block_hash: BlockHash,
+        storage: &mut S,
+        network: &mut dyn NetworkManager,
+    ) -> Result<(), String> {
+        if self.pending_start_list_backfills.contains_key(&missing_block_hash) {
+            tracing::info!(
+                "Already waiting for start masternode list at block {}",
+                missing_block_hash
+            );
+            return Ok(());
+        }
+
+        let engine =
+            self.engine.as_mut().ok_or_else(|| "Masternode engine not initialized".to_string())?;
+        let (latest_height, latest_block_hash) = engine
+            .latest_masternode_list()
+            .map(|list| (list.known_height, list.block_hash))
+            .ok_or_else(|| "Masternode engine has no known masternode list".to_string())?;
+
+        let target_height = storage
+            .get_header_height_by_hash(&missing_block_hash)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to look up height for missing start list block {}: {}",
+                    missing_block_hash, e
+                )
+            })?
+            .ok_or_else(|| {
+                format!(
+                    "Height not found in storage for missing start list block {}",
+                    missing_block_hash
+                )
+            })?;
+
+        if latest_height >= target_height {
+            tracing::debug!(
+                "Engine already has masternode list at or beyond height {}",
+                target_height
+            );
+            return Ok(());
+        }
+
+        engine.feed_block_height(target_height, missing_block_hash);
+
+        let request = dashcore::network::message_sml::GetMnListDiff {
+            base_block_hash: latest_block_hash,
+            block_hash: missing_block_hash,
+        };
+
+        network
+            .send_message(NetworkMessage::GetMnListD(request))
+            .await
+            .map_err(|e| format!("Failed to send MnListDiff backfill request: {}", e))?;
+
+        tracing::info!(
+            "Requested MnListDiff backfill from height {} to {} ({} -> {})",
+            latest_height,
+            target_height,
+            latest_block_hash,
+            missing_block_hash
+        );
+
+        self.pending_start_list_backfills.insert(missing_block_hash, target_height);
+
+        Ok(())
+    }
+
+    async fn apply_start_list_backfill(
+        &mut self,
+        diff: MnListDiff,
+        target_height: u32,
+    ) -> Result<(), String> {
+        let engine =
+            self.engine.as_mut().ok_or_else(|| "Masternode engine not initialized".to_string())?;
+        let block_hash = diff.block_hash;
+        engine.feed_block_height(target_height, block_hash);
+        engine
+            .apply_diff(diff, Some(target_height), false, None)
+            .map_err(|e| format!("Failed to apply MnListDiff backfill: {}", e))?;
+        tracing::info!(
+            "Applied MnListDiff backfill up to height {} (block {})",
+            target_height,
+            block_hash
+        );
+        Ok(())
+    }
+
+    async fn retry_pending_qrinfo(&mut self, storage: &mut S, network: &mut dyn NetworkManager) {
+        if let Some(pending) = self.pending_qrinfo_retry.take() {
+            tracing::info!("Retrying deferred QRInfo after start list backfill");
+            self.handle_qrinfo_message(pending, storage, network).await;
+        }
     }
 
     /// Request QRInfo - simplified non-blocking implementation
@@ -483,9 +593,26 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         diff: MnListDiff,
         storage: &mut S,
-        _network: &mut dyn NetworkManager,
+        network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
         self.insert_mn_list_diff(&diff, storage).await;
+
+        let mut backfill_applied = false;
+        if let Some(target_height) = self.pending_start_list_backfills.remove(&diff.block_hash) {
+            match self.apply_start_list_backfill(diff.clone(), target_height).await {
+                Ok(()) => {
+                    backfill_applied = true;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "❌ Failed to apply start list backfill for block {}: {}",
+                        diff.block_hash,
+                        e
+                    );
+                    self.error = Some(e);
+                }
+            }
+        }
 
         // Decrement pending request counter if we were expecting this response
         if self.pending_mnlistdiff_requests > 0 {
@@ -532,6 +659,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     }
                 }
             }
+        }
+
+        if backfill_applied {
+            self.retry_pending_qrinfo(storage, network).await;
         }
 
         Ok(false) // Not used for sync completion in simple approach
@@ -689,11 +820,21 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Feed QRInfo to engine and get additional MnListDiffs needed for quorum validation
         // This is the critical step that dash-evo-tool performs after initial QRInfo processing
-        if let Err(e) = self.feed_qrinfo_and_get_additional_diffs(&qr_info, storage, network).await
-        {
-            tracing::error!("❌ Failed to process QRInfo follow-up diffs: {}", e);
-            self.error = Some(e);
-            return;
+        match self.feed_qrinfo_and_get_additional_diffs(&qr_info, storage, network).await {
+            Ok(QrInfoProcessResult::Completed) => {}
+            Ok(QrInfoProcessResult::WaitingForStartList(block_hash)) => {
+                tracing::info!(
+                    "⏳ Waiting for missing start masternode list at block {} before processing QRInfo",
+                    block_hash
+                );
+                self.pending_qrinfo_retry = Some(qr_info);
+                return;
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to process QRInfo follow-up diffs: {}", e);
+                self.error = Some(e);
+                return;
+            }
         }
 
         // Cache the QRInfo using the requested block hash as key
@@ -758,7 +899,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         qr_info: &QRInfo,
         storage: &mut S,
         network: &mut dyn NetworkManager,
-    ) -> Result<(), String> {
+    ) -> Result<QrInfoProcessResult, String> {
         tracing::info!(
             "🔗 Feeding QRInfo to engine and getting additional diffs for quorum validation"
         );
@@ -784,6 +925,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             match engine.feed_qr_info(qr_info.clone(), true, true, Some(height_lookup)) {
                 Ok(()) => {
                     tracing::info!("✅ Successfully fed QRInfo to masternode list engine");
+                }
+                Err(dashcore::sml::quorum_validation_error::QuorumValidationError::SMLError(
+                    dashcore::sml::error::SmlError::MissingStartMasternodeList(block_hash),
+                )) => {
+                    self.schedule_start_list_backfill(block_hash, storage, network).await?;
+                    return Ok(QrInfoProcessResult::WaitingForStartList(block_hash));
                 }
                 Err(e) => {
                     let error_msg = format!("Failed to feed QRInfo to engine: {}", e);
@@ -829,7 +976,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         }
 
-        Ok(())
+        Ok(QrInfoProcessResult::Completed)
     }
 
     /// Fetch additional MnListDiffs for quorum validation (dash-evo-tool pattern)
