@@ -46,12 +46,13 @@ mod tests {
             block: &Block,
             height: u32,
             _network: Network,
-        ) -> Vec<dashcore::Txid> {
+        ) -> (Vec<dashcore::Txid>, bool) {
             let mut processed = self.processed_blocks.lock().await;
             processed.push((block.block_hash(), height));
 
             // Return txids of all transactions in block as "relevant"
-            block.txdata.iter().map(|tx| tx.txid()).collect()
+            // No gap limit changes in mock
+            (block.txdata.iter().map(|tx| tx.txid()).collect(), false)
         }
 
         async fn process_mempool_transaction(&mut self, tx: &Transaction, _network: Network) {
@@ -272,8 +273,8 @@ mod tests {
                 _block: &Block,
                 _height: u32,
                 _network: Network,
-            ) -> Vec<dashcore::Txid> {
-                Vec::new()
+            ) -> (Vec<dashcore::Txid>, bool) {
+                (Vec::new(), false)
             }
 
             async fn process_mempool_transaction(&mut self, _tx: &Transaction, _network: Network) {}

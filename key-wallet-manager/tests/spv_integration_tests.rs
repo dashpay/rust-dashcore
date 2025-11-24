@@ -113,10 +113,12 @@ async fn test_block_processing() {
     let block = create_test_block(100, vec![tx.clone()]);
 
     // Process the block
-    let result = manager.process_block(&block, 100, Network::Testnet).await;
+    let (txids, gap_limit_changed) = manager.process_block(&block, 100, Network::Testnet).await;
 
     // Since we're not watching specific addresses, no transactions should be relevant
-    assert_eq!(result.len(), 0);
+    assert_eq!(txids.len(), 0);
+    // No addresses should be generated if we're not tracking any wallets
+    assert!(!gap_limit_changed);
 }
 
 #[tokio::test]

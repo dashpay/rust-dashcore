@@ -30,8 +30,10 @@
 //! - `recovery` - Recovery and error handling logic
 //! - `request_control` - Request flow control
 //! - `transitions` - Phase transition management
+//! - `filter_recheck` - Filter re-checking for gap limit changes
 
 // Sub-modules (focused implementations)
+pub mod filter_recheck;
 pub mod lifecycle;
 pub mod manager;
 pub mod message_handlers;

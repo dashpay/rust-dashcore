@@ -38,6 +38,11 @@ impl<
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
 
+        // Create filter recheck queue with default config
+        let filter_recheck_config = crate::sync::filters::recheck::FilterRecheckConfig::default();
+        let filter_recheck_queue =
+            crate::sync::filters::recheck::FilterRecheckQueue::new(filter_recheck_config);
+
         Ok(Self {
             current_phase: SyncPhase::Idle,
             transition_manager: TransitionManager::new(config),
@@ -56,6 +61,7 @@ impl<
             current_phase_retries: 0,
             wallet,
             stats,
+            filter_recheck_queue,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         })

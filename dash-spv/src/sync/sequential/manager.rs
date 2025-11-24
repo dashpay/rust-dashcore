@@ -99,6 +99,9 @@ pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: Wallet
 
     /// Statistics for tracking sync progress
     pub(super) stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+
+    /// Filter re-check queue for handling gap limit changes
+    pub(super) filter_recheck_queue: crate::sync::filters::recheck::FilterRecheckQueue,
 }
 
 impl<
