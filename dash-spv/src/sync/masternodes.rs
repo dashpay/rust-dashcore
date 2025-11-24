@@ -49,6 +49,9 @@ pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
 
     // Track retry attempts for MnListDiff requests
     mnlistdiff_retry_count: u8,
+
+    // Checkpoint base height (0 when syncing from genesis)
+    sync_base_height: u32,
 }
 
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
@@ -118,9 +121,15 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             pending_mnlistdiff_requests: 0,
             mnlistdiff_wait_start: None,
             mnlistdiff_retry_count: 0,
+            sync_base_height: 0,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         }
+    }
+
+    /// Set the checkpoint base height used when syncing from checkpoints.
+    pub fn set_sync_base_height(&mut self, height: u32) {
+        self.sync_base_height = height;
     }
 
     /// Request QRInfo - simplified non-blocking implementation
@@ -233,6 +242,47 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         tracing::info!("📤 Sent QRInfo request (unified processing)");
         Ok(())
+    }
+
+    async fn determine_base_hash<T>(&self, storage: &T) -> SyncResult<BlockHash>
+    where
+        T: StorageManager + ?Sized,
+    {
+        if let Some(last_qrinfo_hash) = self.last_qrinfo_block_hash {
+            return Ok(last_qrinfo_hash);
+        }
+
+        if self.sync_base_height > 0 {
+            match storage.get_header(self.sync_base_height).await {
+                Ok(Some(header)) => {
+                    let hash = header.block_hash();
+                    tracing::debug!(
+                        "Using checkpoint base block at height {} as QRInfo base: {}",
+                        self.sync_base_height,
+                        hash
+                    );
+                    return Ok(hash);
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        "Checkpoint header at height {} not found in storage, falling back to genesis",
+                        self.sync_base_height
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load checkpoint header at height {}: {}. Falling back to genesis",
+                        self.sync_base_height,
+                        e
+                    );
+                }
+            }
+        }
+
+        self.config
+            .network
+            .known_genesis_block_hash()
+            .ok_or_else(|| SyncError::InvalidState("Genesis hash not available".to_string()))
     }
 
     /// Log detailed QRInfo statistics
@@ -411,19 +461,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Determine base block hash using dash-evo-tool pattern:
         // - First QRInfo request: use genesis block hash
         // - Subsequent requests: use the last successfully processed QRInfo block
-        let base_hash = if let Some(last_qrinfo_hash) = self.last_qrinfo_block_hash {
-            // Use the last successfully processed QRInfo block
-            tracing::debug!("Using last successful QRInfo block as base: {}", last_qrinfo_hash);
-            last_qrinfo_hash
-        } else {
-            // First time - use genesis block
-            let genesis_hash =
-                self.config.network.known_genesis_block_hash().ok_or_else(|| {
-                    SyncError::InvalidState("Genesis hash not available".to_string())
-                })?;
-            tracing::debug!("Using genesis block as base: {}", genesis_hash);
-            genesis_hash
-        };
+        let base_hash = self.determine_base_hash(storage).await?;
 
         // Request QRInfo using simplified non-blocking approach
         match self.request_qrinfo(network, base_hash, tip_hash).await {
@@ -545,14 +583,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             })?;
                         let tip_hash = tip_header.block_hash();
 
-                        let base_hash = if let Some(last_qrinfo_hash) = self.last_qrinfo_block_hash
-                        {
-                            last_qrinfo_hash
-                        } else {
-                            self.config.network.known_genesis_block_hash().ok_or_else(|| {
-                                SyncError::InvalidState("Genesis hash not available".to_string())
-                            })?
-                        };
+                        let base_hash = self.determine_base_hash(storage).await?;
 
                         // Re-send the QRInfo request
                         match self.request_qrinfo(network, base_hash, tip_hash).await {

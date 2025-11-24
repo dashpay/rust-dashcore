@@ -16,6 +16,7 @@ use dashcore::{
     BlockHash,
 };
 
+use super::manager::TrustedCheckpointFilterHeader;
 use super::types::*;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
@@ -38,19 +39,50 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Ok(true);
         }
 
-        // Load previous and expected headers
-        let prev_header = storage.get_filter_header(height - 1).await.map_err(|e| {
-            SyncError::Storage(format!("Failed to load previous filter header: {}", e))
-        })?;
+        let prev_height = height - 1;
+        let prev_header = match storage.get_filter_header(prev_height).await.map_err(|e| {
+            SyncError::Storage(format!(
+                "Failed to load previous filter header at height {}: {}",
+                prev_height, e
+            ))
+        })? {
+            Some(header) => header,
+            None if self.sync_base_height > 0 && height == self.sync_base_height => {
+                match self.load_checkpoint_prev_filter_header(storage).await? {
+                    Some(trusted) if trusted.height == prev_height => trusted.header,
+                    Some(trusted) => {
+                        tracing::error!(
+                            "Checkpoint predecessor header height mismatch: expected {}, stored {}",
+                            prev_height,
+                            trusted.height
+                        );
+                        return Ok(false);
+                    }
+                    None => {
+                        tracing::warn!(
+                            "Missing trusted checkpoint predecessor filter header at height {}",
+                            prev_height
+                        );
+                        return Ok(false);
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    "Missing filter header at height {} required for verifying cfilter at {}",
+                    prev_height,
+                    height
+                );
+                return Ok(false);
+            }
+        };
+
         let expected_header = storage.get_filter_header(height).await.map_err(|e| {
             SyncError::Storage(format!("Failed to load expected filter header: {}", e))
         })?;
 
-        let (Some(prev_header), Some(expected_header)) = (prev_header, expected_header) else {
-            tracing::warn!(
-                "Missing filter headers in storage for height {} (prev and/or expected)",
-                height
-            );
+        let Some(expected_header) = expected_header else {
+            tracing::warn!("Missing filter headers in storage for height {}", height);
             return Ok(false);
         };
 
@@ -582,8 +614,21 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             );
                         }
 
-                        // If this is the first batch after a checkpoint, store the checkpoint filter header
-                        if self.sync_base_height > 0
+                        // If this is the first batch that begins at the checkpoint base, persist the
+                        // trusted predecessor filter header so we can verify the checkpoint filter.
+                        if self.sync_base_height > 0 && start_height == self.sync_base_height {
+                            if let Some(prev_height) = self.sync_base_height.checked_sub(1) {
+                                let record = TrustedCheckpointFilterHeader {
+                                    height: prev_height,
+                                    header: cfheaders.previous_filter_header,
+                                };
+                                self.persist_checkpoint_prev_filter_header(storage, record).await?;
+                                tracing::info!(
+                                    "Stored trusted checkpoint predecessor filter header at height {}",
+                                    prev_height
+                                );
+                            }
+                        } else if self.sync_base_height > 0
                             && start_height == self.sync_base_height + 1
                             && current_filter_tip < self.sync_base_height
                         {

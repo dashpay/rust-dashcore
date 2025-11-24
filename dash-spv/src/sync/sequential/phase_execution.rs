@@ -85,6 +85,8 @@ impl<
                     effective_height
                 };
 
+                self.masternode_sync.set_sync_base_height(sync_base_height);
+
                 // Start masternode sync (unified processing)
                 match self.masternode_sync.start_sync(network, storage).await {
                     Ok(_) => {

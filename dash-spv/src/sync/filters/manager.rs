@@ -6,15 +6,50 @@
 use dashcore::{hash_types::FilterHeader, network::message_filter::CFHeaders, BlockHash};
 use dashcore_hashes::{sha256d, Hash};
 use std::collections::{HashMap, HashSet, VecDeque};
+use tokio::sync::Mutex;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
+use crate::storage::metadata_keys::CHECKPOINT_PREV_FILTER_HEADER_KEY;
 use crate::storage::StorageManager;
 use crate::types::SharedFilterHeights;
 
 // Import types and constants from the types module
 use super::types::*;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TrustedCheckpointFilterHeader {
+    pub(super) height: u32,
+    pub(super) header: FilterHeader,
+}
+
+impl TrustedCheckpointFilterHeader {
+    fn to_bytes(self) -> [u8; 36] {
+        let mut buf = [0u8; 36];
+        buf[..4].copy_from_slice(&self.height.to_le_bytes());
+        buf[4..].copy_from_slice(self.header.as_byte_array());
+        buf
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != 36 {
+            return None;
+        }
+
+        let mut height_bytes = [0u8; 4];
+        height_bytes.copy_from_slice(&bytes[..4]);
+        let height = u32::from_le_bytes(height_bytes);
+
+        let mut header_bytes = [0u8; 32];
+        header_bytes.copy_from_slice(&bytes[4..36]);
+
+        Some(Self {
+            height,
+            header: FilterHeader::from_byte_array(header_bytes),
+        })
+    }
+}
 
 /// Manages BIP157 compact block filter synchronization.
 ///
@@ -102,6 +137,8 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     pub(super) max_concurrent_cfheader_requests: usize,
     /// Timeout for CFHeaders requests
     pub(super) cfheader_request_timeout: std::time::Duration,
+    /// Trusted predecessor filter header for the configured checkpoint base
+    checkpoint_prev_filter_header: Mutex<Option<TrustedCheckpointFilterHeader>>,
 }
 
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
@@ -148,6 +185,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             cfheader_request_timeout: std::time::Duration::from_secs(
                 config.cfheaders_request_timeout_secs,
             ),
+            checkpoint_prev_filter_header: Mutex::new(None),
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         }
@@ -262,6 +300,54 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         Ok(new_filter_headers)
+    }
+
+    pub(super) async fn persist_checkpoint_prev_filter_header(
+        &self,
+        storage: &mut S,
+        header: TrustedCheckpointFilterHeader,
+    ) -> SyncResult<()> {
+        storage
+            .store_metadata(CHECKPOINT_PREV_FILTER_HEADER_KEY, &header.to_bytes())
+            .await
+            .map_err(|e| {
+                SyncError::Storage(format!(
+                    "Failed to persist checkpoint predecessor filter header: {}",
+                    e
+                ))
+            })?;
+
+        let mut guard = self.checkpoint_prev_filter_header.lock().await;
+        *guard = Some(header);
+        Ok(())
+    }
+
+    pub(super) async fn load_checkpoint_prev_filter_header(
+        &self,
+        storage: &S,
+    ) -> SyncResult<Option<TrustedCheckpointFilterHeader>> {
+        let mut guard = self.checkpoint_prev_filter_header.lock().await;
+        if guard.is_none() {
+            if let Some(bytes) =
+                storage.load_metadata(CHECKPOINT_PREV_FILTER_HEADER_KEY).await.map_err(|e| {
+                    SyncError::Storage(format!(
+                        "Failed to load checkpoint predecessor filter header: {}",
+                        e
+                    ))
+                })?
+            {
+                if let Some(record) = TrustedCheckpointFilterHeader::from_bytes(&bytes) {
+                    *guard = Some(record);
+                } else {
+                    tracing::warn!(
+                        "Stored checkpoint predecessor filter header has unexpected format ({} bytes)",
+                        bytes.len()
+                    );
+                }
+            }
+        }
+
+        Ok(*guard)
     }
 
     /// Handle overlapping filter headers by skipping already processed ones.
