@@ -147,19 +147,25 @@ impl QuorumLookup {
 
     /// Get a quorum entry by type and hash at a specific block height.
     ///
-    /// This is the core method for quorum lookups, used by applications to retrieve
-    /// quorum public keys and other quorum information needed for validation.
+    /// This method first tries to find the quorum in the `quorum_statuses` index
+    /// (which stores all known quorums with their public keys), verifying that
+    /// the requested height is within the valid range for that quorum.
+    ///
+    /// If not found in the index, it falls back to looking up the exact masternode
+    /// list at the specified height.
     ///
     /// ## Parameters
     ///
-    /// - `height`: Block height at which to query the masternode list
+    /// - `height`: Block height at which the quorum should be valid. The quorum will
+    ///   be returned if this height is >= the minimum height where the quorum was seen
+    ///   and <= the maximum height where we have masternode lists.
     /// - `quorum_type`: LLMQ type (e.g., 1 for LLMQ_TYPE_50_60, 4 for LLMQ_TYPE_400_60)
     /// - `quorum_hash`: 32-byte hash identifying the specific quorum
     ///
     /// ## Returns
     ///
-    /// - `Some(quorum)`: If the quorum is found
-    /// - `None`: If masternode sync incomplete, no list at height, or quorum not found
+    /// - `Some(quorum)`: If the quorum is found and valid at the requested height
+    /// - `None`: If masternode sync incomplete or quorum not found/not valid at height
     ///
     /// ## Example
     ///
@@ -197,7 +203,62 @@ impl QuorumLookup {
         // Get the engine
         let engine = self.engine()?;
 
-        // Look up the masternode list and quorum
+        // First, try to find the quorum in the quorum_statuses index.
+        // This is more flexible as it doesn't require an exact height match.
+        if let Some(type_map) = engine.quorum_statuses.get(&llmq_type) {
+            if let Some((heights, _public_key, _status)) = type_map.get(&qhash) {
+                // Quorum exists in our index. Check if the requested height is valid.
+                // The quorum is valid if:
+                // 1. We have seen it at some height(s)
+                // 2. The requested height is >= the minimum height where we've seen it
+                //    (quorums don't exist before they're created)
+                // 3. The requested height is <= our max known height
+                //    (we can't verify quorums for heights we haven't synced to)
+
+                let min_seen_height = heights.iter().min().copied().unwrap_or(u32::MAX);
+                let max_known_height = engine.masternode_lists.keys().max().copied().unwrap_or(0);
+
+                if height >= min_seen_height && height <= max_known_height {
+                    // Find the best masternode list to get the full quorum entry from.
+                    // Use the highest height that is <= the requested height.
+                    let best_height = heights
+                        .iter()
+                        .filter(|&&h| h <= height)
+                        .max()
+                        .copied()
+                        .or_else(|| heights.iter().min().copied());
+
+                    if let Some(lookup_height) = best_height {
+                        if let Some(quorum) = engine
+                            .masternode_lists
+                            .get(&lookup_height)
+                            .and_then(|ml| ml.quorums.get(&llmq_type))
+                            .and_then(|quorums| quorums.get(&qhash))
+                        {
+                            debug!(
+                                "Found quorum type {} at requested height {} (using list at height {}) with hash {}",
+                                quorum_type,
+                                height,
+                                lookup_height,
+                                hex::encode(quorum_hash)
+                            );
+                            return Some(quorum.clone());
+                        }
+                    }
+                } else {
+                    debug!(
+                        "Quorum type {} hash {} exists but requested height {} is outside valid range [{}, {}]",
+                        quorum_type,
+                        hex::encode(quorum_hash),
+                        height,
+                        min_seen_height,
+                        max_known_height
+                    );
+                }
+            }
+        }
+
+        // Fallback: Try exact height lookup in masternode_lists
         let quorum = engine
             .masternode_lists
             .get(&height)
@@ -205,35 +266,105 @@ impl QuorumLookup {
             .and_then(|quorums| {
                 if let Some(quorum) = quorums.get(&qhash) {
                     debug!(
-                        "Found quorum type {} at height {} with hash {}",
+                        "Found quorum type {} at exact height {} with hash {}",
                         quorum_type,
                         height,
                         hex::encode(quorum_hash)
                     );
                     Some(quorum.clone())
                 } else {
-                    warn!(
-                        "Quorum not found: type {} at height {} with hash {} (masternode list exists with {} quorums of this type)",
-                        quorum_type,
-                        height,
-                        hex::encode(quorum_hash),
-                        quorums.len()
-                    );
                     None
                 }
             });
 
-        if quorum.is_none() && engine.masternode_lists.contains_key(&height) {
-            // We have the masternode list but not this quorum type
+        if quorum.is_none() {
+            // Provide diagnostic information
+            let available_heights: Vec<u32> = engine.masternode_lists.keys().copied().collect();
             warn!(
-                "No quorums of type {} found at height {} (masternode list exists)",
-                quorum_type, height
+                "Quorum not found: type {} at height {} with hash {}. Available masternode list heights: {:?}",
+                quorum_type,
+                height,
+                hex::encode(quorum_hash),
+                available_heights
             );
-        } else if quorum.is_none() {
-            warn!("No masternode list found at height {} - cannot retrieve quorum", height);
         }
 
         quorum
+    }
+
+    /// Get a quorum's public key by type and hash, validating it was active at the given height.
+    ///
+    /// This is a convenience method for Platform integration that returns just the public key
+    /// bytes. It uses the `quorum_statuses` index for efficient lookup.
+    ///
+    /// ## Parameters
+    ///
+    /// - `height`: The core chain locked height where the quorum should be valid
+    /// - `quorum_type`: LLMQ type
+    /// - `quorum_hash`: 32-byte hash identifying the specific quorum
+    ///
+    /// ## Returns
+    ///
+    /// - `Some([u8; 48])`: The 48-byte BLS public key if the quorum is found and valid
+    /// - `None`: If the quorum is not found or not valid at the requested height
+    pub async fn get_quorum_public_key(
+        &self,
+        height: u32,
+        quorum_type: u8,
+        quorum_hash: &[u8; 32],
+    ) -> Option<[u8; 48]> {
+        // Convert quorum type to LLMQType
+        let llmq_type: LLMQType = LLMQType::from(quorum_type);
+        if llmq_type == LLMQType::LlmqtypeUnknown {
+            warn!("Invalid quorum type {} requested", quorum_type);
+            return None;
+        }
+
+        // Convert hash
+        let qhash = QuorumHash::from_byte_array(*quorum_hash);
+
+        // Get the engine
+        let engine = self.engine()?;
+
+        // Look up directly in quorum_statuses
+        if let Some(type_map) = engine.quorum_statuses.get(&llmq_type) {
+            if let Some((heights, public_key, _status)) = type_map.get(&qhash) {
+                // Validate height is within valid range
+                let min_seen_height = heights.iter().min().copied().unwrap_or(u32::MAX);
+                let max_known_height = engine.masternode_lists.keys().max().copied().unwrap_or(0);
+
+                if height >= min_seen_height && height <= max_known_height {
+                    debug!(
+                        "Found quorum public key for type {} hash {} at height {} (valid range: [{}, {}])",
+                        quorum_type,
+                        hex::encode(quorum_hash),
+                        height,
+                        min_seen_height,
+                        max_known_height
+                    );
+                    return Some(*public_key.as_ref());
+                } else {
+                    warn!(
+                        "Quorum type {} hash {} exists but height {} is outside valid range [{}, {}]",
+                        quorum_type,
+                        hex::encode(quorum_hash),
+                        height,
+                        min_seen_height,
+                        max_known_height
+                    );
+                }
+            } else {
+                warn!(
+                    "Quorum not found in status index: type {} hash {}",
+                    quorum_type,
+                    hex::encode(quorum_hash)
+                );
+            }
+        } else {
+            warn!("No quorums of type {} found in engine", quorum_type);
+        }
+
+        None
     }
 
     /// Check if the masternode engine is available.
