@@ -197,7 +197,7 @@ impl QuorumLookup {
             return None;
         }
 
-        // Convert hash - the input is in big-endian (display) order,
+        // Convert hash - DAPI returns big-endian (display) order,
         // but QuorumHash stores internally in little-endian order
         let mut reversed_hash = *quorum_hash;
         reversed_hash.reverse();
@@ -206,17 +206,12 @@ impl QuorumLookup {
         // Get the engine
         let engine = self.engine()?;
 
-        // First, try to find the quorum in the quorum_statuses index.
-        // This is the primary lookup method - if we know about the quorum, we can return it.
+        // Search for the quorum in the quorum_statuses index.
         if let Some(type_map) = engine.quorum_statuses.get(&llmq_type) {
             if let Some((heights, _public_key, _status)) = type_map.get(&qhash) {
                 // Quorum exists in our index.
                 // The only constraint is that the requested height should be >= the minimum
                 // height where we first saw this quorum (quorums don't exist before creation).
-                // We do NOT require height <= max_known_height because:
-                // - If we know about the quorum, we have its public key
-                // - Platform may pass a core_chain_locked_height slightly ahead of our sync
-                // - The quorum is still valid as long as it hasn't been rotated out
 
                 let min_seen_height = heights.iter().min().copied().unwrap_or(u32::MAX);
 
@@ -254,115 +249,7 @@ impl QuorumLookup {
             }
         }
 
-        // Fallback: Try exact height lookup in masternode_lists
-        let quorum = engine
-            .masternode_lists
-            .get(&height)
-            .and_then(|ml| ml.quorums.get(&llmq_type))
-            .and_then(|quorums| {
-                if let Some(quorum) = quorums.get(&qhash) {
-                    debug!(
-                        "Found quorum type {} at exact height {} with hash {}",
-                        quorum_type,
-                        height,
-                        hex::encode(quorum_hash)
-                    );
-                    Some(quorum.clone())
-                } else {
-                    None
-                }
-            });
-
-        if quorum.is_none() {
-            // Provide diagnostic information
-            let available_heights: Vec<u32> = engine.masternode_lists.keys().copied().collect();
-            warn!(
-                "Quorum not found: type {} at height {} with hash {}. Available masternode list heights: {:?}",
-                quorum_type,
-                height,
-                hex::encode(quorum_hash),
-                available_heights
-            );
-        }
-
-        quorum
-    }
-
-    /// Get a quorum's public key by type and hash, validating it was active at the given height.
-    ///
-    /// This is a convenience method for Platform integration that returns just the public key
-    /// bytes. It uses the `quorum_statuses` index for efficient lookup.
-    ///
-    /// ## Parameters
-    ///
-    /// - `height`: The core chain locked height context (from Platform proof). The quorum
-    ///   will be returned if we know about it and height >= the quorum's creation height.
-    /// - `quorum_type`: LLMQ type
-    /// - `quorum_hash`: 32-byte hash identifying the specific quorum
-    ///
-    /// ## Returns
-    ///
-    /// - `Some([u8; 48])`: The 48-byte BLS public key if the quorum is found
-    /// - `None`: If the quorum is not found
-    pub async fn get_quorum_public_key(
-        &self,
-        height: u32,
-        quorum_type: u8,
-        quorum_hash: &[u8; 32],
-    ) -> Option<[u8; 48]> {
-        // Convert quorum type to LLMQType
-        let llmq_type: LLMQType = LLMQType::from(quorum_type);
-        if llmq_type == LLMQType::LlmqtypeUnknown {
-            warn!("Invalid quorum type {} requested", quorum_type);
-            return None;
-        }
-
-        // Convert hash - the input is in big-endian (display) order,
-        // but QuorumHash stores internally in little-endian order
-        let mut reversed_hash = *quorum_hash;
-        reversed_hash.reverse();
-        let qhash = QuorumHash::from_byte_array(reversed_hash);
-
-        // Get the engine
-        let engine = self.engine()?;
-
-        // Look up directly in quorum_statuses
-        if let Some(type_map) = engine.quorum_statuses.get(&llmq_type) {
-            if let Some((heights, public_key, _status)) = type_map.get(&qhash) {
-                // The only constraint is that height >= min_seen_height
-                // (the quorum must have existed by the requested height)
-                let min_seen_height = heights.iter().min().copied().unwrap_or(u32::MAX);
-
-                if height >= min_seen_height {
-                    debug!(
-                        "Found quorum public key for type {} hash {} at height {} (quorum first seen at height {})",
-                        quorum_type,
-                        hex::encode(quorum_hash),
-                        height,
-                        min_seen_height
-                    );
-                    return Some(*public_key.as_ref());
-                } else {
-                    warn!(
-                        "Quorum type {} hash {} exists but height {} is before quorum creation at {}",
-                        quorum_type,
-                        hex::encode(quorum_hash),
-                        height,
-                        min_seen_height
-                    );
-                }
-            } else {
-                warn!(
-                    "Quorum not found in status index: type {} hash {}",
-                    quorum_type,
-                    hex::encode(quorum_hash)
-                );
-            }
-        } else {
-            warn!("No quorums of type {} found in engine", quorum_type);
-        }
-
-        None
+        return None;
     }
 
     /// Check if the masternode engine is available.
