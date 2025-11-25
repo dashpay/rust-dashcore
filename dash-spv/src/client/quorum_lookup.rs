@@ -148,24 +148,24 @@ impl QuorumLookup {
     /// Get a quorum entry by type and hash at a specific block height.
     ///
     /// This method first tries to find the quorum in the `quorum_statuses` index
-    /// (which stores all known quorums with their public keys), verifying that
-    /// the requested height is within the valid range for that quorum.
+    /// (which stores all known quorums with their public keys). The height parameter
+    /// is used to verify the quorum existed at that point (height >= quorum creation).
     ///
     /// If not found in the index, it falls back to looking up the exact masternode
     /// list at the specified height.
     ///
     /// ## Parameters
     ///
-    /// - `height`: Block height at which the quorum should be valid. The quorum will
-    ///   be returned if this height is >= the minimum height where the quorum was seen
-    ///   and <= the maximum height where we have masternode lists.
-    /// - `quorum_type`: LLMQ type (e.g., 1 for LLMQ_TYPE_50_60, 4 for LLMQ_TYPE_400_60)
+    /// - `height`: Block height context (e.g., core_chain_locked_height from Platform).
+    ///   The quorum will be returned if we know about it and height >= the first height
+    ///   where we saw the quorum.
+    /// - `quorum_type`: LLMQ type (e.g., 1 for LLMQ_TYPE_50_60, 4 for LLMQ_TYPE_100_67)
     /// - `quorum_hash`: 32-byte hash identifying the specific quorum
     ///
     /// ## Returns
     ///
-    /// - `Some(quorum)`: If the quorum is found and valid at the requested height
-    /// - `None`: If masternode sync incomplete or quorum not found/not valid at height
+    /// - `Some(quorum)`: If the quorum is found
+    /// - `None`: If masternode sync incomplete or quorum not found
     ///
     /// ## Example
     ///
@@ -197,36 +197,33 @@ impl QuorumLookup {
             return None;
         }
 
-        // Convert hash
-        let qhash = QuorumHash::from_byte_array(*quorum_hash);
+        // Convert hash - the input is in big-endian (display) order,
+        // but QuorumHash stores internally in little-endian order
+        let mut reversed_hash = *quorum_hash;
+        reversed_hash.reverse();
+        let qhash = QuorumHash::from_byte_array(reversed_hash);
 
         // Get the engine
         let engine = self.engine()?;
 
         // First, try to find the quorum in the quorum_statuses index.
-        // This is more flexible as it doesn't require an exact height match.
+        // This is the primary lookup method - if we know about the quorum, we can return it.
         if let Some(type_map) = engine.quorum_statuses.get(&llmq_type) {
             if let Some((heights, _public_key, _status)) = type_map.get(&qhash) {
-                // Quorum exists in our index. Check if the requested height is valid.
-                // The quorum is valid if:
-                // 1. We have seen it at some height(s)
-                // 2. The requested height is >= the minimum height where we've seen it
-                //    (quorums don't exist before they're created)
-                // 3. The requested height is <= our max known height
-                //    (we can't verify quorums for heights we haven't synced to)
+                // Quorum exists in our index.
+                // The only constraint is that the requested height should be >= the minimum
+                // height where we first saw this quorum (quorums don't exist before creation).
+                // We do NOT require height <= max_known_height because:
+                // - If we know about the quorum, we have its public key
+                // - Platform may pass a core_chain_locked_height slightly ahead of our sync
+                // - The quorum is still valid as long as it hasn't been rotated out
 
                 let min_seen_height = heights.iter().min().copied().unwrap_or(u32::MAX);
-                let max_known_height = engine.masternode_lists.keys().max().copied().unwrap_or(0);
 
-                if height >= min_seen_height && height <= max_known_height {
+                if height >= min_seen_height {
                     // Find the best masternode list to get the full quorum entry from.
-                    // Use the highest height that is <= the requested height.
-                    let best_height = heights
-                        .iter()
-                        .filter(|&&h| h <= height)
-                        .max()
-                        .copied()
-                        .or_else(|| heights.iter().min().copied());
+                    // Use the highest available height where we have the quorum.
+                    let best_height = heights.iter().max().copied();
 
                     if let Some(lookup_height) = best_height {
                         if let Some(quorum) = engine
@@ -247,12 +244,11 @@ impl QuorumLookup {
                     }
                 } else {
                     debug!(
-                        "Quorum type {} hash {} exists but requested height {} is outside valid range [{}, {}]",
+                        "Quorum type {} hash {} exists but requested height {} is before quorum creation at {}",
                         quorum_type,
                         hex::encode(quorum_hash),
                         height,
-                        min_seen_height,
-                        max_known_height
+                        min_seen_height
                     );
                 }
             }
@@ -299,14 +295,15 @@ impl QuorumLookup {
     ///
     /// ## Parameters
     ///
-    /// - `height`: The core chain locked height where the quorum should be valid
+    /// - `height`: The core chain locked height context (from Platform proof). The quorum
+    ///   will be returned if we know about it and height >= the quorum's creation height.
     /// - `quorum_type`: LLMQ type
     /// - `quorum_hash`: 32-byte hash identifying the specific quorum
     ///
     /// ## Returns
     ///
-    /// - `Some([u8; 48])`: The 48-byte BLS public key if the quorum is found and valid
-    /// - `None`: If the quorum is not found or not valid at the requested height
+    /// - `Some([u8; 48])`: The 48-byte BLS public key if the quorum is found
+    /// - `None`: If the quorum is not found
     pub async fn get_quorum_public_key(
         &self,
         height: u32,
@@ -320,8 +317,11 @@ impl QuorumLookup {
             return None;
         }
 
-        // Convert hash
-        let qhash = QuorumHash::from_byte_array(*quorum_hash);
+        // Convert hash - the input is in big-endian (display) order,
+        // but QuorumHash stores internally in little-endian order
+        let mut reversed_hash = *quorum_hash;
+        reversed_hash.reverse();
+        let qhash = QuorumHash::from_byte_array(reversed_hash);
 
         // Get the engine
         let engine = self.engine()?;
@@ -329,28 +329,26 @@ impl QuorumLookup {
         // Look up directly in quorum_statuses
         if let Some(type_map) = engine.quorum_statuses.get(&llmq_type) {
             if let Some((heights, public_key, _status)) = type_map.get(&qhash) {
-                // Validate height is within valid range
+                // The only constraint is that height >= min_seen_height
+                // (the quorum must have existed by the requested height)
                 let min_seen_height = heights.iter().min().copied().unwrap_or(u32::MAX);
-                let max_known_height = engine.masternode_lists.keys().max().copied().unwrap_or(0);
 
-                if height >= min_seen_height && height <= max_known_height {
+                if height >= min_seen_height {
                     debug!(
-                        "Found quorum public key for type {} hash {} at height {} (valid range: [{}, {}])",
+                        "Found quorum public key for type {} hash {} at height {} (quorum first seen at height {})",
                         quorum_type,
                         hex::encode(quorum_hash),
                         height,
-                        min_seen_height,
-                        max_known_height
+                        min_seen_height
                     );
                     return Some(*public_key.as_ref());
                 } else {
                     warn!(
-                        "Quorum type {} hash {} exists but height {} is outside valid range [{}, {}]",
+                        "Quorum type {} hash {} exists but height {} is before quorum creation at {}",
                         quorum_type,
                         hex::encode(quorum_hash),
                         height,
-                        min_seen_height,
-                        max_known_height
+                        min_seen_height
                     );
                 }
             } else {
