@@ -28,7 +28,6 @@
 //! - `phases` - SyncPhase enum and phase-related types
 //! - `progress` - Progress tracking utilities
 //! - `recovery` - Recovery and error handling logic
-//! - `request_control` - Request flow control
 //! - `transitions` - Phase transition management
 
 // Sub-modules (focused implementations)
@@ -40,13 +39,9 @@ pub mod post_sync;
 
 // Existing sub-modules
 pub mod phases;
-pub mod progress;
-pub mod recovery;
-pub mod request_control;
 pub mod transitions;
 
 // Re-exports
 pub use manager::SequentialSyncManager;
 pub use phases::{PhaseTransition, SyncPhase};
-pub use request_control::RequestController;
 pub use transitions::TransitionManager;
