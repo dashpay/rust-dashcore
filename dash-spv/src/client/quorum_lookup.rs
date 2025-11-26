@@ -146,23 +146,24 @@ impl QuorumLookup {
         engine.masternode_lists.get(&height).cloned()
     }
 
-    /// Get a quorum entry by type and hash at a specific block height.
+    /// Get a quorum entry by type and hash (big endian) at a specific block height.
     ///
     /// This method finds the masternode list stored for the requested height and
     /// inspects its quorum map for the requested type/hash pair. The quorum is
-    /// returned only if its `LLMQEntryVerificationStatus` equals `Verified`,
-    /// ensuring callers only receive quorums that the masternode engine has
-    /// already validated. If the engine does not yet have that height, does not
-    /// know about the quorum, or the quorum is present but unverified, `None`
-    /// is returned.
+    /// returned unless its verification status is `Invalid`. The typical flow is:
+    /// - `Verified`: returned normally (already validated).
+    /// - `Unknown`/`Skipped`: returned but a warning is logged to indicate the quorum
+    ///   has not yet been validated by the engine.
+    /// - `Invalid`: filtered out and `None` is returned.
+    ///
+    /// If the engine does not yet have that height or does not know about the
+    /// requested quorum, `None` is returned.
     ///
     /// ## Parameters
     ///
     /// - `height`: Block height context (e.g., core_chain_locked_height from Platform).
-    ///   The quorum will be returned if we know about it and height >= the first height
-    ///   where we saw the quorum.
     /// - `quorum_type`: LLMQ type (e.g., 1 for LLMQ_TYPE_50_60, 4 for LLMQ_TYPE_100_67)
-    /// - `quorum_hash`: 32-byte hash identifying the specific quorum
+    /// - `quorum_hash`: Big-endian 32-byte hash identifying the specific quorum
     ///
     /// ## Returns
     ///
@@ -190,7 +191,7 @@ impl QuorumLookup {
         &self,
         height: u32,
         quorum_type: u8,
-        quorum_hash: &[u8; 32],
+        quorum_hash_big_endian: &[u8; 32],
     ) -> Option<QualifiedQuorumEntry> {
         // Convert quorum type to LLMQType
         let llmq_type: LLMQType = LLMQType::from(quorum_type);
@@ -201,7 +202,7 @@ impl QuorumLookup {
 
         // Convert hash - DAPI returns big-endian (display) order,
         // but QuorumHash stores internally in little-endian order
-        let mut reversed_hash = *quorum_hash;
+        let mut reversed_hash = *quorum_hash_big_endian;
         reversed_hash.reverse();
         let qhash = QuorumHash::from_byte_array(reversed_hash);
 
@@ -215,42 +216,50 @@ impl QuorumLookup {
                     "No masternode list at height {} when looking up quorum type {} with hash {}",
                     height,
                     quorum_type,
-                    hex::encode(quorum_hash)
+                    hex::encode(quorum_hash_big_endian)
                 );
                 return None;
             }
         };
 
-        let quorum =
-            masternode_list.quorum_entry_of_type_for_quorum_hash(llmq_type, qhash).cloned();
-
-        match quorum {
-            Some(q) => {
-                if q.verified == LLMQEntryVerificationStatus::Verified {
+        match masternode_list.quorum_entry_of_type_for_quorum_hash(llmq_type, qhash).cloned() {
+            Some(q) => match &q.verified {
+                LLMQEntryVerificationStatus::Verified => {
                     debug!(
                         "Found verified quorum type {} at height {} with hash {}",
                         quorum_type,
                         height,
-                        hex::encode(quorum_hash)
+                        hex::encode(quorum_hash_big_endian)
                     );
                     Some(q)
-                } else {
-                    debug!(
-                        "Quorum type {} at height {} with hash {} present but not verified (status: {:?})",
+                }
+                LLMQEntryVerificationStatus::Unknown | LLMQEntryVerificationStatus::Skipped(_) => {
+                    warn!(
+                        "Quorum type {} at height {} with hash {} found but not yet verified (status: {:?})",
                         quorum_type,
                         height,
-                        hex::encode(quorum_hash),
+                        hex::encode(quorum_hash_big_endian),
                         q.verified
+                    );
+                    Some(q)
+                }
+                LLMQEntryVerificationStatus::Invalid(err) => {
+                    warn!(
+                        "Quorum type {} at height {} with hash {} rejected due to invalid status: {:?}",
+                        quorum_type,
+                        height,
+                        hex::encode(quorum_hash_big_endian),
+                        err
                     );
                     None
                 }
-            }
+            },
             None => {
                 debug!(
                     "Missing quorum type {} at height {} with hash {}",
                     quorum_type,
                     height,
-                    hex::encode(quorum_hash)
+                    hex::encode(quorum_hash_big_endian)
                 );
                 None
             }
@@ -448,7 +457,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_quorum_lookup_rejects_non_verified_quorum() {
+    async fn test_quorum_lookup_returns_unverified_quorum() {
         use dashcore::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
         use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
         use dashcore::hash_types::{BlockHash, QuorumVVecHash};
@@ -480,11 +489,64 @@ mod tests {
         );
 
         let mut quorums_for_type = BTreeMap::new();
-        quorums_for_type.insert(quorum_hash, qualified_quorum);
+        quorums_for_type.insert(quorum_hash, qualified_quorum.clone());
         let mut quorums = BTreeMap::new();
         quorums.insert(llmq_type, quorums_for_type);
 
         let block_hash = BlockHash::from_slice(&[6u8; 32]).unwrap();
+        let masternode_list =
+            MasternodeList::build(BTreeMap::new(), quorums, block_hash, height).build();
+
+        let mut engine = MasternodeListEngine::default_for_network(Network::Dash);
+        engine.masternode_lists.insert(height, masternode_list);
+
+        let lookup = QuorumLookup::with_engine(Arc::new(engine));
+
+        let mut dapi_hash = quorum_hash.to_byte_array();
+        dapi_hash.reverse();
+
+        assert_eq!(
+            lookup.get_quorum_at_height(height, llmq_type as u8, &dapi_hash).await,
+            Some(qualified_quorum)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_quorum_lookup_rejects_invalid_quorum() {
+        use dashcore::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
+        use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+        use dashcore::hash_types::{BlockHash, QuorumVVecHash};
+        use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
+        use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+        use dashcore::sml::quorum_validation_error::QuorumValidationError;
+        use dashcore::Network;
+        use std::collections::BTreeMap;
+
+        let height = 1700u32;
+        let llmq_type = LLMQType::Llmqtype50_60;
+        let quorum_hash = QuorumHash::from_slice(&[5u8; 32]).unwrap();
+        let quorum_entry = QuorumEntry {
+            version: 1,
+            llmq_type,
+            quorum_hash,
+            quorum_index: None,
+            signers: vec![true, true, true],
+            valid_members: vec![true, true, true],
+            quorum_public_key: BLSPublicKey::from([2u8; 48]),
+            quorum_vvec_hash: QuorumVVecHash::from_slice(&[3u8; 32]).unwrap(),
+            threshold_sig: BLSSignature::from([4u8; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([5u8; 96]),
+        };
+        let mut qualified_quorum = QualifiedQuorumEntry::from(quorum_entry);
+        qualified_quorum.verified =
+            LLMQEntryVerificationStatus::Invalid(QuorumValidationError::InvalidQuorumSignature);
+
+        let mut quorums_for_type = BTreeMap::new();
+        quorums_for_type.insert(quorum_hash, qualified_quorum);
+        let mut quorums = BTreeMap::new();
+        quorums.insert(llmq_type, quorums_for_type);
+
+        let block_hash = BlockHash::from_slice(&[4u8; 32]).unwrap();
         let masternode_list =
             MasternodeList::build(BTreeMap::new(), quorums, block_hash, height).build();
 
