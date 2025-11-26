@@ -147,12 +147,9 @@ impl QuorumLookup {
 
     /// Get a quorum entry by type and hash at a specific block height.
     ///
-    /// This method first tries to find the quorum in the `quorum_statuses` index
+    /// This method tries to find the quorum in the `quorum_statuses` index
     /// (which stores all known quorums with their public keys). The height parameter
     /// is used to verify the quorum existed at that point (height >= quorum creation).
-    ///
-    /// If not found in the index, it falls back to looking up the exact masternode
-    /// list at the specified height.
     ///
     /// ## Parameters
     ///
