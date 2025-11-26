@@ -77,7 +77,7 @@ repos:
         files: ^(key-wallet-ffi|dash-spv-ffi)/.*\.(rs|toml|py)$
         stages: [pre-push, manual]
 
-      - id: clippy-workspace
+      - id: clippy
         name: clippy (workspace strict)
         description: Strict clippy on entire workspace - deny all warnings
         entry: cargo clippy --workspace --all-features --all-targets -- -D warnings
