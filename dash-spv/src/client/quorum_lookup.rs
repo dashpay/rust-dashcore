@@ -161,14 +161,14 @@ impl QuorumLookup {
     ///
     /// ## Parameters
     ///
-    /// - `height`: Block height context (e.g., core_chain_locked_height from Platform).
+    /// - `height`: Block height (core_chain_locked_height from DAPI ResponseMetadata).
     /// - `quorum_type`: LLMQ type (e.g., 1 for LLMQ_TYPE_50_60, 4 for LLMQ_TYPE_100_67)
     /// - `quorum_hash`: Big-endian 32-byte hash identifying the specific quorum
     ///
     /// ## Returns
     ///
-    /// - `Some(quorum)`: If the quorum is found
-    /// - `None`: If masternode sync incomplete or quorum not found
+    /// - `Some(quorum)`: If the quorum is found and not invalid (TODO only return valid once validation is working well)
+    /// - `None`: If quorum not found or invalid
     ///
     /// ## Example
     ///
@@ -224,6 +224,7 @@ impl QuorumLookup {
 
         match masternode_list.quorum_entry_of_type_for_quorum_hash(llmq_type, qhash).cloned() {
             Some(q) => match &q.verified {
+                // TODO only return verified once validation is reliable
                 LLMQEntryVerificationStatus::Verified => {
                     debug!(
                         "Found verified quorum type {} at height {} with hash {}",
