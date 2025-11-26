@@ -197,43 +197,39 @@ impl QuorumLookup {
         // Get the engine
         let engine = self.engine()?;
 
-        // Look up the masternode list and quorum
-        let quorum = engine
-            .masternode_lists
-            .get(&height)
-            .and_then(|ml| ml.quorums.get(&llmq_type))
-            .and_then(|quorums| {
-                if let Some(quorum) = quorums.get(&qhash) {
-                    debug!(
-                        "Found quorum type {} at height {} with hash {}",
-                        quorum_type,
-                        height,
-                        hex::encode(quorum_hash)
-                    );
-                    Some(quorum.clone())
-                } else {
-                    warn!(
-                        "Quorum not found: type {} at height {} with hash {} (masternode list exists with {} quorums of this type)",
-                        quorum_type,
-                        height,
-                        hex::encode(quorum_hash),
-                        quorums.len()
-                    );
-                    None
-                }
-            });
+        let masternode_list = match engine.masternode_lists.get(&height) {
+            Some(list) => list,
+            None => {
+                debug!(
+                    "No masternode list at height {} when looking up quorum type {} with hash {}",
+                    height,
+                    quorum_type,
+                    hex::encode(quorum_hash)
+                );
+                return None;
+            }
+        };
 
-        if quorum.is_none() && engine.masternode_lists.contains_key(&height) {
-            // We have the masternode list but not this quorum type
-            warn!(
-                "No quorums of type {} found at height {} (masternode list exists)",
-                quorum_type, height
-            );
-        } else if quorum.is_none() {
-            warn!("No masternode list found at height {} - cannot retrieve quorum", height);
+        match masternode_list.quorum_entry_of_type_for_quorum_hash(llmq_type, qhash).cloned() {
+            Some(q) => {
+                debug!(
+                    "Found verified quorum type {} at height {} with hash {}",
+                    quorum_type,
+                    height,
+                    hex::encode(quorum_hash)
+                );
+                Some(q)
+            }
+            None => {
+                debug!(
+                    "Missing quorum type {} at height {} with hash {}",
+                    quorum_type,
+                    height,
+                    hex::encode(quorum_hash)
+                );
+                None
+            }
         }
-
-        quorum
     }
 
     /// Check if the masternode engine is available.
