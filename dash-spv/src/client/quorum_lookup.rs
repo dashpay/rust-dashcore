@@ -147,9 +147,10 @@ impl QuorumLookup {
 
     /// Get a quorum entry by type and hash at a specific block height.
     ///
-    /// This method tries to find the quorum in the `quorum_statuses` index
-    /// (which stores all known quorums with their public keys). The height parameter
-    /// is used to verify the quorum existed at that point (height >= quorum creation).
+    /// This method finds the masternode list stored for the requested height and
+    /// inspects its quorum map for the requested type/hash pair. If the engine
+    /// does not yet have that height or does not know about the quorum, `None`
+    /// is returned.
     ///
     /// ## Parameters
     ///
@@ -203,50 +204,39 @@ impl QuorumLookup {
         // Get the engine
         let engine = self.engine()?;
 
-        // Search for the quorum in the quorum_statuses index.
-        if let Some(type_map) = engine.quorum_statuses.get(&llmq_type) {
-            if let Some((heights, _public_key, _status)) = type_map.get(&qhash) {
-                // Quorum exists in our index.
-                // The only constraint is that the requested height should be >= the minimum
-                // height where we first saw this quorum (quorums don't exist before creation).
-
-                let min_seen_height = heights.iter().min().copied().unwrap_or(u32::MAX);
-
-                if height >= min_seen_height {
-                    // Find the best masternode list to get the full quorum entry from.
-                    // Use the highest available height where we have the quorum.
-                    let best_height = heights.iter().max().copied();
-
-                    if let Some(lookup_height) = best_height {
-                        if let Some(quorum) = engine
-                            .masternode_lists
-                            .get(&lookup_height)
-                            .and_then(|ml| ml.quorums.get(&llmq_type))
-                            .and_then(|quorums| quorums.get(&qhash))
-                        {
-                            debug!(
-                                "Found quorum type {} at requested height {} (using list at height {}) with hash {}",
-                                quorum_type,
-                                height,
-                                lookup_height,
-                                hex::encode(quorum_hash)
-                            );
-                            return Some(quorum.clone());
-                        }
-                    }
-                } else {
-                    debug!(
-                        "Quorum type {} hash {} exists but requested height {} is before quorum creation at {}",
-                        quorum_type,
-                        hex::encode(quorum_hash),
-                        height,
-                        min_seen_height
-                    );
-                }
+        let masternode_list = match engine.masternode_lists.get(&height) {
+            Some(list) => list,
+            None => {
+                debug!(
+                    "No masternode list at height {} when looking up quorum type {} with hash {}",
+                    height,
+                    quorum_type,
+                    hex::encode(quorum_hash)
+                );
+                return None;
             }
+        };
+
+        let quorum =
+            masternode_list.quorum_entry_of_type_for_quorum_hash(llmq_type, qhash).cloned();
+
+        if quorum.is_some() {
+            debug!(
+                "Found quorum type {} at height {} with hash {}",
+                quorum_type,
+                height,
+                hex::encode(quorum_hash)
+            );
+        } else {
+            debug!(
+                "Missing quorum type {} at height {} with hash {}",
+                quorum_type,
+                height,
+                hex::encode(quorum_hash)
+            );
         }
 
-        return None;
+        quorum
     }
 
     /// Check if the masternode engine is available.
@@ -388,6 +378,54 @@ mod tests {
         for handle in handles {
             handle.await.expect("Task should not panic");
         }
+    }
+
+    #[tokio::test]
+    async fn test_quorum_lookup_returns_quorum_from_masternode_list() {
+        use dashcore::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
+        use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+        use dashcore::hash_types::{BlockHash, QuorumVVecHash};
+        use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+        use dashcore::Network;
+        use std::collections::BTreeMap;
+
+        let height = 1500u32;
+        let llmq_type = LLMQType::Llmqtype50_60;
+        let quorum_hash = QuorumHash::from_slice(&[9u8; 32]).unwrap();
+        let quorum_entry = QuorumEntry {
+            version: 1,
+            llmq_type,
+            quorum_hash,
+            quorum_index: None,
+            signers: vec![true, true, true],
+            valid_members: vec![true, true, true],
+            quorum_public_key: BLSPublicKey::from([2u8; 48]),
+            quorum_vvec_hash: QuorumVVecHash::from_slice(&[3u8; 32]).unwrap(),
+            threshold_sig: BLSSignature::from([4u8; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([5u8; 96]),
+        };
+        let qualified_quorum = QualifiedQuorumEntry::from(quorum_entry);
+
+        let mut quorums_for_type = BTreeMap::new();
+        quorums_for_type.insert(quorum_hash, qualified_quorum.clone());
+        let mut quorums = BTreeMap::new();
+        quorums.insert(llmq_type, quorums_for_type);
+
+        let block_hash = BlockHash::from_slice(&[7u8; 32]).unwrap();
+        let masternode_list =
+            MasternodeList::build(BTreeMap::new(), quorums, block_hash, height).build();
+
+        let mut engine = MasternodeListEngine::default_for_network(Network::Dash);
+        engine.masternode_lists.insert(height, masternode_list);
+
+        let lookup = QuorumLookup::with_engine(Arc::new(engine));
+
+        let mut dapi_hash = quorum_hash.to_byte_array();
+        dapi_hash.reverse();
+
+        let result = lookup.get_quorum_at_height(height, llmq_type as u8, &dapi_hash).await;
+
+        assert_eq!(result, Some(qualified_quorum));
     }
 
     #[tokio::test]
