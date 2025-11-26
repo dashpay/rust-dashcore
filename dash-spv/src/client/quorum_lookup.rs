@@ -46,6 +46,7 @@
 //! # }
 //! ```
 
+use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
@@ -220,23 +221,37 @@ impl QuorumLookup {
         let quorum =
             masternode_list.quorum_entry_of_type_for_quorum_hash(llmq_type, qhash).cloned();
 
-        if quorum.is_some() {
-            debug!(
-                "Found quorum type {} at height {} with hash {}",
-                quorum_type,
-                height,
-                hex::encode(quorum_hash)
-            );
-        } else {
-            debug!(
-                "Missing quorum type {} at height {} with hash {}",
-                quorum_type,
-                height,
-                hex::encode(quorum_hash)
-            );
+        match quorum {
+            Some(q) => {
+                if q.verified == LLMQEntryVerificationStatus::Verified {
+                    debug!(
+                        "Found verified quorum type {} at height {} with hash {}",
+                        quorum_type,
+                        height,
+                        hex::encode(quorum_hash)
+                    );
+                    Some(q)
+                } else {
+                    debug!(
+                        "Quorum type {} at height {} with hash {} present but not verified (status: {:?})",
+                        quorum_type,
+                        height,
+                        hex::encode(quorum_hash),
+                        q.verified
+                    );
+                    None
+                }
+            }
+            None => {
+                debug!(
+                    "Missing quorum type {} at height {} with hash {}",
+                    quorum_type,
+                    height,
+                    hex::encode(quorum_hash)
+                );
+                None
+            }
         }
-
-        quorum
     }
 
     /// Check if the masternode engine is available.
@@ -404,7 +419,8 @@ mod tests {
             threshold_sig: BLSSignature::from([4u8; 96]),
             all_commitment_aggregated_signature: BLSSignature::from([5u8; 96]),
         };
-        let qualified_quorum = QualifiedQuorumEntry::from(quorum_entry);
+        let mut qualified_quorum = QualifiedQuorumEntry::from(quorum_entry);
+        qualified_quorum.verified = LLMQEntryVerificationStatus::Verified;
 
         let mut quorums_for_type = BTreeMap::new();
         quorums_for_type.insert(quorum_hash, qualified_quorum.clone());
@@ -426,6 +442,58 @@ mod tests {
         let result = lookup.get_quorum_at_height(height, llmq_type as u8, &dapi_hash).await;
 
         assert_eq!(result, Some(qualified_quorum));
+    }
+
+    #[tokio::test]
+    async fn test_quorum_lookup_rejects_non_verified_quorum() {
+        use dashcore::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
+        use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+        use dashcore::hash_types::{BlockHash, QuorumVVecHash};
+        use dashcore::sml::llmq_entry_verification::{
+            LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
+        };
+        use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+        use dashcore::Network;
+        use std::collections::BTreeMap;
+
+        let height = 1600u32;
+        let llmq_type = LLMQType::Llmqtype50_60;
+        let quorum_hash = QuorumHash::from_slice(&[8u8; 32]).unwrap();
+        let quorum_entry = QuorumEntry {
+            version: 1,
+            llmq_type,
+            quorum_hash,
+            quorum_index: None,
+            signers: vec![true, true, true],
+            valid_members: vec![true, true, true],
+            quorum_public_key: BLSPublicKey::from([2u8; 48]),
+            quorum_vvec_hash: QuorumVVecHash::from_slice(&[3u8; 32]).unwrap(),
+            threshold_sig: BLSSignature::from([4u8; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([5u8; 96]),
+        };
+        let mut qualified_quorum = QualifiedQuorumEntry::from(quorum_entry);
+        qualified_quorum.verified = LLMQEntryVerificationStatus::Skipped(
+            LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
+        );
+
+        let mut quorums_for_type = BTreeMap::new();
+        quorums_for_type.insert(quorum_hash, qualified_quorum);
+        let mut quorums = BTreeMap::new();
+        quorums.insert(llmq_type, quorums_for_type);
+
+        let block_hash = BlockHash::from_slice(&[6u8; 32]).unwrap();
+        let masternode_list =
+            MasternodeList::build(BTreeMap::new(), quorums, block_hash, height).build();
+
+        let mut engine = MasternodeListEngine::default_for_network(Network::Dash);
+        engine.masternode_lists.insert(height, masternode_list);
+
+        let lookup = QuorumLookup::with_engine(Arc::new(engine));
+
+        let mut dapi_hash = quorum_hash.to_byte_array();
+        dapi_hash.reverse();
+
+        assert!(lookup.get_quorum_at_height(height, llmq_type as u8, &dapi_hash).await.is_none());
     }
 
     #[tokio::test]
