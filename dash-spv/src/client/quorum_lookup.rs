@@ -145,24 +145,21 @@ impl QuorumLookup {
         engine.masternode_lists.get(&height).cloned()
     }
 
-    /// Get a quorum entry by type and hash (big endian) at a specific block height.
+    /// Get a quorum entry by type and hash at a specific block height.
     ///
-    /// This method finds the masternode list stored for the requested height and
-    /// inspects its quorum map for the requested type/hash pair.
-    ///
-    /// If the engine does not yet have that height or does not know about the
-    /// requested quorum, `None` is returned.
+    /// This is the core method for quorum lookups, used by applications to retrieve
+    /// quorum public keys and other quorum information needed for validation.
     ///
     /// ## Parameters
     ///
-    /// - `height`: Block height (core_chain_locked_height from DAPI ResponseMetadata).
-    /// - `quorum_type`: LLMQ type (e.g., 1 for LLMQ_TYPE_50_60, 4 for LLMQ_TYPE_100_67)
-    /// - `quorum_hash`: Big-endian 32-byte hash identifying the specific quorum
+    /// - `height`: Block height at which to query the masternode list (core_chain_locked_height from DAPI `ResponseMetadata`)
+    /// - `quorum_type`: LLMQ type (e.g., 1 for LLMQ_TYPE_50_60, 4 for LLMQ_TYPE_400_60)
+    /// - `quorum_hash`: 32-byte big endian hash identifying the specific quorum
     ///
     /// ## Returns
     ///
     /// - `Some(quorum)`: If the quorum is found
-    /// - `None`: If quorum not found
+    /// - `None`: If masternode sync incomplete, no list at height, or quorum not found
     ///
     /// ## Example
     ///
@@ -194,10 +191,11 @@ impl QuorumLookup {
             return None;
         }
 
-        // Convert hash - DAPI returns big-endian (display) order,
-        // but QuorumHash stores internally in little-endian order
+        // Reverse the quorum hash from big endian to little endian
         let mut reversed_hash = *quorum_hash_big_endian;
         reversed_hash.reverse();
+
+        // Create QuorumHash from reversed bytes
         let qhash = QuorumHash::from_byte_array(reversed_hash);
 
         // Get the engine
