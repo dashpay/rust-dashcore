@@ -140,8 +140,6 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     /// This component provides shared access to masternode lists and quorum data
     /// without requiring exclusive access to the sync_manager. Applications can
     /// clone the Arc and perform queries from multiple threads.
-    ///
-    /// See `QuorumLookup` documentation for usage examples.
     pub(super) quorum_lookup: Arc<QuorumLookup>,
     pub(super) running: Arc<RwLock<bool>>,
     #[cfg(feature = "terminal-ui")]
