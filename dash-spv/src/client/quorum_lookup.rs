@@ -149,8 +149,11 @@ impl QuorumLookup {
     /// Get a quorum entry by type and hash at a specific block height.
     ///
     /// This method finds the masternode list stored for the requested height and
-    /// inspects its quorum map for the requested type/hash pair. If the engine
-    /// does not yet have that height or does not know about the quorum, `None`
+    /// inspects its quorum map for the requested type/hash pair. The quorum is
+    /// returned only if its `LLMQEntryVerificationStatus` equals `Verified`,
+    /// ensuring callers only receive quorums that the masternode engine has
+    /// already validated. If the engine does not yet have that height, does not
+    /// know about the quorum, or the quorum is present but unverified, `None`
     /// is returned.
     ///
     /// ## Parameters
