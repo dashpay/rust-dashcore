@@ -8,8 +8,8 @@ use dash_spv::{ClientConfig, DashSpvClient};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
-use tokio::signal;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,18 +48,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - Mempool transactions via process_mempool_transaction()
     // - Reorgs via handle_reorg()
     // - Compact filter checks via check_compact_filter()
-    tokio::select! {
-        result = client.monitor_network() => {
-            println!("monitor_network result {:?}", result);
-        },
-        _ = signal::ctrl_c() => {
-            println!("monitor_network canceled");
-        }
-    }
 
-    // Stop the client
-    println!("Stopping SPV client...");
-    client.stop().await?;
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
+
+    client.run_until_shutdown(command_receiver, shutdown_token).await?;
 
     println!("Done!");
     Ok(())

@@ -37,6 +37,7 @@
 pub mod block_processor;
 pub mod config;
 pub mod filter_sync;
+pub mod interface;
 pub mod message_handler;
 pub mod status_display;
 

@@ -10,9 +10,11 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::AddressBalance;
+use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::QuorumHash;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::DashSpvClient;
@@ -73,27 +75,15 @@ impl<
     pub fn get_quorum_at_height(
         &self,
         height: u32,
-        quorum_type: u8,
-        quorum_hash: &[u8; 32],
-    ) -> Option<&QualifiedQuorumEntry> {
-        use dashcore::sml::llmq_type::LLMQType;
-        use dashcore::QuorumHash;
-        use dashcore_hashes::Hash;
-
-        let llmq_type: LLMQType = LLMQType::from(quorum_type);
-        if llmq_type == LLMQType::LlmqtypeUnknown {
-            tracing::warn!("Invalid quorum type {} requested at height {}", quorum_type, height);
-            return None;
-        };
-
-        let qhash = QuorumHash::from_byte_array(*quorum_hash);
-
+        quorum_type: LLMQType,
+        quorum_hash: QuorumHash,
+    ) -> Result<QualifiedQuorumEntry> {
         // First check if we have the masternode list at this height
         match self.get_masternode_list_at_height(height) {
             Some(ml) => {
                 // We have the masternode list, now look for the quorum
-                match ml.quorums.get(&llmq_type) {
-                    Some(quorums) => match quorums.get(&qhash) {
+                match ml.quorums.get(&quorum_type) {
+                    Some(quorums) => match quorums.get(&quorum_hash) {
                         Some(quorum) => {
                             tracing::debug!(
                                 "Found quorum type {} at height {} with hash {}",
@@ -101,17 +91,16 @@ impl<
                                 height,
                                 hex::encode(quorum_hash)
                             );
-                            Some(quorum)
+                            Ok(quorum.clone())
                         }
                         None => {
-                            tracing::warn!(
-                                "Quorum not found: type {} at height {} with hash {} (masternode list exists with {} quorums of this type)",
-                                quorum_type,
-                                height,
-                                hex::encode(quorum_hash),
-                                quorums.len()
-                            );
-                            None
+                            let message = format!("Quorum not found: type {} at height {} with hash {} (masternode list exists with {} quorums of this type)",
+                                                quorum_type,
+                                                height,
+                                                hex::encode(quorum_hash),
+                                                quorums.len());
+                            tracing::warn!(message);
+                            Err(SpvError::QuorumLookupError(message))
                         }
                     },
                     None => {
@@ -120,7 +109,10 @@ impl<
                             quorum_type,
                             height
                         );
-                        None
+                        Err(SpvError::QuorumLookupError(format!(
+                            "No quorums of type {} found at height {}",
+                            quorum_type, height
+                        )))
                     }
                 }
             }
@@ -129,7 +121,10 @@ impl<
                     "No masternode list found at height {} - cannot retrieve quorum",
                     height
                 );
-                None
+                Err(SpvError::QuorumLookupError(format!(
+                    "No masternode list found at height {}",
+                    height
+                )))
             }
         }
     }
