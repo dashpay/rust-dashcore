@@ -17,7 +17,6 @@
 //!
 //! - `block_processor.rs` (649 lines) - Block processing and validation
 //! - `config.rs` (484 lines) - Client configuration
-//! - `filter_sync.rs` (171 lines) - Filter synchronization
 //! - `message_handler.rs` (585 lines) - Network message handling
 //! - `status_display.rs` (242 lines) - Status display formatting
 //!
@@ -35,7 +34,6 @@
 // Existing extracted modules
 pub mod block_processor;
 pub mod config;
-pub mod filter_sync;
 pub mod interface;
 pub mod message_handler;
 pub mod status_display;
@@ -54,7 +52,6 @@ mod transactions;
 // Re-export public types from extracted modules
 pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
-pub use filter_sync::FilterSyncCoordinator;
 pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
 

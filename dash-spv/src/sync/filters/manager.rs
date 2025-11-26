@@ -1,7 +1,7 @@
 //! Filter synchronization manager - main coordinator.
 //!
 //! This module contains the FilterSyncManager struct and high-level coordination logic
-//! that delegates to specialized sub-modules for headers, downloads, matching, gaps, etc.
+//! that delegates to specialized sub-modules for headers, downloads, matching, etc.
 
 use dashcore::{hash_types::FilterHeader, network::message_filter::CFHeaders, BlockHash};
 use dashcore_hashes::{sha256d, Hash};
@@ -28,7 +28,7 @@ use super::types::*;
 /// Filter synchronization involves:
 /// - Downloading thousands of filter headers and filters
 /// - Complex flow control with parallel requests
-/// - Retry logic and gap detection
+/// - Retry logic
 /// - Storage operations for persistence
 ///
 /// Generic design enables:
@@ -50,10 +50,6 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     pub(super) sync_base_height: u32,
     /// Last time sync progress was made (for timeout detection)
     pub(super) last_sync_progress: std::time::Instant,
-    /// Last time filter header tip height was checked for stability
-    pub(super) last_stability_check: std::time::Instant,
-    /// Filter tip height from last stability check
-    pub(super) last_filter_tip_height: Option<u32>,
     /// Whether filter sync is currently in progress
     pub(super) syncing_filters: bool,
     /// Queue of blocks that have been requested and are waiting for response
@@ -62,8 +58,6 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     pub(super) downloading_blocks: HashMap<BlockHash, u32>,
     /// Blocks requested by the filter processing thread
     pub(super) processing_thread_requests: std::sync::Arc<tokio::sync::Mutex<HashSet<BlockHash>>>,
-    /// Track requested filter ranges: (start_height, end_height) -> request_time
-    pub(super) requested_filter_ranges: HashMap<(u32, u32), std::time::Instant>,
     /// Track individual filter heights that have been received (shared with stats)
     pub(super) received_filter_heights: SharedFilterHeights,
     /// Maximum retries for a filter range
@@ -74,22 +68,10 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     pub(super) pending_filter_requests: VecDeque<FilterRequest>,
     /// Currently active filter requests (limited by MAX_CONCURRENT_FILTER_REQUESTS)
     pub(super) active_filter_requests: HashMap<(u32, u32), ActiveRequest>,
-    /// Whether flow control is enabled
-    pub(super) flow_control_enabled: bool,
-    /// Last time we detected a gap and attempted restart
-    pub(super) last_gap_restart_attempt: Option<std::time::Instant>,
-    /// Minimum time between gap restart attempts (to prevent spam)
-    pub(super) gap_restart_cooldown: std::time::Duration,
-    /// Number of consecutive gap restart failures
-    pub(super) gap_restart_failure_count: u32,
-    /// Maximum gap restart attempts before giving up
-    pub(super) max_gap_restart_attempts: u32,
     /// Queue of pending CFHeaders requests
     pub(super) pending_cfheader_requests: VecDeque<CFHeaderRequest>,
     /// Currently active CFHeaders requests: (start_height, stop_height) -> ActiveCFHeaderRequest
     pub(super) active_cfheader_requests: HashMap<u32, ActiveCFHeaderRequest>,
-    /// Whether CFHeaders flow control is enabled
-    pub(super) cfheaders_flow_control_enabled: bool,
     /// Retry counts per CFHeaders range: start_height -> retry_count
     pub(super) cfheader_retry_counts: HashMap<u32, u32>,
     /// Maximum retries for CFHeaders
@@ -115,31 +97,20 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             current_sync_height: 0,
             sync_base_height: 0,
             last_sync_progress: std::time::Instant::now(),
-            last_stability_check: std::time::Instant::now(),
-            last_filter_tip_height: None,
             syncing_filters: false,
             pending_block_downloads: VecDeque::new(),
             downloading_blocks: HashMap::new(),
             processing_thread_requests: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
-            requested_filter_ranges: HashMap::new(),
             received_filter_heights,
             max_filter_retries: 3,
             filter_retry_counts: HashMap::new(),
             pending_filter_requests: VecDeque::new(),
             active_filter_requests: HashMap::new(),
-            flow_control_enabled: true,
-            last_gap_restart_attempt: None,
-            gap_restart_cooldown: std::time::Duration::from_secs(
-                config.cfheader_gap_restart_cooldown_secs,
-            ),
-            gap_restart_failure_count: 0,
-            max_gap_restart_attempts: config.max_cfheader_gap_restart_attempts,
-            // CFHeaders flow control fields
+            // CFHeaders fields
             pending_cfheader_requests: VecDeque::new(),
             active_cfheader_requests: HashMap::new(),
-            cfheaders_flow_control_enabled: config.enable_cfheaders_flow_control,
             cfheader_retry_counts: HashMap::new(),
             max_cfheader_retries: config.max_cfheaders_retries,
             received_cfheader_batches: HashMap::new(),
@@ -179,16 +150,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     // Note: previously had filter_storage_to_abs_height, but it was unused and removed for clarity.
-
-    /// Enable flow control for filter downloads.
-    pub fn enable_flow_control(&mut self) {
-        self.flow_control_enabled = true;
-    }
-
-    /// Disable flow control for filter downloads.
-    pub fn disable_flow_control(&mut self) {
-        self.flow_control_enabled = false;
-    }
 
     /// Set syncing filters state.
     pub fn set_syncing_filters(&mut self, syncing: bool) {
@@ -295,7 +256,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Clear filter sync state (for retries and recovery).
     pub(super) fn clear_filter_sync_state(&mut self) {
         // Clear request tracking
-        self.requested_filter_ranges.clear();
         self.active_filter_requests.clear();
         self.pending_filter_requests.clear();
 
@@ -319,23 +279,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             || !self.pending_filter_requests.is_empty()
     }
 
-    /// Create a filter processing task that runs in a separate thread.
-    /// Returns a sender channel that the networking thread can use to send CFilter messages
-    /// for processing.
-    pub fn reset_filter_tracking(&mut self) {
-        self.requested_filter_ranges.clear();
-        if let Ok(mut heights) = self.received_filter_heights.try_lock() {
-            heights.clear();
-        }
-        self.filter_retry_counts.clear();
-        tracing::info!("🔄 Reset filter range tracking");
-    }
-
     pub fn reset_pending_requests(&mut self) {
         // Clear all request tracking state
         self.syncing_filter_headers = false;
         self.syncing_filters = false;
-        self.requested_filter_ranges.clear();
         self.pending_filter_requests.clear();
         self.active_filter_requests.clear();
         self.filter_retry_counts.clear();

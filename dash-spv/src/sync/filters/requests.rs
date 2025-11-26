@@ -130,7 +130,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(())
     }
 
-    /// Process the filter request queue with flow control.
+    /// Process the filter request queue.
     ///
     /// Sends an initial batch of requests up to MAX_CONCURRENT_FILTER_REQUESTS.
     /// Additional requests are sent as active requests complete.
@@ -176,9 +176,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         self.active_filter_requests.insert(range, active_request);
 
-        // Also record in the existing tracking system
-        self.record_filter_request(request.start_height, request.end_height);
-
         // Include peer info when available
         let peer_addr = network.get_last_message_peer_addr().await;
         match peer_addr {
@@ -216,10 +213,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     ///
     /// Called after filter requests complete to send more from the queue.
     pub async fn process_next_queued_requests(&mut self, network: &mut N) -> SyncResult<()> {
-        if !self.flow_control_enabled {
-            return Ok(());
-        }
-
         let available_slots =
             MAX_CONCURRENT_FILTER_REQUESTS.saturating_sub(self.active_filter_requests.len());
         let mut sent_count = 0;

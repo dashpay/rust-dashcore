@@ -28,7 +28,6 @@ mod tests {
         assert!(config.enable_persistence);
         assert_eq!(config.log_level, "info");
         assert_eq!(config.max_concurrent_filter_requests, 16);
-        assert!(config.enable_filter_flow_control);
         assert_eq!(config.filter_request_delay_ms, 0);
 
         // Mempool defaults
@@ -66,7 +65,6 @@ mod tests {
             .with_connection_timeout(Duration::from_secs(10))
             .with_log_level("debug")
             .with_max_concurrent_filter_requests(32)
-            .with_filter_flow_control(false)
             .with_filter_request_delay(100)
             .with_mempool_tracking(MempoolStrategy::BloomFilter)
             .with_max_mempool_transactions(500)
@@ -80,7 +78,6 @@ mod tests {
         assert_eq!(config.connection_timeout, Duration::from_secs(10));
         assert_eq!(config.log_level, "debug");
         assert_eq!(config.max_concurrent_filter_requests, 32);
-        assert!(!config.enable_filter_flow_control);
         assert_eq!(config.filter_request_delay_ms, 100);
 
         // Mempool settings
@@ -195,28 +192,6 @@ mod tests {
     }
 
     // Removed selective strategy validation test; Selective variant no longer exists
-
-    #[test]
-    fn test_cfheader_gap_settings() {
-        let config = ClientConfig::default();
-
-        assert!(config.enable_cfheader_gap_restart);
-        assert_eq!(config.cfheader_gap_check_interval_secs, 15);
-        assert_eq!(config.cfheader_gap_restart_cooldown_secs, 30);
-        assert_eq!(config.max_cfheader_gap_restart_attempts, 5);
-    }
-
-    #[test]
-    fn test_filter_gap_settings() {
-        let config = ClientConfig::default();
-
-        assert!(config.enable_filter_gap_restart);
-        assert_eq!(config.filter_gap_check_interval_secs, 20);
-        assert_eq!(config.min_filter_gap_size, 10);
-        assert_eq!(config.filter_gap_restart_cooldown_secs, 30);
-        assert_eq!(config.max_filter_gap_restart_attempts, 5);
-        assert_eq!(config.max_filter_gap_sync_size, 50000);
-    }
 
     #[test]
     fn test_request_control_defaults() {
