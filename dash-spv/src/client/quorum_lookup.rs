@@ -46,10 +46,10 @@
 //! # }
 //! ```
 
-use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::sml::{llmq_entry_verification::LLMQEntryVerificationStatus, llmq_type::LLMQType};
 use dashcore::QuorumHash;
 use dashcore_hashes::Hash;
 use std::sync::{Arc, RwLock};
@@ -211,15 +211,38 @@ impl QuorumLookup {
         };
 
         match masternode_list.quorum_entry_of_type_for_quorum_hash(llmq_type, qhash).cloned() {
-            Some(q) => {
-                debug!(
-                    "Found verified quorum type {} at height {} with hash {}",
-                    quorum_type,
-                    height,
-                    hex::encode(quorum_hash)
-                );
-                Some(q)
-            }
+            Some(q) => match &q.verified {
+                // TODO only return verified once validation is reliable
+                LLMQEntryVerificationStatus::Verified => {
+                    debug!(
+                        "Found verified quorum type {} at height {} with hash {}",
+                        quorum_type,
+                        height,
+                        hex::encode(quorum_hash)
+                    );
+                    Some(q)
+                }
+                LLMQEntryVerificationStatus::Unknown | LLMQEntryVerificationStatus::Skipped(_) => {
+                    warn!(
+                        "Quorum type {} at height {} with hash {} found but not yet verified (status: {:?})",
+                        quorum_type,
+                        height,
+                        hex::encode(quorum_hash),
+                        q.verified
+                    );
+                    Some(q)
+                }
+                LLMQEntryVerificationStatus::Invalid(err) => {
+                    warn!(
+                        "Quorum type {} at height {} with hash {} rejected due to invalid status: {:?}",
+                        quorum_type,
+                        height,
+                        hex::encode(quorum_hash),
+                        err
+                    );
+                    None
+                }
+            },
             None => {
                 debug!(
                     "Missing quorum type {} at height {} with hash {}",
