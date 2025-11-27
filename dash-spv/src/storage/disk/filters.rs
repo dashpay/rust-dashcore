@@ -19,7 +19,15 @@ impl DiskStorageManager {
         let mut next_blockchain_height = {
             let current_tip = self.cached_filter_tip_height.read().await;
             match *current_tip {
-                Some(tip) => tip + 1,
+                Some(tip) => {
+                    // If we're syncing from a checkpoint and the current tip is below it,
+                    // start from the checkpoint instead of continuing from the old tip
+                    if sync_base_height > 0 && tip < sync_base_height {
+                        sync_base_height
+                    } else {
+                        tip + 1
+                    }
+                }
                 None => {
                     // If we have a checkpoint, start from there, otherwise from 0
                     if sync_base_height > 0 {
