@@ -182,11 +182,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 )
             })?;
 
-        if latest_height >= target_height {
-            tracing::debug!(
-                "Engine already has masternode list at or beyond height {}",
-                target_height
-            );
+        if engine.masternode_lists.contains_key(&target_height) {
+            tracing::debug!("Engine already has masternode list at height {}", target_height);
             return Ok(());
         }
 
