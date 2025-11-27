@@ -78,6 +78,10 @@ impl<
         quorum_type: LLMQType,
         quorum_hash: QuorumHash,
     ) -> Result<QualifiedQuorumEntry> {
+        // Reverse the quorum hash bytes for lookup
+        // DAPI returns BE in `ResponseMetadata`, but we store as LE
+        let quorum_hash = quorum_hash.reverse();
+
         // First check if we have the masternode list at this height
         match self.get_masternode_list_at_height(height) {
             Some(ml) => {
