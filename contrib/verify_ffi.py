@@ -6,20 +6,27 @@ import sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+FFI_CRATES = ["key-wallet-ffi", "dash-spv-ffi"]
 
-def build_ffi_crate(crate_dir: Path) -> tuple[str, int]:
-    """Build crate to regenerate headers."""
-    print(f"  Building {crate_dir.name}...")
+
+def build_ffi_crates(repo_root: Path) -> bool:
+    """Build all FFI crates to regenerate headers."""
+    print("  Building FFI crates...")
     result = subprocess.run(
-        ["cargo", "build", "--quiet"],
-        cwd=crate_dir,
+        ["cargo", "build", "--quiet"] + [f"-p={crate}" for crate in FFI_CRATES],
+        cwd=repo_root,
         capture_output=True,
         text=True
     )
-    return crate_dir.name, result.returncode
+    if result.returncode != 0:
+        print("Build failed:", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        return False
+    return True
 
 
-def generate_ffi_docs(crate_dir: Path) -> tuple[str, int]:
+def generate_ffi_docs(crate_dir: Path) -> tuple[str, int, str]:
     """Generate FFI documentation for a crate."""
     print(f"  Generating {crate_dir.name} docs...")
     result = subprocess.run(
@@ -28,41 +35,32 @@ def generate_ffi_docs(crate_dir: Path) -> tuple[str, int]:
         capture_output=True,
         text=True
     )
-    if result.returncode == 0:
-        if result.stdout:
-            for line in result.stdout.strip().split('\n'):
-                print(f"    {line}")
-    return crate_dir.name, result.returncode
+    return crate_dir.name, result.returncode, result.stdout
 
 
 def main():
     repo_root = Path(__file__).parent.parent
-    ffi_crates = [
-        repo_root / "key-wallet-ffi",
-        repo_root / "dash-spv-ffi"
-    ]
+    ffi_crate_dirs = [repo_root / crate for crate in FFI_CRATES]
 
     print("Regenerating FFI headers and documentation")
 
-    # Build and generate docs for both crates in parallel
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        build_futures = [executor.submit(build_ffi_crate, crate) for crate in ffi_crates]
-        doc_futures = [executor.submit(generate_ffi_docs, crate) for crate in ffi_crates]
+    # Build all FFI crates first
+    if not build_ffi_crates(repo_root):
+        sys.exit(1)
 
-        build_results = [f.result() for f in build_futures]
+    # Generate docs in parallel
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        doc_futures = [executor.submit(generate_ffi_docs, crate) for crate in ffi_crate_dirs]
         doc_results = [f.result() for f in doc_futures]
 
-    # Check if any builds failed
-    for crate_name, returncode in build_results:
-        if returncode != 0:
-            print(f"Build failed for {crate_name}", file=sys.stderr)
-            sys.exit(1)
-
-    # Check if any doc generation failed
-    for crate_name, returncode in doc_results:
+    # Check results and print output
+    for crate_name, returncode, stdout in doc_results:
         if returncode != 0:
             print(f"Documentation generation failed for {crate_name}", file=sys.stderr)
             sys.exit(1)
+        if stdout:
+            for line in stdout.strip().split('\n'):
+                print(f"    {line}")
 
     print("  Generation complete, checking for changes...")
 
