@@ -1,6 +1,4 @@
-//! Header synchronization with reorganization support
-//!
-//! This module extends the basic header sync with fork detection and reorg handling.
+//! Header synchronization with fork detection and reorganization handling.
 
 use dashcore::{
     block::{Header as BlockHeader, Version},
@@ -45,8 +43,8 @@ impl Default for ReorgConfig {
     }
 }
 
-/// Manages header synchronization with reorg support
-pub struct HeaderSyncManagerWithReorg<S: StorageManager, N: NetworkManager> {
+/// Manages header synchronization with fork detection and reorganization support
+pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
     config: ClientConfig,
@@ -67,9 +65,9 @@ pub struct HeaderSyncManagerWithReorg<S: StorageManager, N: NetworkManager> {
 }
 
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    HeaderSyncManagerWithReorg<S, N>
+    HeaderSyncManager<S, N>
 {
-    /// Create a new header sync manager with reorg support
+    /// Create a new header sync manager
     pub fn new(
         config: &ClientConfig,
         reorg_config: ReorgConfig,
@@ -229,14 +227,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(loaded_count)
     }
 
-    /// Handle a Headers message with fork detection and reorg support
+    /// Handle a Headers message
     pub async fn handle_headers_message(
         &mut self,
         headers: Vec<BlockHeader>,
         storage: &mut S,
         network: &mut N,
     ) -> SyncResult<bool> {
-        tracing::info!("🔍 Handle headers message with {} headers (reorg-aware)", headers.len());
+        tracing::info!("🔍 Handle headers message with {} headers", headers.len());
 
         // Step 1: Handle Empty Batch
         if headers.is_empty() {
@@ -656,7 +654,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Err(SyncError::SyncInProgress);
         }
 
-        tracing::info!("Preparing header synchronization with reorg support");
+        tracing::info!("Preparing header synchronization");
         tracing::info!(
             "Chain state before prepare_sync: sync_base_height={}, synced_from_checkpoint={}, headers_count={}",
             self.get_sync_base_height(),
@@ -804,7 +802,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.syncing_headers = true;
         self.last_sync_progress = std::time::Instant::now();
         tracing::info!(
-            "✅ Prepared header sync state with reorg support, ready to request headers from {:?}",
+            "✅ Prepared header sync state, ready to request headers from {:?}",
             base_hash
         );
 
@@ -813,7 +811,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Start synchronizing headers (initialize the sync state).
     pub async fn start_sync(&mut self, network: &mut N, storage: &mut S) -> SyncResult<bool> {
-        tracing::info!("Starting header synchronization with reorg support");
+        tracing::info!("Starting header synchronization");
 
         // Prepare sync state (this will check if sync is already in progress)
         let base_hash = self.prepare_sync(storage).await?;

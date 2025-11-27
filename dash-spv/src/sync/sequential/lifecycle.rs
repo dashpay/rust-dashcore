@@ -8,9 +8,7 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::{
-    FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
-};
+use crate::sync::{FilterSyncManager, HeaderSyncManager, MasternodeSyncManager, ReorgConfig};
 use crate::types::{SharedFilterHeights, SpvStats};
 use key_wallet_manager::{wallet_interface::WalletInterface, Network as WalletNetwork};
 use std::sync::Arc;
@@ -40,10 +38,9 @@ impl<
         Ok(Self {
             current_phase: SyncPhase::Idle,
             transition_manager: TransitionManager::new(config),
-            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config, chain_state)
-                .map_err(|e| {
-                    SyncError::InvalidState(format!("Failed to create header sync manager: {}", e))
-                })?,
+            header_sync: HeaderSyncManager::new(config, reorg_config, chain_state).map_err(
+                |e| SyncError::InvalidState(format!("Failed to create header sync manager: {}", e)),
+            )?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             config: config.clone(),
