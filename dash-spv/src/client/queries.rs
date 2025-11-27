@@ -10,6 +10,7 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::AddressBalance;
+use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
@@ -84,47 +85,70 @@ impl<
                 // We have the masternode list, now look for the quorum
                 match ml.quorums.get(&quorum_type) {
                     Some(quorums) => match quorums.get(&quorum_hash) {
-                        Some(quorum) => {
-                            tracing::debug!(
-                                "Found quorum type {} at height {} with hash {}",
+                        // Found the quorum, now check its verification status
+                        Some(q) => match &q.verified {
+                            // TODO only return verified once validation is reliable
+                            LLMQEntryVerificationStatus::Verified => {
+                                tracing::debug!(
+                                    "Found verified quorum type {} at height {} with hash {}",
+                                    quorum_type,
+                                    height,
+                                    hex::encode(quorum_hash)
+                                );
+                                Ok(q.clone())
+                            }
+                            LLMQEntryVerificationStatus::Unknown
+                            | LLMQEntryVerificationStatus::Skipped(_) => {
+                                tracing::warn!(
+                                "Quorum type {} at height {} with hash {} found but not yet verified (status: {:?})",
                                 quorum_type,
                                 height,
-                                hex::encode(quorum_hash)
+                                hex::encode(quorum_hash),
+                                q.verified
                             );
-                            Ok(quorum.clone())
-                        }
+                                Ok(q.clone())
+                            }
+                            LLMQEntryVerificationStatus::Invalid(err) => {
+                                let message = format!(
+                                    "Quorum found but invalid: type {} at height {} with hash {} (reason: {:?})",
+                                    quorum_type,
+                                    height,
+                                    hex::encode(quorum_hash),
+                                    err
+                                );
+                                tracing::warn!(message);
+                                Err(SpvError::QuorumLookupError(message))
+                            }
+                        },
                         None => {
                             let message = format!("Quorum not found: type {} at height {} with hash {} (masternode list exists with {} quorums of this type)",
-                                                quorum_type,
-                                                height,
-                                                hex::encode(quorum_hash),
-                                                quorums.len());
+                                quorum_type,
+                                height,
+                                hex::encode(quorum_hash),
+                                quorums.len());
                             tracing::warn!(message);
                             Err(SpvError::QuorumLookupError(message))
                         }
                     },
                     None => {
-                        tracing::warn!(
+                        let message = format!(
                             "No quorums of type {} found at height {} (masternode list exists)",
-                            quorum_type,
-                            height
-                        );
-                        Err(SpvError::QuorumLookupError(format!(
-                            "No quorums of type {} found at height {}",
                             quorum_type, height
-                        )))
+                        );
+                        tracing::warn!(message);
+                        Err(SpvError::QuorumLookupError(message))
                     }
                 }
             }
             None => {
-                tracing::warn!(
-                    "No masternode list found at height {} - cannot retrieve quorum",
-                    height
+                let message = format!(
+                    "Masternode list not found at height {} when looking for quorum type {} with hash {}",
+                    height,
+                    quorum_type,
+                    hex::encode(quorum_hash)
                 );
-                Err(SpvError::QuorumLookupError(format!(
-                    "No masternode list found at height {}",
-                    height
-                )))
+                tracing::warn!(message);
+                Err(SpvError::QuorumLookupError(message))
             }
         }
     }
