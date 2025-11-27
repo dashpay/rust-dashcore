@@ -556,10 +556,25 @@ impl MasternodeListEngine {
             mn_list_diff_list,
         } = qr_info;
 
-        // Apply quorum snapshots and masternode list diffs
+        // Collect ChainLock signatures from all diffs, keyed by block hash.
+        // This allows us to look up signatures for quorums created in older cycles.
+        #[cfg(feature = "quorum_validation")]
+        let mut chainlock_sigs_by_block_hash: BTreeMap<BlockHash, BLSSignature> = BTreeMap::new();
+
+        // Apply quorum snapshots and masternode list diffs from the historical list,
+        // collecting signatures as we go.
         for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list.into_iter())
         {
-            self.known_snapshots.insert(diff.block_hash, snapshot);
+            #[cfg(feature = "quorum_validation")]
+            let block_hash = diff.block_hash;
+            #[cfg(not(feature = "quorum_validation"))]
+            let block_hash = diff.block_hash;
+            self.known_snapshots.insert(block_hash, snapshot);
+            #[cfg(feature = "quorum_validation")]
+            if let Some(sig) = self.apply_diff(diff, None, false, None)? {
+                chainlock_sigs_by_block_hash.insert(block_hash, sig);
+            }
+            #[cfg(not(feature = "quorum_validation"))]
             self.apply_diff(diff, None, false, None)?;
         }
 
@@ -591,43 +606,77 @@ impl MasternodeListEngine {
         if let Some((quorum_snapshot_at_h_minus_4c, mn_list_diff_at_h_minus_4c)) =
             quorum_snapshot_and_mn_list_diff_at_h_minus_4c
         {
+            #[cfg(feature = "quorum_validation")]
+            let block_hash = mn_list_diff_at_h_minus_4c.block_hash;
             self.known_snapshots
                 .insert(mn_list_diff_at_h_minus_4c.block_hash, quorum_snapshot_at_h_minus_4c);
+            #[cfg(feature = "quorum_validation")]
+            if let Some(sig) = self.apply_diff(mn_list_diff_at_h_minus_4c, None, false, None)? {
+                chainlock_sigs_by_block_hash.insert(block_hash, sig);
+            }
+            #[cfg(not(feature = "quorum_validation"))]
             self.apply_diff(mn_list_diff_at_h_minus_4c, None, false, None)?;
         }
 
-        self.known_snapshots
-            .insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
+        // Process h-3c diff
         #[cfg(feature = "quorum_validation")]
         let mn_list_diff_at_h_minus_3c_block_hash = mn_list_diff_at_h_minus_3c.block_hash;
-        #[cfg(feature = "quorum_validation")]
-        let maybe_sigm3 = self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
-        #[cfg(not(feature = "quorum_validation"))]
-        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
         self.known_snapshots
-            .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
+            .insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
+        #[allow(unused_variables)]
+        let maybe_sigm3 = self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
+        #[cfg(feature = "quorum_validation")]
+        if let Some(sig) = maybe_sigm3 {
+            chainlock_sigs_by_block_hash.insert(mn_list_diff_at_h_minus_3c_block_hash, sig);
+        }
+
+        // Process h-2c diff
         #[cfg(feature = "quorum_validation")]
         let mn_list_diff_at_h_minus_2c_block_hash = mn_list_diff_at_h_minus_2c.block_hash;
-        let maybe_sigm2 = self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?;
         self.known_snapshots
-            .insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
+            .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
+        let maybe_sigm2 = self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?;
+        #[cfg(feature = "quorum_validation")]
+        if let Some(sig) = maybe_sigm2 {
+            chainlock_sigs_by_block_hash.insert(mn_list_diff_at_h_minus_2c_block_hash, sig);
+        }
+
+        // Process h-c diff
         #[cfg(feature = "quorum_validation")]
         let mn_list_diff_at_h_minus_c_block_hash = mn_list_diff_at_h_minus_c.block_hash;
+        self.known_snapshots
+            .insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
         let maybe_sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
+        #[cfg(feature = "quorum_validation")]
+        if let Some(sig) = maybe_sigm1 {
+            chainlock_sigs_by_block_hash.insert(mn_list_diff_at_h_minus_c_block_hash, sig);
+        }
+
+        // Process h diff
         #[cfg(feature = "quorum_validation")]
         let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
         let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
+        #[cfg(feature = "quorum_validation")]
+        if let Some(sig) = maybe_sigm0 {
+            chainlock_sigs_by_block_hash.insert(mn_list_diff_at_h_block_hash, sig);
+        }
 
+        // Build the sigs array needed for the tip diff processing
         let sigs = match (maybe_sigm2, maybe_sigm1, maybe_sigm0) {
             (Some(s2), Some(s1), Some(s0)) => Some([s2, s1, s0]),
             _ => None,
         };
 
-        #[allow(unused_variables)]
+        // Process tip diff
+        #[cfg(feature = "quorum_validation")]
         let mn_list_diff_tip_block_hash = mn_list_diff_tip.block_hash;
         #[allow(unused_variables)]
         let maybe_sigmtip =
             self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
+        #[cfg(feature = "quorum_validation")]
+        if let Some(sig) = maybe_sigmtip {
+            chainlock_sigs_by_block_hash.insert(mn_list_diff_tip_block_hash, sig);
+        }
 
         #[cfg(feature = "quorum_validation")]
         let qualified_last_commitment_per_index = last_commitment_per_index
@@ -638,42 +687,42 @@ impl MasternodeListEngine {
                 {
                     Ok(qualified_quorum_entry)
                 } else {
-                    let sigm2 = maybe_sigm2.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                    // Get required signatures from the known diffs.
+                    // For rotating quorums, we need 4 signatures corresponding to
+                    // h-2c, h-c, h, and tip (or h-3c as fallback for tip).
+                    let sigm2 = chainlock_sigs_by_block_hash
+                        .get(&mn_list_diff_at_h_minus_2c_block_hash)
+                        .ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
                             2,
                             mn_list_diff_at_h_minus_2c_block_hash,
-                        ),
-                    )?;
+                        ))?;
 
-                    let sigm1 = maybe_sigm1.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                    let sigm1 = chainlock_sigs_by_block_hash
+                        .get(&mn_list_diff_at_h_minus_c_block_hash)
+                        .ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
                             1,
                             mn_list_diff_at_h_minus_c_block_hash,
-                        ),
-                    )?;
+                        ))?;
 
-                    let sigm0 = maybe_sigm0.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                    let sigm0 = chainlock_sigs_by_block_hash
+                        .get(&mn_list_diff_at_h_block_hash)
+                        .ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
                             0,
                             mn_list_diff_at_h_block_hash,
-                        ),
-                    )?;
+                        ))?;
 
-                    let rotating_sigs = if let Some(sigmtip) = maybe_sigmtip {
-                        [sigm2, sigm1, sigm0, sigmtip]
-                    } else {
-                        let sigm3 = maybe_sigm3.ok_or(
-                            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                                3,
-                                mn_list_diff_at_h_minus_3c_block_hash,
-                            ),
-                        )?;
-                        [sigm3, sigm2, sigm1, sigm0]
-                    };
+                    let sigmtip = chainlock_sigs_by_block_hash
+                        .get(&mn_list_diff_tip_block_hash)
+                        .ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                            3,
+                            mn_list_diff_tip_block_hash,
+                        ))?;
 
                     let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
                     qualified_quorum_entry.verifying_chain_lock_signature =
-                        Some(VerifyingChainLockSignaturesType::Rotating(rotating_sigs));
+                        Some(VerifyingChainLockSignaturesType::Rotating([
+                            *sigm2, *sigm1, *sigm0, *sigmtip,
+                        ]));
                     Ok(qualified_quorum_entry)
                 }
             })
