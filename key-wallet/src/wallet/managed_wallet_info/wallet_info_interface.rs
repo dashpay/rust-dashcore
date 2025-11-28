@@ -14,6 +14,8 @@ use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletBalance};
 use dashcore::{Address as DashAddress, Address, Transaction};
+
+use crate::account::ManagedAccountTrait;
 use std::collections::BTreeSet;
 
 /// Trait that wallet info types must implement to work with WalletManager
@@ -272,6 +274,17 @@ impl WalletInfoInterface for ManagedWalletInfo {
                                 false, // Not ours (we received)
                             );
                             account.transactions.insert(tx.txid, tx_record);
+
+                            // Add UTXOs for outputs that belong to this account
+                            let account_addresses: BTreeSet<Address> =
+                                account.all_addresses().into_iter().collect();
+                            account.add_utxos_from_transaction(
+                                &tx.transaction,
+                                &account_addresses,
+                                network,
+                                tx.height,
+                                true,
+                            );
                         }
                     }
 
@@ -289,6 +302,17 @@ impl WalletInfoInterface for ManagedWalletInfo {
                                 false,
                             );
                             account.transactions.insert(tx.txid, tx_record);
+
+                            // Add UTXOs for outputs that belong to this account
+                            let account_addresses: BTreeSet<Address> =
+                                account.all_addresses().into_iter().collect();
+                            account.add_utxos_from_transaction(
+                                &tx.transaction,
+                                &account_addresses,
+                                network,
+                                tx.height,
+                                true,
+                            );
                         }
                     }
 
@@ -305,6 +329,17 @@ impl WalletInfoInterface for ManagedWalletInfo {
                                 false,
                             );
                             account.transactions.insert(tx.txid, tx_record);
+
+                            // Add UTXOs for outputs that belong to this account
+                            let account_addresses: BTreeSet<Address> =
+                                account.all_addresses().into_iter().collect();
+                            account.add_utxos_from_transaction(
+                                &tx.transaction,
+                                &account_addresses,
+                                network,
+                                tx.height,
+                                true,
+                            );
                         }
                     }
                 }
