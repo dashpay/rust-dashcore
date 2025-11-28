@@ -848,6 +848,40 @@ impl ManagedAccountTrait for ManagedAccount {
         &mut self.transactions
     }
 
+    fn add_utxos_from_transaction(
+        &mut self,
+        tx: &dashcore::Transaction,
+        involved_addresses: &alloc::collections::BTreeSet<Address>,
+        network: Network,
+        height: u32,
+        is_confirmed: bool,
+    ) {
+        let txid = tx.txid();
+        for (vout, output) in tx.output.iter().enumerate() {
+            if let Ok(addr) = Address::from_script(&output.script_pubkey, network) {
+                if involved_addresses.contains(&addr) {
+                    let outpoint = OutPoint {
+                        txid,
+                        vout: vout as u32,
+                    };
+                    let txout = dashcore::TxOut {
+                        value: output.value,
+                        script_pubkey: output.script_pubkey.clone(),
+                    };
+                    let mut utxo = Utxo::new(outpoint, txout, addr, height, tx.is_coin_base());
+                    utxo.is_confirmed = is_confirmed;
+                    tracing::debug!(
+                        "Adding UTXO {}:{} value={} to account",
+                        txid,
+                        vout,
+                        output.value
+                    );
+                    self.utxos.insert(outpoint, utxo);
+                }
+            }
+        }
+    }
+
     fn utxos(&self) -> &BTreeMap<OutPoint, Utxo> {
         &self.utxos
     }
