@@ -205,9 +205,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         block_hash: BlockHash,
         storage: &S,
-    ) -> SyncResult<Vec<(u32, u32)>> {
+    ) -> SyncResult<()> {
         if !self.flow_control_enabled {
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         // Record the received filter
@@ -241,18 +241,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         }
 
-        // Always return at least one "completion" to trigger queue processing
-        // This ensures we continuously utilize available slots instead of waiting for 100% completion
-        if completed_requests.is_empty() && !self.pending_filter_requests.is_empty() {
-            // If we have available slots and pending requests, trigger processing
-            let available_slots =
-                MAX_CONCURRENT_FILTER_REQUESTS.saturating_sub(self.active_filter_requests.len());
-            if available_slots > 0 {
-                completed_requests.push((0, 0)); // Dummy completion to trigger processing
-            }
-        }
-
-        Ok(completed_requests)
+        Ok(())
     }
 
     async fn is_request_complete(&self, start: u32, end: u32) -> SyncResult<bool> {
