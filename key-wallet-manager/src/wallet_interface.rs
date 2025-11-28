@@ -69,4 +69,10 @@ pub trait WalletInterface: Send + Sync {
     async fn describe(&self, _network: Network) -> String {
         "Wallet interface description unavailable".to_string()
     }
+
+    /// Notify the wallet that the chain has advanced to a new height.
+    ///
+    /// This processes any coinbase transactions that have matured (reached 100 confirmations)
+    /// and adds their UTXOs to the spendable balance.
+    async fn update_chain_height(&mut self, network: Network, height: CoreBlockHeight);
 }

@@ -764,6 +764,9 @@ impl<
 
         let relevant_txids = wallet.process_block(&block, block_height, self.config.network).await;
 
+        // Update chain height to process any matured coinbase transactions
+        wallet.update_chain_height(self.config.network, block_height).await;
+
         drop(wallet);
 
         if !relevant_txids.is_empty() {
