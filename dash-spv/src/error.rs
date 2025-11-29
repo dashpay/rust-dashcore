@@ -93,6 +93,9 @@ pub enum StorageError {
     #[error("Data not found: {0}")]
     NotFound(String),
 
+    #[error("Not initialized: {0}")]
+    NotInitialized(String),
+
     #[error("Write failed: {0}")]
     WriteFailed(String),
 
@@ -117,6 +120,7 @@ impl Clone for StorageError {
         match self {
             StorageError::Corruption(s) => StorageError::Corruption(s.clone()),
             StorageError::NotFound(s) => StorageError::NotFound(s.clone()),
+            StorageError::NotInitialized(s) => StorageError::NotInitialized(s.clone()),
             StorageError::WriteFailed(s) => StorageError::WriteFailed(s.clone()),
             StorageError::ReadFailed(s) => StorageError::ReadFailed(s.clone()),
             StorageError::Io(err) => StorageError::Io(io::Error::new(err.kind(), err.to_string())),

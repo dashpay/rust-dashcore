@@ -113,29 +113,46 @@ impl StorageManager for MemoryStorageManager {
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
         // Interpret range as blockchain (absolute) heights and map to storage indices
         let sync_base_height = self.sync_base_height();
-        let start_idx = range.start.saturating_sub(sync_base_height) as usize;
+        let Some(start_idx) = range.start.checked_sub(sync_base_height) else {
+            return Err(StorageError::NotFound(format!(
+                "Header start index out of lower range for: {}..{}",
+                range.start, range.end
+            )));
+        };
+        let start_idx = start_idx as usize;
+
+        if start_idx >= self.headers.len() {
+            return Err(StorageError::NotFound(format!(
+                "Header start index out of upper range for: {}..{}",
+                range.start, range.end
+            )));
+        }
 
         let end_abs = range.end.min(sync_base_height + self.headers.len() as u32);
         let end_idx = end_abs.saturating_sub(sync_base_height) as usize;
-
-        if start_idx > self.headers.len() {
-            return Ok(Vec::new());
-        }
         let end_idx = end_idx.min(self.headers.len());
         Ok(self.headers[start_idx..end_idx].to_vec())
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
         // Convert absolute height to storage index (base-inclusive mapping)
-        let Some(idx) = height.checked_sub(self.sync_base_height()) else {
-            return Ok(None);
+        let sync_base_height = self.sync_base_height();
+        let Some(idx) = height.checked_sub(sync_base_height) else {
+            return Err(StorageError::NotFound(format!(
+                "Header at height {} not found (before sync base {})",
+                height, sync_base_height
+            )));
         };
-        Ok(self.headers.get(idx as usize).copied())
+        self.headers
+            .get(idx as usize)
+            .copied()
+            .ok_or_else(|| StorageError::NotFound(format!("Header at height {} not found", height)))
+            .map(Some)
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
         if self.headers.is_empty() {
-            return Ok(None);
+            return Err(StorageError::NotInitialized("Headers not initialized".into()));
         }
         Ok(Some(self.sync_base_height() + self.headers.len() as u32 - 1))
     }
@@ -150,32 +167,51 @@ impl StorageManager for MemoryStorageManager {
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
         // Interpret range as blockchain (absolute) heights and map to storage indices
         let sync_base_height = self.sync_base_height();
-        let start_idx = range.start.saturating_sub(sync_base_height) as usize;
+        let Some(start_idx) = range.start.checked_sub(sync_base_height) else {
+            return Err(StorageError::NotFound(format!(
+                "Filter header start index out of lower range for: {}..{}",
+                range.start, range.end
+            )));
+        };
+        let start_idx = start_idx as usize;
+
+        if start_idx >= self.filter_headers.len() {
+            return Err(StorageError::NotFound(format!(
+                "Filter header start index out of upper range for: {}..{}",
+                range.start, range.end
+            )));
+        }
 
         let end_abs = range.end.min(sync_base_height + self.filter_headers.len() as u32);
         let end_idx = end_abs.saturating_sub(sync_base_height) as usize;
-
-        if start_idx > self.filter_headers.len() {
-            return Ok(Vec::new());
-        }
-
         let end_idx = end_idx.min(self.filter_headers.len());
         Ok(self.filter_headers[start_idx..end_idx].to_vec())
     }
 
     async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
         // Map blockchain (absolute) height to storage index relative to checkpoint base
-        let idx = height.saturating_sub(self.sync_base_height()) as usize;
-        Ok(self.filter_headers.get(idx).copied())
+        let sync_base_height = self.sync_base_height();
+        let Some(idx) = height.checked_sub(sync_base_height) else {
+            return Err(StorageError::NotFound(format!(
+                "Filter header at height {} not found (before sync base {})",
+                height, sync_base_height
+            )));
+        };
+        self.filter_headers
+            .get(idx as usize)
+            .copied()
+            .ok_or_else(|| {
+                StorageError::NotFound(format!("Filter header at height {} not found", height))
+            })
+            .map(Some)
     }
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
         if self.filter_headers.is_empty() {
-            Ok(None)
-        } else {
-            // Return blockchain (absolute) height for the tip, accounting for checkpoint base
-            Ok(Some(self.sync_base_height() + self.filter_headers.len() as u32 - 1))
+            return Err(StorageError::NotInitialized("Filter headers not initialized".into()));
         }
+        // Return blockchain (absolute) height for the tip, accounting for checkpoint base
+        Ok(Some(self.sync_base_height() + self.filter_headers.len() as u32 - 1))
     }
 
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
@@ -184,7 +220,10 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
-        Ok(self.masternode_state.clone())
+        self.masternode_state
+            .clone()
+            .ok_or_else(|| StorageError::NotInitialized("Masternode state not initialized".into()))
+            .map(Some)
     }
 
     async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
@@ -193,7 +232,10 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
-        Ok(self.chain_state.clone())
+        self.chain_state
+            .clone()
+            .ok_or_else(|| StorageError::NotInitialized("Chain state not initialized".into()))
+            .map(Some)
     }
 
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
@@ -202,7 +244,11 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>> {
-        Ok(self.filters.get(&height).cloned())
+        self.filters
+            .get(&height)
+            .cloned()
+            .ok_or_else(|| StorageError::NotFound(format!("Filter at height {} not found", height)))
+            .map(Some)
     }
 
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
@@ -211,7 +257,11 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
-        Ok(self.metadata.get(key).cloned())
+        self.metadata
+            .get(key)
+            .cloned()
+            .ok_or_else(|| StorageError::NotFound(format!("Metadata key '{}' not found", key)))
+            .map(Some)
     }
 
     async fn clear(&mut self) -> StorageResult<()> {
@@ -299,10 +349,9 @@ impl StorageManager for MemoryStorageManager {
     async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
         // Return ABSOLUTE blockchain height for consistency with DiskStorage.
         // memory.header_hash_index stores storage index; convert to absolute height using base.
-        let storage_index = match self.header_hash_index.get(hash).copied() {
-            Some(idx) => idx,
-            None => return Ok(None),
-        };
+        let storage_index = self.header_hash_index.get(hash).copied().ok_or_else(|| {
+            StorageError::NotFound(format!("Header with hash {} not found", hash))
+        })?;
 
         Ok(Some(self.sync_base_height() + storage_index))
     }
@@ -343,7 +392,10 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::PersistentSyncState>> {
-        Ok(self.sync_state.clone())
+        self.sync_state
+            .clone()
+            .ok_or_else(|| StorageError::NotInitialized("Sync state not initialized".into()))
+            .map(Some)
     }
 
     async fn clear_sync_state(&mut self) -> StorageResult<()> {
@@ -412,14 +464,13 @@ impl StorageManager for MemoryStorageManager {
 
     async fn load_chain_lock(&self, height: u32) -> StorageResult<Option<dashcore::ChainLock>> {
         let key = format!("chainlock_{:08}", height);
-        if let Some(data) = self.metadata.get(&key) {
-            let chain_lock = bincode::deserialize(data).map_err(|e| {
-                StorageError::ReadFailed(format!("Failed to deserialize chain lock: {}", e))
-            })?;
-            Ok(Some(chain_lock))
-        } else {
-            Ok(None)
-        }
+        let data = self.metadata.get(&key).ok_or_else(|| {
+            StorageError::NotFound(format!("Chain lock at height {} not found", height))
+        })?;
+        let chain_lock = bincode::deserialize(data).map_err(|e| {
+            StorageError::ReadFailed(format!("Failed to deserialize chain lock: {}", e))
+        })?;
+        Ok(Some(chain_lock))
     }
 
     async fn get_chain_locks(
@@ -465,7 +516,13 @@ impl StorageManager for MemoryStorageManager {
         &self,
         txid: &Txid,
     ) -> StorageResult<Option<UnconfirmedTransaction>> {
-        Ok(self.mempool_transactions.get(txid).cloned())
+        self.mempool_transactions
+            .get(txid)
+            .cloned()
+            .ok_or_else(|| {
+                StorageError::NotFound(format!("Mempool transaction {} not found", txid))
+            })
+            .map(Some)
     }
 
     async fn get_all_mempool_transactions(
@@ -480,7 +537,10 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>> {
-        Ok(self.mempool_state.clone())
+        self.mempool_state
+            .clone()
+            .ok_or_else(|| StorageError::NotInitialized("Mempool state not initialized".into()))
+            .map(Some)
     }
 
     async fn clear_mempool(&mut self) -> StorageResult<()> {
