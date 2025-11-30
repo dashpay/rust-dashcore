@@ -215,7 +215,7 @@ impl<
                     tracing::error!("Failed to load headers into sync manager: {}", e);
                     // For checkpoint sync, this is critical
                     let state = self.state.read().await;
-                    if state.synced_from_checkpoint {
+                    if state.synced_from_checkpoint() {
                         return Err(SpvError::Sync(e));
                     }
                     // For normal sync, we can continue as headers will be re-synced
@@ -403,11 +403,7 @@ impl<
                         );
 
                         // Update the sync manager's cached flags from the checkpoint-initialized state
-                        self.sync_manager.update_chain_state_cache(
-                            true,
-                            checkpoint.height,
-                            headers_len,
-                        );
+                        self.sync_manager.update_chain_state_cache(checkpoint.height, headers_len);
                         tracing::info!(
                             "Updated sync manager with checkpoint-initialized chain state"
                         );

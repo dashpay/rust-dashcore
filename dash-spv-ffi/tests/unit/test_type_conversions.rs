@@ -171,7 +171,6 @@ mod tests {
             masternode_engine: None,
             last_masternode_diff_height: None,
             sync_base_height: 0,
-            synced_from_checkpoint: false,
         };
 
         let ffi_state = FFIChainState::from(state);

@@ -103,7 +103,7 @@ impl ReorgManager {
 
         // Check reorg depth - account for checkpoint sync
         let reorg_depth = if let Some(state) = chain_state {
-            if state.synced_from_checkpoint && state.sync_base_height > 0 {
+            if state.synced_from_checkpoint() {
                 // During checkpoint sync, both current_tip.height and fork.fork_height
                 // should be interpreted relative to sync_base_height
 

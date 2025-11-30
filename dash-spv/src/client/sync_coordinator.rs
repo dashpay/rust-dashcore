@@ -915,12 +915,7 @@ impl<
         let target_height = saved_state.chain_tip.height;
 
         // Determine first height to load. Skip genesis (already present) unless we started from a checkpoint base.
-        let mut current_height =
-            if saved_state.synced_from_checkpoint && saved_state.sync_base_height > 0 {
-                saved_state.sync_base_height
-            } else {
-                1u32
-            };
+        let mut current_height = saved_state.sync_base_height.max(1);
 
         while current_height <= target_height {
             let end_height = (current_height + BATCH_SIZE - 1).min(target_height);

@@ -99,7 +99,6 @@ mod tests {
         let storage = MemoryStorage::new();
 
         // Simulate checkpoint sync from height 50000
-        chain_state.synced_from_checkpoint = true;
         chain_state.sync_base_height = 50000;
 
         // Current tip at height 50100

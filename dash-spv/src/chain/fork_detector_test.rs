@@ -32,7 +32,6 @@ mod tests {
         let mut chain_state = ChainState::new();
 
         // Simulate checkpoint sync from height 1000
-        chain_state.synced_from_checkpoint = true;
         chain_state.sync_base_height = 1000;
 
         // Add a checkpoint header at height 1000
