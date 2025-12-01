@@ -640,32 +640,26 @@ impl<
         }
 
         // Handle filter message tracking
-        let completed_ranges =
-            self.filter_sync.mark_filter_received(cfilter.block_hash, storage).await?;
+        self.filter_sync.mark_filter_received(cfilter.block_hash, storage).await?;
 
-        // Process any newly completed ranges
-        if !completed_ranges.is_empty() {
-            tracing::debug!("Completed {} filter request ranges", completed_ranges.len());
-
-            // Send more filter requests from the queue if we have available slots
-            if self.filter_sync.has_pending_filter_requests() {
-                let available_slots = self.filter_sync.get_available_request_slots();
-                if available_slots > 0 {
-                    tracing::debug!(
-                        "Sending more filter requests: {} slots available, {} pending",
-                        available_slots,
-                        self.filter_sync.pending_download_count()
-                    );
-                    self.filter_sync.send_next_filter_batch(network).await?;
-                } else {
-                    tracing::trace!(
-                        "No available slots for more filter requests (all {} slots in use)",
-                        self.filter_sync.active_request_count()
-                    );
-                }
+        // Send more filter requests from the queue if we have available slots
+        if self.filter_sync.has_pending_filter_requests() {
+            let available_slots = self.filter_sync.get_available_request_slots();
+            if available_slots > 0 {
+                tracing::debug!(
+                    "Sending more filter requests: {} slots available, {} pending",
+                    available_slots,
+                    self.filter_sync.pending_download_count()
+                );
+                self.filter_sync.send_next_filter_batch(network).await?;
             } else {
-                tracing::trace!("No more pending filter requests in queue");
+                tracing::trace!(
+                    "No available slots for more filter requests (all {} slots in use)",
+                    self.filter_sync.active_request_count()
+                );
             }
+        } else {
+            tracing::trace!("No more pending filter requests in queue");
         }
 
         // Update phase state
