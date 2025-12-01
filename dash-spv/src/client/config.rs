@@ -90,7 +90,7 @@ pub struct ClientConfig {
     /// Interval for checking CFHeader gaps (seconds)
     pub cfheader_gap_check_interval_secs: u64,
 
-    /// Cooldown between CFHeader restart attempts (seconds)  
+    /// Cooldown between CFHeader restart attempts (seconds)
     pub cfheader_gap_restart_cooldown_secs: u64,
 
     /// Maximum CFHeader gap restart attempts

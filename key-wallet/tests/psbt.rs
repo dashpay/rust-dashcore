@@ -71,7 +71,7 @@ fn bip174_psbt_workflow() {
     // Strings from BIP 174 test vector.
     let test_vector = vec![
         ("cQREycwKkUqJrgkYqcSLpv5Ab1ytgVkRk5e7dENJ5pQjUd83qwFd", "m/0h/0h/0h"), // from_priv, into_derivation_path?
-        ("cUQLHVPngMorTZfKhb74quVxtiUuHtt5CnbEgnZTUFk8Vhid9HCh", "m/0h/0h/2h"),
+        ("cUQLHVPngMoreTZfKhb74quVxtiUuHtt5CnbEgnZTUFk8Vhid9HCh", "m/0h/0h/2h"),
     ];
 
     // We pass the keys to the signer after doing verification to make explicit
@@ -276,15 +276,15 @@ fn update_psbt(mut psbt: Psbt, fingerprint: Fingerprint) -> Psbt {
     psbt
 }
 
-/// `pk_path` holds tuples of `(public_key, derivation_path)`. `indecies` is used to access the
+/// `pk_path` holds tuples of `(public_key, derivation_path)`. `indices` is used to access the
 /// `pk_path` vector. `fingerprint` is from the parent extended public key.
 fn bip32_derivation(
     fingerprint: Fingerprint,
     pk_path: &[(&str, &str)],
-    indecies: Vec<usize>,
+    indices: Vec<usize>,
 ) -> BTreeMap<secp256k1::PublicKey, KeySource> {
     let mut tree = BTreeMap::new();
-    for i in indecies {
+    for i in indices {
         let pk = pk_path[i].0;
         let path = pk_path[i].1;
 

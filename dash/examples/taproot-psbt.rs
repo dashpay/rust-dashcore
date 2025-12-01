@@ -398,10 +398,10 @@ impl BenefactorWallet {
         if let ChildNumber::Normal {
             index,
         } = self.next
+            && index > 0
+            && self.current_spend_info.is_some()
         {
-            if index > 0 && self.current_spend_info.is_some() {
-                return Err("Transaction already exists, use refresh_inheritance_timelock to refresh the timelock".into());
-            }
+            return Err("Transaction already exists, use refresh_inheritance_timelock to refresh the timelock".into());
         }
         // We use some other derivation path in this example for our inheritance protocol. The important thing is to ensure
         // that we use an unhardened path so we can make use of xpubs.
@@ -473,7 +473,6 @@ impl BenefactorWallet {
 
         let input = Input {
             witness_utxo: {
-                let script_pubkey = script_pubkey;
                 let amount = Amount::from_sat(value);
 
                 Some(TxOut {

@@ -712,7 +712,7 @@ macro_rules! impl_vec {
                 r: &mut R,
             ) -> Result<Self, Error> {
                 let len = VarInt::consensus_decode_from_finite_reader(r)?.0;
-                // Do not allocate upfront more items than if the sequnce of type
+                // Do not allocate upfront more items than if the sequence of type
                 // occupied roughly quarter a block. This should never be the case
                 // for normal data, but even if that's not true - `push` will just
                 // reallocate.

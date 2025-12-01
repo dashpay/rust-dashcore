@@ -25,9 +25,9 @@ run_cargo_build() {
     local target=$1
     local package=$2
     local description=$3
-    
+
     echo -e "${GREEN}Building $description...${NC}"
-    
+
     # Capture output and error
     local output
     if output=$(cargo build --release --target "$target" -p "$package" 2>&1); then

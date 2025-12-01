@@ -75,7 +75,7 @@ mod primitive {
             &self.0
         }
 
-        /// Returns the underlying mutbale bytes.
+        /// Returns the underlying mutable bytes.
         pub fn as_mut_bytes(&mut self) -> &mut [u8] {
             &mut self.0
         }

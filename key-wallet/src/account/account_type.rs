@@ -42,7 +42,7 @@ pub enum AccountType {
     },
     /// Identity registration funding
     IdentityRegistration,
-    /// Identity top-up funding  
+    /// Identity top-up funding
     IdentityTopUp {
         /// Registration index (which identity this is topping up)
         registration_index: u32,

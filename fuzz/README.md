@@ -90,4 +90,3 @@ hex output into the call to `extend_vec_from_hex`. Then run the test with
 It is important to add the `cfg=fuzzing` flag, which tells rustc to compile the
 library as though it were running a fuzztest. In particular, this will disable
 or weaken all the cryptography.
-

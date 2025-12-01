@@ -8,43 +8,43 @@ public final class PersistentWalletManager: WalletManager {
     private let storage: StorageManager
     private var syncTask: Task<Void, Never>?
     private let logger = Logger(subsystem: "com.dash.sdk", category: "PersistentWalletManager")
-    
+
     public init(client: SPVClient, storage: StorageManager) {
         self.storage = storage
-        
+
         super.init(client: client)
-        
+
         Task {
             await loadPersistedData()
         }
     }
-    
+
     deinit {
         syncTask?.cancel()
     }
-    
+
     // MARK: - Overrides
-    
+
     public override func watchAddress(_ address: String, label: String? = nil) async throws {
         try await super.watchAddress(address, label: label)
-        
+
         // Persist to storage
         let watchedAddress = WatchedAddress(address: address, label: label)
         try storage.saveWatchedAddress(watchedAddress)
-        
+
         // Start syncing data for this address
         await syncAddressData(address)
     }
-    
+
     public override func unwatchAddress(_ address: String) async throws {
         try await super.unwatchAddress(address)
-        
+
         // Remove from storage
         if let watchedAddress = try storage.fetchWatchedAddress(by: address) {
             try storage.deleteWatchedAddress(watchedAddress)
         }
     }
-    
+
     public override func getBalance(for address: String) async throws -> Balance {
         // Try to get from storage first
         if let cachedBalance = try storage.fetchBalance(for: address) {
@@ -53,48 +53,48 @@ public final class PersistentWalletManager: WalletManager {
                 return cachedBalance
             }
         }
-        
+
         // Fetch fresh balance
         let balance = try await super.getBalance(for: address)
-        
+
         // Save to storage
         try storage.saveBalance(balance, for: address)
-        
+
         return balance
     }
-    
+
     public override func getUTXOs(for address: String? = nil) async throws -> [UTXO] {
         // Get from storage
         let cachedUTXOs = try storage.fetchUTXOs(for: address)
-        
+
         // If we have recent data, return it
         if !cachedUTXOs.isEmpty {
             return cachedUTXOs
         }
-        
+
         // Otherwise fetch fresh data
         let utxos = try await super.getUTXOs(for: address)
-        
+
         // Save to storage
         try await storage.saveUTXOs(utxos)
-        
+
         return utxos
     }
-    
+
     public override func getTransactions(for address: String? = nil, limit: Int = 100) async throws -> [Transaction] {
         // First get from parent's in-memory storage (which has real-time data)
         let currentTransactions = try await super.getTransactions(for: address, limit: limit)
-        
+
         // Save any new transactions to storage
         for transaction in currentTransactions {
             if try storage.fetchTransaction(by: transaction.txid) == nil {
                 try storage.saveTransaction(transaction)
             }
         }
-        
+
         // Also get from storage to include any historical transactions
         let cachedTransactions = try storage.fetchTransactions(for: address, limit: limit)
-        
+
         // Merge and deduplicate
         var allTransactions = currentTransactions
         for cached in cachedTransactions {
@@ -102,29 +102,29 @@ public final class PersistentWalletManager: WalletManager {
                 allTransactions.append(cached)
             }
         }
-        
+
         // Sort and limit
         allTransactions.sort { $0.timestamp > $1.timestamp }
         if allTransactions.count > limit {
             allTransactions = Array(allTransactions.prefix(limit))
         }
-        
+
         return allTransactions
     }
-    
+
     // MARK: - Persistence Methods
-    
+
     private func loadPersistedData() async {
         do {
             // Load watched addresses
             let addresses = try storage.fetchWatchedAddresses()
-            
+
             watchedAddresses = Set(addresses.map { $0.address })
-            
+
             // Re-watch addresses in SPV client if connected
             if client.isConnected {
                 var watchErrors: [Error] = []
-                
+
                 for address in addresses {
                     do {
                         try await client.addWatchItem(type: .address, data: address.address)
@@ -134,18 +134,18 @@ public final class PersistentWalletManager: WalletManager {
                         watchErrors.append(error)
                     }
                 }
-                
+
                 // If any addresses failed to watch, throw aggregate error
                 if !watchErrors.isEmpty {
                     throw WalletManagerError.partialWatchFailure(addresses: addresses.count, failures: watchErrors.count)
                 }
             }
-            
+
             // Load total balance
             var totalConfirmed: UInt64 = 0
             var totalPending: UInt64 = 0
             var totalInstantLocked: UInt64 = 0
-            
+
             for address in addresses {
                 if let balance = address.balance {
                     totalConfirmed += balance.confirmed
@@ -153,7 +153,7 @@ public final class PersistentWalletManager: WalletManager {
                     totalInstantLocked += balance.instantLocked
                 }
             }
-            
+
             totalBalance = Balance(
                 confirmed: totalConfirmed,
                 pending: totalPending,
@@ -164,21 +164,21 @@ public final class PersistentWalletManager: WalletManager {
             print("Failed to load persisted data: \(error)")
         }
     }
-    
+
     private func syncAddressData(_ address: String) async {
         do {
             // Sync balance
             let balance = try await getBalance(for: address)
             try storage.saveBalance(balance, for: address)
-            
+
             // Sync UTXOs
             let utxos = try await getUTXOs(for: address)
             try await storage.saveUTXOs(utxos)
-            
+
             // Sync transactions
             let transactions = try await getTransactions(for: address)
             try await storage.saveTransactions(transactions)
-            
+
             // Update activity timestamp
             if let watchedAddress = try storage.fetchWatchedAddress(by: address) {
                 watchedAddress.updateActivity()
@@ -188,11 +188,11 @@ public final class PersistentWalletManager: WalletManager {
             print("Failed to sync address data: \(error)")
         }
     }
-    
+
     private func syncTransactions(for address: String?) async {
         do {
             let transactions = try await super.getTransactions(for: address)
-            
+
             // Update or insert transactions
             for transaction in transactions {
                 if let existing = try storage.fetchTransaction(by: transaction.txid) {
@@ -207,7 +207,7 @@ public final class PersistentWalletManager: WalletManager {
                     try storage.saveTransaction(transaction)
                 }
             }
-            
+
             // Also save address-transaction associations if we have them
             if let address = address {
                 // Store which transactions belong to which addresses
@@ -217,49 +217,49 @@ public final class PersistentWalletManager: WalletManager {
             print("Failed to sync transactions: \(error)")
         }
     }
-    
+
     // MARK: - Public Persistence Methods
-    
+
     public func startPeriodicSync(interval: TimeInterval = 30) {
         syncTask?.cancel()
-        
+
         syncTask = Task {
             while !Task.isCancelled {
                 await syncAllData()
-                
+
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         }
     }
-    
+
     public func stopPeriodicSync() {
         syncTask?.cancel()
         syncTask = nil
     }
-    
+
     public func syncAllData() async {
         for address in watchedAddresses {
             await syncAddressData(address)
         }
-        
+
         await updateTotalBalance()
     }
-    
+
     public func getStorageStatistics() throws -> StorageStatistics {
         return try storage.getStorageStatistics()
     }
-    
+
     public func clearAllData() throws {
         try storage.deleteAllData()
         watchedAddresses.removeAll()
         totalBalance = Balance()
     }
-    
+
     public func exportWalletData() throws -> WalletExportData {
         let addresses = try storage.fetchWatchedAddresses()
         let transactions = try storage.fetchTransactions()
         let utxos = try storage.fetchUTXOs()
-        
+
         // Convert SwiftData models to Codable types
         let exportedAddresses = addresses.map { address in
             WalletExportData.ExportedAddress(
@@ -277,7 +277,7 @@ public final class PersistentWalletManager: WalletManager {
                 }
             )
         }
-        
+
         let exportedTransactions = transactions.map { tx in
             WalletExportData.ExportedTransaction(
                 txid: tx.txid,
@@ -291,7 +291,7 @@ public final class PersistentWalletManager: WalletManager {
                 version: tx.version
             )
         }
-        
+
         let exportedUTXOs = utxos.map { utxo in
             WalletExportData.ExportedUTXO(
                 txid: utxo.txid,
@@ -303,7 +303,7 @@ public final class PersistentWalletManager: WalletManager {
                 isInstantLocked: utxo.isInstantLocked
             )
         }
-        
+
         return WalletExportData(
             addresses: exportedAddresses,
             transactions: exportedTransactions,
@@ -311,11 +311,11 @@ public final class PersistentWalletManager: WalletManager {
             exportDate: .now
         )
     }
-    
+
     public func importWalletData(_ data: WalletExportData) async throws {
         // Clear existing data
         try clearAllData()
-        
+
         // Import addresses
         for exportedAddress in data.addresses {
             let address = WatchedAddress(
@@ -324,7 +324,7 @@ public final class PersistentWalletManager: WalletManager {
                 createdAt: exportedAddress.createdAt,
                 isActive: exportedAddress.isActive
             )
-            
+
             // Create balance if present
             if let exportedBalance = exportedAddress.balance {
                 let balance = Balance(
@@ -334,11 +334,11 @@ public final class PersistentWalletManager: WalletManager {
                 )
                 address.balance = balance
             }
-            
+
             try storage.saveWatchedAddress(address)
             watchedAddresses.insert(address.address)
         }
-        
+
         // Import transactions
         let transactions = data.transactions.map { exportedTx in
             Transaction(
@@ -354,7 +354,7 @@ public final class PersistentWalletManager: WalletManager {
             )
         }
         try await storage.saveTransactions(transactions)
-        
+
         // Import UTXOs
         let utxos = data.utxos.map { exportedUTXO in
             let outpoint = "\(exportedUTXO.txid):\(exportedUTXO.vout)"
@@ -371,7 +371,7 @@ public final class PersistentWalletManager: WalletManager {
             )
         }
         try await storage.saveUTXOs(utxos)
-        
+
         // Update balances
         await updateTotalBalance()
     }
@@ -387,14 +387,14 @@ public struct WalletExportData: Codable {
         public let isActive: Bool
         public let balance: ExportedBalance?
     }
-    
+
     public struct ExportedBalance: Codable {
         public let confirmed: UInt64
         public let pending: UInt64
         public let instantLocked: UInt64
         public let total: UInt64
     }
-    
+
     public struct ExportedTransaction: Codable {
         public let txid: String
         public let height: UInt32?
@@ -406,7 +406,7 @@ public struct WalletExportData: Codable {
         public let size: UInt32
         public let version: UInt32
     }
-    
+
     public struct ExportedUTXO: Codable {
         public let txid: String
         public let vout: UInt32
@@ -416,20 +416,20 @@ public struct WalletExportData: Codable {
         public let confirmations: UInt32
         public let isInstantLocked: Bool
     }
-    
+
     public let addresses: [ExportedAddress]
     public let transactions: [ExportedTransaction]
     public let utxos: [ExportedUTXO]
     public let exportDate: Date
-    
+
     public var formattedSize: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
-        
+
         if let data = try? encoder.encode(self) {
             return ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .binary)
         }
-        
+
         return "Unknown"
     }
 }
@@ -438,7 +438,7 @@ public struct WalletExportData: Codable {
 
 public enum WalletManagerError: LocalizedError {
     case partialWatchFailure(addresses: Int, failures: Int)
-    
+
     public var errorDescription: String? {
         switch self {
         case .partialWatchFailure(let addresses, let failures):

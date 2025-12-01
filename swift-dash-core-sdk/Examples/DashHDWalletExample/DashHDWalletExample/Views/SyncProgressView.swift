@@ -4,9 +4,9 @@ import SwiftDashCoreSDK
 struct SyncProgressView: View {
     @EnvironmentObject private var walletService: WalletService
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var hasStarted = false
-    
+
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
@@ -18,23 +18,23 @@ struct SyncProgressView: View {
                             .font(.system(size: 60))
                             .foregroundColor(statusColor(for: progress.status))
                             .symbolEffect(.pulse, isActive: progress.status.isActive)
-                        
+
                         // Status Text
                         Text(progress.status.description)
                             .font(.title2)
                             .fontWeight(.medium)
-                        
+
                         // Progress Bar
                         VStack(alignment: .leading, spacing: 8) {
                             ProgressView(value: progress.progress)
                                 .progressViewStyle(.linear)
-                            
+
                             HStack {
                                 Text("\(progress.percentageComplete)%")
                                     .monospacedDigit()
-                                
+
                                 Spacer()
-                                
+
                                 if let eta = progress.formattedTimeRemaining {
                                     Text("ETA: \(eta)")
                                 }
@@ -43,14 +43,14 @@ struct SyncProgressView: View {
                             .foregroundColor(.secondary)
                         }
                         .frame(maxWidth: 400)
-                        
+
                         // Block Progress
                         BlockProgressView(
                             current: progress.currentHeight,
                             total: progress.totalHeight,
                             remaining: progress.blocksRemaining
                         )
-                        
+
                         // Message
                         if let message = progress.message {
                             Text(message)
@@ -65,17 +65,17 @@ struct SyncProgressView: View {
                         Image(systemName: "arrow.triangle.2.circlepath.circle")
                             .font(.system(size: 80))
                             .foregroundColor(.blue)
-                        
+
                         Text("Ready to Sync")
                             .font(.title2)
                             .fontWeight(.medium)
-                        
+
                         Text("This will synchronize your wallet with the Dash blockchain")
                             .font(.body)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 300)
-                        
+
                         Button("Start Sync") {
                             Task {
                                 do {
@@ -86,7 +86,7 @@ struct SyncProgressView: View {
                                     } else {
                                         print("⚠️ No stats available")
                                     }
-                                    
+
                                     startSync()
                                 } catch {
                                     print("Failed to test SDK: \(error)")
@@ -101,7 +101,7 @@ struct SyncProgressView: View {
                     ProgressView("Starting sync...")
                         .progressViewStyle(.circular)
                 }
-                
+
                 // Network Stats
                 if let stats = walletService.sdk?.stats {
                     NetworkStatsView(stats: stats)
@@ -126,14 +126,14 @@ struct SyncProgressView: View {
         .frame(width: 600, height: 500)
         #endif
     }
-    
+
     private func startSync() {
         hasStarted = true
         Task {
             try? await walletService.startSync()
         }
     }
-    
+
     private func statusIcon(for status: SyncStatus) -> String {
         switch status {
         case .idle:
@@ -152,7 +152,7 @@ struct SyncProgressView: View {
             return "exclamationmark.triangle.fill"
         }
     }
-    
+
     private func statusColor(for status: SyncStatus) -> Color {
         switch status {
         case .idle:
@@ -173,7 +173,7 @@ struct BlockProgressView: View {
     let current: UInt32
     let total: UInt32
     let remaining: UInt32
-    
+
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 20) {
@@ -182,13 +182,13 @@ struct BlockProgressView: View {
                     value: "\(current)",
                     icon: "cube"
                 )
-                
+
                 BlockStatView(
                     label: "Total Blocks",
                     value: "\(total)",
                     icon: "cube.fill"
                 )
-                
+
                 BlockStatView(
                     label: "Remaining",
                     value: "\(remaining)",
@@ -206,17 +206,17 @@ struct BlockStatView: View {
     let label: String
     let value: String
     let icon: String
-    
+
     var body: some View {
         VStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.title2)
                 .foregroundColor(.blue)
-            
+
             Text(value)
                 .font(.headline)
                 .monospacedDigit()
-            
+
             Text(label)
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -228,29 +228,29 @@ struct BlockStatView: View {
 
 struct NetworkStatsView: View {
     let stats: SPVStats
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Network Statistics")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
+
             HStack(spacing: 20) {
                 StatItemView(
                     label: "Peers",
                     value: "\(stats.connectedPeers)/\(stats.totalPeers)"
                 )
-                
+
                 StatItemView(
                     label: "Downloaded",
                     value: stats.formattedBytesReceived
                 )
-                
+
                 StatItemView(
                     label: "Uploaded",
                     value: stats.formattedBytesSent
                 )
-                
+
                 StatItemView(
                     label: "Uptime",
                     value: stats.formattedUptime
@@ -266,13 +266,13 @@ struct NetworkStatsView: View {
 struct StatItemView: View {
     let label: String
     let value: String
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Text(value)
                 .font(.caption)
                 .fontWeight(.medium)

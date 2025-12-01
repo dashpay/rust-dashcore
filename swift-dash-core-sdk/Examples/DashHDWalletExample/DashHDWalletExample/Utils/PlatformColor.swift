@@ -14,7 +14,7 @@ struct PlatformColor {
         return Color(NSColor.controlBackgroundColor)
         #endif
     }
-    
+
     static var textBackground: Color {
         #if os(iOS)
         return Color(UIColor.secondarySystemGroupedBackground)
@@ -22,7 +22,7 @@ struct PlatformColor {
         return Color(NSColor.textBackgroundColor)
         #endif
     }
-    
+
     static var secondarySystemBackground: Color {
         #if os(iOS)
         return Color(UIColor.secondarySystemBackground)
@@ -30,7 +30,7 @@ struct PlatformColor {
         return Color(NSColor.controlBackgroundColor)
         #endif
     }
-    
+
     static var secondaryLabel: Color {
         #if os(iOS)
         return Color(UIColor.secondaryLabel)
@@ -38,7 +38,7 @@ struct PlatformColor {
         return Color(NSColor.secondaryLabelColor)
         #endif
     }
-    
+
     static var tertiaryLabel: Color {
         #if os(iOS)
         return Color(UIColor.tertiaryLabel)
@@ -46,7 +46,7 @@ struct PlatformColor {
         return Color(NSColor.tertiaryLabelColor)
         #endif
     }
-    
+
     static var systemRed: Color {
         #if os(iOS)
         return Color(UIColor.systemRed)
@@ -54,7 +54,7 @@ struct PlatformColor {
         return Color(NSColor.systemRed)
         #endif
     }
-    
+
     static var systemGreen: Color {
         #if os(iOS)
         return Color(UIColor.systemGreen)
@@ -62,7 +62,7 @@ struct PlatformColor {
         return Color(NSColor.systemGreen)
         #endif
     }
-    
+
     static var systemBlue: Color {
         #if os(iOS)
         return Color(UIColor.systemBlue)
@@ -70,7 +70,7 @@ struct PlatformColor {
         return Color(NSColor.systemBlue)
         #endif
     }
-    
+
     static var systemOrange: Color {
         #if os(iOS)
         return Color(UIColor.systemOrange)
@@ -78,7 +78,7 @@ struct PlatformColor {
         return Color(NSColor.systemOrange)
         #endif
     }
-    
+
     static var tertiarySystemBackground: Color {
         #if os(iOS)
         return Color(UIColor.tertiarySystemBackground)

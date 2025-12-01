@@ -152,7 +152,7 @@ impl HeaderSyncManager {
                 tip_after
             );
         } else {
-            tracing::warn!("⚠️ Headers validated but tip height unchanged! Validated {} headers but tip remains at {:?}", 
+            tracing::warn!("⚠️ Headers validated but tip height unchanged! Validated {} headers but tip remains at {:?}",
                 validated_headers.len(), tip_before);
         }
 

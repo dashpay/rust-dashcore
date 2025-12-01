@@ -15,7 +15,7 @@ public struct SPVStats: Sendable {
     public let startTime: Date
     public let bytesReceived: UInt64
     public let bytesSent: UInt64
-    
+
     public init(
         connectedPeers: UInt32 = 0,
         totalPeers: UInt32 = 0,
@@ -41,7 +41,7 @@ public struct SPVStats: Sendable {
         self.bytesReceived = bytesReceived
         self.bytesSent = bytesSent
     }
-    
+
     internal init(ffiStats: FFISpvStats) {
         self.connectedPeers = ffiStats.connected_peers
         self.totalPeers = ffiStats.total_peers
@@ -55,38 +55,38 @@ public struct SPVStats: Sendable {
         self.bytesReceived = ffiStats.bytes_received
         self.bytesSent = ffiStats.bytes_sent
     }
-    
+
     public var uptime: TimeInterval {
         return Date.now.timeIntervalSince(startTime)
     }
-    
+
     public var formattedUptime: String {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.day, .hour, .minute, .second]
         formatter.unitsStyle = .abbreviated
         return formatter.string(from: uptime) ?? "0s"
     }
-    
+
     public var totalBytesTransferred: UInt64 {
         return bytesReceived + bytesSent
     }
-    
+
     public var formattedBytesReceived: String {
         return ByteCountFormatter.string(fromByteCount: Int64(bytesReceived), countStyle: .binary)
     }
-    
+
     public var formattedBytesSent: String {
         return ByteCountFormatter.string(fromByteCount: Int64(bytesSent), countStyle: .binary)
     }
-    
+
     public var formattedTotalBytes: String {
         return ByteCountFormatter.string(fromByteCount: Int64(totalBytesTransferred), countStyle: .binary)
     }
-    
+
     public var isConnected: Bool {
         return connectedPeers > 0
     }
-    
+
     public var connectionStatus: String {
         if connectedPeers == 0 {
             return "Disconnected"

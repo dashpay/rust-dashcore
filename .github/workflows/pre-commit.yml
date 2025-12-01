@@ -1,0 +1,41 @@
+name: Pre-commit Checks
+
+on:
+  push:
+    branches:
+      - master
+      - 'v**-dev'
+  pull_request:
+
+jobs:
+  pre-commit:
+    name: Pre-commit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # TODO: Windows excluded - rs-x11-hash requires POSIX headers (unistd.h)
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-cache-${{ matrix.os }}"
+
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files --hook-stage push --verbose

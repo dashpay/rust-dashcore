@@ -3,7 +3,7 @@
 //! This library provides a complete implementation of a Dash SPV client that can:
 //!
 //! - Synchronize block headers from the Dash network
-//! - Download and verify BIP157 compact block filters  
+//! - Download and verify BIP157 compact block filters
 //! - Maintain an up-to-date masternode list
 //! - Validate ChainLocks and InstantLocks
 //! - Monitor addresses and scripts for transactions

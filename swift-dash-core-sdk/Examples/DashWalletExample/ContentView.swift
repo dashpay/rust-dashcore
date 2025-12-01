@@ -5,29 +5,29 @@ struct ContentView: View {
     @StateObject private var viewModel = WalletViewModel()
     @State private var showAddAddress = false
     @State private var showSendTransaction = false
-    
+
     var body: some View {
         NavigationView {
             List {
                 // Connection Status
                 ConnectionSection(viewModel: viewModel)
-                
+
                 // Balance Section
                 if viewModel.isConnected {
                     BalanceSection(balance: viewModel.totalBalance)
-                    
+
                     // Sync Progress
                     if let progress = viewModel.syncProgress {
                         SyncProgressSection(progress: progress)
                     }
-                    
+
                     // Watched Addresses
                     WatchedAddressesSection(
                         addresses: Array(viewModel.watchedAddresses),
                         onAdd: { showAddAddress = true },
                         onRemove: viewModel.unwatchAddress
                     )
-                    
+
                     // Recent Transactions
                     TransactionsSection(transactions: viewModel.recentTransactions)
                 }
@@ -39,19 +39,19 @@ struct ContentView: View {
                         Button("Add Address") {
                             showAddAddress = true
                         }
-                        
+
                         Button("Send Transaction") {
                             showSendTransaction = true
                         }
-                        
+
                         Button("Refresh") {
                             Task {
                                 await viewModel.refreshData()
                             }
                         }
-                        
+
                         Divider()
-                        
+
                         Button("Export Wallet Data") {
                             Task {
                                 await viewModel.exportWallet()
@@ -82,7 +82,7 @@ struct ContentView: View {
 
 struct ConnectionSection: View {
     @ObservedObject var viewModel: WalletViewModel
-    
+
     var body: some View {
         Section("Connection") {
             HStack {
@@ -96,7 +96,7 @@ struct ConnectionSection: View {
                         .foregroundColor(.red)
                 }
             }
-            
+
             if viewModel.isConnected {
                 if let stats = viewModel.stats {
                     HStack {
@@ -104,7 +104,7 @@ struct ConnectionSection: View {
                         Spacer()
                         Text("\(stats.connectedPeers)")
                     }
-                    
+
                     HStack {
                         Text("Block Height")
                         Spacer()
@@ -126,7 +126,7 @@ struct ConnectionSection: View {
 
 struct BalanceSection: View {
     let balance: Balance
-    
+
     var body: some View {
         Section("Balance") {
             VStack(alignment: .leading, spacing: 8) {
@@ -138,7 +138,7 @@ struct BalanceSection: View {
                         .font(.headline)
                         .monospacedDigit()
                 }
-                
+
                 HStack {
                     Text("Available")
                         .foregroundColor(.secondary)
@@ -147,7 +147,7 @@ struct BalanceSection: View {
                         .foregroundColor(.secondary)
                         .monospacedDigit()
                 }
-                
+
                 if balance.pending > 0 {
                     HStack {
                         Text("Pending")
@@ -158,7 +158,7 @@ struct BalanceSection: View {
                             .monospacedDigit()
                     }
                 }
-                
+
                 if balance.instantLocked > 0 {
                     HStack {
                         Text("InstantSend")
@@ -173,7 +173,7 @@ struct BalanceSection: View {
             .padding(.vertical, 4)
         }
     }
-    
+
     private func formatDash(_ satoshis: UInt64) -> String {
         let dash = Double(satoshis) / 100_000_000.0
         return String(format: "%.8f DASH", dash)
@@ -184,7 +184,7 @@ struct BalanceSection: View {
 
 struct SyncProgressSection: View {
     let progress: SyncProgress
-    
+
     var body: some View {
         Section("Sync Progress") {
             VStack(alignment: .leading, spacing: 8) {
@@ -193,16 +193,16 @@ struct SyncProgressSection: View {
                     Spacer()
                     Text("\(progress.percentageComplete)%")
                 }
-                
+
                 ProgressView(value: progress.progress)
-                
+
                 HStack {
                     Text("Block \(progress.currentHeight) of \(progress.totalHeight)")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
+
                     Spacer()
-                    
+
                     if let eta = progress.formattedTimeRemaining {
                         Text("ETA: \(eta)")
                             .font(.caption)
@@ -221,7 +221,7 @@ struct WatchedAddressesSection: View {
     let addresses: [String]
     let onAdd: () -> Void
     let onRemove: (String) async -> Void
-    
+
     var body: some View {
         Section("Watched Addresses") {
             if addresses.isEmpty {
@@ -247,13 +247,13 @@ struct WatchedAddressesSection: View {
                     }
                 }
             }
-            
+
             Button(action: onAdd) {
                 Label("Add Address", systemImage: "plus.circle")
             }
         }
     }
-    
+
     private func shortenAddress(_ address: String) -> String {
         guard address.count > 12 else { return address }
         let prefix = address.prefix(8)
@@ -266,7 +266,7 @@ struct WatchedAddressesSection: View {
 
 struct TransactionsSection: View {
     let transactions: [Transaction]
-    
+
     var body: some View {
         Section("Recent Transactions") {
             if transactions.isEmpty {
@@ -283,38 +283,38 @@ struct TransactionsSection: View {
 
 struct TransactionRow: View {
     let transaction: Transaction
-    
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text(shortenTxid(transaction.txid))
                     .font(.system(.caption, design: .monospaced))
-                
+
                 Text(transaction.timestamp, style: .relative)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
+
             VStack(alignment: .trailing, spacing: 4) {
                 Text(formatAmount(transaction.amount))
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(transaction.amount >= 0 ? .green : .red)
-                
+
                 StatusBadge(status: transaction.status)
             }
         }
         .padding(.vertical, 2)
     }
-    
+
     private func shortenTxid(_ txid: String) -> String {
         guard txid.count > 12 else { return txid }
         let prefix = txid.prefix(6)
         let suffix = txid.suffix(4)
         return "\(prefix)...\(suffix)"
     }
-    
+
     private func formatAmount(_ satoshis: Int64) -> String {
         let dash = Double(abs(satoshis)) / 100_000_000.0
         let sign = satoshis >= 0 ? "+" : "-"
@@ -324,7 +324,7 @@ struct TransactionRow: View {
 
 struct StatusBadge: View {
     let status: TransactionStatus
-    
+
     var body: some View {
         Text(status.description)
             .font(.caption2)
@@ -334,7 +334,7 @@ struct StatusBadge: View {
             .foregroundColor(.white)
             .cornerRadius(4)
     }
-    
+
     private var backgroundColor: Color {
         switch status {
         case .pending:
@@ -354,10 +354,10 @@ struct StatusBadge: View {
 struct AddAddressView: View {
     @ObservedObject var viewModel: WalletViewModel
     @Environment(\.dismiss) var dismiss
-    
+
     @State private var address = ""
     @State private var label = ""
-    
+
     var body: some View {
         NavigationView {
             Form {
@@ -365,10 +365,10 @@ struct AddAddressView: View {
                     TextField("Dash Address", text: $address)
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
-                    
+
                     TextField("Label (Optional)", text: $label)
                 }
-                
+
                 Section {
                     Button("Add Address") {
                         Task {
@@ -397,11 +397,11 @@ struct AddAddressView: View {
 struct SendTransactionView: View {
     @ObservedObject var viewModel: WalletViewModel
     @Environment(\.dismiss) var dismiss
-    
+
     @State private var recipientAddress = ""
     @State private var amount = ""
     @State private var estimatedFee: UInt64 = 0
-    
+
     var body: some View {
         NavigationView {
             Form {
@@ -409,14 +409,14 @@ struct SendTransactionView: View {
                     TextField("Recipient Address", text: $recipientAddress)
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
-                    
+
                     TextField("Amount (DASH)", text: $amount)
                         .keyboardType(.decimalPad)
                         .onChange(of: amount) { _ in
                             updateEstimatedFee()
                         }
                 }
-                
+
                 Section("Fee") {
                     HStack {
                         Text("Estimated Fee")
@@ -424,7 +424,7 @@ struct SendTransactionView: View {
                         Text(formatDash(estimatedFee))
                     }
                 }
-                
+
                 Section {
                     Button("Send Transaction") {
                         Task {
@@ -445,11 +445,11 @@ struct SendTransactionView: View {
             }
         }
     }
-    
+
     private func updateEstimatedFee() {
         guard let dashAmount = Double(amount) else { return }
         let satoshis = UInt64(dashAmount * 100_000_000)
-        
+
         Task {
             estimatedFee = await viewModel.estimateFee(
                 to: recipientAddress,
@@ -457,19 +457,19 @@ struct SendTransactionView: View {
             )
         }
     }
-    
+
     private func sendTransaction() async {
         guard let dashAmount = Double(amount) else { return }
         let satoshis = UInt64(dashAmount * 100_000_000)
-        
+
         await viewModel.sendTransaction(
             to: recipientAddress,
             amount: satoshis
         )
-        
+
         dismiss()
     }
-    
+
     private func formatDash(_ satoshis: UInt64) -> String {
         let dash = Double(satoshis) / 100_000_000.0
         return String(format: "%.8f DASH", dash)

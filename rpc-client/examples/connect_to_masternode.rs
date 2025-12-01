@@ -73,7 +73,7 @@ fn main() {
     println!("\nQuorum list: \n{:?}", quorum_list);
 
     let quorum_hashes = quorum_list.quorums_by_type.get(&QuorumType::LlmqTest).unwrap();
-    let quorum_hash = quorum_hashes.get(0);
+    let quorum_hash = quorum_hashes.first();
 
     // Get Quorum info
     let quorum_info =
@@ -83,7 +83,7 @@ fn main() {
     let quorum_listextended = rpc.get_quorum_listextended(Some(quorum_info.height)).unwrap();
     println!("\n\nQuorum list extended \n{:?}", quorum_listextended);
 
-    let mn0 = quorum_info.members.get(0).unwrap();
+    let mn0 = quorum_info.members.first().unwrap();
     let mn0_pro_tx_hash = mn0.to_owned().pro_tx_hash;
 
     // Get Quorum DKG status

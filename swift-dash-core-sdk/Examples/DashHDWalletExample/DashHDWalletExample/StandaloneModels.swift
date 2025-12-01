@@ -8,7 +8,7 @@ public enum BIP44 {
     public static let dashTestnetCoinType: UInt32 = 1
     public static let purpose: UInt32 = 44
     public static let defaultGapLimit: UInt32 = 20
-    
+
     public static func coinType(for network: DashNetwork) -> UInt32 {
         switch network {
         case .mainnet:
@@ -17,7 +17,7 @@ public enum BIP44 {
             return dashTestnetCoinType
         }
     }
-    
+
     public static func derivationPath(
         network: DashNetwork,
         account: UInt32,
