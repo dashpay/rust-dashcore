@@ -2309,7 +2309,8 @@ mod tests {
         assert!(addr.is_platform());
 
         // Test round-trip parsing
-        let parsed = Address::from_str("DTjceJiEqrNkCsSizK65fojEANTKoQMtsR").unwrap().assume_checked();
+        let parsed =
+            Address::from_str("DTjceJiEqrNkCsSizK65fojEANTKoQMtsR").unwrap().assume_checked();
         assert_eq!(parsed.payload(), addr.payload());
         assert!(parsed.is_platform());
     }
@@ -2330,7 +2331,8 @@ mod tests {
         assert!(addr.is_platform());
 
         // Test round-trip parsing
-        let parsed = Address::from_str("dc1oipbXSgBKGsovTV5CmL4RvduvRWRbsr").unwrap().assume_checked();
+        let parsed =
+            Address::from_str("dc1oipbXSgBKGsovTV5CmL4RvduvRWRbsr").unwrap().assume_checked();
         assert_eq!(parsed.payload(), addr.payload());
         assert!(parsed.is_platform());
     }
@@ -2388,16 +2390,19 @@ mod tests {
     #[test]
     fn test_platform_address_parsing() {
         // Test that Platform addresses can be parsed and distinguished from Core addresses
-        let platform_mainnet = Address::from_str("DTjceJiEqrNkCsSizK65fojEANTKoQMtsR").unwrap().assume_checked();
+        let platform_mainnet =
+            Address::from_str("DTjceJiEqrNkCsSizK65fojEANTKoQMtsR").unwrap().assume_checked();
         assert!(platform_mainnet.is_platform());
         assert_eq!(platform_mainnet.address_type(), Some(AddressType::PlatformP2pkh));
 
-        let platform_testnet = Address::from_str("dSqV2orinasFpYAMGQTLy6uYpW9Dnge563").unwrap().assume_checked();
+        let platform_testnet =
+            Address::from_str("dSqV2orinasFpYAMGQTLy6uYpW9Dnge563").unwrap().assume_checked();
         assert!(platform_testnet.is_platform());
         assert_eq!(platform_testnet.address_type(), Some(AddressType::PlatformP2pkh));
 
         // Core addresses should NOT be platform
-        let core_mainnet = Address::from_str("Xci5rLWMqdQDy5uaCDVWEcTi6sfnkmqdUz").unwrap().assume_checked();
+        let core_mainnet =
+            Address::from_str("Xci5rLWMqdQDy5uaCDVWEcTi6sfnkmqdUz").unwrap().assume_checked();
         assert!(!core_mainnet.is_platform());
         assert_eq!(core_mainnet.address_type(), Some(AddressType::P2pkh));
     }
@@ -2405,11 +2410,13 @@ mod tests {
     #[test]
     fn test_platform_p2sh_parsing() {
         // Test Platform P2SH address parsing
-        let mainnet_p2sh = Address::from_str("Pe8D1pMrEnWsmuj5zCEBhHTcsFE51Asp8k").unwrap().assume_checked();
+        let mainnet_p2sh =
+            Address::from_str("Pe8D1pMrEnWsmuj5zCEBhHTcsFE51Asp8k").unwrap().assume_checked();
         assert!(mainnet_p2sh.is_platform());
         assert_eq!(mainnet_p2sh.address_type(), Some(AddressType::PlatformP2sh));
 
-        let testnet_p2sh = Address::from_str("pBk15SYRYnnKfMENUnYdGw4cG1wcRmSdoh").unwrap().assume_checked();
+        let testnet_p2sh =
+            Address::from_str("pBk15SYRYnnKfMENUnYdGw4cG1wcRmSdoh").unwrap().assume_checked();
         assert!(testnet_p2sh.is_platform());
         assert_eq!(testnet_p2sh.address_type(), Some(AddressType::PlatformP2sh));
     }
