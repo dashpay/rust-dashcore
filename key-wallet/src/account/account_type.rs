@@ -246,11 +246,12 @@ impl AccountType {
             Self::CoinJoin {
                 index,
             } => {
-                // m/9'/coin_type'/account'
+                // m/9'/coin_type'/4'/account' (DIP9 Feature 4 = CoinJoin)
                 Ok(DerivationPath::from(vec![
                     ChildNumber::from_hardened_idx(9).map_err(crate::error::Error::Bip32)?,
                     ChildNumber::from_hardened_idx(coin_type)
                         .map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(4).map_err(crate::error::Error::Bip32)?, // Feature index for CoinJoin
                     ChildNumber::from_hardened_idx(*index).map_err(crate::error::Error::Bip32)?,
                 ]))
             }

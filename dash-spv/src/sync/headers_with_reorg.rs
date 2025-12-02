@@ -314,6 +314,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             );
         }
 
+        // OPTIMIZATION (#164): Request next batch immediately to pipeline requests
+        // This allows network I/O to overlap with processing of current batch
+        if self.syncing_headers && !cached_headers.is_empty() {
+            let last_cached = cached_headers.last().unwrap();
+            let next_hash = last_cached.block_hash();
+            tracing::debug!(
+                "🚀 Pipelining: requesting next batch starting from {} while processing current batch",
+                next_hash
+            );
+            self.request_headers(network, Some(next_hash)).await?;
+        }
+
         // Step 3: Process the Entire Validated Batch
 
         // Checkpoint Validation: Perform in-memory security check against checkpoints
@@ -389,14 +401,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // In a production implementation, we would need to handle fork detection
         // at the batch level or in a separate phase
 
-        if self.syncing_headers {
-            // During sync mode - request next batch
-            // Use the last cached header's hash to avoid redundant X11 computation
-            if let Some(last_cached) = cached_headers.last() {
-                let hash = last_cached.block_hash();
-                self.request_headers(network, Some(hash)).await?;
-            }
-        }
+        // OPTIMIZATION (#164): Next batch request moved earlier (line 317-327) for pipelining
+        // This overlaps network I/O with header processing to improve sync speed
+        // Original sequential request removed to avoid duplicate requests
 
         Ok(true)
     }

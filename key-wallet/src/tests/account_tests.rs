@@ -129,8 +129,8 @@ fn test_coinjoin_account_creation() {
             _ => panic!("Expected CoinJoin account type"),
         }
 
-        // Verify derivation path for CoinJoin: m/9'/1'/index' (testnet coin type)
-        assert_eq!(derivation_path.to_string(), format!("m/9'/1'/{}'", index));
+        // Verify derivation path for CoinJoin: m/9'/1'/4'/index' (testnet coin type, feature 4 = CoinJoin)
+        assert_eq!(derivation_path.to_string(), format!("m/9'/1'/4'/{}'", index));
     }
 }
 
@@ -501,7 +501,7 @@ fn test_account_derivation_path_uniqueness() {
             AccountType::CoinJoin {
                 index: 0,
             },
-            "m/9'/1'/0'".to_string(),
+            "m/9'/1'/4'/0'".to_string(), // DIP9 Feature 4 = CoinJoin
         ),
         (AccountType::IdentityRegistration, "m/9'/1'/5'/1'".to_string()),
         (
