@@ -81,8 +81,9 @@ fn dash_genesis_tx() -> Transaction {
 
     // Inputs
     // Using raw script bytes to avoid push_slice issues
+    // Message: "Wired 09/Jan/2014 The Grand Experiment Goes Live: Overstock.com Is Now Accepting Bitcoins"
     let in_script = script::ScriptBuf::from(hex!(
-        "04ffff001d01044c5957697265642030392f4a616e2f32303134205468652047726e64204578706572696d656e7420476f6573204c6976653a204f76657273746f636b2e636f6d204973204e6f7720416363657074696e6720426974636f696e73"
+        "04ffff001d01044c5957697265642030392f4a616e2f3230313420546865204772616e64204578706572696d656e7420476f6573204c6976653a204f76657273746f636b2e636f6d204973204e6f7720416363657074696e6720426974636f696e73"
     ).to_vec());
     ret.input.push(TxIn {
         previous_output: OutPoint::null(),
@@ -155,9 +156,9 @@ pub fn genesis_block(network: Network) -> Block {
                     version: block::Version::ONE,
                     prev_blockhash: Hash::all_zeros(),
                     merkle_root,
-                    time: 1598918400,
-                    bits: CompactTarget::from_consensus(0x1e0377ae),
-                    nonce: 52613770,
+                    time: 1417713337,
+                    bits: CompactTarget::from_consensus(0x207fffff),
+                    nonce: 1096447,
                 },
                 txdata,
             }
@@ -170,9 +171,9 @@ pub fn genesis_block(network: Network) -> Block {
                     version: block::Version::ONE,
                     prev_blockhash: Hash::all_zeros(),
                     merkle_root,
-                    time: 1296688602,
+                    time: 1417713337,
                     bits: CompactTarget::from_consensus(0x207fffff),
-                    nonce: 2,
+                    nonce: 1096447,
                 },
                 txdata,
             }
@@ -199,7 +200,7 @@ mod test {
         assert_eq!(
             genesis_tx.input[0].script_sig.as_bytes(),
             &hex!(
-                "04ffff001d01044c5957697265642030392f4a616e2f32303134205468652047726e64204578706572696d656e7420476f6573204c6976653a204f76657273746f636b2e636f6d204973204e6f7720416363657074696e6720426974636f696e73"
+                "04ffff001d01044c5957697265642030392f4a616e2f3230313420546865204772616e64204578706572696d656e7420476f6573204c6976653a204f76657273746f636b2e636f6d204973204e6f7720416363657074696e6720426974636f696e73"
             )
         );
 
@@ -267,12 +268,12 @@ mod test {
             genesis_block.header.merkle_root.to_string(),
             "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
         );
-        assert_eq!(genesis_block.header.time, 1598918400);
-        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1e0377ae));
-        assert_eq!(genesis_block.header.nonce, 52613770);
+        assert_eq!(genesis_block.header.time, 1417713337);
+        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x207fffff));
+        assert_eq!(genesis_block.header.nonce, 1096447);
         assert_eq!(
             genesis_block.header.block_hash().to_string(),
-            "4e5f930c5d73a8792fa681ba8c5eaf74aa63974a5b1f598dd508029aee70167b"
+            "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e"
         );
     }
 
@@ -283,14 +284,14 @@ mod test {
         assert_eq!(genesis_block.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             genesis_block.header.merkle_root.to_string(),
-            "babeaa0bf3af03c0f12d94da95c7f28168be22087a16fb207e7abda4ae654ee3"
+            "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
         );
-        assert_eq!(genesis_block.header.time, 1296688602);
+        assert_eq!(genesis_block.header.time, 1417713337);
         assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x207fffff));
-        assert_eq!(genesis_block.header.nonce, 2);
+        assert_eq!(genesis_block.header.nonce, 1096447);
         assert_eq!(
             genesis_block.header.block_hash().to_string(),
-            "53b3ed3030781ac19e4852d9c58f2804574f9866f3f7f69131eeb13f449f8007"
+            "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e"
         );
     }
 }
