@@ -99,7 +99,7 @@ impl HDWallet {
     pub fn bip44_account(&self, account: u32) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
             crate::Network::Dash => crate::dip9::DASH_BIP44_PATH_MAINNET,
-            crate::Network::Testnet | crate::Network::Regtest => {
+            Network::Testnet | Network::Devnet | Network::Regtest => {
                 crate::dip9::DASH_BIP44_PATH_TESTNET
             }
             _ => return Err(Error::InvalidNetwork),
@@ -118,7 +118,9 @@ impl HDWallet {
     pub fn coinjoin_account(&self, account: u32) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
             crate::Network::Dash => crate::dip9::COINJOIN_PATH_MAINNET,
-            crate::Network::Testnet | crate::Network::Regtest => crate::dip9::COINJOIN_PATH_TESTNET,
+            Network::Testnet | Network::Devnet | Network::Regtest => {
+                crate::dip9::COINJOIN_PATH_TESTNET
+            }
             _ => return Err(Error::InvalidNetwork),
         };
 
@@ -139,7 +141,7 @@ impl HDWallet {
     ) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
             crate::Network::Dash => crate::dip9::IDENTITY_AUTHENTICATION_PATH_MAINNET,
-            crate::Network::Testnet | crate::Network::Regtest => {
+            Network::Testnet | Network::Devnet | Network::Regtest => {
                 crate::dip9::IDENTITY_AUTHENTICATION_PATH_TESTNET
             }
             _ => return Err(Error::InvalidNetwork),

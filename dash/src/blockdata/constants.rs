@@ -156,9 +156,9 @@ pub fn genesis_block(network: Network) -> Block {
                     version: block::Version::ONE,
                     prev_blockhash: Hash::all_zeros(),
                     merkle_root,
-                    time: 1598918400,
-                    bits: CompactTarget::from_consensus(0x1e0377ae),
-                    nonce: 52613770,
+                    time: 1417713337,
+                    bits: CompactTarget::from_consensus(0x207fffff),
+                    nonce: 1096447,
                 },
                 txdata,
             }
@@ -268,12 +268,12 @@ mod test {
             genesis_block.header.merkle_root.to_string(),
             "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
         );
-        assert_eq!(genesis_block.header.time, 1598918400);
-        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1e0377ae));
-        assert_eq!(genesis_block.header.nonce, 52613770);
+        assert_eq!(genesis_block.header.time, 1417713337);
+        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x207fffff));
+        assert_eq!(genesis_block.header.nonce, 1096447);
         assert_eq!(
             genesis_block.header.block_hash().to_string(),
-            "4e5f930c5d73a8792fa681ba8c5eaf74aa63974a5b1f598dd508029aee70167b"
+            "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e"
         );
     }
 

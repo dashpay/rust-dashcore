@@ -260,7 +260,7 @@ impl AccountType {
                     Network::Dash => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_MAINNET))
                     }
-                    Network::Testnet | Network::Regtest => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_TESTNET))
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
@@ -272,7 +272,9 @@ impl AccountType {
                 // Base path with registration index - actual key index added when deriving
                 let base_path = match network {
                     Network::Dash => crate::dip9::IDENTITY_TOPUP_PATH_MAINNET,
-                    Network::Testnet | Network::Regtest => crate::dip9::IDENTITY_TOPUP_PATH_TESTNET,
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        crate::dip9::IDENTITY_TOPUP_PATH_TESTNET
+                    }
                     _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 let mut path = DerivationPath::from(base_path);
@@ -288,7 +290,7 @@ impl AccountType {
                     Network::Dash => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_MAINNET))
                     }
-                    Network::Testnet | Network::Regtest => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_TESTNET))
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
@@ -300,7 +302,7 @@ impl AccountType {
                     Network::Dash => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_MAINNET))
                     }
-                    Network::Testnet | Network::Regtest => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_TESTNET))
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
@@ -354,7 +356,7 @@ impl AccountType {
                 // Base DashPay root + account 0' + user_id/friend_id (non-hardened per DIP-14/DIP-15)
                 let mut path = match network {
                     Network::Dash => DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET),
-                    Network::Testnet | Network::Regtest => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
                     _ => return Err(crate::error::Error::InvalidNetwork),
@@ -376,7 +378,7 @@ impl AccountType {
                 // Base DashPay root + account 0' + friend_id/user_id (non-hardened per DIP-14/DIP-15)
                 let mut path = match network {
                     Network::Dash => DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET),
-                    Network::Testnet | Network::Regtest => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
                     _ => return Err(crate::error::Error::InvalidNetwork),
