@@ -92,6 +92,10 @@ typedef enum {
     PROVIDER_PLATFORM_KEYS = 10,
     DASHPAY_RECEIVING_FUNDS = 11,
     DASHPAY_EXTERNAL_ACCOUNT = 12,
+    /*
+     Platform Payment address (DIP17/DIP18) - Path: m/9'/5'/17'/account'/key_class'/index
+     */
+    PLATFORM_PAYMENT = 13,
 } FFIAccountType;
 
 /*

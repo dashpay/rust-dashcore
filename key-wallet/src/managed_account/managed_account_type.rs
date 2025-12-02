@@ -104,6 +104,18 @@ pub enum ManagedAccountType {
         /// Address pool
         addresses: AddressPool,
     },
+    /// Platform Payment account (DIP-17)
+    /// Path: m/9'/coin_type'/17'/account'/key_class'/index
+    /// These addresses are encoded with DIP-18 format ("D"/"d" prefix for P2PKH).
+    /// **Warning**: Platform addresses MUST NOT be used in Core chain transactions.
+    PlatformPayment {
+        /// Account index (hardened)
+        account: u32,
+        /// Key class (hardened)
+        key_class: u32,
+        /// Platform payment address pool (single pool, non-hardened leaf index)
+        addresses: AddressPool,
+    },
 }
 
 impl ManagedAccountType {
@@ -152,6 +164,10 @@ impl ManagedAccountType {
                 index,
                 ..
             } => Some(*index),
+            Self::PlatformPayment {
+                account,
+                ..
+            } => Some(*account),
         }
     }
 
@@ -226,6 +242,10 @@ impl ManagedAccountType {
             | Self::DashpayExternalAccount {
                 addresses,
                 ..
+            }
+            | Self::PlatformPayment {
+                addresses,
+                ..
             } => vec![addresses],
         }
     }
@@ -283,6 +303,10 @@ impl ManagedAccountType {
                 ..
             }
             | Self::DashpayExternalAccount {
+                addresses,
+                ..
+            }
+            | Self::PlatformPayment {
                 addresses,
                 ..
             } => vec![addresses],
@@ -400,6 +424,14 @@ impl ManagedAccountType {
                 index: *index,
                 user_identity_id: *user_identity_id,
                 friend_identity_id: *friend_identity_id,
+            },
+            Self::PlatformPayment {
+                account,
+                key_class,
+                ..
+            } => AccountType::PlatformPayment {
+                account: *account,
+                key_class: *key_class,
             },
         }
     }
@@ -641,6 +673,28 @@ impl ManagedAccountType {
                     index,
                     user_identity_id,
                     friend_identity_id,
+                    addresses: pool,
+                })
+            }
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                // DIP-17: m/9'/coin_type'/17'/account'/key_class'/index
+                // The leaf index is non-hardened
+                let path = account_type
+                    .derivation_path(network)
+                    .unwrap_or_else(|_| DerivationPath::master());
+                let pool = AddressPool::new_platform(
+                    path,
+                    crate::managed_account::address_pool::AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT, // DIP-17 recommends gap limit of 20
+                    network,
+                    key_source,
+                )?;
+                Ok(Self::PlatformPayment {
+                    account,
+                    key_class,
                     addresses: pool,
                 })
             }

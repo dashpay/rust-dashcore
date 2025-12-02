@@ -394,9 +394,37 @@ impl AddressPool {
         }
     }
 
+    /// Create a new Platform payment address pool (DIP-17/DIP-18)
+    ///
+    /// This creates an address pool that generates Platform payment addresses
+    /// with DIP-18 encoding ("D" prefix on mainnet, "d" on testnet).
+    /// **Warning**: Platform addresses MUST NOT be used in Core chain transactions.
+    pub fn new_platform(
+        base_path: DerivationPath,
+        pool_type: AddressPoolType,
+        gap_limit: u32,
+        network: Network,
+        key_source: &KeySource,
+    ) -> Result<Self> {
+        let mut pool = Self::new_without_generation(base_path, pool_type, gap_limit, network);
+        pool.address_type = AddressType::PlatformP2pkh;
+
+        // Generate addresses up to the gap limit if we have a key source
+        if !matches!(key_source, KeySource::NoKeySource) {
+            pool.generate_addresses(gap_limit, key_source, true)?;
+        }
+
+        Ok(pool)
+    }
+
     /// Set the address type for new addresses
     pub fn set_address_type(&mut self, address_type: AddressType) {
         self.address_type = address_type;
+    }
+
+    /// Returns true if this is a Platform address pool (DIP-18)
+    pub fn is_platform(&self) -> bool {
+        matches!(self.address_type, AddressType::PlatformP2pkh | AddressType::PlatformP2sh)
     }
 
     /// Check if this is an internal (change) address pool
@@ -481,6 +509,13 @@ impl AddressPool {
                         // For P2SH, we'd need script information
                         // For now, default to P2PKH
                         Address::p2pkh(&dash_pubkey, network)
+                    }
+                    // DIP-18: Platform payment addresses
+                    AddressType::PlatformP2pkh => Address::platform_p2pkh(&dash_pubkey, network),
+                    AddressType::PlatformP2sh => {
+                        // For Platform P2SH, we'd need script information
+                        // For now, default to Platform P2PKH
+                        Address::platform_p2pkh(&dash_pubkey, network)
                     }
                     _ => {
                         // For other address types, default to P2PKH

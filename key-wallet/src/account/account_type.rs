@@ -83,6 +83,16 @@ pub enum AccountType {
         /// Our contact's identity id (32 bytes)
         friend_identity_id: [u8; 32],
     },
+    /// Platform Payment account (DIP-17)
+    /// Path: m/9'/coin_type'/17'/account'/key_class'/index
+    /// These addresses are encoded with DIP-18 format ("D"/"d" prefix for P2PKH).
+    /// **Warning**: Platform addresses MUST NOT be used in Core chain transactions.
+    PlatformPayment {
+        /// Account index (hardened) - default 0'
+        account: u32,
+        /// Key class (hardened) - default 0', 1' reserved for change-like segregation
+        key_class: u32,
+    },
 }
 
 impl From<AccountType> for AccountTypeToCheck {
@@ -116,6 +126,9 @@ impl From<AccountType> for AccountTypeToCheck {
             AccountType::DashpayExternalAccount {
                 ..
             } => AccountTypeToCheck::DashpayExternalAccount,
+            AccountType::PlatformPayment {
+                ..
+            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }
@@ -140,6 +153,10 @@ impl AccountType {
                 index,
                 ..
             } => Some(*index),
+            Self::PlatformPayment {
+                account,
+                ..
+            } => Some(*account),
             // Identity and provider types don't have account indices
             Self::IdentityRegistration
             | Self::IdentityTopUp {
@@ -208,6 +225,9 @@ impl AccountType {
             Self::DashpayExternalAccount {
                 ..
             } => DerivationPathReference::ContactBasedFundsExternal,
+            Self::PlatformPayment {
+                ..
+            } => DerivationPathReference::PlatformPayment,
         }
     }
 
@@ -388,6 +408,31 @@ impl AccountType {
                 path.push(ChildNumber::Normal256 {
                     index: *user_identity_id,
                 });
+                Ok(path)
+            }
+            Self::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                // DIP-17: m/9'/coin_type'/17'/account'/key_class'
+                // The leaf index is non-hardened and appended during address generation
+                let mut path = match network {
+                    Network::Dash => {
+                        DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_MAINNET)
+                    }
+                    Network::Testnet => {
+                        DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_TESTNET)
+                    }
+                    _ => return Err(crate::error::Error::InvalidNetwork),
+                };
+                path.push(
+                    ChildNumber::from_hardened_idx(*account)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
+                path.push(
+                    ChildNumber::from_hardened_idx(*key_class)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
                 Ok(path)
             }
         }

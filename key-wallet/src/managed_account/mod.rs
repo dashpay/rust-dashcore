@@ -244,6 +244,10 @@ impl ManagedAccount {
             | ManagedAccountType::DashpayExternalAccount {
                 addresses,
                 ..
+            }
+            | ManagedAccountType::PlatformPayment {
+                addresses,
+                ..
             } => {
                 addresses.unused_addresses().first().and_then(|addr| addresses.address_index(addr))
             }
@@ -492,6 +496,10 @@ impl ManagedAccount {
             | ManagedAccountType::DashpayExternalAccount {
                 addresses,
                 ..
+            }
+            | ManagedAccountType::PlatformPayment {
+                addresses,
+                ..
             } => {
                 // Create appropriate key source based on whether xpub is provided
                 let key_source = match account_xpub {
@@ -575,6 +583,10 @@ impl ManagedAccount {
                 ..
             }
             | ManagedAccountType::DashpayExternalAccount {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::PlatformPayment {
                 addresses,
                 ..
             } => {
@@ -800,6 +812,10 @@ impl ManagedAccount {
                 ..
             }
             | ManagedAccountType::DashpayExternalAccount {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::PlatformPayment {
                 addresses,
                 ..
             } => Some(addresses.gap_limit),

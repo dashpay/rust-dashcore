@@ -28,6 +28,17 @@ pub struct DashpayAccountKey {
     pub friend_identity_id: DashpayContactIdentityId,
 }
 
+/// Key for Platform Payment accounts (DIP-17)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub struct PlatformPaymentAccountKey {
+    /// Account index (hardened)
+    pub account: u32,
+    /// Key class (hardened)
+    pub key_class: u32,
+}
+
 /// Collection of accounts organized by type
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -61,6 +72,8 @@ pub struct AccountCollection {
     pub dashpay_receival_accounts: BTreeMap<DashpayAccountKey, Account>,
     /// DashPay external (watch-only) accounts
     pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, Account>,
+    /// Platform Payment accounts (DIP-17)
+    pub platform_payment_accounts: BTreeMap<PlatformPaymentAccountKey, Account>,
 }
 
 impl AccountCollection {
@@ -82,6 +95,7 @@ impl AccountCollection {
             provider_platform_keys: None,
             dashpay_receival_accounts: BTreeMap::new(),
             dashpay_external_accounts: BTreeMap::new(),
+            platform_payment_accounts: BTreeMap::new(),
         }
     }
 
@@ -156,6 +170,16 @@ impl AccountCollection {
                     friend_identity_id: *friend_identity_id,
                 };
                 self.dashpay_external_accounts.insert(key, account);
+            }
+            AccountType::PlatformPayment {
+                account: acc_index,
+                key_class,
+            } => {
+                let key = PlatformPaymentAccountKey {
+                    account: *acc_index,
+                    key_class: *key_class,
+                };
+                self.platform_payment_accounts.insert(key, account);
             }
         }
         Ok(())
@@ -240,6 +264,16 @@ impl AccountCollection {
                 };
                 self.dashpay_external_accounts.contains_key(&key)
             }
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                let key = PlatformPaymentAccountKey {
+                    account: *account,
+                    key_class: *key_class,
+                };
+                self.platform_payment_accounts.contains_key(&key)
+            }
         }
     }
 
@@ -292,6 +326,13 @@ impl AccountCollection {
                     friend_identity_id,
                 };
                 self.dashpay_external_accounts.get(&key)
+            }
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                let key = PlatformPaymentAccountKey { account, key_class };
+                self.platform_payment_accounts.get(&key)
             }
         }
     }
@@ -346,6 +387,13 @@ impl AccountCollection {
                 };
                 self.dashpay_external_accounts.get_mut(&key)
             }
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                let key = PlatformPaymentAccountKey { account, key_class };
+                self.platform_payment_accounts.get_mut(&key)
+            }
         }
     }
 
@@ -382,6 +430,10 @@ impl AccountCollection {
         // Note: provider_operator_keys (BLS) and provider_platform_keys (EdDSA) are excluded
         // Use specific methods to access them
 
+        accounts.extend(self.dashpay_receival_accounts.values());
+        accounts.extend(self.dashpay_external_accounts.values());
+        accounts.extend(self.platform_payment_accounts.values());
+
         accounts
     }
 
@@ -417,6 +469,10 @@ impl AccountCollection {
 
         // Note: provider_operator_keys (BLS) and provider_platform_keys (EdDSA) are excluded
         // Use specific methods to access them
+
+        accounts.extend(self.dashpay_receival_accounts.values_mut());
+        accounts.extend(self.dashpay_external_accounts.values_mut());
+        accounts.extend(self.platform_payment_accounts.values_mut());
 
         accounts
     }

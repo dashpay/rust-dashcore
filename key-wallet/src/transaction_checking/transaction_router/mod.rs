@@ -178,6 +178,9 @@ pub enum AccountTypeToCheck {
     ProviderPlatformKeys,
     DashpayReceivingFunds,
     DashpayExternalAccount,
+    /// Platform Payment accounts (DIP-17).
+    /// Note: These are NOT checked for Core chain transactions as they operate on Dash Platform.
+    PlatformPayment,
 }
 
 impl From<ManagedAccountType> for AccountTypeToCheck {
@@ -227,6 +230,9 @@ impl From<ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::DashpayExternalAccount {
                 ..
             } => AccountTypeToCheck::DashpayExternalAccount,
+            ManagedAccountType::PlatformPayment {
+                ..
+            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }
@@ -278,6 +284,9 @@ impl From<&ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::DashpayExternalAccount {
                 ..
             } => AccountTypeToCheck::DashpayExternalAccount,
+            ManagedAccountType::PlatformPayment {
+                ..
+            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }

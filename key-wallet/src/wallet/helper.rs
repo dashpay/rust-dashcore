@@ -873,6 +873,11 @@ impl Wallet {
                     // Currently not retrieved via this helper
                     None
                 }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::PlatformPayment => {
+                    // Platform Payment addresses are not used in Core chain transactions
+                    // and xpubs are not retrieved via this helper
+                    None
+                }
             }
         })
     }
