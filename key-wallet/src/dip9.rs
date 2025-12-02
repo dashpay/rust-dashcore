@@ -27,7 +27,6 @@ pub enum DerivationPathReference {
     BlockchainIdentityCreditInvitationFunding = 13,
     ProviderPlatformNodeKeys = 14,
     CoinJoin = 15,
-    /// DIP-17: Platform Payment Addresses
     PlatformPayment = 16,
     Root = 255,
 }
