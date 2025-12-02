@@ -646,7 +646,9 @@ impl ManagedAccount {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::PlatformPayment {
-                    account, key_class, ..
+                    account,
+                    key_class,
+                    ..
                 } => AccountTypeMatch::PlatformPayment {
                     account_index: *account,
                     key_class: *key_class,

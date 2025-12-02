@@ -426,8 +426,7 @@ impl AccountType {
                     _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(
-                    ChildNumber::from_hardened_idx(*account)
-                        .map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(*account).map_err(crate::error::Error::Bip32)?,
                 );
                 path.push(
                     ChildNumber::from_hardened_idx(*key_class)

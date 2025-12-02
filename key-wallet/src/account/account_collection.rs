@@ -331,7 +331,10 @@ impl AccountCollection {
                 account,
                 key_class,
             } => {
-                let key = PlatformPaymentAccountKey { account, key_class };
+                let key = PlatformPaymentAccountKey {
+                    account,
+                    key_class,
+                };
                 self.platform_payment_accounts.get(&key)
             }
         }
@@ -391,7 +394,10 @@ impl AccountCollection {
                 account,
                 key_class,
             } => {
-                let key = PlatformPaymentAccountKey { account, key_class };
+                let key = PlatformPaymentAccountKey {
+                    account,
+                    key_class,
+                };
                 self.platform_payment_accounts.get_mut(&key)
             }
         }
