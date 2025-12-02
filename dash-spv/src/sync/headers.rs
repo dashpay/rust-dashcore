@@ -1,11 +1,8 @@
 //! Header synchronization with fork detection and reorganization handling.
 
 use dashcore::{
-    block::{Header as BlockHeader, Version},
-    network::constants::NetworkExt,
-    network::message::NetworkMessage,
-    network::message_blockdata::GetHeadersMessage,
-    BlockHash, TxMerkleNode,
+    block::Header as BlockHeader, network::constants::NetworkExt, network::message::NetworkMessage,
+    network::message_blockdata::GetHeadersMessage, BlockHash,
 };
 use dashcore_hashes::Hash;
 
@@ -957,83 +954,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         }
         None
-    }
-
-    /// Check if we're past all checkpoints and can relax validation
-    pub fn is_past_checkpoints(&self) -> bool {
-        // Use total_headers_synced which tracks absolute blockchain height
-        self.checkpoint_manager.is_past_last_checkpoint(self.total_headers_synced)
-    }
-
-    /// Pre-populate headers from checkpoints for fast initial sync
-    /// Note: This requires having prev_blockhash data for checkpoints
-    pub async fn prepopulate_from_checkpoints(&mut self, storage: &S) -> SyncResult<u32> {
-        // Check if we already have headers
-        if let Some(tip_height) = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
-        {
-            if tip_height > 0 {
-                tracing::debug!("Headers already exist in storage (height {}), skipping checkpoint prepopulation", tip_height);
-                return Ok(0);
-            }
-        }
-
-        tracing::info!("Pre-populating headers from checkpoints for fast sync");
-
-        // Now that we have prev_blockhash data, we can implement this!
-        let checkpoints = self.checkpoint_manager.checkpoint_heights();
-        let mut headers_to_insert = Vec::new();
-
-        for &height in checkpoints {
-            if let Some(checkpoint) = self.checkpoint_manager.get_checkpoint(height) {
-                // Convert checkpoint to header
-                let header = BlockHeader {
-                    version: Version::from_consensus(1),
-                    prev_blockhash: checkpoint.prev_blockhash,
-                    merkle_root: checkpoint
-                        .merkle_root
-                        .map(|hash| TxMerkleNode::from_byte_array(*hash.as_byte_array()))
-                        .unwrap_or_else(|| TxMerkleNode::from_byte_array([0u8; 32])),
-                    time: checkpoint.timestamp,
-                    bits: checkpoint.target.to_compact_lossy(),
-                    nonce: checkpoint.nonce,
-                };
-
-                // Verify the header hash matches the checkpoint
-                let calculated_hash = header.block_hash();
-                if calculated_hash != checkpoint.block_hash {
-                    tracing::error!(
-                        "Checkpoint hash mismatch at height {}: expected {:?}, got {:?}",
-                        height,
-                        checkpoint.block_hash,
-                        calculated_hash
-                    );
-                    continue;
-                }
-
-                headers_to_insert.push((height, header));
-            }
-        }
-
-        if headers_to_insert.is_empty() {
-            tracing::warn!("No valid headers to prepopulate from checkpoints");
-            return Ok(0);
-        }
-
-        tracing::info!("Prepopulating {} checkpoint headers", headers_to_insert.len());
-
-        // TODO: Implement batch storage operation
-        // For now, we'll need to store them one by one
-        let mut count = 0;
-        for (height, _header) in headers_to_insert {
-            // Note: This would need proper storage implementation
-            tracing::debug!("Would store checkpoint header at height {}", height);
-            count += 1;
-        }
-
-        Ok(count)
     }
 
     /// Check if header sync is currently in progress
