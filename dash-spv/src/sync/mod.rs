@@ -5,10 +5,10 @@
 
 pub mod embedded_data;
 pub mod filters;
+pub mod headers;
 pub mod headers2_state;
-pub mod headers_with_reorg;
 pub mod masternodes;
 pub mod sequential;
 pub use filters::FilterSyncManager;
-pub use headers_with_reorg::{HeaderSyncManagerWithReorg, ReorgConfig};
+pub use headers::{HeaderSyncManager, ReorgConfig};
 pub use masternodes::MasternodeSyncManager;

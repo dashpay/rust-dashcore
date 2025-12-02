@@ -6,7 +6,7 @@ use crate::client::ClientConfig;
 use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::{FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager};
+use crate::sync::{FilterSyncManager, HeaderSyncManager, MasternodeSyncManager};
 use crate::types::SyncProgress;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
@@ -47,7 +47,7 @@ pub(super) const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
 /// - Optimize across trait boundaries
 ///
 /// ### 3. **Delegation Pattern** 🔗
-/// The sync manager delegates to specialized sub-managers (`HeaderSyncManagerWithReorg`,
+/// The sync manager delegates to specialized sub-managers (`HeaderSyncManager`,
 /// `FilterSyncManager`, `MasternodeSyncManager`), each also generic over `S` and `N`.
 /// This maintains type consistency throughout the sync pipeline.
 ///
@@ -68,7 +68,7 @@ pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: Wallet
     pub(super) transition_manager: TransitionManager,
 
     /// Existing sync managers (wrapped and controlled)
-    pub(super) header_sync: HeaderSyncManagerWithReorg<S, N>,
+    pub(super) header_sync: HeaderSyncManager<S, N>,
     pub(super) filter_sync: FilterSyncManager<S, N>,
     pub(super) masternode_sync: MasternodeSyncManager<S, N>,
 
