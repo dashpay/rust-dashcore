@@ -30,8 +30,6 @@ pub struct Checkpoint {
     pub chain_work: String,
     /// Masternode list identifier (e.g., "ML1088640__70218")
     pub masternode_list_name: Option<String>,
-    /// Whether to include merkle root in validation
-    pub include_merkle_root: bool,
     /// Protocol version at this checkpoint
     pub protocol_version: Option<u32>,
     /// Nonce value for the block
@@ -59,25 +57,12 @@ impl Checkpoint {
     }
 }
 
-/// Checkpoint override settings
-#[derive(Debug, Clone, Default)]
-pub struct CheckpointOverride {
-    /// Override checkpoint height for sync chain
-    pub sync_override_height: Option<u32>,
-    /// Override checkpoint height for terminal chain
-    pub terminal_override_height: Option<u32>,
-    /// Whether to sync from genesis
-    pub sync_from_genesis: bool,
-}
-
 /// Manages checkpoints for a specific network
 pub struct CheckpointManager {
     /// Checkpoints indexed by height
     checkpoints: HashMap<u32, Checkpoint>,
     /// Sorted list of checkpoint heights for efficient searching
     sorted_heights: Vec<u32>,
-    /// Checkpoint override settings (not persisted)
-    override_settings: CheckpointOverride,
 }
 
 impl CheckpointManager {
@@ -96,7 +81,6 @@ impl CheckpointManager {
         Self {
             checkpoints: checkpoint_map,
             sorted_heights: heights,
-            override_settings: CheckpointOverride::default(),
         }
     }
 
@@ -135,11 +119,6 @@ impl CheckpointManager {
         &self.sorted_heights
     }
 
-    /// Check if we're past the last checkpoint
-    pub fn is_past_last_checkpoint(&self, height: u32) -> bool {
-        self.sorted_heights.last().is_none_or(|&last| height > last)
-    }
-
     /// Get the last checkpoint before a given timestamp
     pub fn last_checkpoint_before_timestamp(&self, timestamp: u32) -> Option<&Checkpoint> {
         let mut best_checkpoint = None;
@@ -155,67 +134,11 @@ impl CheckpointManager {
         best_checkpoint
     }
 
-    /// Find the best checkpoint at or before a given height
-    pub fn best_checkpoint_at_or_before_height(&self, height: u32) -> Option<&Checkpoint> {
-        let mut best_checkpoint = None;
-        let mut best_height = 0;
-
-        for checkpoint in self.checkpoints.values() {
-            if checkpoint.height <= height && checkpoint.height >= best_height {
-                best_height = checkpoint.height;
-                best_checkpoint = Some(checkpoint);
-            }
-        }
-
-        best_checkpoint
-    }
-
-    /// Get the last checkpoint that has a masternode list
-    pub fn last_checkpoint_having_masternode_list(&self) -> Option<&Checkpoint> {
-        self.sorted_heights
-            .iter()
-            .rev()
-            .filter_map(|height| self.checkpoints.get(height))
-            .find(|checkpoint| checkpoint.has_masternode_list())
-    }
-
-    /// Set override checkpoint for sync chain
-    pub fn set_sync_override(&mut self, height: Option<u32>) {
-        self.override_settings.sync_override_height = height;
-    }
-
-    /// Set override checkpoint for terminal chain
-    pub fn set_terminal_override(&mut self, height: Option<u32>) {
-        self.override_settings.terminal_override_height = height;
-    }
-
-    /// Set whether to sync from genesis
-    pub fn set_sync_from_genesis(&mut self, from_genesis: bool) {
-        self.override_settings.sync_from_genesis = from_genesis;
-    }
-
     /// Get the checkpoint to use for sync chain based on override settings
     pub fn get_sync_checkpoint(&self, wallet_creation_time: Option<u32>) -> Option<&Checkpoint> {
-        if self.override_settings.sync_from_genesis {
-            return self.get_checkpoint(0);
-        }
-
-        if let Some(override_height) = self.override_settings.sync_override_height {
-            return self.last_checkpoint_before_height(override_height);
-        }
-
         // Default to checkpoint based on wallet creation time
         if let Some(creation_time) = wallet_creation_time {
             self.last_checkpoint_before_timestamp(creation_time)
-        } else {
-            self.last_checkpoint()
-        }
-    }
-
-    /// Get the checkpoint to use for terminal chain based on override settings
-    pub fn get_terminal_checkpoint(&self) -> Option<&Checkpoint> {
-        if let Some(override_height) = self.override_settings.terminal_override_height {
-            self.last_checkpoint_before_height(override_height)
         } else {
             self.last_checkpoint()
         }
@@ -228,32 +151,6 @@ impl CheckpointManager {
         } else {
             false
         }
-    }
-
-    /// Validate a block header against checkpoints
-    pub fn validate_header(
-        &self,
-        height: u32,
-        block_hash: &BlockHash,
-        merkle_root: Option<&BlockHash>,
-    ) -> bool {
-        if let Some(checkpoint) = self.get_checkpoint(height) {
-            // Check block hash
-            if checkpoint.block_hash != *block_hash {
-                return false;
-            }
-
-            // Check merkle root if required
-            if checkpoint.include_merkle_root {
-                if let (Some(expected), Some(actual)) = (&checkpoint.merkle_root, merkle_root) {
-                    if expected != actual {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        true
     }
 }
 
@@ -445,7 +342,6 @@ fn create_checkpoint(
         merkle_root: Some(parse_block_hash_safe(merkle_root)),
         chain_work: chain_work.to_string(),
         masternode_list_name: masternode_list.map(|s| s.to_string()),
-        include_merkle_root: true,
         protocol_version: masternode_list.and_then(|ml| {
             // Extract protocol version from masternode list name
             ml.split("__").nth(1).and_then(|s| s.parse().ok())
@@ -481,10 +377,6 @@ mod tests {
 
         // Test no checkpoint at height
         assert!(manager.validate_block(1, &invalid_hash)); // No checkpoint at height 1
-
-        // Test header validation
-        assert!(manager.validate_header(0, &genesis_hash, None));
-        assert!(!manager.validate_header(0, &invalid_hash, None));
     }
 
     #[test]
@@ -545,27 +437,6 @@ mod tests {
     }
 
     #[test]
-    fn test_checkpoint_overrides() {
-        let checkpoints = mainnet_checkpoints();
-        let mut manager = CheckpointManager::new(checkpoints);
-
-        // Test sync override
-        manager.set_sync_override(Some(5000));
-        let sync_checkpoint = manager.get_sync_checkpoint(None);
-        assert_eq!(sync_checkpoint.expect("Should have sync checkpoint").height, 4991);
-
-        // Test terminal override
-        manager.set_terminal_override(Some(800000));
-        let terminal_checkpoint = manager.get_terminal_checkpoint();
-        assert_eq!(terminal_checkpoint.expect("Should have terminal checkpoint").height, 750000);
-
-        // Test sync from genesis
-        manager.set_sync_from_genesis(true);
-        let genesis_checkpoint = manager.get_sync_checkpoint(None);
-        assert_eq!(genesis_checkpoint.expect("Should have genesis checkpoint").height, 0);
-    }
-
-    #[test]
     #[ignore] // Test depends on specific mainnet checkpoint data
     fn test_fork_rejection() {
         let checkpoints = mainnet_checkpoints();
@@ -577,19 +448,6 @@ mod tests {
 
         // Should not reject fork after last checkpoint
         assert!(!manager.should_reject_fork(2000000));
-    }
-
-    #[test]
-    #[ignore] // Test depends on specific mainnet checkpoint data
-    fn test_masternode_list_checkpoint() {
-        let checkpoints = mainnet_checkpoints();
-        let manager = CheckpointManager::new(checkpoints);
-
-        // Find last checkpoint with masternode list
-        let ml_checkpoint = manager.last_checkpoint_having_masternode_list();
-        assert!(ml_checkpoint.is_some());
-        assert!(ml_checkpoint.expect("Should have ML checkpoint").has_masternode_list());
-        assert_eq!(ml_checkpoint.expect("Should have ML checkpoint").height, 1900000);
     }
 
     #[test]
