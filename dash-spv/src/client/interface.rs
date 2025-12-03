@@ -77,6 +77,8 @@ impl DashSpvClientInterface {
         receive(context, receiver).await?
     }
 
+    /// Get a quorum entry by type and reversed hash at a specific block height.
+    /// Helpful because DAPI returns quorum_hash in BE in `ResponseMetadata`, but we store as LE
     pub async fn get_quorum_by_height_reversed(
         &self,
         height: u32,
