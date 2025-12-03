@@ -425,15 +425,6 @@ impl ChainState {
         self.last_chainlock_height
     }
 
-    /// Record a filter match at a specific height for a wallet ID.
-    ///
-    /// # Parameters
-    /// - `height`: The blockchain height where the filter matched
-    /// - `wallet_id`: The 32-byte wallet identifier that matched
-    pub fn record_filter_match(&mut self, height: u32, wallet_id: [u8; 32]) {
-        self.filter_matches.entry(height).or_insert_with(Vec::new).push(wallet_id);
-    }
-
     /// Record multiple filter matches at a specific height.
     ///
     /// # Parameters
@@ -444,7 +435,11 @@ impl ChainState {
             return;
         }
 
-        self.filter_matches.entry(height).or_insert_with(Vec::new).extend(wallet_ids);
+        if let Some(ids) = self.filter_matches.get_mut(&height) {
+            ids.extend(wallet_ids);
+        } else {
+            self.filter_matches.insert(height, wallet_ids);
+        }
     }
 
     /// Get filter matched heights with wallet IDs in a given range.
@@ -1158,26 +1153,9 @@ impl MempoolState {
 
 #[cfg(test)]
 mod tests {
+    use std::vec;
+
     use super::*;
-
-    #[test]
-    fn test_filter_match_recording() {
-        let mut chain_state = ChainState::default();
-
-        // Record some filter matches
-        let wallet_id_1 = [1u8; 32];
-        let wallet_id_2 = [2u8; 32];
-        let wallet_id_3 = [3u8; 32];
-
-        chain_state.record_filter_match(100, wallet_id_1);
-        chain_state.record_filter_match(100, wallet_id_2);
-        chain_state.record_filter_match(200, wallet_id_3);
-
-        // Verify matches were recorded
-        assert_eq!(chain_state.filter_matches.len(), 2);
-        assert_eq!(chain_state.filter_matches.get(&100).unwrap().len(), 2);
-        assert_eq!(chain_state.filter_matches.get(&200).unwrap().len(), 1);
-    }
 
     #[test]
     fn test_filter_match_bulk_recording() {
@@ -1195,7 +1173,7 @@ mod tests {
 
         // Record matches at various heights
         for height in 100..150 {
-            chain_state.record_filter_match(height, [height as u8; 32]);
+            chain_state.record_filter_matches(height, vec![[height as u8; 32]]);
         }
 
         // Query a range
@@ -1230,8 +1208,8 @@ mod tests {
         let mut chain_state = ChainState::default();
 
         // Record some matches
-        chain_state.record_filter_match(100, [1u8; 32]);
-        chain_state.record_filter_match(200, [2u8; 32]);
+        chain_state.record_filter_matches(100, vec![[1u8; 32]]);
+        chain_state.record_filter_matches(200, vec![[2u8; 32]]);
 
         // Query range with no matches
         let matches = chain_state.get_filter_matched_heights(300..400).unwrap();
