@@ -127,10 +127,6 @@ pub trait StorageManager: Send + Sync {
     /// Get the current filter tip blockchain height.
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>>;
 
-    /// Get the highest stored compact filter height by checking which filters are persisted.
-    /// This is distinct from filter header tip - it shows which filters are actually downloaded.
-    async fn get_stored_filter_height(&self) -> StorageResult<Option<u32>>;
-
     /// Store masternode state.
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()>;
 
