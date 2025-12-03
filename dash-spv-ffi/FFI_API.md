@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 71
+**Total Functions**: 79
 
 ## Table of Contents
 
@@ -91,11 +91,13 @@ Functions: 1
 
 ### Transaction Management
 
-Functions: 3
+Functions: 5
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_broadcast_transaction` | No description | broadcast |
+| `dash_spv_ffi_client_get_blocks_with_transactions_count` | Get the count of blocks that contained relevant transactions | client |
+| `dash_spv_ffi_client_get_transaction_count` | Get the total count of transactions across all wallets | client |
 | `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  # Saf... | types |
 | `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx` | Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction... | types |
 
@@ -138,7 +140,7 @@ Functions: 2
 
 ### Utility Functions
 
-Functions: 19
+Functions: 25
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -148,13 +150,19 @@ Functions: 19
 | `dash_spv_ffi_checkpoint_latest` | Get the latest checkpoint for the given network | checkpoints |
 | `dash_spv_ffi_checkpoints_between_heights` | Get all checkpoints between two heights (inclusive) | checkpoints |
 | `dash_spv_ffi_client_clear_storage` | Clear all persisted SPV storage (headers, filters, metadata, sync state) | client |
+| `dash_spv_ffi_client_get_filter_matched_heights` | Get filter matched heights with wallet IDs in a given range | client |
 | `dash_spv_ffi_client_get_stats` | Get current runtime statistics for the SPV client | client |
 | `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
 | `dash_spv_ffi_client_get_tip_height` | Get the current chain tip height (absolute) | client |
 | `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an `FFIWalle... | client |
+| `dash_spv_ffi_client_load_filters` | Load compact block filters in a given height range | client |
 | `dash_spv_ffi_client_record_send` | Record that we attempted to send a transaction by its txid | client |
 | `dash_spv_ffi_client_rescan_blockchain` | Request a rescan of the blockchain from a given height (not yet implemented) | client |
+| `dash_spv_ffi_compact_filter_destroy` | Destroys a single compact filter | types |
+| `dash_spv_ffi_compact_filters_destroy` | Destroys an array of compact filters | types |
 | `dash_spv_ffi_enable_test_mode` | No description | utils |
+| `dash_spv_ffi_filter_match_entry_destroy` | Destroys a single filter match entry | types |
+| `dash_spv_ffi_filter_matches_destroy` | Destroys an array of filter match entries | types |
 | `dash_spv_ffi_init_logging` | Initialize logging for the SPV library | utils |
 | `dash_spv_ffi_spv_stats_destroy` | Destroy an `FFISpvStats` object returned by this crate | client |
 | `dash_spv_ffi_string_array_destroy` | Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents | types |
@@ -806,6 +814,38 @@ dash_spv_ffi_client_broadcast_transaction(client: *mut FFIDashSpvClient, tx_hex:
 
 ---
 
+#### `dash_spv_ffi_client_get_blocks_with_transactions_count`
+
+```c
+dash_spv_ffi_client_get_blocks_with_transactions_count(client: *mut FFIDashSpvClient,) -> usize
+```
+
+**Description:**
+Get the count of blocks that contained relevant transactions.  This counts unique block heights from the wallet's transaction history, representing how many blocks actually had transactions for the user's wallets. This is a persistent metric that survives app restarts.  # Parameters - `client`: Valid pointer to an FFIDashSpvClient  # Returns - Count of blocks with transactions (0 or higher) - Returns 0 if client not initialized or wallet not available  # Safety - `client` must be a valid, non-null pointer
+
+**Safety:**
+- `client` must be a valid, non-null pointer
+
+**Module:** `client`
+
+---
+
+#### `dash_spv_ffi_client_get_transaction_count`
+
+```c
+dash_spv_ffi_client_get_transaction_count(client: *mut FFIDashSpvClient,) -> usize
+```
+
+**Description:**
+Get the total count of transactions across all wallets.  This returns the persisted transaction count from the wallet, not the ephemeral sync statistics. Use this to show how many blocks contained relevant transactions for the user's wallets.  # Parameters - `client`: Valid pointer to an FFIDashSpvClient  # Returns - Transaction count (0 or higher) - Returns 0 if client not initialized or wallet not available  # Safety - `client` must be a valid, non-null pointer
+
+**Safety:**
+- `client` must be a valid, non-null pointer
+
+**Module:** `client`
+
+---
+
 #### `dash_spv_ffi_unconfirmed_transaction_destroy`
 
 ```c
@@ -1067,6 +1107,22 @@ Clear all persisted SPV storage (headers, filters, metadata, sync state).  # Saf
 
 ---
 
+#### `dash_spv_ffi_client_get_filter_matched_heights`
+
+```c
+dash_spv_ffi_client_get_filter_matched_heights(client: *mut FFIDashSpvClient, start_height: u32, end_height: u32,) -> *mut crate::types::FFIFilterMatches
+```
+
+**Description:**
+Get filter matched heights with wallet IDs in a given range.  Returns an `FFIFilterMatches` struct containing all heights where filters matched and the wallet IDs that matched at each height. The caller must free the result using `dash_spv_ffi_filter_matches_destroy`.  # Parameters - `client`: Valid pointer to an FFIDashSpvClient - `start_height`: Starting block height (inclusive) - `end_height`: Ending block height (exclusive)  # Limits - Maximum range size: 10,000 blocks - If `end_height - start_height > 10000`, an error is returned  # Returns - Non-null pointer to FFIFilterMatches on success - Null pointer on error (check `dash_spv_ffi_get_last_error`)  # Safety - `client` must be a valid, non-null pointer - Caller must call `dash_spv_ffi_filter_matches_destroy` on the returned pointer
+
+**Safety:**
+- `client` must be a valid, non-null pointer - Caller must call `dash_spv_ffi_filter_matches_destroy` on the returned pointer
+
+**Module:** `client`
+
+---
+
 #### `dash_spv_ffi_client_get_stats`
 
 ```c
@@ -1131,6 +1187,22 @@ The caller must ensure that: - The client pointer is valid - The returned pointe
 
 ---
 
+#### `dash_spv_ffi_client_load_filters`
+
+```c
+dash_spv_ffi_client_load_filters(client: *mut FFIDashSpvClient, start_height: u32, end_height: u32,) -> *mut crate::types::FFICompactFilters
+```
+
+**Description:**
+Load compact block filters in a given height range.  Returns an `FFICompactFilters` struct containing all filters that exist in the range. Missing filters are skipped. The caller must free the result using `dash_spv_ffi_compact_filters_destroy`.  # Parameters - `client`: Valid pointer to an FFIDashSpvClient - `start_height`: Starting block height (inclusive) - `end_height`: Ending block height (exclusive)  # Limits - Maximum range size: 10,000 blocks - If `end_height - start_height > 10000`, an error is returned  # Returns - Non-null pointer to FFICompactFilters on success - Null pointer on error (check `dash_spv_ffi_get_last_error`)  # Safety - `client` must be a valid, non-null pointer - Caller must call `dash_spv_ffi_compact_filters_destroy` on the returned pointer
+
+**Safety:**
+- `client` must be a valid, non-null pointer - Caller must call `dash_spv_ffi_compact_filters_destroy` on the returned pointer
+
+**Module:** `client`
+
+---
+
 #### `dash_spv_ffi_client_record_send`
 
 ```c
@@ -1163,6 +1235,38 @@ Request a rescan of the blockchain from a given height (not yet implemented).  #
 
 ---
 
+#### `dash_spv_ffi_compact_filter_destroy`
+
+```c
+dash_spv_ffi_compact_filter_destroy(filter: *mut FFICompactFilter) -> ()
+```
+
+**Description:**
+Destroys a single compact filter.  # Safety  - `filter` must be a valid pointer to an FFICompactFilter - The pointer must not be used after this function is called - This function should only be called once per allocation
+
+**Safety:**
+- `filter` must be a valid pointer to an FFICompactFilter - The pointer must not be used after this function is called - This function should only be called once per allocation
+
+**Module:** `types`
+
+---
+
+#### `dash_spv_ffi_compact_filters_destroy`
+
+```c
+dash_spv_ffi_compact_filters_destroy(filters: *mut FFICompactFilters) -> ()
+```
+
+**Description:**
+Destroys an array of compact filters.  # Safety  - `filters` must be a valid pointer to an FFICompactFilters struct - The pointer must not be used after this function is called - This function should only be called once per allocation
+
+**Safety:**
+- `filters` must be a valid pointer to an FFICompactFilters struct - The pointer must not be used after this function is called - This function should only be called once per allocation
+
+**Module:** `types`
+
+---
+
 #### `dash_spv_ffi_enable_test_mode`
 
 ```c
@@ -1170,6 +1274,38 @@ dash_spv_ffi_enable_test_mode() -> ()
 ```
 
 **Module:** `utils`
+
+---
+
+#### `dash_spv_ffi_filter_match_entry_destroy`
+
+```c
+dash_spv_ffi_filter_match_entry_destroy(entry: *mut FFIFilterMatchEntry) -> ()
+```
+
+**Description:**
+Destroys a single filter match entry.  # Safety  - `entry` must be a valid pointer to an FFIFilterMatchEntry - The pointer must not be used after this function is called - This function should only be called once per allocation
+
+**Safety:**
+- `entry` must be a valid pointer to an FFIFilterMatchEntry - The pointer must not be used after this function is called - This function should only be called once per allocation
+
+**Module:** `types`
+
+---
+
+#### `dash_spv_ffi_filter_matches_destroy`
+
+```c
+dash_spv_ffi_filter_matches_destroy(matches: *mut FFIFilterMatches) -> ()
+```
+
+**Description:**
+Destroys an array of filter match entries.  # Safety  - `matches` must be a valid pointer to an FFIFilterMatches struct - The pointer must not be used after this function is called - This function should only be called once per allocation
+
+**Safety:**
+- `matches` must be a valid pointer to an FFIFilterMatches struct - The pointer must not be used after this function is called - This function should only be called once per allocation
+
+**Module:** `types`
 
 ---
 
