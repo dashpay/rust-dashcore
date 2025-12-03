@@ -29,8 +29,10 @@
 //! - `progress` - Progress tracking utilities
 //! - `recovery` - Recovery and error handling logic
 //! - `transitions` - Phase transition management
+//! - `filter_recheck` - Filter re-checking for gap limit changes
 
 // Sub-modules (focused implementations)
+pub mod filter_recheck;
 pub mod lifecycle;
 pub mod manager;
 pub mod message_handlers;

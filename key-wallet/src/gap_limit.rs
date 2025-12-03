@@ -83,13 +83,24 @@ impl GapLimit {
     }
 
     /// Mark an address at the given index as used
-    pub fn mark_used(&mut self, index: u32) {
+    /// Returns true if the highest_used_index increased (indicating new addresses may need generation)
+    pub fn mark_used(&mut self, index: u32) -> bool {
         self.used_indices.insert(index);
+
+        // Track if highest_used_index changed
+        let old_highest = self.highest_used_index;
 
         // Update highest used index
         self.highest_used_index = match self.highest_used_index {
             None => Some(index),
             Some(current) => Some(cmp::max(current, index)),
+        };
+
+        // Determine if the highest used index increased
+        let highest_increased = match (old_highest, self.highest_used_index) {
+            (None, Some(_)) => true,             // First address marked as used
+            (Some(old), Some(new)) => new > old, // Highest index increased
+            _ => false,
         };
 
         // Reset unused count if this breaks a gap
@@ -109,6 +120,8 @@ impl GapLimit {
         if self.stage == GapLimitStage::Scanning && !self.limit_reached {
             self.stage = GapLimitStage::Extended;
         }
+
+        highest_increased
     }
 
     /// Mark an address as generated (but not necessarily used)
@@ -364,9 +377,10 @@ mod tests {
         }
 
         // Mark some as used
-        gap.mark_used(2);
-        gap.mark_used(5);
-        gap.mark_used(7);
+        assert!(gap.mark_used(2)); // First use, should return true
+        assert!(gap.mark_used(5)); // Increases highest, should return true
+        assert!(gap.mark_used(7)); // Increases highest, should return true
+        assert!(!gap.mark_used(2)); // Already used and doesn't increase highest
 
         assert_eq!(gap.highest_used_index, Some(7));
         assert_eq!(gap.current_unused_count, 2); // indices 8 and 9 are unused
@@ -389,7 +403,8 @@ mod tests {
         for i in 0..5 {
             gap.mark_generated(i);
         }
-        gap.mark_used(3);
+        let changed = gap.mark_used(3);
+        assert!(changed); // First use should return true
 
         assert!(gap.needs_extension());
 
@@ -437,8 +452,9 @@ mod tests {
         assert_eq!(gap.addresses_to_generate(), 0);
 
         // After using one
-        gap.mark_used(2);
-        // target = 2 + 5 + 1 = 8, highest_generated = 4, so need 8 - 4 = 4 more
+        let changed = gap.mark_used(2);
+        assert!(changed); // First use should return true
+                          // target = 2 + 5 + 1 = 8, highest_generated = 4, so need 8 - 4 = 4 more
         assert_eq!(gap.addresses_to_generate(), 4); // Need to generate 5, 6, 7, 8 to maintain gap
     }
 }

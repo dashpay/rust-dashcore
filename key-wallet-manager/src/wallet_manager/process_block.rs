@@ -18,7 +18,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         block: &Block,
         height: CoreBlockHeight,
         network: Network,
-    ) -> Vec<Txid> {
+    ) -> (Vec<Txid>, bool) {
+        // Capture address count before processing
+        let addresses_before: usize =
+            self.wallet_infos.values().map(|info| info.monitored_addresses(network).len()).sum();
+
         let mut relevant_txids = Vec::new();
         let block_hash = Some(block.block_hash());
         let timestamp = block.header.time;
@@ -47,7 +51,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             state.current_height = height;
         }
 
-        relevant_txids
+        // Capture address count after processing
+        let addresses_after: usize =
+            self.wallet_infos.values().map(|info| info.monitored_addresses(network).len()).sum();
+
+        // Determine if gap limit changed (new addresses were generated)
+        let gap_limit_changed = addresses_after > addresses_before;
+
+        // Note: Gap limit changes will be logged by the SPV client
+
+        (relevant_txids, gap_limit_changed)
     }
 
     async fn process_mempool_transaction(&mut self, tx: &Transaction, network: Network) {

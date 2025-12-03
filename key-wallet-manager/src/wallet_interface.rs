@@ -13,13 +13,15 @@ use key_wallet::Network;
 #[async_trait]
 pub trait WalletInterface: Send + Sync {
     /// Called when a new block is received that may contain relevant transactions
-    /// Returns transaction IDs that were relevant to the wallet
+    /// Returns (transaction_ids, gap_limit_changed)
+    /// - transaction_ids: Transaction IDs that were relevant to the wallet
+    /// - gap_limit_changed: true if new addresses were generated due to gap limit maintenance
     async fn process_block(
         &mut self,
         block: &Block,
         height: CoreBlockHeight,
         network: Network,
-    ) -> Vec<Txid>;
+    ) -> (Vec<Txid>, bool);
 
     /// Called when a transaction is seen in the mempool
     async fn process_mempool_transaction(&mut self, tx: &Transaction, network: Network);

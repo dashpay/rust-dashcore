@@ -13,6 +13,7 @@
 //! - `retry` - Retry and timeout logic
 //! - `stats` - Statistics and progress tracking
 //! - `requests` - Request queue management
+//! - `recheck` - Filter re-checking when gap limits change
 //!
 //! ## Thread Safety
 //!
@@ -27,6 +28,7 @@ pub mod gaps;
 pub mod headers;
 pub mod manager;
 pub mod matching;
+pub mod recheck;
 pub mod requests;
 pub mod retry;
 pub mod stats;

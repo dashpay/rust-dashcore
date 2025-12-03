@@ -226,7 +226,17 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
 
         // Process block with wallet
         let mut wallet = self.wallet.write().await;
-        let txids = wallet.process_block(&block, height, self.network).await;
+        let (txids, gap_limit_changed) = wallet.process_block(&block, height, self.network).await;
+
+        // TODO: Handle gap_limit_changed by notifying filter sync to re-check filters
+        // For now, just log it
+        if gap_limit_changed {
+            tracing::warn!(
+                "⚠️ Gap limit changed during block processing at height {}. Filters may need re-checking.",
+                height
+            );
+        }
+
         if !txids.is_empty() {
             tracing::info!(
                 "🎯 Wallet found {} relevant transactions in block {} at height {}",

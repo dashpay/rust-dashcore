@@ -756,9 +756,69 @@ impl<
             .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
             .unwrap_or(0);
 
-        let relevant_txids = wallet.process_block(&block, block_height, self.config.network).await;
+        let (relevant_txids, gap_limit_changed) =
+            wallet.process_block(&block, block_height, self.config.network).await;
 
         drop(wallet);
+
+        // Handle gap limit changes by queuing filter re-checks
+        if gap_limit_changed {
+            tracing::warn!(
+                "⚠️ Gap limit changed during block processing at height {}. Queuing filters for re-check.",
+                block_height
+            );
+
+            // Determine the range to re-check based on current phase
+            if let SyncPhase::DownloadingBlocks {
+                pending_blocks,
+                downloading,
+                completed,
+                ..
+            } = &self.current_phase
+            {
+                // Find the minimum and maximum heights in our current download batch
+                let mut min_height = block_height;
+                let mut max_height = block_height;
+
+                // Check pending blocks
+                for (_, height) in pending_blocks {
+                    min_height = min_height.min(*height);
+                    max_height = max_height.max(*height);
+                }
+
+                // Check downloading blocks (need to look them up from storage)
+                for block_hash in downloading.keys() {
+                    if let Ok(Some(height)) = storage.get_header_height_by_hash(block_hash).await {
+                        min_height = min_height.min(height);
+                        max_height = max_height.max(height);
+                    }
+                }
+
+                // Check completed blocks
+                for block_hash in completed {
+                    if let Ok(Some(height)) = storage.get_header_height_by_hash(block_hash).await {
+                        min_height = min_height.min(height);
+                        max_height = max_height.max(height);
+                    }
+                }
+
+                // Queue the range for re-checking (iteration 0 for first re-check)
+                if let Err(e) = self.filter_recheck_queue.add_range(min_height, max_height, 0) {
+                    tracing::error!(
+                        "Failed to queue filter re-check for range {}-{}: {}",
+                        min_height,
+                        max_height,
+                        e
+                    );
+                } else {
+                    tracing::info!(
+                        "📋 Queued filter re-check for heights {}-{} after gap limit change",
+                        min_height,
+                        max_height
+                    );
+                }
+            }
+        }
 
         if !relevant_txids.is_empty() {
             tracing::info!(
@@ -796,10 +856,79 @@ impl<
         };
 
         if should_transition {
-            self.transition_to_next_phase(storage, network, "All blocks downloaded").await?;
+            // Before transitioning, process any pending filter re-checks
+            if self.filter_recheck_queue.has_pending() {
+                tracing::info!(
+                    "🔄 Processing {} pending filter re-check(s) before transitioning",
+                    self.filter_recheck_queue.pending_count()
+                );
 
-            // Execute the next phase (if any)
-            self.execute_current_phase(network, storage).await?;
+                // Process all pending re-checks
+                while let Some(range) = self.filter_recheck_queue.next_range() {
+                    tracing::info!(
+                        "🔍 Re-checking filters for heights {}-{} (iteration {}/{})",
+                        range.start,
+                        range.end,
+                        range.iteration + 1,
+                        self.filter_recheck_queue.stats().config.max_iterations
+                    );
+
+                    // Re-check filters for this range
+                    match self.recheck_filters_for_range(storage, network, &range).await {
+                        Ok(new_matches) => {
+                            if !new_matches.is_empty() {
+                                tracing::info!(
+                                    "✅ Found {} new filter matches after re-check for range {}-{}",
+                                    new_matches.len(),
+                                    range.start,
+                                    range.end
+                                );
+
+                                // Download the newly matched blocks
+                                // This will trigger another iteration if gap limits change again
+                                for (block_hash, height) in new_matches {
+                                    tracing::debug!(
+                                        "📦 Requesting block {} at height {} from filter re-check",
+                                        block_hash,
+                                        height
+                                    );
+                                    // Add to pending blocks for download
+                                    // Note: We'll re-enter the DownloadingBlocks phase
+                                }
+                            }
+                            self.filter_recheck_queue.mark_completed(&range);
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to re-check filters for range {}-{}: {}",
+                                range.start,
+                                range.end,
+                                e
+                            );
+                            // Continue with other re-checks
+                        }
+                    }
+                }
+
+                // If we added new blocks to download, don't transition yet
+                if self.no_more_pending_blocks() {
+                    self.transition_to_next_phase(
+                        storage,
+                        network,
+                        "All blocks downloaded (after filter re-check)",
+                    )
+                    .await?;
+                    self.execute_current_phase(network, storage).await?;
+                } else {
+                    tracing::info!(
+                        "🔄 Filter re-check found new blocks to download, staying in DownloadingBlocks phase"
+                    );
+                }
+            } else {
+                // No pending re-checks, normal transition
+                self.transition_to_next_phase(storage, network, "All blocks downloaded").await?;
+                self.execute_current_phase(network, storage).await?;
+            }
         }
 
         Ok(())
