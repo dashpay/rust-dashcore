@@ -645,7 +645,7 @@ impl<
                     .load_chain_state()
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to load chain state: {}", e)))?
-                    .unwrap_or_else(|| crate::types::ChainState::new());
+                    .unwrap_or_else(crate::types::ChainState::new);
 
                 // Record the filter matches
                 chain_state.record_filter_matches(height, matched_wallet_ids);
