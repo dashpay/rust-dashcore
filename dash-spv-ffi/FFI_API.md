@@ -98,7 +98,7 @@ Functions: 5
 | `dash_spv_ffi_client_broadcast_transaction` | No description | broadcast |
 | `dash_spv_ffi_client_get_blocks_with_transactions_count` | Get the count of blocks that contained relevant transactions | client |
 | `dash_spv_ffi_client_get_transaction_count` | Get the total count of transactions across all wallets | client |
-| `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  # Saf... | types |
+| `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  #... | types |
 | `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx` | Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction... | types |
 
 ### Mempool Operations
@@ -154,7 +154,7 @@ Functions: 25
 | `dash_spv_ffi_client_get_stats` | Get current runtime statistics for the SPV client | client |
 | `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
 | `dash_spv_ffi_client_get_tip_height` | Get the current chain tip height (absolute) | client |
-| `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an `FFIWalle... | client |
+| `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an... | client |
 | `dash_spv_ffi_client_load_filters` | Load compact block filters in a given height range | client |
 | `dash_spv_ffi_client_record_send` | Record that we attempted to send a transaction by its txid | client |
 | `dash_spv_ffi_client_rescan_blockchain` | Request a rescan of the blockchain from a given height (not yet implemented) | client |
