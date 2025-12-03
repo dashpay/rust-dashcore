@@ -214,7 +214,7 @@ impl ChainLockManager {
                             let required_height = chain_lock
                                 .block_height
                                 .saturating_sub(CHAINLOCK_VALIDATION_MASTERNODE_OFFSET);
-                            warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
+                            warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation",
                                 chain_lock.block_height, required_height);
                             self.queue_pending_chainlock(chain_lock.clone()).map_err(|e| {
                                 ValidationError::InvalidChainLock(format!(

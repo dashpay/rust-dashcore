@@ -5,7 +5,7 @@ import SwiftDashCoreSDK
 struct WalletDetailView: View {
     @EnvironmentObject private var walletService: WalletService
     @Environment(\.modelContext) private var modelContext
-    
+
     let wallet: HDWallet
     @State private var selectedAccount: HDAccount?
     @State private var showCreateAccount = false
@@ -16,7 +16,7 @@ struct WalletDetailView: View {
     @State private var lastSyncProgress: SyncProgress?  // Store last sync state
     @State private var showConnectionError = false
     @State private var connectionError: String = ""
-    
+
     var body: some View {
         #if os(iOS)
         Group {
@@ -43,7 +43,7 @@ struct WalletDetailView: View {
                     isConnected: walletService.isConnected && walletService.activeWallet == wallet,
                     isSyncing: walletService.isSyncing
                 )
-                
+
                 // Sync and View Results Buttons
                 if walletService.isConnected && walletService.activeWallet == wallet {
                     // View Sync Results Button (shown when sync was completed)
@@ -52,11 +52,11 @@ struct WalletDetailView: View {
                             Label("View Last Sync", systemImage: "clock.arrow.circlepath")
                         }
                     }
-                    
+
                     // Main Sync Button
-                    Button(action: { 
+                    Button(action: {
                         syncWasCompleted = false  // Reset on new sync
-                        showSyncProgress = true 
+                        showSyncProgress = true
                     }) {
                         Label("Sync", systemImage: "arrow.triangle.2.circlepath")
                     }
@@ -109,7 +109,7 @@ struct WalletDetailView: View {
                 onCreateAccount: { showCreateAccount = true }
             )
             .frame(minWidth: 200, idealWidth: 250)
-            
+
             // Account Detail
             if let account = selectedAccount {
                 AccountDetailView(account: account)
@@ -126,7 +126,7 @@ struct WalletDetailView: View {
                     isConnected: walletService.isConnected && walletService.activeWallet == wallet,
                     isSyncing: walletService.isSyncing
                 )
-                
+
                 // Sync and View Results Buttons
                 if walletService.isConnected && walletService.activeWallet == wallet {
                     // View Sync Results Button (shown when sync was completed)
@@ -135,11 +135,11 @@ struct WalletDetailView: View {
                             Label("View Last Sync", systemImage: "clock.arrow.circlepath")
                         }
                     }
-                    
+
                     // Main Sync Button
-                    Button(action: { 
+                    Button(action: {
                         syncWasCompleted = false  // Reset on new sync
-                        showSyncProgress = true 
+                        showSyncProgress = true
                     }) {
                         Label("Sync", systemImage: "arrow.triangle.2.circlepath")
                     }
@@ -187,7 +187,7 @@ struct WalletDetailView: View {
             // Monitor sync completion
             if let progress = newValue {
                 lastSyncProgress = progress
-                
+
                 // Check if sync just completed
                 if progress.status == .synced && oldValue?.status != .synced {
                     syncWasCompleted = true
@@ -204,10 +204,10 @@ struct WalletDetailView: View {
         }
         #endif
     }
-    
+
     private func connectWallet() {
         guard let firstAccount = wallet.accounts.first else { return }
-        
+
         isConnecting = true
         Task {
             do {
@@ -232,7 +232,7 @@ struct AccountListView: View {
     let wallet: HDWallet
     @Binding var selectedAccount: HDAccount?
     let onCreateAccount: () -> Void
-    
+
     var body: some View {
         #if os(iOS)
         List {
@@ -243,7 +243,7 @@ struct AccountListView: View {
                     }
                 }
             }
-            
+
             Section {
                 Button(action: onCreateAccount) {
                     Label("Add Account", systemImage: "plus.circle")
@@ -259,7 +259,7 @@ struct AccountListView: View {
                         .tag(account)
                 }
             }
-            
+
             Section {
                 Button(action: onCreateAccount) {
                     Label("Add Account", systemImage: "plus.circle")
@@ -275,17 +275,17 @@ struct AccountListView: View {
 
 struct AccountRowView: View {
     let account: HDAccount
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(account.displayName)
                 .font(.headline)
-            
+
             Text(account.derivationPath)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fontDesign(.monospaced)
-            
+
             if let balance = account.balance {
                 Text(balance.formattedTotal)
                     .font(.caption)
@@ -305,7 +305,7 @@ struct EmptyAccountView: View {
             Image(systemName: "person.crop.circle.dashed")
                 .font(.system(size: 80))
                 .foregroundColor(.secondary)
-            
+
             Text("No Account Selected")
                 .font(.title2)
                 .foregroundColor(.secondary)
@@ -319,17 +319,17 @@ struct EmptyAccountView: View {
 struct ConnectionStatusView: View {
     let isConnected: Bool
     let isSyncing: Bool
-    
+
     var body: some View {
         HStack(spacing: 8) {
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
-            
+
             Text(statusText)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
+
             if isSyncing {
                 ProgressView()
                     .scaleEffect(0.7)
@@ -340,7 +340,7 @@ struct ConnectionStatusView: View {
         .background(Color.secondary.opacity(0.1))
         .cornerRadius(6)
     }
-    
+
     private var statusColor: Color {
         if isSyncing {
             return .orange
@@ -350,7 +350,7 @@ struct ConnectionStatusView: View {
             return .red
         }
     }
-    
+
     private var statusText: String {
         if isSyncing {
             return "Syncing"

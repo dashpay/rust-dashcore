@@ -8,7 +8,7 @@ struct SettingsView: View {
     @State private var showingResetConfirmation = false
     @State private var showingResetAlert = false
     @State private var resetMessage = ""
-    
+
     var body: some View {
         NavigationView {
             Form {
@@ -19,7 +19,7 @@ struct SettingsView: View {
                         Label("Reset All Data", systemImage: "trash")
                     }
                 }
-                
+
                 Section("About") {
                     HStack {
                         Text("Version")
@@ -27,7 +27,7 @@ struct SettingsView: View {
                         Text("1.0.0")
                             .foregroundColor(.secondary)
                     }
-                    
+
                     HStack {
                         Text("Build")
                         Spacer()
@@ -67,7 +67,7 @@ struct SettingsView: View {
             }
         }
     }
-    
+
     private func resetAllData() {
         do {
             // Delete all SwiftData models
@@ -79,13 +79,13 @@ struct SettingsView: View {
             try modelContext.delete(model: SwiftDashCoreSDK.Balance.self)
             try modelContext.delete(model: SwiftDashCoreSDK.WatchedAddress.self)
             try modelContext.delete(model: SyncState.self)
-            
+
             // Save the context
             try modelContext.save()
-            
+
             // Clean up the persistent store
             ModelContainerHelper.cleanupCorruptStore()
-            
+
             resetMessage = "All data has been reset. The app will now restart."
             showingResetAlert = true
         } catch {

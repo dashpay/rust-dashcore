@@ -18,7 +18,7 @@ public enum DashSDKError: LocalizedError {
     case invalidArgument(String)
     case unknownError(String)
     case notImplemented(String)
-    
+
     public var errorDescription: String? {
         switch self {
         case .invalidConfiguration(let message):
@@ -59,7 +59,7 @@ public enum DashSDKError: LocalizedError {
             return "Not implemented: \(message)"
         }
     }
-    
+
     public var recoverySuggestion: String? {
         switch self {
         case .invalidConfiguration:

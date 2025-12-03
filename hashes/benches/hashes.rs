@@ -128,7 +128,6 @@ fn bench_siphash24(c: &mut Criterion) {
     for (size, label) in [(1024, "1k"), (65536, "64k"), (1048576, "1m")] {
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-            let key = [0u8; 16];
             let bytes = vec![1u8; size];
             b.iter(|| {
                 let hash =
@@ -217,26 +216,26 @@ fn bench_slice_comparisons(c: &mut Criterion) {
     group.bench_function("32b_ne", |b| {
         let hash_a = sha256::Hash::hash(&[0; 1]);
         let hash_b = sha256::Hash::hash(&[1; 1]);
-        b.iter(|| &hash_a[..] == &hash_b[..]);
+        b.iter(|| hash_a[..] == hash_b[..]);
     });
 
     group.bench_function("32b_eq", |b| {
         let hash_a = sha256::Hash::hash(&[0; 1]);
         let hash_b = sha256::Hash::hash(&[0; 1]);
-        b.iter(|| &hash_a[..] == &hash_b[..]);
+        b.iter(|| hash_a[..] == hash_b[..]);
     });
 
     // 64-byte comparisons (SHA512)
     group.bench_function("64b_ne", |b| {
         let hash_a = sha512::Hash::hash(&[0; 1]);
         let hash_b = sha512::Hash::hash(&[1; 1]);
-        b.iter(|| &hash_a[..] == &hash_b[..]);
+        b.iter(|| hash_a[..] == hash_b[..]);
     });
 
     group.bench_function("64b_eq", |b| {
         let hash_a = sha512::Hash::hash(&[0; 1]);
         let hash_b = sha512::Hash::hash(&[0; 1]);
-        b.iter(|| &hash_a[..] == &hash_b[..]);
+        b.iter(|| hash_a[..] == hash_b[..]);
     });
 
     group.finish();

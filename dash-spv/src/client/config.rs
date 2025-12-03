@@ -56,9 +56,6 @@ pub struct ClientConfig {
     /// Sync timeout.
     pub sync_timeout: Duration,
 
-    /// Read timeout for TCP socket operations.
-    pub read_timeout: Duration,
-
     /// Whether to enable filter syncing.
     pub enable_filters: bool,
 
@@ -93,7 +90,7 @@ pub struct ClientConfig {
     /// Interval for checking CFHeader gaps (seconds)
     pub cfheader_gap_check_interval_secs: u64,
 
-    /// Cooldown between CFHeader restart attempts (seconds)  
+    /// Cooldown between CFHeader restart attempts (seconds)
     pub cfheader_gap_restart_cooldown_secs: u64,
 
     /// Maximum CFHeader gap restart attempts
@@ -206,7 +203,6 @@ impl Default for ClientConfig {
             connection_timeout: Duration::from_secs(30),
             message_timeout: Duration::from_secs(60),
             sync_timeout: Duration::from_secs(300),
-            read_timeout: Duration::from_millis(100),
             enable_filters: true,
             enable_masternodes: true,
             max_peers: 8,
@@ -323,12 +319,6 @@ impl ClientConfig {
     /// Set connection timeout.
     pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
         self.connection_timeout = timeout;
-        self
-    }
-
-    /// Set read timeout for TCP socket operations.
-    pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
-        self.read_timeout = timeout;
         self
     }
 

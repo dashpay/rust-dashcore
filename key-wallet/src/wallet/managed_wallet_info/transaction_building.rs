@@ -13,7 +13,7 @@ use dashcore::Transaction;
 pub enum AccountTypePreference {
     /// Use BIP44 account only
     BIP44,
-    /// Use BIP32 account only  
+    /// Use BIP32 account only
     BIP32,
     /// Prefer BIP44, fallback to BIP32
     PreferBIP44,

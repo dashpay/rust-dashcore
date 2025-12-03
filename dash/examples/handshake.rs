@@ -12,7 +12,7 @@ use dashcore::{Network, secp256k1};
 use secp256k1::rand;
 
 fn main() {
-    // This example establishes a connection to a Bitcoin node, sends the intial
+    // This example establishes a connection to a Bitcoin node, sends the initial
     // "version" message, waits for the reply, and finally closes the connection.
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {

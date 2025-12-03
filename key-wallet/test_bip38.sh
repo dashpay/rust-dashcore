@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # BIP38 Test Runner Script
-# 
+#
 # This script runs all BIP38-related tests that are normally ignored due to their
 # slow execution time (caused by the computationally intensive scrypt algorithm).
 #
@@ -30,9 +30,9 @@ cd "$(dirname "$0")"
 run_test_module() {
     local module=$1
     local description=$2
-    
+
     echo -e "${YELLOW}Running $description...${NC}"
-    
+
     if cargo test --lib $module -- --ignored --nocapture "$@" 2>&1; then
         echo -e "${GREEN}✓ $description passed${NC}"
         echo ""

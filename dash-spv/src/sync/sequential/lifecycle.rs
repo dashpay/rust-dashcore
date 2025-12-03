@@ -8,9 +8,7 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::{
-    FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
-};
+use crate::sync::{FilterSyncManager, HeaderSyncManager, MasternodeSyncManager, ReorgConfig};
 use crate::types::{SharedFilterHeights, SpvStats};
 use key_wallet_manager::{wallet_interface::WalletInterface, Network as WalletNetwork};
 use std::sync::Arc;
@@ -18,7 +16,6 @@ use tokio::sync::RwLock;
 
 use super::manager::SequentialSyncManager;
 use super::phases::SyncPhase;
-use super::request_control::RequestController;
 use super::transitions::TransitionManager;
 
 impl<
@@ -41,11 +38,9 @@ impl<
         Ok(Self {
             current_phase: SyncPhase::Idle,
             transition_manager: TransitionManager::new(config),
-            request_controller: RequestController::new(config),
-            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config, chain_state)
-                .map_err(|e| {
-                    SyncError::InvalidState(format!("Failed to create header sync manager: {}", e))
-                })?,
+            header_sync: HeaderSyncManager::new(config, reorg_config, chain_state).map_err(
+                |e| SyncError::InvalidState(format!("Failed to create header sync manager: {}", e)),
+            )?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             config: config.clone(),
@@ -181,27 +176,7 @@ impl<
         // Reset phase tracking
         self.current_phase_retries = 0;
 
-        // Clear request controller state
-        self.request_controller.clear_pending_requests();
-
         tracing::debug!("Reset sequential sync manager pending requests");
-    }
-
-    /// Fully reset the sync manager state to idle, used when sync initialization fails
-    pub fn reset_to_idle(&mut self) {
-        // First reset all pending requests
-        self.reset_pending_requests();
-
-        // Reset phase to idle
-        self.current_phase = SyncPhase::Idle;
-
-        // Clear sync start time
-        self.sync_start_time = None;
-
-        // Clear phase history
-        self.phase_history.clear();
-
-        tracing::info!("Reset sequential sync manager to idle state");
     }
 
     /// Helper method to get base hash from storage

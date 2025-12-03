@@ -116,10 +116,10 @@ TCP-based networking with proper Dash protocol implementation:
 - **DNS-first peer discovery**: Automatically uses DNS seeds (`dnsseed.dash.org`, `testnet-seed.dashdot.io`) when no explicit peers are configured
 - **Immediate startup**: No delay for initial peer discovery (10-second delay only for subsequent searches)
 - **Exclusive mode**: When explicit peers are provided, uses only those peers (no DNS discovery)
-- Connection management via `TcpConnection`
+- Connection management via `Peer`
 - Handshake handling via `HandshakeManager`
 - Message routing via `MessageHandler`
-- Multi-peer support via `MultiPeerManager`
+- Peer support via `PeerNetworkManager`
 
 ### Validation Modes
 - `ValidationMode::None`: No validation (fast)

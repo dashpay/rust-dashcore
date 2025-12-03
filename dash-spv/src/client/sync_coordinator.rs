@@ -11,15 +11,17 @@
 //! This is the largest module as it handles all coordination between network,
 //! storage, and the sync manager.
 
-use std::time::{Duration, Instant, SystemTime};
-
+use super::{BlockProcessingTask, DashSpvClient, MessageHandler};
+use crate::client::interface::DashSpvClientCommand;
 use crate::error::{Result, SpvError};
+use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::{DetailedSyncProgress, SyncProgress};
 use key_wallet_manager::wallet_interface::WalletInterface;
-
-use super::{BlockProcessingTask, DashSpvClient, MessageHandler};
+use std::time::{Duration, Instant, SystemTime};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio_util::sync::CancellationToken;
 
 impl<
         W: WalletInterface + Send + Sync + 'static,
@@ -66,7 +68,11 @@ impl<
     ///
     /// This is the sole network message receiver to prevent race conditions.
     /// All sync operations coordinate through this monitoring loop.
-    pub async fn monitor_network(&mut self) -> Result<()> {
+    pub async fn monitor_network(
+        &mut self,
+        mut command_receiver: UnboundedReceiver<DashSpvClientCommand>,
+        token: CancellationToken,
+    ) -> Result<()> {
         let running = self.running.read().await;
         if !*running {
             return Err(SpvError::Config("Client not running".to_string()));
@@ -126,21 +132,6 @@ impl<
                 break;
             }
             drop(running);
-
-            // Check if we need to send a ping
-            if self.network.should_ping() {
-                match self.network.send_ping().await {
-                    Ok(nonce) => {
-                        tracing::trace!("Sent periodic ping with nonce {}", nonce);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to send periodic ping: {}", e);
-                    }
-                }
-            }
-
-            // Clean up old pending pings
-            self.network.cleanup_old_pings();
 
             // Check if we have connected peers and start initial sync operations (once)
             if !initial_sync_started && self.network.peer_count() > 0 {
@@ -490,86 +481,142 @@ impl<
                 last_chainlock_validation_check = Instant::now();
             }
 
-            // Handle network messages with timeout for responsiveness
-            match tokio::time::timeout(Duration::from_millis(1000), self.network.receive_message())
-                .await
-            {
-                Ok(msg_result) => match msg_result {
-                    Ok(Some(message)) => {
-                        // Wrap message handling in comprehensive error handling
-                        match self.handle_network_message(message).await {
-                            Ok(_) => {
-                                // Message handled successfully
-                            }
-                            Err(e) => {
-                                tracing::error!("Error handling network message: {}", e);
-
-                                // Categorize error severity
-                                match &e {
-                                    SpvError::Network(_) => {
-                                        tracing::warn!("Network error during message handling - may recover automatically");
-                                    }
-                                    SpvError::Storage(_) => {
-                                        tracing::error!("Storage error during message handling - this may affect data consistency");
-                                    }
-                                    SpvError::Validation(_) => {
-                                        tracing::warn!("Validation error during message handling - message rejected");
-                                    }
-                                    _ => {
-                                        tracing::error!("Unexpected error during message handling");
-                                    }
-                                }
-
-                                // Continue monitoring despite errors
-                                tracing::debug!(
-                                    "Continuing network monitoring despite message handling error"
-                                );
-                            }
+            tokio::select! {
+                received = command_receiver.recv() => {
+                    match received {
+                    None => {tracing::warn!("DashSpvClientCommand channel closed.");},
+                    Some(command) => {
+                            self.handle_command(command).await.unwrap_or_else(|e| tracing::error!("Failed to handle command: {}", e));
                         }
                     }
-                    Ok(None) => {
-                        // No message available, brief pause before continuing
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                    Err(e) => {
-                        // Handle specific network error types
-                        if let crate::error::NetworkError::ConnectionFailed(msg) = &e {
-                            if msg.contains("No connected peers") || self.network.peer_count() == 0
-                            {
-                                tracing::warn!("All peers disconnected during monitoring, checking connection health");
-
-                                // Wait for potential reconnection
-                                let mut wait_count = 0;
-                                while wait_count < 10 && self.network.peer_count() == 0 {
-                                    tokio::time::sleep(Duration::from_millis(500)).await;
-                                    wait_count += 1;
+                }
+                received = self.network.receive_message() => {
+                    match received {
+                        Ok(None) => {
+                            continue;
+                        }
+                        Ok(Some(message)) => {
+                            // Wrap message handling in comprehensive error handling
+                            match self.handle_network_message(message).await {
+                                Ok(_) => {
+                                    // Message handled successfully
                                 }
+                                Err(e) => {
+                                    tracing::error!("Error handling network message: {}", e);
 
-                                if self.network.peer_count() > 0 {
-                                    tracing::info!(
-                                        "✅ Reconnected to {} peer(s), resuming monitoring",
-                                        self.network.peer_count()
-                                    );
-                                    continue;
-                                } else {
-                                    tracing::warn!(
-                                        "No peers available after waiting, will retry monitoring"
+                                    // Categorize error severity
+                                    match &e {
+                                        SpvError::Network(_) => {
+                                            tracing::warn!("Network error during message handling - may recover automatically");
+                                        }
+                                        SpvError::Storage(_) => {
+                                            tracing::error!("Storage error during message handling - this may affect data consistency");
+                                        }
+                                        SpvError::Validation(_) => {
+                                            tracing::warn!("Validation error during message handling - message rejected");
+                                        }
+                                        _ => {
+                                            tracing::error!("Unexpected error during message handling");
+                                        }
+                                    }
+
+                                    // Continue monitoring despite errors
+                                    tracing::debug!(
+                                        "Continuing network monitoring despite message handling error"
                                     );
                                 }
                             }
-                        }
+                        },
+                        Err(err) => {
+                            // Handle specific network error types
+                            if let crate::error::NetworkError::ConnectionFailed(msg) = &err {
+                                if msg.contains("No connected peers") || self.network.peer_count() == 0 {
+                                    tracing::warn!("All peers disconnected during monitoring, checking connection health");
 
-                        tracing::error!("Network error during monitoring: {}", e);
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                                    // Wait for potential reconnection
+                                    let mut wait_count = 0;
+                                    while wait_count < 10 && self.network.peer_count() == 0 {
+                                        tokio::time::sleep(Duration::from_millis(500)).await;
+                                        wait_count += 1;
+                                    }
+
+                                    if self.network.peer_count() > 0 {
+                                        tracing::info!(
+                                            "✅ Reconnected to {} peer(s), resuming monitoring",
+                                            self.network.peer_count()
+                                        );
+                                        continue
+                                    } else {
+                                        tracing::warn!(
+                                            "No peers available after waiting, will retry monitoring"
+                                        );
+                                    }
+                                }
+                            }
+
+                            tracing::error!("Network error during monitoring: {}", err);
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
                     }
-                },
-                Err(_) => {
-                    // Timeout occurred - this is expected and allows checking running state
-                    // Continue the loop to check if we should stop
+                }
+                _ = tokio::time::sleep(MESSAGE_RECEIVE_TIMEOUT) => {}
+                _ = token.cancelled() => {
+                    log::debug!("DashSpvClient run loop cancelled");
+                    break
                 }
             }
         }
 
+        Ok(())
+    }
+
+    pub async fn run(
+        mut self,
+        command_receiver: UnboundedReceiver<DashSpvClientCommand>,
+        shutdown_token: CancellationToken,
+    ) -> Result<()> {
+        let client_token = shutdown_token.clone();
+
+        let client_task = tokio::spawn(async move {
+            let result = self.monitor_network(command_receiver, client_token).await;
+            if let Err(e) = &result {
+                tracing::error!("Error running client: {}", e);
+            }
+            if let Err(e) = self.stop().await {
+                tracing::error!("Error stopping client: {}", e);
+            }
+            result
+        });
+
+        let shutdown_task = tokio::spawn(async move {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                tracing::error!("Error waiting for ctrl_c: {}", e);
+            }
+            tracing::debug!("Shutdown signal received");
+            shutdown_token.cancel();
+        });
+
+        let (client_result, _) = tokio::join!(client_task, shutdown_task);
+        client_result.map_err(|e| SpvError::General(format!("client_task panicked: {e}")))?
+    }
+
+    async fn handle_command(&mut self, command: DashSpvClientCommand) -> Result<()> {
+        match command {
+            DashSpvClientCommand::GetQuorumByHeight {
+                height,
+                quorum_type,
+                quorum_hash,
+                sender,
+            } => {
+                let result = self.get_quorum_at_height(height, quorum_type, quorum_hash);
+                if sender.send(result).is_err() {
+                    return Err(SpvError::ChannelFailure(
+                        format!("GetQuorumByHeight({height}, {quorum_type}, {quorum_hash})"),
+                        "Failed to send quorum result".to_string(),
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 

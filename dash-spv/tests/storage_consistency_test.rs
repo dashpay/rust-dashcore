@@ -132,7 +132,7 @@ async fn test_tip_height_header_consistency_large_dataset() {
         if let Some(height) = tip_height {
             let header = storage.get_header(height).await.unwrap();
             if header.is_none() {
-                panic!("❌ CONSISTENCY BUG DETECTED: tip_height={} but get_header({}) returned None after batch ending at {}", 
+                panic!("❌ CONSISTENCY BUG DETECTED: tip_height={} but get_header({}) returned None after batch ending at {}",
                        height, height, batch_end - 1);
             }
 
@@ -211,7 +211,7 @@ async fn test_concurrent_tip_header_access() {
                 if let Some(height) = tip_height {
                     let header = storage.get_header(height).await.unwrap();
                     if header.is_none() {
-                        panic!("❌ CONCURRENCY BUG DETECTED in task {}, iteration {}: tip_height={} but get_header({}) returned None", 
+                        panic!("❌ CONCURRENCY BUG DETECTED in task {}, iteration {}: tip_height={} but get_header({}) returned None",
                                i, iteration, height, height);
                     }
 
@@ -220,7 +220,7 @@ async fn test_concurrent_tip_header_access() {
                         let test_height = height.saturating_sub(offset);
                         let test_header = storage.get_header(test_height).await.unwrap();
                         if test_header.is_none() {
-                            panic!("❌ CONCURRENCY BUG: Header missing at height {} (tip is {}) in task {}", 
+                            panic!("❌ CONCURRENCY BUG: Header missing at height {} (tip is {}) in task {}",
                                    test_height, height, i);
                         }
                     }
@@ -287,7 +287,7 @@ async fn test_reproduce_filter_sync_bug() {
         println!("Header at tip height {}: {:?}", tip_height, tip_header.is_some());
 
         if tip_header.is_none() {
-            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None", 
+            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None",
                      tip_height, tip_height);
         }
 
@@ -307,7 +307,7 @@ async fn test_reproduce_filter_sync_bug() {
             );
 
             if tip_header.is_none() {
-                println!("🔥 EXACT BUG REPRODUCED: Fallback to tip {} also failed - this is the exact error from the logs!", 
+                println!("🔥 EXACT BUG REPRODUCED: Fallback to tip {} also failed - this is the exact error from the logs!",
                          tip_height);
                 panic!("Reproduced the exact filter sync bug scenario");
             }
@@ -355,7 +355,7 @@ async fn test_reproduce_filter_sync_bug_small() {
         println!("Header at tip height {}: {:?}", tip_height, tip_header.is_some());
 
         if tip_header.is_none() {
-            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None", 
+            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None",
                      tip_height, tip_height);
         }
 
@@ -550,7 +550,7 @@ async fn test_concurrent_tip_height_access_with_eviction() {
                     let header_result = storage.get_header(height).await.unwrap();
 
                     if header_result.is_none() {
-                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None", 
+                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None",
                                task_id, iteration, height, height);
                     }
 
@@ -615,7 +615,7 @@ async fn test_concurrent_tip_height_access_with_eviction_heavy() {
                     let header_result = storage.get_header(height).await.unwrap();
 
                     if header_result.is_none() {
-                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None", 
+                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None",
                                task_id, iteration, height, height);
                     }
 
@@ -684,7 +684,7 @@ async fn test_tip_height_segment_boundary_race() {
             if let Some(tip) = reported_tip {
                 let header = storage.get_header(tip).await.unwrap();
                 if header.is_none() {
-                    panic!("🎯 SEGMENT BOUNDARY RACE DETECTED: After storing segment {}, tip_height={} but header is None", 
+                    panic!("🎯 SEGMENT BOUNDARY RACE DETECTED: After storing segment {}, tip_height={} but header is None",
                            i, tip);
                 }
             }

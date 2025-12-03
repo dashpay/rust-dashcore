@@ -19,4 +19,3 @@ hex = "0.4"
 [lib]
 crate-type = ["cdylib", "staticlib"]
 name = "dash_network_ffi"
-

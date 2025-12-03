@@ -99,30 +99,6 @@ impl NetworkManager for MockNetworkManager {
         }]
     }
 
-    async fn send_ping(&mut self) -> dash_spv::error::NetworkResult<u64> {
-        Ok(12345) // Return a dummy nonce
-    }
-
-    async fn handle_ping(&mut self, _nonce: u64) -> dash_spv::error::NetworkResult<()> {
-        Ok(())
-    }
-
-    fn should_ping(&self) -> bool {
-        false // Mock doesn't need pinging
-    }
-
-    fn cleanup_old_pings(&mut self) {
-        // No-op for mock
-    }
-
-    fn get_message_sender(
-        &self,
-    ) -> tokio::sync::mpsc::Sender<dashcore::network::message::NetworkMessage> {
-        // Create a dummy sender that drops messages
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        tx
-    }
-
     async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
         Ok(Some(0)) // Return dummy height
     }
@@ -132,17 +108,6 @@ impl NetworkManager for MockNetworkManager {
         _service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool {
         true // Mock always has service
-    }
-
-    async fn get_peers_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> Vec<dash_spv::types::PeerInfo> {
-        self.peer_info() // Return same peer info
-    }
-
-    fn handle_pong(&mut self, _nonce: u64) -> dash_spv::error::NetworkResult<()> {
-        Ok(()) // No-op for mock
     }
 
     async fn update_peer_dsq_preference(

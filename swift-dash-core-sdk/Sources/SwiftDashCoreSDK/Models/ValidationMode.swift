@@ -7,7 +7,7 @@ public enum ValidationMode: String, Codable, CaseIterable, Sendable {
     case none = "none"
     case basic = "basic"
     case full = "full"
-    
+
     public var description: String {
         switch self {
         case .none:
@@ -18,7 +18,7 @@ public enum ValidationMode: String, Codable, CaseIterable, Sendable {
             return "Full validation - verify everything including ChainLocks"
         }
     }
-    
+
     internal var ffiValue: FFIValidationMode {
         switch self {
         case .none:
@@ -29,7 +29,7 @@ public enum ValidationMode: String, Codable, CaseIterable, Sendable {
             return FFIValidationMode(rawValue: 2)
         }
     }
-    
+
     internal init?(ffiMode: FFIValidationMode) {
         switch ffiMode.rawValue {
         case 0:

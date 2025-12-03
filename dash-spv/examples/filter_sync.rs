@@ -1,6 +1,6 @@
 //! BIP157 filter synchronization example.
 
-use dash_spv::network::MultiPeerNetworkManager;
+use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::MemoryStorageManager;
 use dash_spv::{init_logging, ClientConfig, DashSpvClient};
 use dashcore::Address;
@@ -9,6 +9,7 @@ use key_wallet_manager::wallet_manager::WalletManager;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ClientConfig::mainnet().without_masternodes(); // Skip masternode sync for this example
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
     let storage_manager = MemoryStorageManager::new().await?;
@@ -42,21 +43,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Watching address: {:?}", watch_address);
 
     // Full sync including filters
-    let progress = client.sync_to_tip().await?;
+    client.sync_to_tip().await?;
 
-    println!("Synchronization completed!");
-    println!("Headers synced: {}", progress.header_height);
-    println!("Filter headers synced: {}", progress.filter_header_height);
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
 
-    // Get statistics
-    let stats = client.stats().await?;
-    println!("Filter headers downloaded: {}", stats.filter_headers_downloaded);
-    println!("Filters downloaded: {}", stats.filters_downloaded);
-    println!("Filter matches found: {}", stats.filters_matched);
-    println!("Blocks requested: {}", stats.blocks_requested);
-
-    // Stop the client
-    client.stop().await?;
+    client.run(command_receiver, shutdown_token).await?;
 
     println!("Done!");
     Ok(())

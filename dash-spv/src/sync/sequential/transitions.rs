@@ -219,7 +219,6 @@ impl TransitionManager {
                         target_height: header_tip,
                         last_progress: Instant::now(),
                         diffs_processed: 0,
-                        sync_strategy: None,
                         requests_total: 0,
                         requests_completed: 0,
                     }))

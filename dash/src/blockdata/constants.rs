@@ -12,7 +12,6 @@ use core::default::Default;
 
 use hashes::{Hash, sha256d};
 use hex_lit::hex;
-use internals::impl_array_newtype;
 
 use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;
@@ -23,7 +22,6 @@ use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
-use crate::internal_macros::impl_bytes_newtype;
 use crate::pow::CompactTarget;
 use dash_network::Network;
 
@@ -83,8 +81,9 @@ fn dash_genesis_tx() -> Transaction {
 
     // Inputs
     // Using raw script bytes to avoid push_slice issues
+    // Message: "Wired 09/Jan/2014 The Grand Experiment Goes Live: Overstock.com Is Now Accepting Bitcoins"
     let in_script = script::ScriptBuf::from(hex!(
-        "04ffff001d01044c5957697265642030392f4a616e2f32303134205468652047726e64204578706572696d656e7420476f6573204c6976653a204f76657273746f636b2e636f6d204973204e6f7720416363657074696e6720426974636f696e73"
+        "04ffff001d01044c5957697265642030392f4a616e2f3230313420546865204772616e64204578706572696d656e7420476f6573204c6976653a204f76657273746f636b2e636f6d204973204e6f7720416363657074696e6720426974636f696e73"
     ).to_vec());
     ret.input.push(TxIn {
         previous_output: OutPoint::null(),
@@ -157,9 +156,9 @@ pub fn genesis_block(network: Network) -> Block {
                     version: block::Version::ONE,
                     prev_blockhash: Hash::all_zeros(),
                     merkle_root,
-                    time: 1598918400,
-                    bits: CompactTarget::from_consensus(0x1e0377ae),
-                    nonce: 52613770,
+                    time: 1417713337,
+                    bits: CompactTarget::from_consensus(0x207fffff),
+                    nonce: 1096447,
                 },
                 txdata,
             }
@@ -172,63 +171,15 @@ pub fn genesis_block(network: Network) -> Block {
                     version: block::Version::ONE,
                     prev_blockhash: Hash::all_zeros(),
                     merkle_root,
-                    time: 1296688602,
+                    time: 1417713337,
                     bits: CompactTarget::from_consensus(0x207fffff),
-                    nonce: 2,
+                    nonce: 1096447,
                 },
                 txdata,
             }
         }
         // Any new network variant must be handled explicitly.
         _ => unreachable!("genesis_block(): unsupported network variant {network:?}"),
-    }
-}
-
-/// The uniquely identifying hash of the target blockchain.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ChainHash([u8; 32]);
-impl_array_newtype!(ChainHash, u8, 32);
-impl_bytes_newtype!(ChainHash, 32);
-
-impl ChainHash {
-    // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
-    /// `ChainHash` for mainnet dash.
-    pub const DASH: Self = Self([
-        0x00, 0x00, 0x0f, 0xfd, 0x59, 0x0b, 0x14, 0x85, 0xb3, 0xca, 0xad, 0xc1, 0x9b, 0x22, 0xe6,
-        0x37, 0x9c, 0x73, 0x33, 0x55, 0x10, 0x8f, 0x10, 0x7a, 0x43, 0x04, 0x58, 0xcd, 0xf3, 0x40,
-        0x7a, 0xb6,
-    ]);
-    /// `ChainHash` for testnet dash.
-    pub const TESTNET: Self = Self([
-        0x00, 0x00, 0x0b, 0xaf, 0xbc, 0x94, 0xad, 0xd7, 0x6c, 0xb7, 0x5e, 0x2e, 0xc9, 0x28, 0x94,
-        0x83, 0x72, 0x88, 0xa4, 0x81, 0xe5, 0xc0, 0x05, 0xf6, 0x56, 0x3d, 0x91, 0x62, 0x3b, 0xf8,
-        0xbc, 0x2c,
-    ]);
-    /// `ChainHash` for devnet dash.
-    pub const DEVNET: Self = Self([
-        0x4e, 0x5f, 0x93, 0x0c, 0x5d, 0x73, 0xa8, 0x79, 0x2f, 0xa6, 0x81, 0xba, 0x8c, 0x5e, 0xaf,
-        0x74, 0xaa, 0x63, 0x97, 0x4a, 0x5b, 0x1f, 0x59, 0x8d, 0xd5, 0x08, 0x02, 0x9a, 0xee, 0x70,
-        0x16, 0x7b,
-    ]);
-    /// `ChainHash` for regtest dash.
-    pub const REGTEST: Self = Self([
-        0x53, 0xb3, 0xed, 0x30, 0x30, 0x78, 0x1a, 0xc1, 0x9e, 0x48, 0x52, 0xd9, 0xc5, 0x8f, 0x28,
-        0x04, 0x57, 0x4f, 0x98, 0x66, 0xf3, 0xf7, 0xf6, 0x91, 0x31, 0xee, 0xb1, 0x3f, 0x44, 0x9f,
-        0x80, 0x07,
-    ]);
-
-    /// Returns the hash of the `network` genesis block for use as a chain hash.
-    ///
-    /// See [BOLT 0](https://github.com/lightning/bolts/blob/ffeece3dab1c52efdb9b53ae476539320fa44938/00-introduction.md#chain_hash)
-    /// for specification.
-    pub const fn using_genesis_block(network: Network) -> Self {
-        let hashes = [Self::DASH, Self::TESTNET, Self::DEVNET, Self::REGTEST];
-        hashes[network as usize]
-    }
-
-    /// Converts genesis block hash into `ChainHash`.
-    pub fn from_genesis_block_hash(block_hash: crate::BlockHash) -> Self {
-        ChainHash(block_hash.to_byte_array())
     }
 }
 
@@ -249,7 +200,7 @@ mod test {
         assert_eq!(
             genesis_tx.input[0].script_sig.as_bytes(),
             &hex!(
-                "04ffff001d01044c5957697265642030392f4a616e2f32303134205468652047726e64204578706572696d656e7420476f6573204c6976653a204f76657273746f636b2e636f6d204973204e6f7720416363657074696e6720426974636f696e73"
+                "04ffff001d01044c5957697265642030392f4a616e2f3230313420546865204772616e64204578706572696d656e7420476f6573204c6976653a204f76657273746f636b2e636f6d204973204e6f7720416363657074696e6720426974636f696e73"
             )
         );
 
@@ -317,63 +268,30 @@ mod test {
             genesis_block.header.merkle_root.to_string(),
             "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
         );
-        assert_eq!(genesis_block.header.time, 1598918400);
-        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1e0377ae));
-        assert_eq!(genesis_block.header.nonce, 52613770);
+        assert_eq!(genesis_block.header.time, 1417713337);
+        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x207fffff));
+        assert_eq!(genesis_block.header.nonce, 1096447);
         assert_eq!(
             genesis_block.header.block_hash().to_string(),
-            "4e5f930c5d73a8792fa681ba8c5eaf74aa63974a5b1f598dd508029aee70167b"
+            "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e"
         );
     }
 
-    // The *_chain_hash tests are sanity/regression tests, they verify that the const byte array
-    // representing the genesis block is the same as that created by hashing the genesis block.
-    fn chain_hash_and_genesis_block(network: Network) {
-        // The genesis block hash is a double-sha256, and it is displayed backwards.
-        let genesis_hash = genesis_block(network).block_hash();
-        let want = format!("{:02x}", genesis_hash);
-
-        let chain_hash = ChainHash::using_genesis_block(network);
-        let got = format!("{:02x}", chain_hash);
-
-        // Compare strings because the spec specifically states how the chain hash must encode to hex.
-        assert_eq!(got, want);
-
-        #[allow(unreachable_patterns)] // This is specifically trying to catch later added variants.
-        match network {
-            Network::Dash => {}
-            Network::Testnet => {}
-            Network::Devnet => {}
-            Network::Regtest => {}
-            _ => panic!(
-                "Update ChainHash::using_genesis_block and chain_hash_genesis_block with new variants"
-            ),
-        }
-    }
-
-    macro_rules! chain_hash_genesis_block {
-        ($($test_name:ident, $network:expr);* $(;)*) => {
-            $(
-                #[test]
-                fn $test_name() {
-                    chain_hash_and_genesis_block($network);
-                }
-            )*
-        }
-    }
-
-    chain_hash_genesis_block! {
-        mainnet_chain_hash_genesis_block, Network::Dash;
-        testnet_chain_hash_genesis_block, Network::Testnet;
-        devnet_chain_hash_genesis_block, Network::Devnet;
-        regtest_chain_hash_genesis_block, Network::Regtest;
-    }
-
-    // Test vector taken from: https://github.com/lightning/bolts/blob/master/00-introduction.md
     #[test]
-    fn mainnet_chain_hash_test_vector() {
-        let got = ChainHash::using_genesis_block(Network::Dash).to_string();
-        let want = "00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6";
-        assert_eq!(got, want);
+    fn regtest_genesis_full_block() {
+        let genesis_block = genesis_block(Network::Regtest);
+        assert_eq!(genesis_block.header.version, block::Version::ONE);
+        assert_eq!(genesis_block.header.prev_blockhash, Hash::all_zeros());
+        assert_eq!(
+            genesis_block.header.merkle_root.to_string(),
+            "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
+        );
+        assert_eq!(genesis_block.header.time, 1417713337);
+        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x207fffff));
+        assert_eq!(genesis_block.header.nonce, 1096447);
+        assert_eq!(
+            genesis_block.header.block_hash().to_string(),
+            "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e"
+        );
     }
 }

@@ -4,7 +4,7 @@ import SwiftDashCoreSDK
 struct CreateWalletView: View {
     @EnvironmentObject private var walletService: WalletService
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var walletName = "Dev Wallet \(Int.random(in: 1000...9999))"
     @State private var selectedNetwork: DashNetwork = .testnet
     @State private var password = "password123"
@@ -14,9 +14,9 @@ struct CreateWalletView: View {
     @State private var mnemonicConfirmed = true
     @State private var isCreating = false
     @State private var errorMessage = ""
-    
+
     let onComplete: (HDWallet) -> Void
-    
+
     var isValid: Bool {
         !walletName.isEmpty &&
         !password.isEmpty &&
@@ -24,7 +24,7 @@ struct CreateWalletView: View {
         password.count >= 8 &&
         mnemonicConfirmed
     }
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -36,7 +36,7 @@ struct CreateWalletView: View {
             }
             .padding()
             .background(PlatformColor.controlBackground)
-            
+
             // Content
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -44,10 +44,10 @@ struct CreateWalletView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Wallet Details")
                             .font(.headline)
-                        
+
                         TextField("Wallet Name", text: $walletName)
                             .textFieldStyle(.roundedBorder)
-                        
+
                         HStack {
                             Text("Network:")
                             Picker("", selection: $selectedNetwork) {
@@ -64,47 +64,47 @@ struct CreateWalletView: View {
                             Spacer()
                         }
                     }
-                    
+
                     Divider()
-                    
+
                     // Security
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Security")
                             .font(.headline)
-                        
+
                         SecureField("Password (min 8 characters)", text: $password)
                             .textFieldStyle(.roundedBorder)
-                        
+
                         SecureField("Confirm Password", text: $confirmPassword)
                             .textFieldStyle(.roundedBorder)
-                        
+
                         // Password validation warnings
                         if !password.isEmpty && password.count < 8 {
                             Text("Password must be at least 8 characters")
                                 .font(.caption)
                                 .foregroundColor(.orange)
                         }
-                        
+
                         if !password.isEmpty && !confirmPassword.isEmpty && password != confirmPassword {
                             Text("Passwords don't match")
                                 .font(.caption)
                                 .foregroundColor(.red)
                         }
-                        
+
                         if password.isEmpty && confirmPassword.isEmpty && !walletName.isEmpty {
                             Text("Please set a password to protect your wallet")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
-                    
+
                     Divider()
-                    
+
                     // Recovery Phrase
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Recovery Phrase")
                             .font(.headline)
-                        
+
                         if mnemonic.isEmpty {
                             Button("Generate Recovery Phrase") {
                                 generateMnemonic()
@@ -114,17 +114,17 @@ struct CreateWalletView: View {
                             Text("Write down these words in order. You'll need them to recover your wallet.")
                                 .font(.caption)
                                 .foregroundColor(.orange)
-                            
+
                             MnemonicGridView(
                                 words: mnemonic,
                                 showWords: showMnemonic
                             )
-                            
+
                             HStack {
                                 Toggle("Show words", isOn: $showMnemonic)
-                                
+
                                 Spacer()
-                                
+
                                 Button("Copy") {
                                     copyMnemonic()
                                 }
@@ -134,7 +134,7 @@ struct CreateWalletView: View {
                                 .buttonStyle(.link)
                                 #endif
                             }
-                            
+
                             Toggle("I have written down my recovery phrase", isOn: $mnemonicConfirmed)
                                 #if os(macOS)
                                 .toggleStyle(.checkbox)
@@ -143,7 +143,7 @@ struct CreateWalletView: View {
                                 #endif
                         }
                     }
-                    
+
                     // Error Message
                     if !errorMessage.isEmpty {
                         Text(errorMessage)
@@ -153,18 +153,18 @@ struct CreateWalletView: View {
                 }
                 .padding()
             }
-            
+
             Divider()
-            
+
             // Footer buttons
             HStack {
                 Button("Cancel") {
                     dismiss()
                 }
                 .keyboardShortcut(.escape)
-                
+
                 Spacer()
-                
+
                 // Show what's missing if button is disabled
                 if !isValid && !walletName.isEmpty {
                     VStack(alignment: .trailing, spacing: 4) {
@@ -187,7 +187,7 @@ struct CreateWalletView: View {
                         }
                     }
                 }
-                
+
                 Button("Create") {
                     createWallet()
                 }
@@ -207,20 +207,20 @@ struct CreateWalletView: View {
             }
         }
     }
-    
+
     private func generateMnemonic() {
         mnemonic = HDWalletService.generateMnemonic()
     }
-    
+
     private func copyMnemonic() {
         let phrase = mnemonic.joined(separator: " ")
         Clipboard.copy(phrase)
     }
-    
+
     private func createWallet() {
         isCreating = true
         errorMessage = ""
-        
+
         do {
             let wallet = try walletService.createWallet(
                 name: walletName,
@@ -228,7 +228,7 @@ struct CreateWalletView: View {
                 password: password,
                 network: selectedNetwork
             )
-            
+
             onComplete(wallet)
             dismiss()
         } catch {
@@ -243,13 +243,13 @@ struct CreateWalletView: View {
 struct MnemonicGridView: View {
     let words: [String]
     let showWords: Bool
-    
+
     private let columns = [
         GridItem(.flexible()),
         GridItem(.flexible()),
         GridItem(.flexible())
     ]
-    
+
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
             ForEach(Array(words.enumerated()), id: \.offset) { index, word in
@@ -258,7 +258,7 @@ struct MnemonicGridView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .frame(width: 20, alignment: .trailing)
-                    
+
                     Text(showWords ? word : "•••••")
                         .font(.system(.body, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -277,7 +277,7 @@ struct MnemonicGridView: View {
 struct ImportWalletView: View {
     @EnvironmentObject private var walletService: WalletService
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var walletName = ""
     @State private var mnemonicText = ""
     @State private var selectedNetwork: DashNetwork = .testnet
@@ -285,9 +285,9 @@ struct ImportWalletView: View {
     @State private var confirmPassword = ""
     @State private var isImporting = false
     @State private var errorMessage = ""
-    
+
     let onComplete: (HDWallet) -> Void
-    
+
     var isValid: Bool {
         !walletName.isEmpty &&
         !mnemonicText.isEmpty &&
@@ -295,7 +295,7 @@ struct ImportWalletView: View {
         password == confirmPassword &&
         password.count >= 8
     }
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -307,7 +307,7 @@ struct ImportWalletView: View {
             }
             .padding()
             .background(PlatformColor.controlBackground)
-            
+
             // Content
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -315,10 +315,10 @@ struct ImportWalletView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Wallet Details")
                             .font(.headline)
-                        
+
                         TextField("Wallet Name", text: $walletName)
                             .textFieldStyle(.roundedBorder)
-                        
+
                         HStack {
                             Text("Network:")
                             Picker("", selection: $selectedNetwork) {
@@ -335,18 +335,18 @@ struct ImportWalletView: View {
                             Spacer()
                         }
                     }
-                    
+
                     Divider()
-                    
+
                     // Recovery Phrase
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Recovery Phrase")
                             .font(.headline)
-                        
+
                         Text("Enter your 12 or 24 word recovery phrase")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         TextEditor(text: $mnemonicText)
                             .font(.system(.body, design: .monospaced))
                             .frame(height: 100)
@@ -355,40 +355,40 @@ struct ImportWalletView: View {
                                     .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                             )
                     }
-                    
+
                     Divider()
-                    
+
                     // Security
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Security")
                             .font(.headline)
-                        
+
                         SecureField("Password (min 8 characters)", text: $password)
                             .textFieldStyle(.roundedBorder)
-                        
+
                         SecureField("Confirm Password", text: $confirmPassword)
                             .textFieldStyle(.roundedBorder)
-                        
+
                         // Password validation warnings
                         if !password.isEmpty && password.count < 8 {
                             Text("Password must be at least 8 characters")
                                 .font(.caption)
                                 .foregroundColor(.orange)
                         }
-                        
+
                         if !password.isEmpty && !confirmPassword.isEmpty && password != confirmPassword {
                             Text("Passwords don't match")
                                 .font(.caption)
                                 .foregroundColor(.red)
                         }
-                        
+
                         if password.isEmpty && confirmPassword.isEmpty && !walletName.isEmpty {
                             Text("Please set a password to protect your wallet")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
-                    
+
                     // Error Message
                     if !errorMessage.isEmpty {
                         Text(errorMessage)
@@ -398,18 +398,18 @@ struct ImportWalletView: View {
                 }
                 .padding()
             }
-            
+
             Divider()
-            
+
             // Footer buttons
             HStack {
                 Button("Cancel") {
                     dismiss()
                 }
                 .keyboardShortcut(.escape)
-                
+
                 Spacer()
-                
+
                 Button("Import") {
                     importWallet()
                 }
@@ -423,24 +423,24 @@ struct ImportWalletView: View {
         .frame(width: 600, height: 500)
         #endif
     }
-    
+
     private func importWallet() {
         isImporting = true
         errorMessage = ""
-        
+
         // Parse mnemonic
         let words = mnemonicText
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .split(separator: " ")
             .map { String($0) }
-        
+
         // Validate word count
         guard words.count == 12 || words.count == 24 else {
             errorMessage = "Recovery phrase must be 12 or 24 words"
             isImporting = false
             return
         }
-        
+
         do {
             let wallet = try walletService.createWallet(
                 name: walletName,
@@ -448,7 +448,7 @@ struct ImportWalletView: View {
                 password: password,
                 network: selectedNetwork
             )
-            
+
             onComplete(wallet)
             dismiss()
         } catch {

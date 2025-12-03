@@ -6,12 +6,11 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Arg, Command};
-use tokio::signal;
-
 use dash_spv::terminal::TerminalGuard;
 use dash_spv::{ClientConfig, DashSpvClient, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() {
@@ -243,14 +242,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
 
     // Create network manager
-    let network_manager =
-        match dash_spv::network::multi_peer::MultiPeerNetworkManager::new(&config).await {
-            Ok(nm) => nm,
-            Err(e) => {
-                eprintln!("Failed to create network manager: {}", e);
-                process::exit(1);
-            }
-        };
+    let network_manager = match dash_spv::network::manager::PeerNetworkManager::new(&config).await {
+        Ok(nm) => nm,
+        Err(e) => {
+            eprintln!("Failed to create network manager: {}", e);
+            process::exit(1);
+        }
+    };
 
     // Create and start the client based on storage type
     if config.enable_persistence {
@@ -317,7 +315,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static>(
     config: ClientConfig,
-    network_manager: dash_spv::network::multi_peer::MultiPeerNetworkManager,
+    network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
     enable_terminal_ui: bool,
@@ -328,7 +326,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     let mut client =
         match DashSpvClient::<
             WalletManager<ManagedWalletInfo>,
-            dash_spv::network::multi_peer::MultiPeerNetworkManager,
+            dash_spv::network::manager::PeerNetworkManager,
             S,
         >::new(config.clone(), network_manager, storage_manager, wallet.clone())
         .await
@@ -632,32 +630,10 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
         tracing::info!("You can manually trigger filter sync later if needed");
     }
 
-    tokio::select! {
-        result = client.monitor_network() => {
-            if let Err(e) = result {
-                tracing::error!("Network monitoring failed: {}", e);
-            }
-        }
-        _ = signal::ctrl_c() => {
-            tracing::info!("Received shutdown signal (Ctrl-C)");
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
 
-            // Stop the client immediately
-            tracing::info!("Stopping SPV client...");
-            if let Err(e) = client.stop().await {
-                tracing::error!("Error stopping client: {}", e);
-            } else {
-                tracing::info!("SPV client stopped successfully");
-            }
-            return Ok(());
-        }
-    }
+    client.run(command_receiver, shutdown_token).await?;
 
-    // Stop the client (if monitor_network exited normally)
-    tracing::info!("Stopping SPV client...");
-    if let Err(e) = client.stop().await {
-        tracing::error!("Error stopping client: {}", e);
-    }
-
-    tracing::info!("SPV client stopped");
     Ok(())
 }

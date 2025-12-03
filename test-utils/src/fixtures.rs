@@ -29,7 +29,7 @@ pub fn mainnet_genesis_hash() -> BlockHash {
     BlockHash::from_slice(&reversed).unwrap()
 }
 
-/// Get testnet genesis block hash  
+/// Get testnet genesis block hash
 pub fn testnet_genesis_hash() -> BlockHash {
     let bytes = decode(TESTNET_GENESIS_HASH).unwrap();
     let mut reversed = [0u8; 32];

@@ -3,25 +3,25 @@ import XCTest
 import DashSPVFFI
 
 final class MempoolTests: XCTestCase {
-    
+
     func testMempoolConfigCreation() {
         // Test disabled configuration
         let disabled = MempoolConfig.disabled
         XCTAssertFalse(disabled.enabled)
-        
+
         // Test selective configuration
         let selective = MempoolConfig.selective(maxTransactions: 1000)
         XCTAssertTrue(selective.enabled)
         XCTAssertEqual(selective.strategy, .selective)
         XCTAssertEqual(selective.maxTransactions, 1000)
         XCTAssertEqual(selective.timeoutSeconds, 3600)
-        
+
         // Test fetchAll configuration
         let fetchAll = MempoolConfig.fetchAll(maxTransactions: 5000)
         XCTAssertTrue(fetchAll.enabled)
         XCTAssertEqual(fetchAll.strategy, .fetchAll)
         XCTAssertEqual(fetchAll.maxTransactions, 5000)
-        
+
         // Test custom configuration
         let custom = MempoolConfig(
             enabled: true,
@@ -38,14 +38,14 @@ final class MempoolTests: XCTestCase {
         XCTAssertFalse(custom.fetchTransactions)
         XCTAssertTrue(custom.persistMempool)
     }
-    
+
     func testMempoolBalanceCalculations() {
         let balance = MempoolBalance(pending: 1000000, pendingInstant: 500000)
         XCTAssertEqual(balance.pending, 1000000)
         XCTAssertEqual(balance.pendingInstant, 500000)
         XCTAssertEqual(balance.total, 1500000)
     }
-    
+
     func testMempoolTransactionProperties() {
         let tx = MempoolTransaction(
             txid: "abc123",
@@ -58,7 +58,7 @@ final class MempoolTests: XCTestCase {
             netAmount: -50000,
             size: 250
         )
-        
+
         XCTAssertEqual(tx.txid, "abc123")
         XCTAssertEqual(tx.fee, 1000)
         XCTAssertEqual(tx.size, 250)
@@ -67,10 +67,10 @@ final class MempoolTests: XCTestCase {
         XCTAssertTrue(tx.isOutgoing)
         XCTAssertFalse(tx.isInstantSend)
     }
-    
+
     func testMempoolRemovalReasons() {
         let reasons: [MempoolRemovalReason] = [.expired, .replaced, .doubleSpent, .confirmed, .manual, .unknown]
-        
+
         XCTAssertEqual(reasons[0].rawValue, 0)
         XCTAssertEqual(reasons[1].rawValue, 1)
         XCTAssertEqual(reasons[2].rawValue, 2)
@@ -78,30 +78,30 @@ final class MempoolTests: XCTestCase {
         XCTAssertEqual(reasons[4].rawValue, 4)
         XCTAssertEqual(reasons[5].rawValue, 255)
     }
-    
+
     func testSPVClientConfigurationWithMempool() async throws {
         let config = SPVClientConfiguration()
         config.network = .testnet
         config.mempoolConfig = .fetchAll(maxTransactions: 1000)
-        
+
         XCTAssertEqual(config.network, .testnet)
         XCTAssertTrue(config.mempoolConfig.enabled)
         XCTAssertEqual(config.mempoolConfig.strategy, .fetchAll)
         XCTAssertEqual(config.mempoolConfig.maxTransactions, 1000)
-        
+
         // Test FFI config creation includes mempool settings
         let ffiConfig = try config.createFFIConfig()
         defer {
             dash_spv_ffi_config_destroy(OpaquePointer(ffiConfig))
         }
-        
+
         XCTAssertTrue(dash_spv_ffi_config_get_mempool_tracking(OpaquePointer(ffiConfig)))
         XCTAssertEqual(
             dash_spv_ffi_config_get_mempool_strategy(OpaquePointer(ffiConfig)),
             FFIMempoolStrategy(rawValue: 0) // FetchAll
         )
     }
-    
+
     func testMempoolEventTypes() {
         // Test transaction added event
         let addedTx = MempoolTransaction(
@@ -116,21 +116,21 @@ final class MempoolTests: XCTestCase {
             size: 200
         )
         let addedEvent = MempoolEvent.transactionAdded(addedTx)
-        
+
         if case .transactionAdded(let tx) = addedEvent {
             XCTAssertEqual(tx.txid, "tx1")
             XCTAssertTrue(tx.isInstantSend)
         } else {
             XCTFail("Expected transactionAdded event")
         }
-        
+
         // Test transaction confirmed event
         let confirmedEvent = MempoolEvent.transactionConfirmed(
             txid: "tx2",
             blockHeight: 12345,
             blockHash: "blockhash123"
         )
-        
+
         if case .transactionConfirmed(let txid, let height, let hash) = confirmedEvent {
             XCTAssertEqual(txid, "tx2")
             XCTAssertEqual(height, 12345)
@@ -138,13 +138,13 @@ final class MempoolTests: XCTestCase {
         } else {
             XCTFail("Expected transactionConfirmed event")
         }
-        
+
         // Test transaction removed event
         let removedEvent = MempoolEvent.transactionRemoved(
             txid: "tx3",
             reason: .expired
         )
-        
+
         if case .transactionRemoved(let txid, let reason) = removedEvent {
             XCTAssertEqual(txid, "tx3")
             XCTAssertEqual(reason, .expired)

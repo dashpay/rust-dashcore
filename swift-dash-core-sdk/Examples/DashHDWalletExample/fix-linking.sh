@@ -18,7 +18,7 @@ mkdir -p "$PROJECT_ROOT/target/ios-simulator-universal/release"
 if [ -f "$SCRIPT_DIR/libdash_spv_ffi.a" ]; then
     echo "Creating symlink in target/release..."
     ln -sf "$SCRIPT_DIR/libdash_spv_ffi.a" "$PROJECT_ROOT/target/release/libdash_spv_ffi.a"
-    
+
     echo "Creating symlink in ios-simulator-universal..."
     ln -sf "$SCRIPT_DIR/libdash_spv_ffi.a" "$PROJECT_ROOT/target/ios-simulator-universal/release/libdash_spv_ffi.a"
 fi
@@ -27,7 +27,7 @@ fi
 if [ -f "$SCRIPT_DIR/libdash_spv_ffi_sim.a" ]; then
     echo "Creating symlink in aarch64-apple-ios-sim..."
     ln -sf "$SCRIPT_DIR/libdash_spv_ffi_sim.a" "$PROJECT_ROOT/target/aarch64-apple-ios-sim/release/libdash_spv_ffi.a"
-    
+
     echo "Creating symlink in x86_64-apple-ios..."
     ln -sf "$SCRIPT_DIR/libdash_spv_ffi_sim.a" "$PROJECT_ROOT/target/x86_64-apple-ios/release/libdash_spv_ffi.a"
 fi

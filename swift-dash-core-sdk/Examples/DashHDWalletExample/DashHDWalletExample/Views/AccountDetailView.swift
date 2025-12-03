@@ -5,12 +5,12 @@ import SwiftDashCoreSDK
 struct AccountDetailView: View {
     @EnvironmentObject private var walletService: WalletService
     @Environment(\.modelContext) private var modelContext
-    
+
     let account: HDAccount
     @State private var selectedTab = 0
     @State private var showReceiveAddress = false
     @State private var showSendTransaction = false
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Account Header
@@ -19,9 +19,9 @@ struct AccountDetailView: View {
                 onReceive: { showReceiveAddress = true },
                 onSend: { showSendTransaction = true }
             )
-            
+
             Divider()
-            
+
             // Tab View
             TabView(selection: $selectedTab) {
                 // Transactions Tab
@@ -30,14 +30,14 @@ struct AccountDetailView: View {
                         Label("Transactions", systemImage: "list.bullet")
                     }
                     .tag(0)
-                
+
                 // Addresses Tab
                 AddressesTabView(account: account)
                     .tabItem {
                         Label("Addresses", systemImage: "qrcode")
                     }
                     .tag(1)
-                
+
                 // UTXOs Tab
                 UTXOsTabView(account: account)
                     .tabItem {
@@ -62,7 +62,7 @@ struct AccountHeaderView: View {
     let account: HDAccount
     let onReceive: () -> Void
     let onSend: () -> Void
-    
+
     var body: some View {
         VStack(spacing: 16) {
             // Account Info
@@ -70,26 +70,26 @@ struct AccountHeaderView: View {
                 Text(account.displayName)
                     .font(.title2)
                     .fontWeight(.semibold)
-                
+
                 Text(account.derivationPath)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fontDesign(.monospaced)
             }
-            
+
             // Balance
             if let balance = account.balance {
                 BalanceView(balance: balance)
             }
-            
+
             // Mempool Status
             if walletService.mempoolTransactionCount > 0 {
                 MempoolStatusView(count: walletService.mempoolTransactionCount)
             }
-            
+
             // Watch Status
             WatchStatusView(status: walletService.watchVerificationStatus)
-            
+
             // Watch Errors
             if !walletService.watchAddressErrors.isEmpty || walletService.pendingWatchCount > 0 {
                 WatchErrorsView(
@@ -97,14 +97,14 @@ struct AccountHeaderView: View {
                     pendingCount: walletService.pendingWatchCount
                 )
             }
-            
+
             // Action Buttons
             HStack(spacing: 16) {
                 Button(action: onReceive) {
                     Label("Receive", systemImage: "arrow.down.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
-                
+
                 Button(action: onSend) {
                     Label("Send", systemImage: "arrow.up.circle.fill")
                 }
@@ -121,19 +121,19 @@ struct AccountHeaderView: View {
 
 struct BalanceView: View {
     let balance: Balance
-    
+
     var body: some View {
         VStack(spacing: 8) {
             Text(balance.formattedTotal)
                 .font(.system(size: 32, weight: .medium, design: .monospaced))
-            
+
             HStack(spacing: 20) {
                 BalanceComponent(
                     label: "Available",
                     amount: formatDash(balance.available),
                     color: .green
                 )
-                
+
                 if balance.pending > 0 {
                     BalanceComponent(
                         label: "Pending",
@@ -141,7 +141,7 @@ struct BalanceView: View {
                         color: .orange
                     )
                 }
-                
+
                 if balance.instantLocked > 0 {
                     BalanceComponent(
                         label: "InstantSend",
@@ -149,7 +149,7 @@ struct BalanceView: View {
                         color: .blue
                     )
                 }
-                
+
                 if balance.mempool > 0 {
                     BalanceComponent(
                         label: "Mempool",
@@ -160,7 +160,7 @@ struct BalanceView: View {
             }
         }
     }
-    
+
     private func formatDash(_ satoshis: UInt64) -> String {
         let dash = Double(satoshis) / 100_000_000.0
         return String(format: "%.8f", dash)
@@ -171,13 +171,13 @@ struct BalanceComponent: View {
     let label: String
     let amount: String
     let color: Color
-    
+
     var body: some View {
         VStack(spacing: 4) {
             Text(label)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
+
             Text(amount)
                 .font(.system(.body, design: .monospaced))
                 .foregroundColor(color)
@@ -191,7 +191,7 @@ struct TransactionsTabView: View {
     let account: HDAccount
     @State private var searchText = ""
     @Environment(\.modelContext) private var modelContext
-    
+
     var filteredTransactions: [SwiftDashCoreSDK.Transaction] {
         // Fetch transactions by IDs
         let txIds = account.transactionIds
@@ -201,9 +201,9 @@ struct TransactionsTabView: View {
             },
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
-        
+
         let allTransactions = (try? modelContext.fetch(descriptor)) ?? []
-        
+
         if searchText.isEmpty {
             return allTransactions
         } else {
@@ -212,7 +212,7 @@ struct TransactionsTabView: View {
             }
         }
     }
-    
+
     var body: some View {
         VStack {
             if account.transactionIds.isEmpty {
@@ -239,11 +239,11 @@ struct AddressesTabView: View {
     @EnvironmentObject private var walletService: WalletService
     let account: HDAccount
     @State private var showingExternal = true
-    
+
     var addresses: [HDWatchedAddress] {
         showingExternal ? account.externalAddresses : account.internalAddresses
     }
-    
+
     var body: some View {
         VStack {
             // Address Type Picker
@@ -253,7 +253,7 @@ struct AddressesTabView: View {
             }
             .pickerStyle(SegmentedPickerStyle())
             .padding()
-            
+
             if addresses.isEmpty {
                 EmptyStateView(
                     icon: "qrcode",
@@ -267,7 +267,7 @@ struct AddressesTabView: View {
                     }
                 }
             }
-            
+
             // Generate New Address Button
             HStack {
                 Spacer()
@@ -278,7 +278,7 @@ struct AddressesTabView: View {
             }
         }
     }
-    
+
     private func generateNewAddress() {
         Task {
             do {
@@ -298,25 +298,25 @@ struct AddressesTabView: View {
 struct UTXOsTabView: View {
     let account: HDAccount
     @Environment(\.modelContext) private var modelContext
-    
+
     var utxos: [UTXO] {
         // Collect all UTXO outpoints from addresses
         let allOutpoints = account.addresses.flatMap { $0.utxoOutpoints }
-        
+
         // Fetch UTXOs by outpoints
         let descriptor = FetchDescriptor<SwiftDashCoreSDK.UTXO>(
             predicate: #Predicate { utxo in
                 allOutpoints.contains(utxo.outpoint) && !utxo.isSpent
             }
         )
-        
+
         return (try? modelContext.fetch(descriptor)) ?? []
     }
-    
+
     var totalValue: UInt64 {
         utxos.reduce(0) { $0 + $1.value }
     }
-    
+
     var body: some View {
         VStack {
             if utxos.isEmpty {
@@ -337,7 +337,7 @@ struct UTXOsTabView: View {
                             .monospacedDigit()
                     }
                     .padding()
-                    
+
                     // UTXO List
                     List {
                         ForEach(utxos.sorted { $0.value > $1.value }) { utxo in
@@ -348,7 +348,7 @@ struct UTXOsTabView: View {
             }
         }
     }
-    
+
     private func formatDash(_ satoshis: UInt64) -> String {
         let dash = Double(satoshis) / 100_000_000.0
         return String(format: "%.8f DASH", dash)
@@ -361,17 +361,17 @@ struct EmptyStateView: View {
     let icon: String
     let title: String
     let message: String
-    
+
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: icon)
                 .font(.system(size: 60))
                 .foregroundColor(.secondary)
-            
+
             Text(title)
                 .font(.title3)
                 .fontWeight(.medium)
-            
+
             Text(message)
                 .font(.body)
                 .foregroundColor(.secondary)
@@ -386,14 +386,14 @@ struct EmptyStateView: View {
 
 struct TransactionRowView: View {
     let transaction: SwiftDashCoreSDK.Transaction
-    
+
     var body: some View {
         HStack {
             // Direction Icon
             Image(systemName: transaction.amount >= 0 ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
                 .foregroundColor(transaction.amount >= 0 ? .green : .red)
                 .font(.title2)
-            
+
             // Transaction Info
             VStack(alignment: .leading, spacing: 4) {
                 Text(transaction.txid)
@@ -401,20 +401,20 @@ struct TransactionRowView: View {
                     .fontDesign(.monospaced)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                
+
                 Text(transaction.timestamp, style: .relative)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
+
             // Amount and Status
             VStack(alignment: .trailing, spacing: 4) {
                 Text(formatAmount(transaction.amount))
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(transaction.amount >= 0 ? .green : .red)
-                
+
                 if transaction.isInstantLocked {
                     Label("InstantSend", systemImage: "bolt.fill")
                         .font(.caption2)
@@ -432,7 +432,7 @@ struct TransactionRowView: View {
         }
         .padding(.vertical, 4)
     }
-    
+
     private func formatAmount(_ satoshis: Int64) -> String {
         let dash = Double(abs(satoshis)) / 100_000_000.0
         let sign = satoshis >= 0 ? "+" : "-"
@@ -443,7 +443,7 @@ struct TransactionRowView: View {
 struct AddressRowView: View {
     let address: HDWatchedAddress
     @State private var isCopied = false
-    
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
@@ -452,28 +452,28 @@ struct AddressRowView: View {
                         .font(.system(.caption, design: .monospaced))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    
+
                     if address.transactionIds.count > 0 {
                         Text("(\(address.transactionIds.count) tx)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
                 }
-                
+
                 Text("Index: \(address.index)")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
+
             if let balance = address.balance {
                 Text(balance.formattedTotal)
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundColor(.secondary)
             }
-            
+
             Button(action: copyAddress) {
                 Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                     .font(.caption)
@@ -482,14 +482,14 @@ struct AddressRowView: View {
         }
         .padding(.vertical, 4)
     }
-    
+
     private func copyAddress() {
         Clipboard.copy(address.address)
-        
+
         withAnimation {
             isCopied = true
         }
-        
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation {
                 isCopied = false
@@ -500,7 +500,7 @@ struct AddressRowView: View {
 
 struct UTXORowView: View {
     let utxo: UTXO
-    
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
@@ -508,7 +508,7 @@ struct UTXORowView: View {
                     .font(.system(.caption, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                
+
                 HStack {
                     Text("Height: \(utxo.height)")
                     Text("•")
@@ -517,13 +517,13 @@ struct UTXORowView: View {
                 .font(.caption2)
                 .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
+
             VStack(alignment: .trailing, spacing: 4) {
                 Text(utxo.formattedValue)
                     .font(.system(.body, design: .monospaced))
-                
+
                 if utxo.isInstantLocked {
                     Text("InstantSend")
                         .font(.caption2)
@@ -539,12 +539,12 @@ struct UTXORowView: View {
 
 struct MempoolStatusView: View {
     let count: Int
-    
+
     var body: some View {
         HStack {
             Image(systemName: "clock.arrow.circlepath")
                 .foregroundColor(.purple)
-            
+
             Text("\(count) unconfirmed transaction\(count == 1 ? "" : "s") in mempool")
                 .font(.caption)
                 .foregroundColor(.secondary)

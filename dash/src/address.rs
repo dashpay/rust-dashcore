@@ -628,7 +628,7 @@ pub struct AddressEncoding<'a> {
     pub p2pkh_prefix: u8,
     /// base58 version byte for p2sh payloads (e.g. 0x05 for "3..." addresses).
     pub p2sh_prefix: u8,
-    /// hrp used in bech32 addresss (e.g. "bc" for "bc1..." addresses).
+    /// hrp used in bech32 address (e.g. "bc" for "bc1..." addresses).
     pub bech32_hrp: &'a str,
 }
 
@@ -1019,7 +1019,7 @@ impl<V: NetworkValidation> Address<V> {
         encoding.fmt(fmt)
     }
 
-    /// Create new address from given components, infering the network validation
+    /// Create new address from given components, inferring the network validation
     /// marker type of the address.
     #[inline]
     pub fn new(network: Network, payload: Payload) -> Self {
@@ -1222,7 +1222,7 @@ impl Address<NetworkUnchecked> {
         unsafe { &*(self as *const Address<NetworkUnchecked> as *const Address) }
     }
     /// Parsed addresses do not always have *one* network. The problem is that legacy testnet,
-    /// regtest and devnet addresse use the same prefix instead of multiple different ones. When
+    /// regtest and devnet addresses use the same prefix instead of multiple different ones. When
     /// parsing, such addresses are always assumed to be testnet addresses (the same is true for
     /// bech32 devnet addresses). So if one wants to check if an address belongs to a certain
     /// network a simple comparison is not enough anymore. Instead this function can be used.

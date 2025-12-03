@@ -64,7 +64,7 @@ fn p2pk_pubkey_bytes_no_checksig_returns_none() {
 }
 
 #[test]
-fn p2pk_pubkey_bytes_emptry_script_returns_none() {
+fn p2pk_pubkey_bytes_empty_script_returns_none() {
     let empty_script = Script::builder().into_script();
     assert!(empty_script.p2pk_pubkey_bytes().is_none());
 }
@@ -174,7 +174,7 @@ fn p2pk_public_key_compressed_key_returns_some() {
 
 #[test]
 fn script_x_only_key() {
-    // Notice the "20" which prepends the keystr. That 20 is hexidecimal for "32". The Builder automatically adds the 32 opcode
+    // Notice the "20" which prepends the keystr. That 20 is hexadecimal for "32". The Builder automatically adds the 32 opcode
     // to our script in order to give a heads up to the script compiler that it should add the next 32 bytes to the stack.
     // From: https://github.com/bitcoin-core/btcdeb/blob/e8c2750c4a4702768c52d15640ed03bf744d2601/doc/tapscript-example.md?plain=1#L43
     const KEYSTR: &str = "209997a497d964fc1a62885b05a51166a65a90df00492c8d7cf61d6accf54803be";
@@ -410,7 +410,7 @@ fn script_asm() {
     assert_eq!(ScriptBuf::from_hex("0047304402202457e78cc1b7f50d0543863c27de75d07982bde8359b9e3316adec0aec165f2f02200203fd331c4e4a4a02f48cf1c291e2c0d6b2f7078a784b5b3649fca41f8794d401004cf1552103244e602b46755f24327142a0517288cebd159eccb6ccf41ea6edf1f601e9af952103bbbacc302d19d29dbfa62d23f37944ae19853cf260c745c2bea739c95328fcb721039227e83246bd51140fe93538b2301c9048be82ef2fb3c7fc5d78426ed6f609ad210229bf310c379b90033e2ecb07f77ecf9b8d59acb623ab7be25a0caed539e2e6472103703e2ed676936f10b3ce9149fa2d4a32060fb86fa9a70a4efe3f21d7ab90611921031e9b7c6022400a6bb0424bbcde14cff6c016b91ee3803926f3440abf5c146d05210334667f975f55a8455d515a2ef1c94fdfa3315f12319a14515d2a13d82831f62f57ae").unwrap().to_asm_string(),
                "OP_0 OP_PUSHBYTES_71 304402202457e78cc1b7f50d0543863c27de75d07982bde8359b9e3316adec0aec165f2f02200203fd331c4e4a4a02f48cf1c291e2c0d6b2f7078a784b5b3649fca41f8794d401 OP_0 OP_PUSHDATA1 552103244e602b46755f24327142a0517288cebd159eccb6ccf41ea6edf1f601e9af952103bbbacc302d19d29dbfa62d23f37944ae19853cf260c745c2bea739c95328fcb721039227e83246bd51140fe93538b2301c9048be82ef2fb3c7fc5d78426ed6f609ad210229bf310c379b90033e2ecb07f77ecf9b8d59acb623ab7be25a0caed539e2e6472103703e2ed676936f10b3ce9149fa2d4a32060fb86fa9a70a4efe3f21d7ab90611921031e9b7c6022400a6bb0424bbcde14cff6c016b91ee3803926f3440abf5c146d05210334667f975f55a8455d515a2ef1c94fdfa3315f12319a14515d2a13d82831f62f57ae");
     // Various weird scripts found in transaction 6d7ed9914625c73c0288694a6819196a27ef6c08f98e1270d975a8e65a3dc09a
-    // which triggerred overflow bugs on 32-bit machines in script formatting in the past.
+    // which triggered overflow bugs on 32-bit machines in script formatting in the past.
     assert_eq!(
         ScriptBuf::from_hex("01").unwrap().to_asm_string(),
         "OP_PUSHBYTES_1 <push past end>"
@@ -489,11 +489,11 @@ fn p2sh_p2wsh_conversion() {
     // Test vectors taken from Core tests/data/script_tests.json
     // bare p2wsh
     let redeem_script = ScriptBuf::from_hex("410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8ac").unwrap();
-    let expected_witout =
+    let expected_without =
         ScriptBuf::from_hex("0020b95237b48faaa69eb078e1170be3b5cbb3fddf16d0a991e14ad274f7b33a4f64")
             .unwrap();
     assert!(redeem_script.to_v0_p2wsh().is_v0_p2wsh());
-    assert_eq!(redeem_script.to_v0_p2wsh(), expected_witout);
+    assert_eq!(redeem_script.to_v0_p2wsh(), expected_without);
 
     // p2sh
     let redeem_script = ScriptBuf::from_hex("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8").unwrap();
@@ -504,14 +504,14 @@ fn p2sh_p2wsh_conversion() {
 
     // p2sh-p2wsh
     let redeem_script = ScriptBuf::from_hex("410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8ac").unwrap();
-    let expected_witout =
+    let expected_without =
         ScriptBuf::from_hex("0020b95237b48faaa69eb078e1170be3b5cbb3fddf16d0a991e14ad274f7b33a4f64")
             .unwrap();
     let expected_out =
         ScriptBuf::from_hex("a914f386c2ba255cc56d20cfa6ea8b062f8b5994551887").unwrap();
     assert!(redeem_script.to_p2sh().is_p2sh());
     assert!(redeem_script.to_p2sh().to_v0_p2wsh().is_v0_p2wsh());
-    assert_eq!(redeem_script.to_v0_p2wsh(), expected_witout);
+    assert_eq!(redeem_script.to_v0_p2wsh(), expected_without);
     assert_eq!(redeem_script.to_v0_p2wsh().to_p2sh(), expected_out);
 }
 
@@ -613,7 +613,7 @@ fn test_bitcoinconsensus() {
 }
 
 #[test]
-fn defult_dust_value_tests() {
+fn default_dust_value_tests() {
     // Check that our dust_value() calculator correctly calculates the dust limit on common
     // well-known scriptPubKey types.
     let script_p2wpkh = Builder::new().push_int(0).push_slice([42; 20]).into_script();

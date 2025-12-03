@@ -7,13 +7,13 @@ extension Data {
     var hexString: String {
         return map { String(format: "%02x", $0) }.joined()
     }
-    
+
     /// Create data from hex string
     init?(hexString: String) {
         let len = hexString.count / 2
         var data = Data(capacity: len)
         var index = hexString.startIndex
-        
+
         for _ in 0..<len {
             let nextIndex = hexString.index(index, offsetBy: 2)
             guard let byte = UInt8(hexString[index..<nextIndex], radix: 16) else {
@@ -22,7 +22,7 @@ extension Data {
             data.append(byte)
             index = nextIndex
         }
-        
+
         self = data
     }
 }
@@ -35,17 +35,17 @@ extension String {
         // Basic validation - real implementation would use proper address validation
         let mainnetPrefixes = ["X", "7"]
         let testnetPrefixes = ["y", "8", "9"]
-        
+
         guard count >= 26 && count <= 35 else { return false }
-        
+
         let firstChar = String(prefix(1))
         return mainnetPrefixes.contains(firstChar) || testnetPrefixes.contains(firstChar)
     }
-    
+
     /// Shorten string for display (e.g., addresses, txids)
     func shortened(prefix: Int = 6, suffix: Int = 4) -> String {
         guard count > prefix + suffix + 3 else { return self }
-        
+
         let prefixStr = self.prefix(prefix)
         let suffixStr = self.suffix(suffix)
         return "\(prefixStr)...\(suffixStr)"
@@ -59,7 +59,7 @@ extension UInt64 {
     var dashValue: Double {
         return Double(self) / 100_000_000.0
     }
-    
+
     /// Format as Dash string
     var formattedDash: String {
         return String(format: "%.8f DASH", dashValue)

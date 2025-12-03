@@ -700,7 +700,7 @@ impl InputWeightPrediction {
     ///
     /// # Panics
     ///
-    /// The funcion panics in const context and debug builds if `bytes_to_grind` is higher than 62.
+    /// The function panics in const context and debug builds if `bytes_to_grind` is higher than 62.
     ///
     /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
     pub const fn ground_p2wpkh(bytes_to_grind: usize) -> Self {
@@ -787,7 +787,7 @@ impl InputWeightPrediction {
 ///   of the to-be-constructed transaction.
 ///
 /// Note that lengths of the scripts and witness elements must be non-serialized, IOW *without* the
-/// preceding compact size. The lenght of preceding compact size is computed and added inside the
+/// preceding compact size. The length of preceding compact size is computed and added inside the
 /// function for convenience.
 ///
 /// # Usage

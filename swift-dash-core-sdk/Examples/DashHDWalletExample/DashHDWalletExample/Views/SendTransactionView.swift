@@ -4,9 +4,9 @@ import SwiftDashCoreSDK
 struct SendTransactionView: View {
     @EnvironmentObject private var walletService: WalletService
     @Environment(\.dismiss) private var dismiss
-    
+
     let account: HDAccount
-    
+
     @State private var recipientAddress = ""
     @State private var amountString = ""
     @State private var feeRate: UInt64 = 1000
@@ -14,20 +14,20 @@ struct SendTransactionView: View {
     @State private var isSending = false
     @State private var errorMessage = ""
     @State private var successTxid = ""
-    
+
     private var amount: UInt64? {
         guard let dash = Double(amountString) else { return nil }
         return UInt64(dash * 100_000_000)
     }
-    
+
     private var availableBalance: UInt64 {
         account.balance?.available ?? 0
     }
-    
+
     private var totalAmount: UInt64 {
         (amount ?? 0) + estimatedFee
     }
-    
+
     private var isValid: Bool {
         !recipientAddress.isEmpty &&
         amount != nil &&
@@ -35,7 +35,7 @@ struct SendTransactionView: View {
         totalAmount <= availableBalance &&
         walletService.sdk?.validateAddress(recipientAddress) ?? false
     }
-    
+
     var body: some View {
         NavigationView {
             Form {
@@ -49,7 +49,7 @@ struct SendTransactionView: View {
                             .fontWeight(.medium)
                     }
                 }
-                
+
                 // Recipient Section
                 Section("Recipient") {
                     TextField("Dash Address", text: $recipientAddress)
@@ -58,14 +58,14 @@ struct SendTransactionView: View {
                         .onChange(of: recipientAddress) { _ in
                             validateAddress()
                         }
-                    
+
                     if !recipientAddress.isEmpty && !(walletService.sdk?.validateAddress(recipientAddress) ?? false) {
                         Label("Invalid Dash address", systemImage: "exclamationmark.circle")
                             .foregroundColor(.red)
                             .font(.caption)
                     }
                 }
-                
+
                 // Amount Section
                 Section("Amount") {
                     HStack {
@@ -74,10 +74,10 @@ struct SendTransactionView: View {
                             .onChange(of: amountString) { _ in
                                 updateEstimatedFee()
                             }
-                        
+
                         Text("DASH")
                             .foregroundColor(.secondary)
-                        
+
                         Button("Max") {
                             setMaxAmount()
                         }
@@ -87,7 +87,7 @@ struct SendTransactionView: View {
                         .buttonStyle(.link)
                         #endif
                     }
-                    
+
                     if let amount = amount {
                         HStack {
                             Text("Amount in satoshis")
@@ -99,7 +99,7 @@ struct SendTransactionView: View {
                         .font(.caption)
                     }
                 }
-                
+
                 // Fee Section
                 Section("Network Fee") {
                     Picker("Fee Rate", selection: $feeRate) {
@@ -110,7 +110,7 @@ struct SendTransactionView: View {
                     .onChange(of: feeRate) { _ in
                         updateEstimatedFee()
                     }
-                    
+
                     HStack {
                         Text("Estimated Fee")
                         Spacer()
@@ -118,7 +118,7 @@ struct SendTransactionView: View {
                             .monospacedDigit()
                     }
                 }
-                
+
                 // Summary Section
                 Section("Summary") {
                     HStack {
@@ -129,14 +129,14 @@ struct SendTransactionView: View {
                             .monospacedDigit()
                             .fontWeight(.medium)
                     }
-                    
+
                     if totalAmount > availableBalance {
                         Label("Insufficient balance", systemImage: "exclamationmark.triangle")
                             .foregroundColor(.red)
                             .font(.caption)
                     }
                 }
-                
+
                 // Error/Success Messages
                 if !errorMessage.isEmpty {
                     Section {
@@ -144,13 +144,13 @@ struct SendTransactionView: View {
                             .foregroundColor(.red)
                     }
                 }
-                
+
                 if !successTxid.isEmpty {
                     Section("Transaction Sent") {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Transaction broadcast successfully", systemImage: "checkmark.circle.fill")
                                 .foregroundColor(.green)
-                            
+
                             HStack {
                                 Text("Transaction ID:")
                                     .font(.caption)
@@ -170,7 +170,7 @@ struct SendTransactionView: View {
                         dismiss()
                     }
                 }
-                
+
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Send") {
                         sendTransaction()
@@ -183,17 +183,17 @@ struct SendTransactionView: View {
         .frame(width: 500, height: 600)
         #endif
     }
-    
+
     private func validateAddress() {
         errorMessage = ""
     }
-    
+
     private func updateEstimatedFee() {
         guard let amount = amount, amount > 0 else {
             estimatedFee = 0
             return
         }
-        
+
         Task {
             do {
                 estimatedFee = try await walletService.sdk?.estimateFee(
@@ -207,47 +207,47 @@ struct SendTransactionView: View {
             }
         }
     }
-    
+
     private func setMaxAmount() {
         // Calculate max amount (balance - estimated fee)
         let maxAmount = availableBalance > estimatedFee ? availableBalance - estimatedFee : 0
         let dash = Double(maxAmount) / 100_000_000.0
         amountString = String(format: "%.8f", dash)
     }
-    
+
     private func sendTransaction() {
         guard let amount = amount, isValid else { return }
-        
+
         isSending = true
         errorMessage = ""
-        
+
         Task {
             do {
                 guard let sdk = walletService.sdk else {
                     throw WalletError.notConnected
                 }
-                
+
                 let txid = try await sdk.sendTransaction(
                     to: recipientAddress,
                     amount: amount,
                     feeRate: feeRate
                 )
-                
+
                 successTxid = txid
-                
+
                 // Clear form after success
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     dismiss()
                 }
-                
+
             } catch {
                 errorMessage = error.localizedDescription
             }
-            
+
             isSending = false
         }
     }
-    
+
     private func formatDash(_ satoshis: UInt64) -> String {
         let dash = Double(satoshis) / 100_000_000.0
         return String(format: "%.8f DASH", dash)

@@ -62,7 +62,7 @@ pub trait DisplayHex: Copy + sealed::IsRef {
     /// Appends hex-encoded content to an existing `String`.
     ///
     /// This may be faster than `write!(string, "{:x}", self.display_hex())` because it uses
-    /// `reserve_sugggestion`.
+    /// `reserve_suggestion`.
     #[cfg(feature = "alloc")]
     fn append_hex_to_string(self, case: Case, string: &mut String) {
         use fmt::Write;

@@ -62,7 +62,7 @@ pub enum WalletAccountCreationOptions {
     /// # Arguments
     /// * First: Set of BIP44 account indices
     /// * Second: Set of BIP32 account indices
-    /// * Third: Set of CoinJoin account indices  
+    /// * Third: Set of CoinJoin account indices
     /// * Fourth: Set of identity top-up registration indices
     /// * Fifth: Additional special account type to create (e.g., IdentityRegistration)
     SpecificAccounts(

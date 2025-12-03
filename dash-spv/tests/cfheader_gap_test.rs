@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 use dash_spv::{
     client::ClientConfig,
-    network::MultiPeerNetworkManager,
+    network::PeerNetworkManager,
     storage::{MemoryStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
 };
@@ -40,8 +40,8 @@ fn create_mock_filter_header() -> FilterHeader {
 async fn test_cfheader_gap_detection_no_gap() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
-        FilterSyncManager::<MemoryStorageManager, MultiPeerNetworkManager>::new(
+    let filter_sync: FilterSyncManager<MemoryStorageManager, PeerNetworkManager> =
+        FilterSyncManager::<MemoryStorageManager, PeerNetworkManager>::new(
             &config,
             received_heights,
         );
@@ -75,8 +75,8 @@ async fn test_cfheader_gap_detection_no_gap() {
 async fn test_cfheader_gap_detection_with_gap() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
-        FilterSyncManager::<MemoryStorageManager, MultiPeerNetworkManager>::new(
+    let filter_sync: FilterSyncManager<MemoryStorageManager, PeerNetworkManager> =
+        FilterSyncManager::<MemoryStorageManager, PeerNetworkManager>::new(
             &config,
             received_heights,
         );
@@ -113,8 +113,8 @@ async fn test_cfheader_gap_detection_with_gap() {
 async fn test_cfheader_gap_detection_filter_ahead() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
-        FilterSyncManager::<MemoryStorageManager, MultiPeerNetworkManager>::new(
+    let filter_sync: FilterSyncManager<MemoryStorageManager, PeerNetworkManager> =
+        FilterSyncManager::<MemoryStorageManager, PeerNetworkManager>::new(
             &config,
             received_heights,
         );
@@ -208,29 +208,6 @@ async fn test_cfheader_restart_cooldown() {
             Vec::new()
         }
 
-        async fn send_ping(&mut self) -> NetworkResult<u64> {
-            Ok(0)
-        }
-
-        async fn handle_ping(&mut self, _nonce: u64) -> NetworkResult<()> {
-            Ok(())
-        }
-
-        fn handle_pong(&mut self, _nonce: u64) -> NetworkResult<()> {
-            Ok(())
-        }
-
-        fn should_ping(&self) -> bool {
-            false
-        }
-
-        fn cleanup_old_pings(&mut self) {}
-
-        fn get_message_sender(&self) -> tokio::sync::mpsc::Sender<NetworkMessage> {
-            let (tx, _rx) = tokio::sync::mpsc::channel(1);
-            tx
-        }
-
         async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
             Ok(Some(100))
         }
@@ -240,13 +217,6 @@ async fn test_cfheader_restart_cooldown() {
             _service_flags: dashcore::network::constants::ServiceFlags,
         ) -> bool {
             true
-        }
-
-        async fn get_peers_with_service(
-            &self,
-            _service_flags: dashcore::network::constants::ServiceFlags,
-        ) -> Vec<dash_spv::types::PeerInfo> {
-            vec![]
         }
 
         async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {
@@ -262,7 +232,7 @@ async fn test_cfheader_restart_cooldown() {
     // Network manager omitted until restart logic is implemented
 
     // Note: The following tests are skipped because MockNetworkManager doesn't implement
-    // the full MultiPeerNetworkManager interface required by maybe_restart_cfheader_sync_for_gap
+    // the full PeerNetworkManager interface required by maybe_restart_cfheader_sync_for_gap
     // First attempt should try to restart (and fail)
     // let result1 = filter_sync.maybe_restart_cfheader_sync_for_gap(&mut network, &mut storage).await;
     // assert!(result1.is_err(), "First restart attempt should fail with mock network");

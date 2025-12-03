@@ -13,8 +13,6 @@ use std::{error, fmt, io};
 use crate::dashcore;
 use dashcore::hashes::hex;
 use dashcore::secp256k1;
-use jsonrpc;
-use serde_json;
 
 pub type OldVecLen = usize;
 pub type FixedSizeLen = usize;

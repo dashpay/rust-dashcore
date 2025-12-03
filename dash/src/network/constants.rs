@@ -37,14 +37,11 @@
 //! ```
 
 use core::convert::From;
-use core::fmt::Display;
 use core::{fmt, ops};
 
 use hashes::Hash;
 
 use crate::consensus::encode::{self, Decodable, Encodable};
-use crate::constants::ChainHash;
-use crate::error::impl_std_error;
 use crate::{BlockHash, io};
 use dash_network::Network;
 
@@ -100,33 +97,6 @@ impl NetworkExt for Network {
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
             _ => None,
-        }
-    }
-}
-
-/// Error in parsing network from chain hash.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnknownChainHash(ChainHash);
-
-impl Display for UnknownChainHash {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "unknown chain hash: {}", self.0)
-    }
-}
-
-impl_std_error!(UnknownChainHash);
-
-impl TryFrom<ChainHash> for Network {
-    type Error = UnknownChainHash;
-
-    fn try_from(chain_hash: ChainHash) -> Result<Self, Self::Error> {
-        match chain_hash {
-            // Note: any new network entries must be matched against here.
-            ChainHash::DASH => Ok(Network::Dash),
-            ChainHash::TESTNET => Ok(Network::Testnet),
-            ChainHash::DEVNET => Ok(Network::Devnet),
-            ChainHash::REGTEST => Ok(Network::Regtest),
-            _ => Err(UnknownChainHash(chain_hash)),
         }
     }
 }

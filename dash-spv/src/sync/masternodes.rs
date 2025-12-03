@@ -39,6 +39,16 @@ pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
     // Sync state
     sync_in_progress: bool,
     last_sync_time: Option<Instant>,
+
+    // Track pending MnListDiff requests (for quorum validation)
+    // This ensures we don't transition to the next phase before receiving all responses
+    pending_mnlistdiff_requests: usize,
+
+    // Track when we started waiting for MnListDiff responses (for timeout detection)
+    mnlistdiff_wait_start: Option<Instant>,
+
+    // Track retry attempts for MnListDiff requests
+    mnlistdiff_retry_count: u8,
 }
 
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
@@ -105,6 +115,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             error: None,
             sync_in_progress: false,
             last_sync_time: None,
+            pending_mnlistdiff_requests: 0,
+            mnlistdiff_wait_start: None,
+            mnlistdiff_retry_count: 0,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         }
@@ -379,6 +392,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         self.sync_in_progress = true;
         self.error = None;
+        self.mnlistdiff_retry_count = 0; // Reset retry counter for new sync
 
         // Get current chain tip
         let tip_height = storage
@@ -434,24 +448,160 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         _network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
         self.insert_mn_list_diff(&diff, storage).await;
+
+        // Decrement pending request counter if we were expecting this response
+        if self.pending_mnlistdiff_requests > 0 {
+            self.pending_mnlistdiff_requests -= 1;
+            tracing::info!(
+                "📥 Received MnListDiff response ({} pending remaining)",
+                self.pending_mnlistdiff_requests
+            );
+
+            // If this was the last pending request, mark sync as complete
+            if self.pending_mnlistdiff_requests == 0 && self.sync_in_progress {
+                tracing::info!(
+                    "✅ All MnListDiff requests completed, marking masternode sync as done"
+                );
+                self.sync_in_progress = false;
+                self.last_sync_time = Some(Instant::now());
+                self.mnlistdiff_wait_start = None; // Clear wait timer
+
+                // Persist masternode state so phase manager can detect completion
+                match storage.get_tip_height().await {
+                    Ok(Some(tip_height)) => {
+                        let state = crate::storage::MasternodeState {
+                            last_height: tip_height,
+                            engine_state: Vec::new(),
+                            last_update: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        };
+                        if let Err(e) = storage.store_masternode_state(&state).await {
+                            tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            "⚠️ Storage returned no tip height when persisting masternode state"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "⚠️ Failed to read tip height to persist masternode state: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(false) // Not used for sync completion in simple approach
     }
 
     /// Check for sync timeout
     pub async fn check_sync_timeout(
         &mut self,
-        _storage: &mut dyn StorageManager,
-        _network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
     ) -> SyncResult<()> {
-        // Simple timeout check
-        if self.sync_in_progress {
-            if let Some(last_sync) = self.last_sync_time {
-                if last_sync.elapsed() > Duration::from_secs(60) {
-                    self.sync_in_progress = false;
-                    self.error = Some("Sync timeout".to_string());
+        // Check if we're waiting for MnListDiff responses and have timed out
+        if self.pending_mnlistdiff_requests > 0 {
+            if let Some(wait_start) = self.mnlistdiff_wait_start {
+                let timeout_duration = Duration::from_secs(15);
+
+                if wait_start.elapsed() > timeout_duration {
+                    // Timeout hit
+                    if self.mnlistdiff_retry_count < 1 {
+                        // First timeout - retry by restarting the QRInfo request
+                        tracing::warn!(
+                            "⏰ Timeout waiting for {} MnListDiff responses after {:?}, retrying QRInfo request...",
+                            self.pending_mnlistdiff_requests,
+                            wait_start.elapsed()
+                        );
+
+                        self.mnlistdiff_retry_count += 1;
+                        self.pending_mnlistdiff_requests = 0;
+                        self.mnlistdiff_wait_start = None;
+
+                        // Restart by re-initiating the sync
+                        // Get current chain tip for the retry
+                        let tip_height = storage
+                            .get_tip_height()
+                            .await
+                            .map_err(|e| {
+                                SyncError::Storage(format!("Failed to get tip height: {}", e))
+                            })?
+                            .unwrap_or(0);
+
+                        let tip_header = storage
+                            .get_header(tip_height)
+                            .await
+                            .map_err(|e| {
+                                SyncError::Storage(format!("Failed to get tip header: {}", e))
+                            })?
+                            .ok_or_else(|| {
+                                SyncError::Storage("Tip header not found".to_string())
+                            })?;
+                        let tip_hash = tip_header.block_hash();
+
+                        let base_hash = if let Some(last_qrinfo_hash) = self.last_qrinfo_block_hash
+                        {
+                            last_qrinfo_hash
+                        } else {
+                            self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                                SyncError::InvalidState("Genesis hash not available".to_string())
+                            })?
+                        };
+
+                        // Re-send the QRInfo request
+                        match self.request_qrinfo(network, base_hash, tip_hash).await {
+                            Ok(()) => {
+                                tracing::info!("🔄 QRInfo retry request sent successfully");
+                            }
+                            Err(e) => {
+                                tracing::error!("❌ Failed to send retry QRInfo request: {}", e);
+                                self.error = Some(format!("Failed to retry QRInfo: {}", e));
+                                self.sync_in_progress = false;
+                            }
+                        }
+                    } else {
+                        // Already retried once - give up and force completion
+                        tracing::error!(
+                            "❌ Failed to receive {} MnListDiff responses after {:?} and {} retry attempt(s)",
+                            self.pending_mnlistdiff_requests,
+                            wait_start.elapsed(),
+                            self.mnlistdiff_retry_count
+                        );
+                        tracing::warn!(
+                            "⚠️ Proceeding without complete masternode data - quorum validation may be incomplete"
+                        );
+
+                        // Force completion to unblock sync
+                        self.pending_mnlistdiff_requests = 0;
+                        self.mnlistdiff_wait_start = None;
+                        self.sync_in_progress = false;
+                        self.error = Some("MnListDiff requests timed out after retry".to_string());
+
+                        // Still persist what we have
+                        if let Ok(Some(tip_height)) = storage.get_tip_height().await {
+                            let state = crate::storage::MasternodeState {
+                                last_height: tip_height,
+                                engine_state: Vec::new(),
+                                last_update: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0),
+                            };
+                            if let Err(e) = storage.store_masternode_state(&state).await {
+                                tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+                            }
+                        }
+                    }
                 }
             }
         }
+
         Ok(())
     }
 
@@ -522,34 +672,49 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Update last successful QRInfo block for progressive sync
         self.last_qrinfo_block_hash = Some(block_hash);
 
-        // Mark sync as completed successfully
-        self.sync_in_progress = false;
-        self.last_sync_time = Some(Instant::now());
+        // Check if we need to wait for MnListDiff responses
+        if self.pending_mnlistdiff_requests == 0 {
+            // No additional requests were sent (edge case: no quorum validation needed)
+            // Mark sync as complete immediately
+            tracing::info!("✅ QRInfo processing completed with no additional requests, masternode sync phase is done");
+            self.sync_in_progress = false;
+            self.last_sync_time = Some(Instant::now());
+            self.mnlistdiff_wait_start = None; // Ensure wait timer is cleared
 
-        // Persist masternode state so phase manager can detect completion
-        // We store the current header tip height as the masternode sync height.
-        match storage.get_tip_height().await {
-            Ok(Some(tip_height)) => {
-                let state = crate::storage::MasternodeState {
-                    last_height: tip_height,
-                    engine_state: Vec::new(),
-                    last_update: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0),
-                };
-                if let Err(e) = storage.store_masternode_state(&state).await {
-                    tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+            // Persist masternode state so phase manager can detect completion
+            match storage.get_tip_height().await {
+                Ok(Some(tip_height)) => {
+                    let state = crate::storage::MasternodeState {
+                        last_height: tip_height,
+                        engine_state: Vec::new(),
+                        last_update: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    };
+                    if let Err(e) = storage.store_masternode_state(&state).await {
+                        tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        "⚠️ Storage returned no tip height when persisting masternode state"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "⚠️ Failed to read tip height to persist masternode state: {}",
+                        e
+                    );
                 }
             }
-            Ok(None) => {
-                tracing::warn!(
-                    "⚠️ Storage returned no tip height when persisting masternode state"
-                );
-            }
-            Err(e) => {
-                tracing::warn!("⚠️ Failed to read tip height to persist masternode state: {}", e);
-            }
+        } else {
+            tracing::info!(
+                "⏳ Waiting for {} pending MnListDiff responses before completing masternode sync",
+                self.pending_mnlistdiff_requests
+            );
+            // Keep sync_in_progress = true so we don't transition to the next phase yet
+            // Completion and state persistence will happen in handle_mnlistdiff_message
         }
 
         tracing::info!("✅ QRInfo processing completed successfully (unified path)");
@@ -651,6 +816,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             "🔍 Fetching {} additional MnListDiffs for quorum validation",
             quorum_hashes.len()
         );
+
+        // Track how many requests we're about to send
+        let mut requests_sent = 0;
 
         for quorum_hash in quorum_hashes.iter() {
             tracing::info!("🔍 Processing quorum hash: {}", quorum_hash);
@@ -758,6 +926,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 continue;
             }
 
+            // Track that we sent a request
+            requests_sent += 1;
+
             tracing::info!(
                 "✅ Sent MnListDiff request for quorum hash {} (base: {} -> target: {})",
                 quorum_hash,
@@ -766,10 +937,21 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             );
         }
 
-        tracing::info!(
-            "📋 Completed sending {} MnListDiff requests for quorum validation",
-            quorum_hashes.len()
-        );
+        // Update the pending request counter
+        self.pending_mnlistdiff_requests += requests_sent;
+
+        // Start tracking wait time if we sent any requests
+        if requests_sent > 0 {
+            self.mnlistdiff_wait_start = Some(Instant::now());
+            tracing::info!(
+                "📋 Completed sending {} MnListDiff requests for quorum validation (total pending: {}), started timeout tracking",
+                requests_sent,
+                self.pending_mnlistdiff_requests
+            );
+        } else {
+            tracing::info!("📋 No MnListDiff requests sent (all quorums already have data)");
+        }
+
         Ok(())
     }
 }

@@ -6,16 +6,16 @@ import KeyWalletFFISwift
 // MARK: - HD Wallet Service
 
 class HDWalletService {
-    
+
     // MARK: - Mnemonic Generation
-    
+
     static func generateMnemonic(strength: Int = 128) -> [String] {
         do {
             // Use the proper BIP39 implementation from key-wallet-ffi
             // Word count: 12 words for 128-bit entropy, 24 words for 256-bit entropy
             let wordCount: UInt8 = strength == 256 ? 24 : 12
             let mnemonic = try Mnemonic.generate(language: .english, wordCount: wordCount)
-            
+
             // Split the phrase into words
             let words = mnemonic.phrase().split(separator: " ").map { String($0) }
             return words
@@ -25,7 +25,7 @@ class HDWalletService {
             return generateFallbackMnemonic()
         }
     }
-    
+
     private static func generateFallbackMnemonic() -> [String] {
         // Generate 12 random words from a small set
         // This is NOT cryptographically secure but better than hardcoded values
@@ -38,53 +38,53 @@ class HDWalletService {
             "cash", "cast", "cell", "chat", "chip", "city", "clay", "clean",
             "clip", "club", "coal", "coat", "code", "coin", "cold", "come"
         ]
-        
+
         var mnemonic: [String] = []
         for _ in 0..<12 {
             let randomIndex = Int.random(in: 0..<sampleWords.count)
             mnemonic.append(sampleWords[randomIndex])
         }
-        
+
         return mnemonic
     }
-    
+
     private static func generateWordsFromEntropy(_ entropy: Data) -> [String] {
         // Simplified entropy to word mapping
         // In production, this should use proper BIP39 algorithm with checksum
         let wordList = getBIP39WordList()
         var words: [String] = []
-        
+
         // Simple mapping: take 11 bits at a time to index into 2048-word list
         let bits = entropy.flatMap { byte in
             (0..<8).reversed().map { (byte >> $0) & 1 }
         }
-        
+
         // For 128-bit entropy, we need 12 words (132 bits with checksum)
         // This is simplified - proper BIP39 adds checksum bits
         for i in 0..<12 {
             let startBit = i * 11
             let endBit = min(startBit + 11, bits.count)
-            
+
             if endBit <= bits.count {
                 var index = 0
                 for j in startBit..<endBit {
                     index = (index << 1) | Int(bits[j])
                 }
-                
+
                 // Ensure index is within word list bounds
                 let wordIndex = index % wordList.count
                 words.append(wordList[wordIndex])
             }
         }
-        
+
         // If we don't have enough words, use fallback
         if words.count < 12 {
             return generateFallbackMnemonic()
         }
-        
+
         return words
     }
-    
+
     private static func getBIP39WordList() -> [String] {
         // First 100 words of BIP39 English word list
         // In production, use the full 2048-word list
@@ -104,7 +104,7 @@ class HDWalletService {
             "army", "around", "arrange", "arrest", "arrive", "arrow", "art", "artefact"
         ]
     }
-    
+
     static func validateMnemonic(_ words: [String]) -> Bool {
         let phrase = words.joined(separator: " ")
         do {
@@ -115,9 +115,9 @@ class HDWalletService {
             return false
         }
     }
-    
+
     // MARK: - Seed Operations
-    
+
     static func mnemonicToSeed(_ mnemonic: [String], passphrase: String = "") -> Data {
         do {
             let phrase = mnemonic.joined(separator: " ")
@@ -131,28 +131,28 @@ class HDWalletService {
             return phrase.data(using: .utf8) ?? Data()
         }
     }
-    
+
     static func seedHash(_ seed: Data) -> String {
         let hash = SHA256.hash(data: seed)
         return hash.compactMap { String(format: "%02x", $0) }.joined()
     }
-    
+
     // MARK: - Encryption
-    
+
     static func encryptSeed(_ seed: Data, password: String) throws -> Data {
         // In a real app, use proper encryption (e.g., CryptoKit)
         // This is a placeholder
         return seed
     }
-    
+
     static func decryptSeed(_ encryptedSeed: Data, password: String) throws -> Data {
         // In a real app, use proper decryption
         // This is a placeholder
         return encryptedSeed
     }
-    
+
     // MARK: - Key Derivation
-    
+
     static func deriveExtendedPublicKey(
         seed: Data,
         network: DashNetwork,
@@ -161,13 +161,13 @@ class HDWalletService {
         do {
             // Convert DashNetwork to KeyWalletFFI Network
             let ffiNetwork = convertToFFINetwork(network)
-            
+
             // Create HD wallet from seed
             let hdWallet = try HdWallet.fromSeed(seed: Array(seed), network: ffiNetwork)
-            
+
             // Get account extended public key
             let accountXPub = try hdWallet.getAccountXpub(account: account)
-            
+
             return accountXPub.xpub
         } catch {
             print("Failed to derive extended public key: \(error)")
@@ -176,7 +176,7 @@ class HDWalletService {
             return "\(prefix)MockExtendedPublicKey\(account)"
         }
     }
-    
+
     static func deriveAddress(
         xpub: String,
         network: DashNetwork,
@@ -186,10 +186,10 @@ class HDWalletService {
         do {
             // Convert DashNetwork to KeyWalletFFI Network
             let ffiNetwork = convertToFFINetwork(network)
-            
+
             // Create address generator
             let addressGenerator = AddressGenerator(network: ffiNetwork)
-            
+
             // Create AccountXPub from the extended public key string
             // The derivation path will be filled in by the FFI when getting account xpub
             let accountXPub = AccountXPub(
@@ -197,14 +197,14 @@ class HDWalletService {
                 xpub: xpub,
                 pubKey: nil
             )
-            
+
             // Generate the address
             let address = try addressGenerator.generate(
                 accountXpub: accountXPub,
                 external: !change,  // external=true for receive addresses, false for change
                 index: index
             )
-            
+
             return address.toString()
         } catch {
             print("Failed to derive address: \(error)")
@@ -214,7 +214,7 @@ class HDWalletService {
             return "\(prefix)MockAddress\(changeStr)\(index)"
         }
     }
-    
+
     static func deriveAddresses(
         xpub: String,
         network: DashNetwork,
@@ -225,17 +225,17 @@ class HDWalletService {
         do {
             // Convert DashNetwork to KeyWalletFFI Network
             let ffiNetwork = convertToFFINetwork(network)
-            
+
             // Create address generator
             let addressGenerator = AddressGenerator(network: ffiNetwork)
-            
+
             // Create AccountXPub from string
             let accountXPub = AccountXPub(
                 derivationPath: "", // Path is not needed for address generation
                 xpub: xpub,
                 pubKey: nil
             )
-            
+
             // Generate addresses in range
             let addresses = try addressGenerator.generateRange(
                 accountXpub: accountXPub,
@@ -243,7 +243,7 @@ class HDWalletService {
                 start: startIndex,
                 count: count
             )
-            
+
             return addresses.map { $0.toString() }
         } catch {
             print("Failed to derive addresses: \(error)")
@@ -253,9 +253,9 @@ class HDWalletService {
             }
         }
     }
-    
+
     // MARK: - Helper Functions
-    
+
     static func convertToFFINetwork(_ network: DashNetwork) -> KeyWalletFFISwift.Network {
         switch network {
         case .mainnet:
@@ -275,12 +275,12 @@ class HDWalletService {
 class AddressDiscoveryService {
     private let sdk: DashSDK
     private let walletService: HDWalletService
-    
+
     init(sdk: DashSDK) {
         self.sdk = sdk
         self.walletService = HDWalletService()
     }
-    
+
     func discoverAddresses(
         for account: HDAccount,
         network: DashNetwork,
@@ -288,7 +288,7 @@ class AddressDiscoveryService {
     ) async throws -> (external: [String], internal: [String]) {
         var externalAddresses: [String] = []
         var internalAddresses: [String] = []
-        
+
         // Discover external addresses
         let (lastExternal, discoveredExternal) = try await discoverChain(
             xpub: account.extendedPublicKey,
@@ -299,7 +299,7 @@ class AddressDiscoveryService {
         )
         externalAddresses = discoveredExternal
         account.lastUsedExternalIndex = lastExternal
-        
+
         // Discover internal (change) addresses
         let (lastInternal, discoveredInternal) = try await discoverChain(
             xpub: account.extendedPublicKey,
@@ -310,10 +310,10 @@ class AddressDiscoveryService {
         )
         internalAddresses = discoveredInternal
         account.lastUsedInternalIndex = lastInternal
-        
+
         return (externalAddresses, internalAddresses)
     }
-    
+
     private func discoverChain(
         xpub: String,
         network: DashNetwork,
@@ -325,7 +325,7 @@ class AddressDiscoveryService {
         var lastUsedIndex: UInt32 = 0
         var consecutiveUnused: UInt32 = 0
         var currentIndex = startIndex
-        
+
         while consecutiveUnused < gapLimit {
             // Derive batch of addresses
             let batchSize: UInt32 = 10
@@ -336,12 +336,12 @@ class AddressDiscoveryService {
                 startIndex: currentIndex,
                 count: batchSize
             )
-            
+
             // Check each address for transactions
             for (offset, address) in batch.enumerated() {
                 let index = currentIndex + UInt32(offset)
                 addresses.append(address)
-                
+
                 // Check if address has been used
                 let transactions = try await sdk.getTransactions(for: address, limit: 1)
                 if !transactions.isEmpty {
@@ -350,15 +350,15 @@ class AddressDiscoveryService {
                 } else {
                     consecutiveUnused += 1
                 }
-                
+
                 if consecutiveUnused >= gapLimit {
                     break
                 }
             }
-            
+
             currentIndex += batchSize
         }
-        
+
         return (lastUsedIndex, addresses)
     }
 }
@@ -366,11 +366,11 @@ class AddressDiscoveryService {
 // MARK: - Key Wallet FFI Bridge
 
 class KeyWalletBridge {
-    
+
     struct WalletWrapper {
         let hdWallet: HdWallet
         let network: DashNetwork
-        
+
         func deriveAccount(_ index: UInt32) -> AccountWrapper {
             do {
                 let accountXPub = try hdWallet.getAccountXpub(account: index)
@@ -396,12 +396,12 @@ class KeyWalletBridge {
             }
         }
     }
-    
+
     struct AccountWrapper {
         let index: UInt32
         let xpub: String
         let network: DashNetwork
-        
+
         func deriveAddress(change: Bool, index: UInt32) -> String {
             return HDWalletService.deriveAddress(
                 xpub: xpub,
@@ -411,7 +411,7 @@ class KeyWalletBridge {
             )
         }
     }
-    
+
     static func createWallet(mnemonic: [String], network: DashNetwork) -> WalletWrapper? {
         do {
             let phrase = mnemonic.joined(separator: " ")

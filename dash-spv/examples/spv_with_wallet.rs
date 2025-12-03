@@ -2,13 +2,14 @@
 //!
 //! This example shows how to integrate the SPV client with a wallet manager.
 
-use dash_spv::network::MultiPeerNetworkManager;
+use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.enable_filters = true;
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager - use disk storage for persistence
     let storage_manager = DiskStorageManager::new("/tmp/dash-spv-example".into()).await?;
@@ -48,9 +49,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - Reorgs via handle_reorg()
     // - Compact filter checks via check_compact_filter()
 
-    // Stop the client
-    println!("Stopping SPV client...");
-    client.stop().await?;
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
+
+    client.run(command_receiver, shutdown_token).await?;
 
     println!("Done!");
     Ok(())

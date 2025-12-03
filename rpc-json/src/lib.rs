@@ -17,9 +17,6 @@
 #![crate_type = "rlib"]
 
 pub use dashcore;
-use serde;
-use serde_json;
-use serde_with;
 
 use bincode::{Decode, Encode};
 use serde_repr::*;
@@ -1493,7 +1490,7 @@ pub struct GetBlockTemplateResult {
     pub min_time: u64,
     /// List of things that may be changed by the client before submitting a
     /// block
-    pub mutable: Vec<GetBlockTemplateResulMutations>,
+    pub mutable: Vec<GetBlockTemplateResultMutations>,
     // TODO figure out what is the data is represented to value
     // pub value:
     /// A range of valid nonces
@@ -1576,7 +1573,7 @@ pub enum GetBlockTemplateResultRules {
 /// but not implemented in the getblocktemplate implementation of Bitcoin Core.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum GetBlockTemplateResulMutations {
+pub enum GetBlockTemplateResultMutations {
     /// The client is allowed to modify the time in the header of the block
     Time,
     /// The client is allowed to add transactions to the block
@@ -3273,10 +3270,10 @@ mod tests {
         }
 
         let json = r#"{"field": 1}"#;
-        let result: Test = serde_json::from_str(&json).unwrap();
+        let result: Test = serde_json::from_str(json).unwrap();
         assert_eq!(result.field, Some(1));
         let json = r#"{"field": -1}"#;
-        let result: Test = serde_json::from_str(&json).unwrap();
+        let result: Test = serde_json::from_str(json).unwrap();
         assert_eq!(result.field, None);
     }
 
@@ -3297,7 +3294,7 @@ mod tests {
         let result: ExtendedQuorumListResult =
             serde_json::from_str(json_list).expect("expected to deserialize json");
         let first_type = result.quorums_by_type.get(&QuorumType::Llmq50_60).unwrap();
-        let first_quorum = first_type.into_iter().nth(0).unwrap();
+        let first_quorum = first_type.iter().next().unwrap();
 
         assert_eq!(
             first_quorum.0.to_byte_array(),
@@ -3427,7 +3424,7 @@ mod tests {
               ]
             }"#;
         let result: MasternodeListDiff =
-            serde_json::from_str(&json).expect("expected to deserialize json");
+            serde_json::from_str(json).expect("expected to deserialize json");
         println!("{:#?}", result);
         assert_eq!(32, result.added_mns[0].pro_tx_hash.as_byte_array().len());
 

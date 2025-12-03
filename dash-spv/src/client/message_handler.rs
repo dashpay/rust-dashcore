@@ -94,7 +94,7 @@ impl<
                     });
             }
             NetworkMessage::MnListDiff(ref diff) => {
-                tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums", 
+                tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums",
                               diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
                 // Move to sync manager without cloning
                 return self
@@ -332,17 +332,9 @@ impl<
             }
             NetworkMessage::Ping(nonce) => {
                 tracing::debug!("Received ping with nonce {}", nonce);
-                // Automatically respond with pong
-                if let Err(e) = self.network.handle_ping(nonce).await {
-                    tracing::error!("Failed to send pong response: {}", e);
-                }
             }
             NetworkMessage::Pong(nonce) => {
                 tracing::debug!("Received pong with nonce {}", nonce);
-                // Validate the pong nonce
-                if let Err(e) = self.network.handle_pong(nonce) {
-                    tracing::warn!("Invalid pong received: {}", e);
-                }
             }
             NetworkMessage::CFilter(cfilter) => {
                 tracing::debug!("Received CFilter for block {}", cfilter.block_hash);
@@ -431,7 +423,7 @@ impl<
                                 tracing::error!("Failed to request transaction {}: {}", txid, e);
                             }
                         } else {
-                            tracing::debug!("Not fetching transaction {} (fetch_mempool_transactions={}, should_fetch={})", 
+                            tracing::debug!("Not fetching transaction {} (fetch_mempool_transactions={}, should_fetch={})",
                                 txid,
                                 self.config.fetch_mempool_transactions,
                                 filter.should_fetch_transaction(&txid).await

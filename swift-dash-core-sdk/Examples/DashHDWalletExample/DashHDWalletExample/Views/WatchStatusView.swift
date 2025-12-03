@@ -3,7 +3,7 @@ import SwiftDashCoreSDK
 
 struct WatchStatusView: View {
     let status: WatchVerificationStatus
-    
+
     var body: some View {
         HStack {
             switch status {
@@ -42,7 +42,7 @@ struct WatchStatusView: View {
 struct WatchErrorsView: View {
     let errors: [WatchAddressError]
     let pendingCount: Int
-    
+
     var body: some View {
         if !errors.isEmpty || pendingCount > 0 {
             VStack(alignment: .leading, spacing: 8) {
@@ -54,7 +54,7 @@ struct WatchErrorsView: View {
                             .font(.caption)
                     }
                 }
-                
+
                 ForEach(Array(errors.prefix(3).enumerated()), id: \.offset) { _, error in
                     HStack {
                         Image(systemName: "exclamationmark.circle.fill")
@@ -65,7 +65,7 @@ struct WatchErrorsView: View {
                             .lineLimit(2)
                     }
                 }
-                
+
                 if errors.count > 3 {
                     Text("And \(errors.count - 3) more errors...")
                         .font(.caption)
@@ -86,7 +86,7 @@ struct WatchErrorsView: View {
         WatchStatusView(status: .verified(total: 20, watching: 20))
         WatchStatusView(status: .verified(total: 20, watching: 15))
         WatchStatusView(status: .failed(error: "Network error"))
-        
+
         WatchErrorsView(
             errors: [
                 WatchAddressError.networkError("Connection timeout"),
