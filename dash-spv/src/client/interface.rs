@@ -76,4 +76,14 @@ impl DashSpvClientInterface {
         command.send(context.clone(), self.command_sender.clone()).await?;
         receive(context, receiver).await?
     }
+
+    pub async fn get_quorum_by_height_reversed(
+        &self,
+        height: u32,
+        quorum_type: LLMQType,
+        quorum_hash: QuorumHash,
+    ) -> GetQuorumByHeightResult {
+        let quorum_hash = quorum_hash.reverse();
+        self.get_quorum_by_height(height, quorum_type, quorum_hash).await
+    }
 }
