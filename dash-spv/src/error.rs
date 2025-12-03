@@ -6,6 +6,9 @@ use thiserror::Error;
 /// Main error type for the Dash SPV client.
 #[derive(Debug, Error)]
 pub enum SpvError {
+    #[error("Channel failure for: {0} - Failure: {1}")]
+    ChannelFailure(String, String),
+
     #[error("Network error: {0}")]
     Network(#[from] NetworkError),
 
@@ -32,6 +35,9 @@ pub enum SpvError {
 
     #[error("Wallet error: {0}")]
     Wallet(#[from] WalletError),
+
+    #[error("Quorum lookup error: {0}")]
+    QuorumLookupError(String),
 }
 
 /// Parse-related errors.

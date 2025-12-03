@@ -8,8 +8,8 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::signal;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,29 +43,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Watching address: {:?}", watch_address);
 
     // Full sync including filters
-    let progress = client.sync_to_tip().await?;
+    client.sync_to_tip().await?;
 
-    tokio::select! {
-        result = client.monitor_network() => {
-            println!("monitor_network result {:?}", result);
-        },
-        _ = signal::ctrl_c() => {
-            println!("monitor_network canceled");
-        }
-    }
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
 
-    println!("Headers synced: {}", progress.header_height);
-    println!("Filter headers synced: {}", progress.filter_header_height);
-
-    // Get statistics
-    let stats = client.stats().await?;
-    println!("Filter headers downloaded: {}", stats.filter_headers_downloaded);
-    println!("Filters downloaded: {}", stats.filters_downloaded);
-    println!("Filter matches found: {}", stats.filters_matched);
-    println!("Blocks requested: {}", stats.blocks_requested);
-
-    // Stop the client
-    client.stop().await?;
+    client.run(command_receiver, shutdown_token).await?;
 
     println!("Done!");
     Ok(())

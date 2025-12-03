@@ -6,12 +6,11 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Arg, Command};
-use tokio::signal;
-
 use dash_spv::terminal::TerminalGuard;
 use dash_spv::{ClientConfig, DashSpvClient, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() {
@@ -631,32 +630,10 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
         tracing::info!("You can manually trigger filter sync later if needed");
     }
 
-    tokio::select! {
-        result = client.monitor_network() => {
-            if let Err(e) = result {
-                tracing::error!("Network monitoring failed: {}", e);
-            }
-        }
-        _ = signal::ctrl_c() => {
-            tracing::info!("Received shutdown signal (Ctrl-C)");
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
 
-            // Stop the client immediately
-            tracing::info!("Stopping SPV client...");
-            if let Err(e) = client.stop().await {
-                tracing::error!("Error stopping client: {}", e);
-            } else {
-                tracing::info!("SPV client stopped successfully");
-            }
-            return Ok(());
-        }
-    }
+    client.run(command_receiver, shutdown_token).await?;
 
-    // Stop the client (if monitor_network exited normally)
-    tracing::info!("Stopping SPV client...");
-    if let Err(e) = client.stop().await {
-        tracing::error!("Error stopping client: {}", e);
-    }
-
-    tracing::info!("SPV client stopped");
     Ok(())
 }
