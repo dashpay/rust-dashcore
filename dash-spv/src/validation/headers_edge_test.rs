@@ -33,10 +33,9 @@ mod tests {
 
     #[test]
     fn test_genesis_block_validation() {
-        let mut validator = HeaderValidator::new(ValidationMode::Full);
-
         for network in [Network::Dash, Network::Testnet, Network::Regtest] {
-            validator.set_network(network);
+            let validator = HeaderValidator::new(ValidationMode::Full, network);
+
             let genesis = genesis_block(network).header;
 
             // Genesis block should validate with no previous header
@@ -50,7 +49,7 @@ mod tests {
 
     #[test]
     fn test_maximum_target_validation() {
-        let validator = HeaderValidator::new(ValidationMode::Full);
+        let validator = HeaderValidator::new(ValidationMode::Full, Network::Dash);
 
         // Create header with maximum allowed target (easiest difficulty)
         let max_target_bits = 0x1e0fffff; // Maximum target for testing
@@ -71,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_minimum_target_validation() {
-        let validator = HeaderValidator::new(ValidationMode::Full);
+        let validator = HeaderValidator::new(ValidationMode::Full, Network::Dash);
 
         // Create header with very low target (hardest difficulty)
         let min_target_bits = 0x17000000; // Very difficult target
@@ -93,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_zero_prev_blockhash() {
-        let validator = HeaderValidator::new(ValidationMode::Basic);
+        let validator = HeaderValidator::new(ValidationMode::Basic, Network::Dash);
 
         // First header with zero prev_blockhash (like genesis)
         let header1 = create_test_header_with_params(
@@ -126,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_all_ff_prev_blockhash() {
-        let validator = HeaderValidator::new(ValidationMode::Basic);
+        let validator = HeaderValidator::new(ValidationMode::Basic, Network::Dash);
 
         // Header with all 0xFF prev_blockhash
         let header = create_test_header_with_params(
@@ -162,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_timestamp_boundaries() {
-        let validator = HeaderValidator::new(ValidationMode::Basic);
+        let validator = HeaderValidator::new(ValidationMode::Basic, Network::Dash);
 
         // Test with minimum timestamp (0)
         let header_min_time = create_test_header_with_params(
@@ -193,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_version_edge_cases() {
-        let validator = HeaderValidator::new(ValidationMode::Basic);
+        let validator = HeaderValidator::new(ValidationMode::Basic, Network::Dash);
 
         // Test various version values
         let versions = [0, 1, 0x20000000, 0x20000001, u32::MAX];
@@ -217,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_large_chain_validation() {
-        let validator = HeaderValidator::new(ValidationMode::Basic);
+        let validator = HeaderValidator::new(ValidationMode::Basic, Network::Dash);
 
         // Create a large chain
         let chain_size = 1000;
@@ -240,7 +239,7 @@ mod tests {
         }
 
         // Should validate entire chain
-        assert!(validator.validate_chain_basic(&headers).is_ok());
+        assert!(validator.validate_headers(&headers).is_ok());
 
         // Break the chain in the middle
         let broken_index = chain_size / 2;
@@ -256,14 +255,12 @@ mod tests {
         );
 
         // Should fail validation
-        let result = validator.validate_chain_basic(&headers);
+        let result = validator.validate_headers(&headers);
         assert!(matches!(result, Err(ValidationError::InvalidHeaderChain(_))));
     }
 
     #[test]
     fn test_single_header_chain_validation() {
-        let validator = HeaderValidator::new(ValidationMode::Full);
-
         let header = create_test_header_with_params(
             0x20000000,
             dashcore::BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::from_byte_array(
@@ -277,14 +274,15 @@ mod tests {
 
         let headers = vec![header];
 
-        // Single header chain should validate in both basic and full modes
-        assert!(validator.validate_chain_basic(&headers).is_ok());
-        assert!(validator.validate_chain_full(&headers, false).is_ok());
+        // Single header chain should validate
+        assert!(HeaderValidator::new(ValidationMode::Basic, Network::Dash)
+            .validate_headers(&headers)
+            .is_ok());
     }
 
     #[test]
     fn test_duplicate_headers_in_chain() {
-        let validator = HeaderValidator::new(ValidationMode::Basic);
+        let validator = HeaderValidator::new(ValidationMode::Basic, Network::Dash);
 
         let header = create_test_header_with_params(
             0x20000000,
@@ -301,13 +299,13 @@ mod tests {
         let headers = vec![header, header];
 
         // Should fail because second header's prev_blockhash won't match first header's hash
-        let result = validator.validate_chain_basic(&headers);
+        let result = validator.validate_headers(&headers);
         assert!(matches!(result, Err(ValidationError::InvalidHeaderChain(_))));
     }
 
     #[test]
     fn test_merkle_root_variations() {
-        let validator = HeaderValidator::new(ValidationMode::Basic);
+        let validator = HeaderValidator::new(ValidationMode::Basic, Network::Dash);
 
         // Test various merkle root patterns
         let merkle_patterns = [
@@ -340,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_mode_switching_during_chain_validation() {
-        let mut validator = HeaderValidator::new(ValidationMode::None);
+        let mut validator = HeaderValidator::new(ValidationMode::None, Network::Dash);
 
         // Create headers with invalid PoW
         let mut headers = vec![];
@@ -361,18 +359,16 @@ mod tests {
             headers.push(header);
         }
 
-        // Should pass with None mode (ValidationMode::None always passes)
-        let result = validator.validate_chain_full(&headers, true);
+        let result = validator.validate_headers(&headers);
         assert!(result.is_ok(), "ValidationMode::None should always pass, but got: {:?}", result);
 
-        // Switch to Full mode
         validator.set_mode(ValidationMode::Full);
-
         // Should now fail due to invalid PoW
-        let result = validator.validate_chain_full(&headers, true);
+        let result = validator.validate_headers(&headers);
         assert!(matches!(result, Err(ValidationError::InvalidProofOfWork)));
 
-        // But should pass without PoW check
-        assert!(validator.validate_chain_full(&headers, false).is_ok());
+        validator.set_mode(ValidationMode::None);
+        let result = validator.validate_headers(&headers);
+        assert!(result.is_ok(), "ValidationMode::None should always pass, but got: {:?}", result);
     }
 }

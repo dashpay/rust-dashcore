@@ -931,7 +931,7 @@ impl<
             // Validate headers before adding to chain state
             {
                 // Validate the batch of headers
-                if let Err(e) = self.validation.validate_header_chain(&headers, false) {
+                if let Err(e) = self.validation.validate_headers(&headers) {
                     tracing::error!(
                         "Header validation failed for range {}..{}: {:?}",
                         current_height,

@@ -16,21 +16,16 @@ pub struct HeaderValidator {
 
 impl HeaderValidator {
     /// Create a new header validator.
-    pub fn new(mode: ValidationMode) -> Self {
+    pub fn new(mode: ValidationMode, network: Network) -> Self {
         Self {
             mode,
-            network: Network::Dash, // Default to mainnet
+            network,
         }
     }
 
     /// Set validation mode.
     pub fn set_mode(&mut self, mode: ValidationMode) {
         self.mode = mode;
-    }
-
-    /// Set network.
-    pub fn set_network(&mut self, network: Network) {
-        self.network = network;
     }
 
     /// Validate a single header.
@@ -76,55 +71,23 @@ impl HeaderValidator {
         // Validate proof of work with X11 hashing (now enabled with core-block-hash-use-x11 feature)
         let target = header.target();
         if let Err(e) = header.validate_pow(target) {
-            match e {
-                DashError::BlockBadProofOfWork => {
-                    return Err(ValidationError::InvalidProofOfWork);
-                }
+            return match e {
+                DashError::BlockBadProofOfWork => Err(ValidationError::InvalidProofOfWork),
                 DashError::BlockBadTarget => {
-                    return Err(ValidationError::InvalidHeaderChain("Invalid target".to_string()));
+                    Err(ValidationError::InvalidHeaderChain("Invalid target".to_string()))
                 }
-                _ => {
-                    return Err(ValidationError::InvalidHeaderChain(format!(
-                        "PoW validation error: {:?}",
-                        e
-                    )));
-                }
-            }
+                _ => Err(ValidationError::InvalidHeaderChain(format!(
+                    "PoW validation error: {:?}",
+                    e
+                ))),
+            };
         }
 
         Ok(())
     }
 
-    /// Validate a chain of headers with basic validation.
-    pub fn validate_chain_basic(&self, headers: &[BlockHeader]) -> ValidationResult<()> {
-        // Respect ValidationMode::None
-        if self.mode == ValidationMode::None {
-            return Ok(());
-        }
-
-        if headers.is_empty() {
-            return Ok(());
-        }
-
-        // Validate chain continuity
-        for i in 1..headers.len() {
-            let header = &headers[i];
-            let prev_header = &headers[i - 1];
-
-            self.validate_basic(header, Some(prev_header))?;
-        }
-
-        tracing::debug!("Basic header chain validation passed for {} headers", headers.len());
-        Ok(())
-    }
-
-    /// Validate a chain of headers with full validation.
-    pub fn validate_chain_full(
-        &self,
-        headers: &[BlockHeader],
-        validate_pow: bool,
-    ) -> ValidationResult<()> {
-        // Respect ValidationMode::None
+    /// Validate a chain of headers considering the validation mode.
+    pub fn validate_headers(&self, headers: &[BlockHeader]) -> ValidationResult<()> {
         if self.mode == ValidationMode::None {
             return Ok(());
         }
@@ -145,14 +108,14 @@ impl HeaderValidator {
                 None
             };
 
-            if validate_pow {
-                self.validate_full(header, prev_header)?;
-            } else {
-                self.validate_basic(header, prev_header)?;
-            }
+            self.validate(header, prev_header)?;
         }
 
-        tracing::debug!("Full header chain validation passed for {} headers", headers.len());
+        tracing::debug!(
+            "Header chain validation passed for {} headers in mode: {:?}",
+            headers.len(),
+            self.mode
+        );
         Ok(())
     }
 
@@ -171,23 +134,6 @@ impl HeaderValidator {
                 "First header doesn't connect to genesis".to_string(),
             ));
         }
-
-        Ok(())
-    }
-
-    /// Validate difficulty adjustment (simplified for SPV).
-    pub fn validate_difficulty_adjustment(
-        &self,
-        header: &BlockHeader,
-        prev_header: &BlockHeader,
-    ) -> ValidationResult<()> {
-        // For SPV client, we trust that the network has validated difficulty properly
-        // We only check basic constraints
-
-        // For SPV we trust the network for difficulty validation
-        // TODO: Implement proper difficulty validation if needed
-        let _prev_target = prev_header.target();
-        let _current_target = header.target();
 
         Ok(())
     }

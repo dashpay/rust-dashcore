@@ -4,7 +4,7 @@ pub mod headers;
 pub mod instantlock;
 pub mod quorum;
 
-use dashcore::{block::Header as BlockHeader, InstantLock};
+use dashcore::{block::Header as BlockHeader, InstantLock, Network};
 
 use crate::error::ValidationResult;
 use crate::types::ValidationMode;
@@ -22,10 +22,10 @@ pub struct ValidationManager {
 
 impl ValidationManager {
     /// Create a new validation manager.
-    pub fn new(mode: ValidationMode) -> Self {
+    pub fn new(mode: ValidationMode, network: Network) -> Self {
         Self {
             mode,
-            header_validator: HeaderValidator::new(mode),
+            header_validator: HeaderValidator::new(mode, network),
             instantlock_validator: InstantLockValidator::new(),
         }
     }
@@ -36,27 +36,12 @@ impl ValidationManager {
         header: &BlockHeader,
         prev_header: Option<&BlockHeader>,
     ) -> ValidationResult<()> {
-        match self.mode {
-            ValidationMode::None => Ok(()),
-            ValidationMode::Basic | ValidationMode::Full => {
-                self.header_validator.validate(header, prev_header)
-            }
-        }
+        self.header_validator.validate(header, prev_header)
     }
 
     /// Validate a chain of headers.
-    pub fn validate_header_chain(
-        &self,
-        headers: &[BlockHeader],
-        validate_pow: bool,
-    ) -> ValidationResult<()> {
-        match self.mode {
-            ValidationMode::None => Ok(()),
-            ValidationMode::Basic => self.header_validator.validate_chain_basic(headers),
-            ValidationMode::Full => {
-                self.header_validator.validate_chain_full(headers, validate_pow)
-            }
-        }
+    pub fn validate_headers(&self, headers: &[BlockHeader]) -> ValidationResult<()> {
+        self.header_validator.validate_headers(headers)
     }
 
     /// Validate an InstantLock (structural validation only).

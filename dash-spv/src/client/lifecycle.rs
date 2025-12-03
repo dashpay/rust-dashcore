@@ -62,7 +62,7 @@ impl<
         .map_err(SpvError::Sync)?;
 
         // Create validation manager
-        let validation = ValidationManager::new(config.validation_mode);
+        let validation = ValidationManager::new(config.validation_mode, config.network);
 
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));

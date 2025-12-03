@@ -59,19 +59,19 @@ mod tests {
 
     #[test]
     fn test_validation_manager_creation() {
-        let manager = ValidationManager::new(ValidationMode::Basic);
+        let manager = ValidationManager::new(ValidationMode::Basic, Network::Dash);
         assert_eq!(manager.mode(), ValidationMode::Basic);
 
-        let manager = ValidationManager::new(ValidationMode::Full);
+        let manager = ValidationManager::new(ValidationMode::Full, Network::Dash);
         assert_eq!(manager.mode(), ValidationMode::Full);
 
-        let manager = ValidationManager::new(ValidationMode::None);
+        let manager = ValidationManager::new(ValidationMode::None, Network::Dash);
         assert_eq!(manager.mode(), ValidationMode::None);
     }
 
     #[test]
     fn test_validation_manager_mode_change() {
-        let mut manager = ValidationManager::new(ValidationMode::None);
+        let mut manager = ValidationManager::new(ValidationMode::None, Network::Dash);
         assert_eq!(manager.mode(), ValidationMode::None);
 
         manager.set_mode(ValidationMode::Basic);
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn test_header_validation_with_mode_none() {
-        let manager = ValidationManager::new(ValidationMode::None);
+        let manager = ValidationManager::new(ValidationMode::None, Network::Dash);
 
         let header = create_test_header(
             dashcore::BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::from_byte_array(
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_header_validation_with_mode_basic() {
-        let manager = ValidationManager::new(ValidationMode::Basic);
+        let manager = ValidationManager::new(ValidationMode::Basic, Network::Dash);
 
         // Valid chain continuity
         let header1 = create_test_header(
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_header_validation_with_mode_full() {
-        let manager = ValidationManager::new(ValidationMode::Full);
+        let manager = ValidationManager::new(ValidationMode::Full, Network::Dash);
 
         // Header with invalid PoW
         let header = create_test_header(
@@ -155,11 +155,10 @@ mod tests {
 
     #[test]
     fn test_header_chain_validation_none() {
-        let manager = ValidationManager::new(ValidationMode::None);
+        let manager = ValidationManager::new(ValidationMode::None, Network::Dash);
 
         // Even an empty chain should pass
-        assert!(manager.validate_header_chain(&[], false).is_ok());
-        assert!(manager.validate_header_chain(&[], true).is_ok());
+        assert!(manager.validate_headers(&[]).is_ok());
 
         // Even broken chains should pass
         let headers = vec![
@@ -167,13 +166,12 @@ mod tests {
             create_test_header(dashcore::BlockHash::from_byte_array([99; 32]), 2, 0x1e0fffff),
         ];
 
-        assert!(manager.validate_header_chain(&headers, false).is_ok());
-        assert!(manager.validate_header_chain(&headers, true).is_ok());
+        assert!(manager.validate_headers(&headers).is_ok());
     }
 
     #[test]
     fn test_header_chain_validation_basic() {
-        let manager = ValidationManager::new(ValidationMode::Basic);
+        let manager = ValidationManager::new(ValidationMode::Basic, Network::Dash);
 
         // Valid chain
         let mut headers = vec![];
@@ -187,7 +185,7 @@ mod tests {
             headers.push(header);
         }
 
-        assert!(manager.validate_header_chain(&headers, false).is_ok());
+        assert!(manager.validate_headers(&headers).is_ok());
 
         // Broken chain
         headers[2] = create_test_header(
@@ -198,13 +196,13 @@ mod tests {
             0x1e0fffff,
         );
 
-        let result = manager.validate_header_chain(&headers, false);
+        let result = manager.validate_headers(&headers);
         assert!(matches!(result, Err(ValidationError::InvalidHeaderChain(_))));
     }
 
     #[test]
     fn test_header_chain_validation_full() {
-        let manager = ValidationManager::new(ValidationMode::Full);
+        let manager = ValidationManager::new(ValidationMode::Full, Network::Dash);
 
         // Headers with invalid PoW
         let headers = vec![create_test_header(
@@ -215,17 +213,14 @@ mod tests {
             0x1d00ffff,
         )];
 
-        // Should pass when validate_pow is false
-        assert!(manager.validate_header_chain(&headers, false).is_ok());
-
-        // Should fail when validate_pow is true
-        let result = manager.validate_header_chain(&headers, true);
+        // Should fail because of the POW validation
+        let result = manager.validate_headers(&headers);
         assert!(matches!(result, Err(ValidationError::InvalidProofOfWork)));
     }
 
     #[test]
     fn test_instantlock_validation_none() {
-        let manager = ValidationManager::new(ValidationMode::None);
+        let manager = ValidationManager::new(ValidationMode::None, Network::Dash);
         let instantlock = create_test_instantlock();
 
         // Should always pass
@@ -234,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_instantlock_validation_basic() {
-        let manager = ValidationManager::new(ValidationMode::Basic);
+        let manager = ValidationManager::new(ValidationMode::Basic, Network::Dash);
         let instantlock = create_test_instantlock();
 
         // Basic validation should check structure
@@ -246,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_instantlock_validation_full() {
-        let manager = ValidationManager::new(ValidationMode::Full);
+        let manager = ValidationManager::new(ValidationMode::Full, Network::Dash);
         let instantlock = create_test_instantlock();
 
         // Full validation should check structure and signatures
@@ -257,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_mode_switching_affects_validation() {
-        let mut manager = ValidationManager::new(ValidationMode::None);
+        let mut manager = ValidationManager::new(ValidationMode::None, Network::Dash);
 
         // Create headers with broken chain
         let header1 = create_test_header(
@@ -294,13 +289,14 @@ mod tests {
 
     #[test]
     fn test_empty_header_chain_validation() {
-        for mode in [ValidationMode::None, ValidationMode::Basic, ValidationMode::Full] {
-            let manager = ValidationManager::new(mode);
-            let empty_chain: Vec<BlockHeader> = vec![];
+        for network in [Network::Dash, Network::Testnet, Network::Devnet, Network::Regtest] {
+            for mode in [ValidationMode::None, ValidationMode::Basic, ValidationMode::Full] {
+                let manager = ValidationManager::new(mode, network);
+                let empty_chain: Vec<BlockHeader> = vec![];
 
-            // Empty chains should always pass
-            assert!(manager.validate_header_chain(&empty_chain, false).is_ok());
-            assert!(manager.validate_header_chain(&empty_chain, true).is_ok());
+                // Empty chains should always pass
+                assert!(manager.validate_headers(&empty_chain).is_ok());
+            }
         }
     }
 }
