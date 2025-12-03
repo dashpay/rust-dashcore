@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let shutdown_token = CancellationToken::new();
 
-    client.run_until_shutdown(command_receiver, shutdown_token).await?;
+    client.run(command_receiver, shutdown_token).await?;
 
     println!("Done!");
     Ok(())

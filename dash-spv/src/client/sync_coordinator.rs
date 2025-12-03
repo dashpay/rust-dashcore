@@ -68,9 +68,9 @@ impl<
     ///
     /// This is the sole network message receiver to prevent race conditions.
     /// All sync operations coordinate through this monitoring loop.
-    pub async fn run(
+    pub async fn monitor_network(
         &mut self,
-        mut receiver: UnboundedReceiver<DashSpvClientCommand>,
+        mut command_receiver: UnboundedReceiver<DashSpvClientCommand>,
         token: CancellationToken,
     ) -> Result<()> {
         let running = self.running.read().await;
@@ -482,7 +482,7 @@ impl<
             }
 
             tokio::select! {
-                received = receiver.recv() => {
+                received = command_receiver.recv() => {
                     match received {
                     None => {tracing::warn!("DashSpvClientCommand channel closed.");},
                     Some(command) => {
@@ -570,15 +570,15 @@ impl<
         Ok(())
     }
 
-    pub async fn run_until_shutdown(
+    pub async fn run(
         mut self,
-        receiver: UnboundedReceiver<DashSpvClientCommand>,
+        command_receiver: UnboundedReceiver<DashSpvClientCommand>,
         shutdown_token: CancellationToken,
     ) -> Result<()> {
         let client_token = shutdown_token.clone();
 
         let client_task = tokio::spawn(async move {
-            let result = self.run(receiver, client_token).await;
+            let result = self.monitor_network(command_receiver, client_token).await;
             if let Err(e) = &result {
                 tracing::error!("Error running client: {}", e);
             }
@@ -589,7 +589,9 @@ impl<
         });
 
         let shutdown_task = tokio::spawn(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                tracing::error!("Error waiting for ctrl_c: {}", e);
+            }
             tracing::debug!("Shutdown signal received");
             shutdown_token.cancel();
         });

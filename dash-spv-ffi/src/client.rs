@@ -889,24 +889,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                 let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
                 let run_token = shutdown_token_sync.clone();
                 let (abort_handle, abort_registration) = AbortHandle::new_pair();
-                let mut run_future = Box::pin(Abortable::new(
-                    spv_client.run(command_receiver, run_token),
+                let mut monitor_future = Box::pin(Abortable::new(
+                    spv_client.monitor_network(command_receiver, run_token),
                     abort_registration,
                 ));
                 let result = tokio::select! {
-                    res = &mut run_future => match res {
+                    res = &mut monitor_future => match res {
                         Ok(inner) => inner,
                         Err(_) => Ok(()),
                     },
                     _ = shutdown_token_sync.cancelled() => {
                         abort_handle.abort();
-                        match run_future.as_mut().await {
+                        match monitor_future.as_mut().await {
                             Ok(inner) => inner,
                             Err(_) => Ok(()),
                         }
                     }
                 };
-                drop(run_future);
+                drop(monitor_future);
                 let mut guard = inner.lock().unwrap();
                 *guard = Some(spv_client);
                 result
