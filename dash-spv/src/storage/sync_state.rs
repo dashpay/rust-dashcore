@@ -2,7 +2,6 @@
 
 use dashcore::{BlockHash, Network};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use crate::types::{ChainState, SyncProgress};
@@ -111,10 +110,6 @@ pub struct FilterSyncState {
     /// Number of filters downloaded.
     pub filters_downloaded: u64,
 
-    /// Filter matches: height -> Vec of wallet IDs (32-byte arrays) that matched.
-    /// This tracks which wallet IDs had transactions in blocks with matching compact filters.
-    pub filter_matches: BTreeMap<u32, Vec<[u8; 32]>>,
-
     /// Whether filter sync is available from peers.
     pub filter_sync_available: bool,
 }
@@ -188,7 +183,6 @@ impl PersistentSyncState {
                 filter_header_height: sync_progress.filter_header_height,
                 filter_height: sync_progress.last_synced_filter_height.unwrap_or(0),
                 filters_downloaded: sync_progress.filters_downloaded,
-                filter_matches: chain_state.filter_matches.clone(),
                 filter_sync_available: sync_progress.filter_sync_available,
             },
             saved_at: SystemTime::now(),
@@ -374,7 +368,6 @@ mod tests {
                 filter_header_height: 0,
                 filter_height: 0,
                 filters_downloaded: 0,
-                filter_matches: BTreeMap::new(),
                 filter_sync_available: false,
             },
             saved_at: SystemTime::now(),
