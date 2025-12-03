@@ -129,20 +129,6 @@ impl<
         }
     }
 
-    /// Get a quorum entry by type and reversed hash at a specific block height.
-    /// This mirror's the Core client's `get_quorum_info_reversed` method.
-    /// It is noted that "This is incorrect response format, but it was used by platform and we need to support it".
-    /// The reverse hash lookup is needed because DAPI returns BE in `ResponseMetadata`, but we store as LE.
-    pub fn get_quorum_at_height_reversed(
-        &self,
-        height: u32,
-        quorum_type: LLMQType,
-        quorum_hash: QuorumHash,
-    ) -> Result<QualifiedQuorumEntry> {
-        let quorum_hash = quorum_hash.reverse();
-        self.get_quorum_at_height(height, quorum_type, quorum_hash)
-    }
-
     // ============ Balance Queries ============
 
     /// Get balance for a specific address.
