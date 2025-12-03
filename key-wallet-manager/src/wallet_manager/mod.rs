@@ -90,7 +90,7 @@ pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     network_states: BTreeMap<Network, NetworkState>,
     /// Filter match cache (per network) - caches whether a filter matched
     /// This is used for SPV operations to avoid rechecking filters
-    filter_matches: BTreeMap<Network, BTreeMap<BlockHash, bool>>,
+    filter_matches: BTreeMap<Network, BTreeMap<BlockHash, Vec<[u8; 32]>>>,
 }
 
 impl<T: WalletInfoInterface> Default for WalletManager<T>

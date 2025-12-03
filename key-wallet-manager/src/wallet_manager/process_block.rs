@@ -90,6 +90,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         block_hash: &BlockHash,
         network: Network,
     ) -> Vec<[u8; 32]> {
+        // Check if we've already evaluated this filter
+        if let Some(network_cache) = self.filter_matches.get(&network) {
+            if let Some(matched) = network_cache.get(block_hash) {
+                return matched.clone();
+            }
+        }
+
         let mut matched_wallet_ids = Vec::new();
 
         // Check each wallet individually to track which ones match
@@ -115,9 +122,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
         }
 
-        // Cache the result (true if any wallet matched)
-        let any_match = !matched_wallet_ids.is_empty();
-        self.filter_matches.entry(network).or_default().insert(*block_hash, any_match);
+        // Cache the result
+        self.filter_matches
+            .entry(network)
+            .or_default()
+            .insert(*block_hash, matched_wallet_ids.clone());
 
         matched_wallet_ids
     }
