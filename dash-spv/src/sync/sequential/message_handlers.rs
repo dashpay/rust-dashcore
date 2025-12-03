@@ -622,7 +622,9 @@ impl<
 
         drop(wallet);
 
-        if !matched_wallet_ids.is_empty() {
+        let matched_wallet_ids_len = matched_wallet_ids.len();
+
+        if matched_wallet_ids_len > 0 {
             // Update filter match statistics
             {
                 let mut stats = self.stats.write().await;
@@ -639,7 +641,7 @@ impl<
                     .unwrap_or_else(|| crate::types::ChainState::new());
 
                 // Record the filter matches
-                chain_state.record_filter_matches(height, matched_wallet_ids.clone());
+                chain_state.record_filter_matches(height, matched_wallet_ids);
 
                 // Save ChainState to persist the filter matches
                 storage.store_chain_state(&chain_state).await.map_err(|e| {
@@ -648,7 +650,7 @@ impl<
 
                 tracing::debug!(
                     "✅ Recorded {} wallet ID(s) matching at height {} to ChainState",
-                    matched_wallet_ids.len(),
+                    matched_wallet_ids_len,
                     height
                 );
             }
@@ -656,7 +658,7 @@ impl<
             tracing::info!(
                 "🎯 Filter match found! Requesting block {} (matched {} wallet(s))",
                 cfilter.block_hash,
-                matched_wallet_ids.len()
+                matched_wallet_ids_len
             );
 
             // Request the full block
