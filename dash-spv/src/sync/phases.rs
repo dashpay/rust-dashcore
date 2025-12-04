@@ -170,7 +170,10 @@ impl SyncPhase {
                 last_progress,
                 ..
             } => Some(*last_progress),
-            _ => None,
+            SyncPhase::Idle
+            | SyncPhase::FullySynced {
+                ..
+            } => None,
         }
     }
 
@@ -198,7 +201,10 @@ impl SyncPhase {
                 last_progress,
                 ..
             } => *last_progress = now,
-            _ => {}
+            SyncPhase::Idle
+            | SyncPhase::FullySynced {
+                ..
+            } => {}
         }
     }
 }
@@ -421,7 +427,10 @@ impl SyncPhase {
                 }
             }
 
-            _ => PhaseProgress {
+            SyncPhase::Idle
+            | SyncPhase::FullySynced {
+                ..
+            } => PhaseProgress {
                 phase_name: self.name(),
                 items_completed: 0,
                 items_total: None,
