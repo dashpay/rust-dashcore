@@ -102,116 +102,37 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Load headers from storage into the chain state
     pub async fn load_headers_from_storage(&mut self, storage: &S) -> SyncResult<u32> {
+        let start_time = std::time::Instant::now();
+        let mut loaded_count = 0;
+        let mut tip_height = 0;
         // First, try to load the persisted chain state which may contain sync_base_height
         if let Ok(Some(stored_chain_state)) = storage.load_chain_state().await {
             tracing::info!(
                 "Loaded chain state from storage with sync_base_height: {}",
                 stored_chain_state.sync_base_height,
             );
-            // Update our chain state with the loaded one to preserve sync_base_height
+            // Update our chain state with the loaded one
             {
+                loaded_count = stored_chain_state.headers.len();
+                tip_height = stored_chain_state.tip_height();
                 self.cached_sync_base_height = stored_chain_state.sync_base_height;
                 let mut cs = self.chain_state.write().await;
                 *cs = stored_chain_state;
             }
         }
 
-        // Get the current tip height from storage
-        let tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
-
-        let Some(tip_height) = tip_height else {
-            tracing::debug!("No headers found in storage");
-            // If we're syncing from a checkpoint, this is expected
-            if self.is_synced_from_checkpoint() {
-                tracing::info!("No headers in storage for checkpoint sync - this is expected");
-                return Ok(0);
-            }
-            return Ok(0);
-        };
-
-        if tip_height == 0 && !self.is_synced_from_checkpoint() {
-            tracing::debug!("Only genesis block in storage");
-            return Ok(0);
-        }
-
-        tracing::info!("Loading {} headers from storage into HeaderSyncManager", tip_height);
-        let start_time = std::time::Instant::now();
-
-        // Load headers in batches
-        const BATCH_SIZE: u32 = 10_000;
-        let mut loaded_count = 0u32;
-
-        // For checkpoint syncs we start at the checkpoint base; otherwise we skip genesis (already present).
-        let mut current_height = self.get_sync_base_height().max(1);
-
-        while current_height <= tip_height {
-            let end_height = (current_height + BATCH_SIZE - 1).min(tip_height);
-
-            // Load batch from storage
-            let headers_result = storage.load_headers(current_height..end_height + 1).await;
-
-            match headers_result {
-                Ok(headers) if !headers.is_empty() => {
-                    // Add headers to chain state
-                    {
-                        let mut cs = self.chain_state.write().await;
-                        for header in headers {
-                            cs.add_header(header);
-                            loaded_count += 1;
-                        }
-                    }
-                }
-                Ok(_) => {
-                    // Empty headers - this can happen for checkpoint sync with minimal headers
-                    tracing::debug!(
-                        "No headers found for range {}..{} - continuing",
-                        current_height,
-                        end_height + 1
-                    );
-                    // Break out of the loop since we've reached the end of available headers
-                    break;
-                }
-                Err(e) => {
-                    // For checkpoint sync with only 1 header stored, this is expected
-                    if self.is_synced_from_checkpoint() && loaded_count == 0 && tip_height == 0 {
-                        tracing::info!(
-                            "No additional headers to load for checkpoint sync - this is expected"
-                        );
-                        return Ok(0);
-                    }
-                    return Err(SyncError::Storage(format!("Failed to load headers: {}", e)));
-                }
-            }
-
-            // Progress logging
-            if loaded_count.is_multiple_of(50_000) || loaded_count == tip_height {
-                let elapsed = start_time.elapsed();
-                let headers_per_sec = loaded_count as f64 / elapsed.as_secs_f64();
-                tracing::info!(
-                    "Loaded {}/{} headers ({:.0} headers/sec)",
-                    loaded_count,
-                    tip_height,
-                    headers_per_sec
-                );
-            }
-
-            current_height = end_height + 1;
-        }
-
         self.total_headers_synced = tip_height;
 
         let elapsed = start_time.elapsed();
         tracing::info!(
-            "✅ Loaded {} headers into HeaderSyncManager in {:.2}s ({:.0} headers/sec)",
+            "✅ Loaded {} headers for tip height {} into HeaderSyncManager in {:.2}s ({:.0} headers/sec)",
             loaded_count,
+            tip_height,
             elapsed.as_secs_f64(),
             loaded_count as f64 / elapsed.as_secs_f64()
         );
 
-        Ok(loaded_count)
+        Ok(loaded_count as u32)
     }
 
     /// Handle a Headers message
