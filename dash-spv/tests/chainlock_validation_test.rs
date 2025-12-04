@@ -355,7 +355,7 @@ async fn test_client_chainlock_update_flow() {
     // Simulate masternode sync by manually setting sequential sync state
     // In real usage, this would happen automatically during sync
     // Note: sync_manager is private, can't access directly
-    // client.sync_manager.set_phase(dash_spv::sync::sequential::phases::SyncPhase::FullySynced {
+    // client.sync_manager.set_phase(dash_spv::sync::SyncPhase::FullySynced {
     //     sync_completed_at: std::time::Instant::now(),
     //     total_sync_time: Duration::from_secs(10),
     //     headers_synced: 1000,

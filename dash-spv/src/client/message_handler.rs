@@ -5,7 +5,7 @@ use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::sequential::SyncManager;
+use crate::sync::SyncManager;
 use crate::types::{MempoolState, SpvEvent, SpvStats};
 // Removed local ad-hoc compact filter construction in favor of always processing full blocks
 use key_wallet_manager::wallet_interface::WalletInterface;

@@ -12,7 +12,7 @@ mod tests {
     use crate::storage::memory::MemoryStorageManager;
     use crate::storage::StorageManager;
     use crate::sync::filters::FilterNotificationSender;
-    use crate::sync::sequential::SyncManager;
+    use crate::sync::SyncManager;
     use crate::types::{ChainState, MempoolState, SpvEvent, SpvStats};
     use crate::validation::ValidationManager;
     use crate::wallet::Wallet;

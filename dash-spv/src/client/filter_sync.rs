@@ -3,7 +3,7 @@
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::sequential::SyncManager;
+use crate::sync::SyncManager;
 use crate::types::FilterMatch;
 use crate::types::SpvStats;
 use key_wallet_manager::wallet_interface::WalletInterface;

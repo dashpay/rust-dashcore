@@ -20,7 +20,7 @@ use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
-use crate::sync::sequential::SyncManager;
+use crate::sync::SyncManager;
 use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
 use crate::validation::ValidationManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
