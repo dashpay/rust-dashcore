@@ -92,7 +92,7 @@
            │
            ▼
     ┌─────────────────────────────────────────┐
-    │     SequentialSyncManager               │
+    │     SyncManager               │
     │  - HeadersSync                          │
     │  - MasternodeSync                       │
     │  - FilterSync (4,027 lines - TOO BIG)   │
@@ -108,7 +108,7 @@
 ### Data Flow
 
 ```
-Network Messages → MessageHandler → SequentialSyncManager
+Network Messages → MessageHandler → SyncManager
                                           │
                                           ▼
                               ┌─────────────────────┐
@@ -1011,7 +1011,7 @@ The sync module coordinates all blockchain synchronization. This is the most com
 ```
 sync/sequential/ (4,785 lines total across 11 modules)
 ├── mod.rs (52 lines) - Module coordinator and re-exports
-├── manager.rs (234 lines) - Core SequentialSyncManager struct and accessors
+├── manager.rs (234 lines) - Core SyncManager struct and accessors
 ├── lifecycle.rs (225 lines) - Initialization, startup, and shutdown
 ├── phase_execution.rs (519 lines) - Phase execution, transitions, timeout handling
 ├── message_handlers.rs (808 lines) - Handlers for sync phase messages

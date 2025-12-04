@@ -20,7 +20,7 @@ use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
-use crate::sync::sequential::SequentialSyncManager;
+use crate::sync::sequential::SyncManager;
 use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
 use crate::validation::ValidationManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -127,12 +127,12 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     ///
     /// If concurrent access becomes necessary (e.g., for monitoring sync progress from
     /// multiple threads), consider:
-    /// - Using interior mutability patterns (Arc<Mutex<SequentialSyncManager>>)
+    /// - Using interior mutability patterns (Arc<Mutex<SyncManager>>)
     /// - Extracting read-only state into a separate shared structure
     /// - Implementing a message-passing architecture for sync commands
     ///
     /// The current design prioritizes simplicity and correctness over concurrent access.
-    pub(super) sync_manager: SequentialSyncManager<S, N, W>,
+    pub(super) sync_manager: SyncManager<S, N, W>,
     pub(super) validation: ValidationManager,
     pub(super) chainlock_manager: Arc<ChainLockManager>,
     pub(super) running: Arc<RwLock<bool>>,
@@ -179,7 +179,7 @@ impl<
 
     /// Get mutable reference to sync manager (for testing).
     #[cfg(test)]
-    pub fn sync_manager_mut(&mut self) -> &mut SequentialSyncManager<S, N, W> {
+    pub fn sync_manager_mut(&mut self) -> &mut SyncManager<S, N, W> {
         &mut self.sync_manager
     }
 

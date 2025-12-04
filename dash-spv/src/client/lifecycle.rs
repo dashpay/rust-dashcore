@@ -17,7 +17,7 @@ use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::sequential::SequentialSyncManager;
+use crate::sync::sequential::SyncManager;
 use crate::types::{ChainState, MempoolState, SpvStats};
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
@@ -52,7 +52,7 @@ impl<
         // Create sync manager
         let received_filter_heights = stats.read().await.received_filter_heights.clone();
         tracing::info!("Creating sequential sync manager");
-        let sync_manager = SequentialSyncManager::new(
+        let sync_manager = SyncManager::new(
             &config,
             received_filter_heights,
             wallet.clone(),

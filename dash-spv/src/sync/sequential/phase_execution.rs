@@ -7,14 +7,14 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::manager::SequentialSyncManager;
+use super::manager::SyncManager;
 use super::phases::SyncPhase;
 
 impl<
         S: StorageManager + Send + Sync + 'static,
         N: NetworkManager + Send + Sync + 'static,
         W: WalletInterface,
-    > SequentialSyncManager<S, N, W>
+    > SyncManager<S, N, W>
 {
     /// Execute the current sync phase
     pub(super) async fn execute_current_phase(

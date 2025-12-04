@@ -3,7 +3,7 @@
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::sequential::SequentialSyncManager;
+use crate::sync::sequential::SyncManager;
 use crate::types::FilterMatch;
 use crate::types::SpvStats;
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 /// Filter synchronization manager for coordinating filter downloads and checking.
 pub struct FilterSyncCoordinator<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> {
-    sync_manager: &'a mut SequentialSyncManager<S, N, W>,
+    sync_manager: &'a mut SyncManager<S, N, W>,
     storage: &'a mut S,
     network: &'a mut N,
     stats: &'a Arc<RwLock<SpvStats>>,
@@ -28,7 +28,7 @@ impl<
 {
     /// Create a new filter sync coordinator.
     pub fn new(
-        sync_manager: &'a mut SequentialSyncManager<S, N, W>,
+        sync_manager: &'a mut SyncManager<S, N, W>,
         storage: &'a mut S,
         network: &'a mut N,
         stats: &'a Arc<RwLock<SpvStats>>,

@@ -1,4 +1,4 @@
-//! Core SequentialSyncManager struct and simple accessor methods.
+//! Core SyncManager struct and simple accessor methods.
 
 use std::time::{Duration, Instant};
 
@@ -58,7 +58,7 @@ pub(super) const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
 /// The generic design enables comprehensive testing while maintaining zero-cost abstraction.
 ///
 /// [`DashSpvClient`]: crate::client::DashSpvClient
-pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: WalletInterface> {
+pub struct SyncManager<S: StorageManager, N: NetworkManager, W: WalletInterface> {
     pub(super) _phantom_s: std::marker::PhantomData<S>,
     pub(super) _phantom_n: std::marker::PhantomData<N>,
     /// Current synchronization phase
@@ -101,7 +101,7 @@ impl<
         S: StorageManager + Send + Sync + 'static,
         N: NetworkManager + Send + Sync + 'static,
         W: WalletInterface,
-    > SequentialSyncManager<S, N, W>
+    > SyncManager<S, N, W>
 {
     /// Get the current chain height from the header sync manager
     pub fn get_chain_height(&self) -> u32 {
