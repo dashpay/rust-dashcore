@@ -553,6 +553,10 @@ impl StorageManager for DiskStorageManager {
         Self::get_filter_tip_height(self).await
     }
 
+    async fn get_stored_filter_height(&self) -> StorageResult<Option<u32>> {
+        Self::get_stored_filter_height(self).await
+    }
+
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
         Self::store_masternode_state(self, state).await
     }
