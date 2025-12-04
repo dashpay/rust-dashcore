@@ -258,6 +258,15 @@ impl StorageManager for MemoryStorageManager {
         }
     }
 
+    async fn get_stored_filter_height(&self) -> StorageResult<Option<u32>> {
+        // For memory storage, find the highest filter in the HashMap
+        if self.filters.is_empty() {
+            Ok(None)
+        } else {
+            Ok(self.filters.keys().max().copied())
+        }
+    }
+
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
         self.masternode_state = Some(state.clone());
         Ok(())

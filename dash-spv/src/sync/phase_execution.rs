@@ -149,42 +149,84 @@ impl<
                     .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
                     .unwrap_or(0);
 
-                if filter_header_tip > 0 {
-                    // Download all filters for complete blockchain history
-                    // This ensures the wallet can find transactions from any point in history
-                    let start_height = self.header_sync.get_sync_base_height().max(1);
-                    let count = filter_header_tip - start_height + 1;
-
-                    tracing::info!(
-                        "Starting filter download from height {} to {} ({} filters)",
-                        start_height,
-                        filter_header_tip,
-                        count
-                    );
-
-                    // Update the phase to track the expected total
-                    if let SyncPhase::DownloadingFilters {
-                        total_filters,
-                        ..
-                    } = &mut self.current_phase
-                    {
-                        *total_filters = count;
-                    }
-
-                    // Use the filter sync manager to download filters
-                    self.filter_sync
-                        .sync_filters_with_flow_control(
-                            network,
-                            storage,
-                            Some(start_height),
-                            Some(count),
-                        )
-                        .await?;
-                } else {
-                    // No filter headers available, skip to next phase
+                // No filter headers available, skip to next phase
+                if filter_header_tip == 0 {
                     self.transition_to_next_phase(storage, network, "No filter headers available")
                         .await?;
+                    return Ok(());
                 }
+
+                tracing::info!(
+                    "🔍 Filter download check: filter_header_tip={}, sync_base_height={}",
+                    filter_header_tip,
+                    self.header_sync.get_sync_base_height()
+                );
+
+                // Check what filters are already stored to resume download
+                let stored_filter_height =
+                    storage.get_stored_filter_height().await.map_err(|e| {
+                        SyncError::Storage(format!("Failed to get stored filter height: {}", e))
+                    })?;
+
+                tracing::info!(
+                    "🔍 Stored filter height from disk scan: {:?}",
+                    stored_filter_height
+                );
+
+                // Resume from the next height after the last stored filter
+                // If no filters are stored, start from sync_base_height or 1
+                let start_height = if let Some(stored_height) = stored_filter_height {
+                    tracing::info!(
+                        "Found stored filters up to height {}, resuming from height {}",
+                        stored_height,
+                        stored_height + 1
+                    );
+                    stored_height + 1
+                } else {
+                    let base_height = self.header_sync.get_sync_base_height().max(1);
+                    tracing::info!("No stored filters found, starting from height {}", base_height);
+                    base_height
+                };
+
+                // If we've already downloaded all filters, skip to next phase
+                if start_height > filter_header_tip {
+                    tracing::info!(
+                            "All filters already downloaded (stored up to {}, tip is {}), skipping to next phase",
+                            start_height - 1,
+                            filter_header_tip
+                        );
+                    self.transition_to_next_phase(storage, network, "Filters already synced")
+                        .await?;
+                    return Ok(());
+                }
+
+                let count = filter_header_tip - start_height + 1;
+
+                tracing::info!(
+                    "Starting filter download from height {} to {} ({} filters)",
+                    start_height,
+                    filter_header_tip,
+                    count
+                );
+
+                // Update the phase to track the expected total
+                if let SyncPhase::DownloadingFilters {
+                    total_filters,
+                    ..
+                } = &mut self.current_phase
+                {
+                    *total_filters = count;
+                }
+
+                // Use the filter sync manager to download filters
+                self.filter_sync
+                    .sync_filters_with_flow_control(
+                        network,
+                        storage,
+                        Some(start_height),
+                        Some(count),
+                    )
+                    .await?;
             }
 
             SyncPhase::DownloadingBlocks {
