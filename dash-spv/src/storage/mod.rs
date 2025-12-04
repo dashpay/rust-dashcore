@@ -2,6 +2,7 @@
 
 pub mod disk;
 pub mod memory;
+pub mod metadata_keys;
 pub mod sync_state;
 pub mod sync_storage;
 pub mod types;

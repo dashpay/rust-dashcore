@@ -5,7 +5,8 @@ use std::ops::Range;
 use dashcore::hash_types::FilterHeader;
 use dashcore_hashes::Hash;
 
-use crate::error::StorageResult;
+use crate::error::{StorageError, StorageResult};
+use crate::storage::metadata_keys::CHECKPOINT_PREV_FILTER_HEADER_KEY;
 
 use super::manager::DiskStorageManager;
 use super::segments::SegmentState;
@@ -215,6 +216,17 @@ impl DiskStorageManager {
             tokio::fs::remove_dir_all(&filters_dir).await?;
         }
         tokio::fs::create_dir_all(&filters_dir).await?;
+
+        // Remove trusted checkpoint predecessor filter header metadata if present
+        let metadata_path =
+            self.base_path.join(format!("state/{}.dat", CHECKPOINT_PREV_FILTER_HEADER_KEY));
+        if metadata_path.exists() {
+            if let Err(e) = tokio::fs::remove_file(&metadata_path).await {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(StorageError::Io(e));
+                }
+            }
+        }
 
         // Restart background worker for future operations
         self.start_worker().await;

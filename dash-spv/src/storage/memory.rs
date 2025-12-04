@@ -7,6 +7,7 @@ use std::ops::Range;
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
+use crate::storage::metadata_keys::CHECKPOINT_PREV_FILTER_HEADER_KEY;
 use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
@@ -310,6 +311,7 @@ impl StorageManager for MemoryStorageManager {
     async fn clear_filters(&mut self) -> StorageResult<()> {
         self.filter_headers.clear();
         self.filters.clear();
+        self.metadata.remove(CHECKPOINT_PREV_FILTER_HEADER_KEY);
         Ok(())
     }
 
