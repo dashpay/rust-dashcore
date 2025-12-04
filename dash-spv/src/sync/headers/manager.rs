@@ -14,7 +14,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::headers::validate_headers;
 use crate::sync::headers2::Headers2StateManager;
-use crate::types::{CachedHeader, ChainState};
+use crate::types::{CachedHeader, ChainState, ValidationMode};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -293,7 +293,22 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         }
 
-        validate_headers(&cached_headers, self.config.validation_mode).map_err(|e| {
+        // If trust_checkpoints is enabled use basic validation (skip PoW) for faster initial
+        // sync. Once past checkpoints, use the configured validation mode.
+        let mut validation_mode = self.config.validation_mode;
+        if self.config.trust_checkpoints
+            && validation_mode == ValidationMode::Full
+            && !self.checkpoint_manager.is_past_checkpoints(self.total_headers_synced)
+        {
+            tracing::trace!(
+                "Using basic validation (trusting checkpoints) - height {} is before last checkpoint {:?}",
+                self.total_headers_synced,
+                self.checkpoint_manager.last_checkpoint(),
+            );
+            validation_mode = ValidationMode::Basic;
+        }
+
+        validate_headers(&cached_headers, validation_mode).map_err(|e| {
             let error = format!("Header validation failed: {}", e);
             tracing::error!(error);
             SyncError::Validation(error)

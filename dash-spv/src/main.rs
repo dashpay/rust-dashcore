@@ -125,6 +125,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .help("Start syncing from a specific block height using the nearest checkpoint. Use 'now' for the latest checkpoint")
                 .value_name("HEIGHT"),
         )
+        .arg(
+            Arg::new("no-trust-checkpoints")
+                .long("no-trust-checkpoints")
+                .help("Disable checkpoint trust to use the configured validation mode for all headers")
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches();
 
     // Get log level (will be used after we know if terminal UI is enabled)
@@ -190,6 +196,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches.get_flag("no-mempool") {
         config.enable_mempool_tracking = false;
+    }
+    if matches.get_flag("no-trust-checkpoints") {
+        config = config.with_trust_checkpoints(false);
     }
 
     // Set start height if specified

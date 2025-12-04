@@ -119,6 +119,11 @@ impl CheckpointManager {
         &self.sorted_heights
     }
 
+    /// Check if we're past the last checkpoint
+    pub fn is_past_checkpoints(&self, height: u32) -> bool {
+        self.sorted_heights.last().is_none_or(|&last| height > last)
+    }
+
     /// Get the last checkpoint before a given timestamp
     pub fn last_checkpoint_before_timestamp(&self, timestamp: u32) -> Option<&Checkpoint> {
         let mut best_checkpoint = None;

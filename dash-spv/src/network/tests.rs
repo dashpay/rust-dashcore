@@ -51,6 +51,7 @@ mod peer_network_manager_tests {
             blocks_request_rate_limit: None,
             start_from_height: None,
             wallet_creation_time: None,
+            trust_checkpoints: true,
             // QRInfo fields
             qr_info_extra_share: true,
             qr_info_timeout: Duration::from_secs(30),

@@ -146,6 +146,9 @@ pub struct ClientConfig {
     /// Used to determine appropriate checkpoint for sync.
     pub wallet_creation_time: Option<u32>,
 
+    /// Force basic validation only (skip PoW) before the last checkpoint to speed up sync. (default: true)
+    pub trust_checkpoints: bool,
+
     // QRInfo configuration (simplified per plan)
     /// Request extra share data in QRInfo (default: false per DMLviewer.patch).
     pub qr_info_extra_share: bool,
@@ -194,6 +197,7 @@ impl Default for ClientConfig {
             blocks_request_rate_limit: None,
             start_from_height: None,
             wallet_creation_time: None,
+            trust_checkpoints: true,
             // CFHeaders flow control defaults
             max_concurrent_cfheaders_requests_parallel: 50,
             cfheaders_request_timeout_secs: 30,
@@ -327,6 +331,12 @@ impl ClientConfig {
     /// Set the starting height for synchronization.
     pub fn with_start_height(mut self, height: u32) -> Self {
         self.start_from_height = Some(height);
+        self
+    }
+
+    /// Set whether to trust checkpoints during sync.
+    pub fn with_trust_checkpoints(mut self, trust: bool) -> Self {
+        self.trust_checkpoints = trust;
         self
     }
 
