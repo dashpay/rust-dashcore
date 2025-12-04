@@ -12,7 +12,7 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::headers2_state::Headers2StateManager;
+use crate::sync::headers2::Headers2StateManager;
 use crate::types::{CachedHeader, ChainState};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -611,10 +611,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                     // If we failed due to missing previous header, and we're at genesis,
                     // this might be a protocol issue where peer expects us to have genesis in compression state
-                    if matches!(
-                        e,
-                        crate::sync::headers2_state::ProcessError::DecompressionError(0, _)
-                    ) && self.chain_state.read().await.tip_height() == 0
+                    if matches!(e, crate::sync::headers2::ProcessError::DecompressionError(0, _))
+                        && self.chain_state.read().await.tip_height() == 0
                     {
                         tracing::warn!(
                         "Headers2 decompression failed at genesis. Peer may be sending compressed headers that reference genesis. Consider falling back to regular headers."

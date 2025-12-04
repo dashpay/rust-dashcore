@@ -17,7 +17,7 @@ use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::sequential::SyncManager;
+use crate::sync::SyncManager;
 use crate::types::{ChainState, MempoolState, SpvStats};
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
