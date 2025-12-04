@@ -7,7 +7,6 @@
 //! - `core.rs` - Core DashSpvClient struct definition and simple accessors
 //! - `lifecycle.rs` - Client lifecycle (new, start, stop, shutdown)
 //! - `events.rs` - Event emission and progress tracking receivers
-//! - `progress.rs` - Sync progress calculation and reporting
 //! - `mempool.rs` - Mempool tracking and coordination
 //! - `queries.rs` - Peer, masternode, and balance queries
 //! - `transactions.rs` - Transaction operations (e.g., broadcast)
@@ -37,6 +36,7 @@
 pub mod block_processor;
 pub mod config;
 pub mod filter_sync;
+pub mod interface;
 pub mod message_handler;
 pub mod status_display;
 

@@ -3,8 +3,8 @@ extend-ignore-re = [
     # Dash addresses and hex strings contain random character sequences
     # that may match typo patterns (e.g., "nce", "Ue", "LAF", "BA")
     # These are intentionally excluded as they are valid cryptographic data
-    ".*[XYy][a-zA-Z0-9]{33}.*",  # Dash addresses (base58)
-    ".*tb1q[a-z0-9]{58}.*",       # Testnet bech32 addresses
+    "[Xy78DdPp][1-9A-HJ-NP-Za-km-z]{33}",  # Dash addresses (base58)
+    "(tb|bc)1[a-z0-9]{39,87}",    # Bitcoin/bech32 addresses (we have some in tests)
     "0x[0-9a-fA-F]+",             # Hex strings with 0x prefix
     '"[0-9a-fA-F]+"',             # Quoted hex strings in code
     '[0-9a-fA-F]{5,}',            # Hex strings (5+ chars to catch "BA70D")

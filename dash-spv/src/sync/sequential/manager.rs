@@ -6,12 +6,11 @@ use crate::client::ClientConfig;
 use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::{FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager};
+use crate::sync::{FilterSyncManager, HeaderSyncManager, MasternodeSyncManager};
 use crate::types::SyncProgress;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::phases::{PhaseTransition, SyncPhase};
-use super::request_control::RequestController;
 use super::transitions::TransitionManager;
 
 /// Number of blocks back from a ChainLock's block height where we need the masternode list
@@ -48,7 +47,7 @@ pub(super) const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
 /// - Optimize across trait boundaries
 ///
 /// ### 3. **Delegation Pattern** 🔗
-/// The sync manager delegates to specialized sub-managers (`HeaderSyncManagerWithReorg`,
+/// The sync manager delegates to specialized sub-managers (`HeaderSyncManager`,
 /// `FilterSyncManager`, `MasternodeSyncManager`), each also generic over `S` and `N`.
 /// This maintains type consistency throughout the sync pipeline.
 ///
@@ -68,11 +67,8 @@ pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: Wallet
     /// Phase transition manager
     pub(super) transition_manager: TransitionManager,
 
-    /// Request controller for phase-aware request management
-    pub(super) request_controller: RequestController,
-
     /// Existing sync managers (wrapped and controlled)
-    pub(super) header_sync: HeaderSyncManagerWithReorg<S, N>,
+    pub(super) header_sync: HeaderSyncManager<S, N>,
     pub(super) filter_sync: FilterSyncManager<S, N>,
     pub(super) masternode_sync: MasternodeSyncManager<S, N>,
 
@@ -187,11 +183,6 @@ impl<
         matches!(self.current_phase, SyncPhase::DownloadingBlocks { .. })
     }
 
-    /// Get phase history
-    pub fn phase_history(&self) -> &[PhaseTransition] {
-        &self.phase_history
-    }
-
     /// Get current phase
     pub fn current_phase(&self) -> &SyncPhase {
         &self.current_phase
@@ -227,15 +218,6 @@ impl<
         self.masternode_sync.engine()
     }
 
-    /// Get a quorum manager populated from the masternode engine.
-    /// Returns an empty quorum manager if masternodes are disabled or not initialized.
-    pub fn get_quorum_manager(&self) -> crate::validation::quorum::QuorumManager {
-        // TODO: Populate quorum manager from masternode engine
-        // For now, return an empty manager
-        // This will be enhanced when quorum extraction from masternode list is implemented
-        crate::validation::quorum::QuorumManager::new()
-    }
-
     /// Get a reference to the filter sync manager.
     pub fn filter_sync(&self) -> &FilterSyncManager<S, N> {
         &self.filter_sync
@@ -266,17 +248,5 @@ impl<
             // Normal sync: storage height IS the blockchain height
             Ok(storage_height)
         }
-    }
-
-    /// Set the current phase (for testing)
-    #[cfg(test)]
-    pub fn set_phase(&mut self, phase: SyncPhase) {
-        self.current_phase = phase;
-    }
-
-    /// Get mutable reference to masternode sync manager (for testing)
-    #[cfg(test)]
-    pub fn masternode_sync_mut(&mut self) -> &mut MasternodeSyncManager<S, N> {
-        &mut self.masternode_sync
     }
 }

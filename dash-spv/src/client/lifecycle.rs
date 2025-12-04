@@ -21,6 +21,7 @@ use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{ChainState, MempoolState, SpvStats};
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
+use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::{BlockProcessor, ClientConfig, DashSpvClient};
@@ -431,45 +432,8 @@ impl<
             genesis_hash
         );
 
-        // Create the correct genesis header using known Dash genesis block parameters
-        use dashcore::{
-            block::{Header as BlockHeader, Version},
-            pow::CompactTarget,
-        };
-        use dashcore_hashes::Hash;
-
-        let genesis_header = match self.config.network {
-            dashcore::Network::Dash => {
-                // Use the actual Dash mainnet genesis block parameters
-                BlockHeader {
-                    version: Version::from_consensus(1),
-                    prev_blockhash: dashcore::BlockHash::from([0u8; 32]),
-                    merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
-                        .parse()
-                        .unwrap_or_else(|_| dashcore::hashes::sha256d::Hash::all_zeros().into()),
-                    time: 1390095618,
-                    bits: CompactTarget::from_consensus(0x1e0ffff0),
-                    nonce: 28917698,
-                }
-            }
-            dashcore::Network::Testnet => {
-                // Use the actual Dash testnet genesis block parameters
-                BlockHeader {
-                    version: Version::from_consensus(1),
-                    prev_blockhash: dashcore::BlockHash::from([0u8; 32]),
-                    merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
-                        .parse()
-                        .unwrap_or_else(|_| dashcore::hashes::sha256d::Hash::all_zeros().into()),
-                    time: 1390666206,
-                    bits: CompactTarget::from_consensus(0x1e0ffff0),
-                    nonce: 3861367235,
-                }
-            }
-            _ => {
-                // For other networks, use the existing genesis block function
-                dashcore::blockdata::constants::genesis_block(self.config.network).header
-            }
-        };
+        let genesis_header =
+            dashcore::blockdata::constants::genesis_block(self.config.network).header;
 
         // Verify the header produces the expected genesis hash
         let calculated_hash = genesis_header.block_hash();

@@ -5,18 +5,6 @@ use std::time::{Duration, Instant};
 
 use dashcore::BlockHash;
 
-/// Hybrid sync strategy tracking
-#[derive(Debug, Clone, PartialEq)]
-pub enum HybridSyncStrategy {
-    /// Engine-driven discovery with both QRInfo and MnListDiff
-    EngineDiscovery {
-        qr_info_requests: u32,
-        mn_diff_requests: u32,
-        qr_info_completed: u32,
-        mn_diff_completed: u32,
-    },
-}
-
 /// Represents the current synchronization phase
 #[derive(Debug, Clone, PartialEq)]
 pub enum SyncPhase {
@@ -57,8 +45,6 @@ pub enum SyncPhase {
         last_progress: Instant,
         /// Number of masternode list diffs processed
         diffs_processed: u32,
-        /// Hybrid sync strategy tracking
-        sync_strategy: Option<HybridSyncStrategy>,
         /// Total requests (QRInfo + MnListDiff)
         requests_total: u32,
         /// Completed requests
@@ -139,14 +125,8 @@ impl SyncPhase {
                 ..
             } => "Downloading Headers",
             SyncPhase::DownloadingMnList {
-                sync_strategy,
                 ..
-            } => match sync_strategy {
-                Some(HybridSyncStrategy::EngineDiscovery {
-                    ..
-                }) => "Downloading Masternode Lists (Hybrid)",
-                None => "Downloading Masternode Lists",
-            },
+            } => "Downloading Masternode Lists",
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => "Downloading Filter Headers",
@@ -221,37 +201,6 @@ impl SyncPhase {
             _ => {}
         }
     }
-
-    /// Get phase elapsed time
-    pub fn elapsed_time(&self) -> Option<Duration> {
-        match self {
-            SyncPhase::DownloadingHeaders {
-                start_time,
-                ..
-            } => Some(start_time.elapsed()),
-            SyncPhase::DownloadingMnList {
-                start_time,
-                ..
-            } => Some(start_time.elapsed()),
-            SyncPhase::DownloadingCFHeaders {
-                start_time,
-                ..
-            } => Some(start_time.elapsed()),
-            SyncPhase::DownloadingFilters {
-                start_time,
-                ..
-            } => Some(start_time.elapsed()),
-            SyncPhase::DownloadingBlocks {
-                start_time,
-                ..
-            } => Some(start_time.elapsed()),
-            SyncPhase::FullySynced {
-                total_sync_time,
-                ..
-            } => Some(*total_sync_time),
-            SyncPhase::Idle => None,
-        }
-    }
 }
 
 /// Progress information for a sync phase
@@ -318,7 +267,6 @@ impl SyncPhase {
             }
 
             SyncPhase::DownloadingMnList {
-                sync_strategy,
                 requests_completed,
                 requests_total,
                 start_time,
@@ -327,44 +275,6 @@ impl SyncPhase {
                 target_height,
                 ..
             } => {
-                let (_method_description, _efficiency_note) = match sync_strategy {
-                    Some(HybridSyncStrategy::EngineDiscovery {
-                        qr_info_requests,
-                        mn_diff_requests,
-                        qr_info_completed,
-                        mn_diff_completed,
-                    }) => {
-                        let total_requests = qr_info_requests + mn_diff_requests;
-                        let qr_info_ratio = if total_requests > 0 {
-                            (*qr_info_requests as f64 / total_requests as f64) * 100.0
-                        } else {
-                            0.0
-                        };
-
-                        let efficiency = if qr_info_ratio > 70.0 {
-                            "High Efficiency"
-                        } else if qr_info_ratio > 30.0 {
-                            "Standard Efficiency"
-                        } else {
-                            "Targeted Sync"
-                        };
-
-                        (
-                            format!(
-                                "Hybrid ({:.0}% QRInfo, {:.0}% MnListDiff) - {} of {} QRInfo, {} of {} MnListDiff",
-                                qr_info_ratio,
-                                100.0 - qr_info_ratio,
-                                qr_info_completed,
-                                qr_info_requests,
-                                mn_diff_completed,
-                                mn_diff_requests
-                            ),
-                            efficiency.to_string()
-                        )
-                    }
-                    None => ("Standard".to_string(), "Legacy Mode".to_string()),
-                };
-
                 let percentage = if *requests_total > 0 {
                     (*requests_completed as f64 / *requests_total as f64) * 100.0
                 } else if *target_height > *start_height {
@@ -520,87 +430,6 @@ impl SyncPhase {
                 eta: None,
                 elapsed: Duration::from_secs(0),
             },
-        }
-    }
-
-    /// Update hybrid sync strategy for masternode phase
-    pub fn set_masternode_sync_plan(&mut self, qr_info_count: u32, mn_diff_count: u32) {
-        if let SyncPhase::DownloadingMnList {
-            sync_strategy,
-            requests_total,
-            ..
-        } = self
-        {
-            *sync_strategy = Some(HybridSyncStrategy::EngineDiscovery {
-                qr_info_requests: qr_info_count,
-                mn_diff_requests: mn_diff_count,
-                qr_info_completed: 0,
-                mn_diff_completed: 0,
-            });
-            *requests_total = qr_info_count + mn_diff_count;
-        }
-    }
-
-    /// Mark a QRInfo request as completed
-    pub fn complete_qr_info_request(&mut self) {
-        if let SyncPhase::DownloadingMnList {
-            sync_strategy:
-                Some(HybridSyncStrategy::EngineDiscovery {
-                    qr_info_requests,
-                    qr_info_completed,
-                    ..
-                }),
-            requests_completed,
-            requests_total,
-            last_progress,
-            ..
-        } = self
-        {
-            // Only increment if we haven't reached the planned total
-            if *qr_info_completed < *qr_info_requests {
-                *qr_info_completed += 1;
-                *requests_completed = (*requests_completed + 1).min(*requests_total);
-                *last_progress = Instant::now();
-            }
-        }
-    }
-
-    /// Mark a MnListDiff request as completed
-    pub fn complete_mn_diff_request(&mut self) {
-        if let SyncPhase::DownloadingMnList {
-            sync_strategy:
-                Some(HybridSyncStrategy::EngineDiscovery {
-                    mn_diff_requests,
-                    mn_diff_completed,
-                    ..
-                }),
-            requests_completed,
-            requests_total,
-            diffs_processed,
-            last_progress,
-            ..
-        } = self
-        {
-            // Only increment if we haven't reached the planned total
-            if *mn_diff_completed < *mn_diff_requests {
-                *mn_diff_completed += 1;
-                *requests_completed = (*requests_completed + 1).min(*requests_total);
-                *diffs_processed += 1; // Backward compatibility
-                *last_progress = Instant::now();
-            }
-        }
-    }
-
-    /// Update masternode sync height
-    pub fn update_masternode_height(&mut self, height: u32) {
-        if let SyncPhase::DownloadingMnList {
-            current_height,
-            last_progress,
-            ..
-        } = self
-        {
-            *current_height = height;
-            *last_progress = Instant::now();
         }
     }
 }

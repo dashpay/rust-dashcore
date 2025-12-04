@@ -6,7 +6,6 @@ use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
     storage::{MemoryStorageManager, StorageManager},
-    sync::headers::HeaderSyncManager,
     types::{ChainState, ValidationMode},
 };
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
@@ -16,21 +15,6 @@ use key_wallet_manager::wallet_manager::WalletManager;
 use log::{debug, info};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
-#[tokio::test]
-async fn test_header_sync_manager_creation() {
-    let _ = env_logger::try_init();
-
-    let _storage = MemoryStorageManager::new().await.expect("Failed to create storage");
-
-    let config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
-
-    let _sync_manager = HeaderSyncManager::new(&config);
-    // HeaderSyncManager::new returns a HeaderSyncManager directly, not a Result
-    // So we just verify it was created successfully by not panicking
-
-    info!("Header sync manager created successfully");
-}
 
 #[tokio::test]
 async fn test_basic_header_sync_from_genesis() {
@@ -84,40 +68,6 @@ async fn test_header_sync_continuation() {
     }
 
     info!("Header sync continuation test completed");
-}
-
-#[tokio::test]
-async fn test_header_validation_modes() {
-    let _ = env_logger::try_init();
-
-    // Test ValidationMode::None - should accept any headers
-    {
-        let config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::None);
-
-        let _storage = MemoryStorageManager::new().await.unwrap();
-        let _sync_manager = HeaderSyncManager::new(&config);
-        debug!("ValidationMode::None test passed");
-    }
-
-    // Test ValidationMode::Basic - should do basic validation
-    {
-        let config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
-
-        let _storage = MemoryStorageManager::new().await.unwrap();
-        let _sync_manager = HeaderSyncManager::new(&config);
-        debug!("ValidationMode::Basic test passed");
-    }
-
-    // Test ValidationMode::Full - should do full validation
-    {
-        let config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Full);
-
-        let _storage = MemoryStorageManager::new().await.unwrap();
-        let _sync_manager = HeaderSyncManager::new(&config);
-        debug!("ValidationMode::Full test passed");
-    }
-
-    info!("All validation mode tests completed");
 }
 
 #[tokio::test]
@@ -350,24 +300,6 @@ fn create_test_header_chain_from(start: usize, count: usize) -> Vec<BlockHeader>
     }
 
     headers
-}
-
-#[tokio::test]
-async fn test_header_sync_error_handling() {
-    let _ = env_logger::try_init();
-
-    // Test various error conditions in header sync
-    let _storage = MemoryStorageManager::new().await.expect("Failed to create storage");
-
-    // Test with invalid configuration
-    let invalid_config =
-        ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::None); // Valid config for this test
-
-    let _sync_manager = HeaderSyncManager::new(&invalid_config);
-    // Note: HeaderSyncManager creation is straightforward and doesn't validate config
-    // The actual error handling happens during sync operations
-
-    info!("Header sync error handling test completed");
 }
 
 #[tokio::test]

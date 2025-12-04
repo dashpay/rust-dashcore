@@ -886,9 +886,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                         }
                     }
                 };
+                let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+                let run_token = shutdown_token_sync.clone();
                 let (abort_handle, abort_registration) = AbortHandle::new_pair();
-                let mut monitor_future =
-                    Box::pin(Abortable::new(spv_client.monitor_network(), abort_registration));
+                let mut monitor_future = Box::pin(Abortable::new(
+                    spv_client.monitor_network(command_receiver, run_token),
+                    abort_registration,
+                ));
                 let result = tokio::select! {
                     res = &mut monitor_future => match res {
                         Ok(inner) => inner,
