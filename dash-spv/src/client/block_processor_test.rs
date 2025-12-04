@@ -85,6 +85,8 @@ mod tests {
             let map = self.effects.lock().await;
             map.get(&tx.txid()).cloned()
         }
+
+        async fn update_chain_height(&mut self, _network: Network, _height: u32) {}
     }
 
     fn create_test_block(network: Network) -> Block {
@@ -299,6 +301,8 @@ mod tests {
             async fn describe(&self, _network: Network) -> String {
                 "NonMatchingWallet (test implementation)".to_string()
             }
+
+            async fn update_chain_height(&mut self, _network: Network, _height: u32) {}
         }
 
         let (task_tx, task_rx) = mpsc::unbounded_channel();

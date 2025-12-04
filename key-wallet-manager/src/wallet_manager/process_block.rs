@@ -213,4 +213,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         format!("WalletManager: {} wallet(s) on {}\n{}", wallet_count, network, details.join("\n"))
     }
+
+    async fn update_chain_height(&mut self, network: Network, height: CoreBlockHeight) {
+        for info in self.wallet_infos.values_mut() {
+            info.update_chain_height(network, height);
+        }
+    }
 }

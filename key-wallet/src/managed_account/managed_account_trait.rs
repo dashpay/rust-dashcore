@@ -10,7 +10,7 @@ use crate::wallet::balance::WalletBalance;
 use crate::Network;
 use alloc::collections::BTreeMap;
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::Txid;
+use dashcore::{Address, Txid};
 
 /// Common trait for all managed account types
 pub trait ManagedAccountTrait {
@@ -43,6 +43,19 @@ pub trait ManagedAccountTrait {
 
     /// Get mutable transactions
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord>;
+
+    /// Extract UTXOs from a transaction and add them to this account.
+    ///
+    /// Scans the transaction outputs for addresses belonging to `involved_addresses`
+    /// and creates UTXOs for any matches.
+    fn add_utxos_from_transaction(
+        &mut self,
+        tx: &dashcore::Transaction,
+        involved_addresses: &alloc::collections::BTreeSet<Address>,
+        network: Network,
+        height: u32,
+        is_confirmed: bool,
+    );
 
     /// Get UTXOs
     fn utxos(&self) -> &BTreeMap<OutPoint, Utxo>;

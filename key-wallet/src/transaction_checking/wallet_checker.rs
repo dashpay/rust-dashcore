@@ -5,14 +5,14 @@
 
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::immature_transaction::ImmatureTransaction;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
-use crate::{Network, Utxo, Wallet};
+use crate::{Network, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::BlockHash;
-use dashcore::{Address as DashAddress, OutPoint};
 use dashcore_hashes::Hash;
 
 /// Context for transaction processing
@@ -205,28 +205,13 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
                                     // Insert UTXOs for matching outputs (skip for immature coinbase)
                                     if !needs_maturity {
-                                        let txid = tx.txid();
-                                        for (vout, output) in tx.output.iter().enumerate() {
-                                            if let Ok(addr) = DashAddress::from_script(&output.script_pubkey, network) {
-                                                if involved_addrs.contains(&addr) {
-                                                    let outpoint = OutPoint { txid, vout: vout as u32 };
-                                                    // Construct TxOut clone explicitly to avoid trait assumptions
-                                                    let txout = dashcore::TxOut {
-                                                        value: output.value,
-                                                        script_pubkey: output.script_pubkey.clone(),
-                                                    };
-                                                    let mut utxo = Utxo::new(
-                                                        outpoint,
-                                                        txout,
-                                                        addr,
-                                                        utxo_height,
-                                                        tx.is_coin_base(),
-                                                    );
-                                                    utxo.is_confirmed = is_confirmed;
-                                                    account.utxos.insert(outpoint, utxo);
-                                                }
-                                            }
-                                        }
+                                        account.add_utxos_from_transaction(
+                                            tx,
+                                            &involved_addrs,
+                                            network,
+                                            utxo_height,
+                                            is_confirmed,
+                                        );
                                     }
 
                                     // Remove any UTXOs that are being spent by this transaction
