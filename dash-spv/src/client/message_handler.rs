@@ -5,7 +5,7 @@ use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::sequential::SequentialSyncManager;
+use crate::sync::sequential::SyncManager;
 use crate::types::{MempoolState, SpvEvent, SpvStats};
 // Removed local ad-hoc compact filter construction in favor of always processing full blocks
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 
 /// Network message handler for processing incoming Dash protocol messages.
 pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> {
-    sync_manager: &'a mut SequentialSyncManager<S, N, W>,
+    sync_manager: &'a mut SyncManager<S, N, W>,
     storage: &'a mut S,
     network: &'a mut N,
     config: &'a ClientConfig,
@@ -35,7 +35,7 @@ impl<
     /// Create a new message handler.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        sync_manager: &'a mut SequentialSyncManager<S, N, W>,
+        sync_manager: &'a mut SyncManager<S, N, W>,
         storage: &'a mut S,
         network: &'a mut N,
         config: &'a ClientConfig,

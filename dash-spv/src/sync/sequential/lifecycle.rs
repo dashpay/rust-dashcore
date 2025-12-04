@@ -1,4 +1,4 @@
-//! Lifecycle management for SequentialSyncManager (initialization, startup, shutdown).
+//! Lifecycle management for SyncManager (initialization, startup, shutdown).
 
 use std::time::{Duration, Instant};
 
@@ -14,7 +14,7 @@ use key_wallet_manager::{wallet_interface::WalletInterface, Network as WalletNet
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::manager::SequentialSyncManager;
+use super::manager::SyncManager;
 use super::phases::SyncPhase;
 use super::transitions::TransitionManager;
 
@@ -22,7 +22,7 @@ impl<
         S: StorageManager + Send + Sync + 'static,
         N: NetworkManager + Send + Sync + 'static,
         W: WalletInterface,
-    > SequentialSyncManager<S, N, W>
+    > SyncManager<S, N, W>
 {
     /// Create a new sequential sync manager
     pub fn new(

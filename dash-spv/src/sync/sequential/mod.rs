@@ -42,6 +42,6 @@ pub mod phases;
 pub mod transitions;
 
 // Re-exports
-pub use manager::SequentialSyncManager;
+pub use manager::SyncManager;
 pub use phases::{PhaseTransition, SyncPhase};
 pub use transitions::TransitionManager;
