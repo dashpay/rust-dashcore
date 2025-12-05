@@ -22,7 +22,6 @@ use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
 use crate::sync::SyncManager;
 use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
-use crate::validation::ValidationManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
@@ -133,7 +132,6 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     ///
     /// The current design prioritizes simplicity and correctness over concurrent access.
     pub(super) sync_manager: SyncManager<S, N, W>,
-    pub(super) validation: ValidationManager,
     pub(super) chainlock_manager: Arc<ChainLockManager>,
     pub(super) running: Arc<RwLock<bool>>,
     #[cfg(feature = "terminal-ui")]

@@ -19,7 +19,6 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncManager;
 use crate::types::{ChainState, MempoolState, SpvStats};
-use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
 use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -61,9 +60,6 @@ impl<
         )
         .map_err(SpvError::Sync)?;
 
-        // Create validation manager
-        let validation = ValidationManager::new(config.validation_mode);
-
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
 
@@ -87,7 +83,6 @@ impl<
             storage,
             wallet,
             sync_manager,
-            validation,
             chainlock_manager,
             running: Arc::new(RwLock::new(false)),
             #[cfg(feature = "terminal-ui")]

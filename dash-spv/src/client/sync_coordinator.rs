@@ -18,6 +18,8 @@ use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::{DetailedSyncProgress, SyncProgress};
+use crate::validation::validate_headers;
+use crate::ValidationMode;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -946,7 +948,9 @@ impl<
             // Validate headers before adding to chain state
             {
                 // Validate the batch of headers
-                if let Err(e) = self.validation.validate_header_chain(&headers, false) {
+                // Use basic validation only, the headers anyway are already validated since they
+                // come from storage.
+                if let Err(e) = validate_headers(&headers, ValidationMode::Basic) {
                     tracing::error!(
                         "Header validation failed for range {}..{}: {:?}",
                         current_height,
