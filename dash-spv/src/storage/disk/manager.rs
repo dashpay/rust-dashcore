@@ -72,16 +72,40 @@ pub struct DiskStorageManager {
     // Mempool storage
     pub(super) mempool_transactions: Arc<RwLock<HashMap<Txid, UnconfirmedTransaction>>>,
     pub(super) mempool_state: Arc<RwLock<Option<MempoolState>>>,
+
+    // Lock file to prevent concurrent access from multiple processes.
+    _lock_file: std::fs::File,
 }
 
 impl DiskStorageManager {
     /// Create a new disk storage manager with segmented storage.
     pub async fn new(base_path: PathBuf) -> StorageResult<Self> {
         use std::fs;
+        use std::io::Write;
 
         // Create directories if they don't exist
         fs::create_dir_all(&base_path)
             .map_err(|e| StorageError::WriteFailed(format!("Failed to create directory: {}", e)))?;
+
+        // Acquire exclusive lock on the data directory
+        let lock_path = base_path.join(".lock");
+        let mut _lock_file = fs::File::create(&lock_path)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to create lock file: {}", e)))?;
+
+        _lock_file.try_lock().map_err(|e| match e {
+            fs::TryLockError::WouldBlock => StorageError::DirectoryLocked(format!(
+                "Data directory '{}' is already in use by another process",
+                base_path.display()
+            )),
+            fs::TryLockError::Error(io_err) => {
+                StorageError::WriteFailed(format!("Failed to acquire lock: {}", io_err))
+            }
+        })?;
+
+        // Write our PID to lock file for debugging
+        if let Err(e) = writeln!(_lock_file, "{}", std::process::id()) {
+            tracing::warn!("Failed to write PID to lock file: {}", e);
+        }
 
         let headers_dir = base_path.join("headers");
         let filters_dir = base_path.join("filters");
@@ -111,6 +135,7 @@ impl DiskStorageManager {
             last_index_save_count: Arc::new(RwLock::new(0)),
             mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
             mempool_state: Arc::new(RwLock::new(None)),
+            _lock_file,
         };
 
         // Start background worker
