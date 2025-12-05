@@ -448,6 +448,13 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "PlatformPayment cannot be converted to AccountType")]
+    fn test_platform_payment_to_account_type_panics() {
+        // This should panic because we cannot construct a Platform Payment account without indices
+        let _ = FFIAccountType::PlatformPayment.to_account_type(0);
+    }
+
+    #[test]
     #[should_panic(expected = "Cannot convert AccountType::DashpayReceivingFunds")]
     fn test_dashpay_receiving_funds_from_account_type_panics() {
         // This should panic because we cannot represent identity IDs in the FFI tuple
