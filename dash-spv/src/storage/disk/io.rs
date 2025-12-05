@@ -1,17 +1,16 @@
 //! Low-level I/O utilities for reading and writing segment files.
 
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Write};
+use std::fs::{self, File};
+use std::io::BufReader;
 use std::path::Path;
 
 use dashcore::{
     block::Header as BlockHeader,
-    consensus::{encode, Decodable, Encodable},
+    consensus::{encode, Decodable},
     hash_types::FilterHeader,
     BlockHash,
 };
-use dashcore_hashes::Hash;
 
 use crate::error::{StorageError, StorageResult};
 
@@ -94,67 +93,6 @@ pub(super) async fn load_index_from_file(path: &Path) -> StorageResult<HashMap<B
     })
     .await
     .map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
-}
-
-/// Save a segment of headers to disk.
-pub(super) async fn save_segment_to_disk(
-    path: &Path,
-    headers: &[BlockHeader],
-) -> StorageResult<()> {
-    tokio::task::spawn_blocking({
-        let path = path.to_path_buf();
-        let headers = headers.to_vec();
-        move || {
-            let file = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
-            let mut writer = BufWriter::new(file);
-
-            // Only save actual headers, not sentinel headers
-            for header in headers {
-                // Skip sentinel headers (used for padding)
-                if header.version.to_consensus() == i32::MAX
-                    && header.time == u32::MAX
-                    && header.nonce == u32::MAX
-                    && header.prev_blockhash == BlockHash::from_byte_array([0xFF; 32])
-                {
-                    continue;
-                }
-                header.consensus_encode(&mut writer).map_err(|e| {
-                    StorageError::WriteFailed(format!("Failed to encode header: {}", e))
-                })?;
-            }
-
-            writer.flush()?;
-            Ok(())
-        }
-    })
-    .await
-    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
-}
-
-/// Save a segment of filter headers to disk.
-pub(super) async fn save_filter_segment_to_disk(
-    path: &Path,
-    filter_headers: &[FilterHeader],
-) -> StorageResult<()> {
-    tokio::task::spawn_blocking({
-        let path = path.to_path_buf();
-        let filter_headers = filter_headers.to_vec();
-        move || {
-            let file = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
-            let mut writer = BufWriter::new(file);
-
-            for header in filter_headers {
-                header.consensus_encode(&mut writer).map_err(|e| {
-                    StorageError::WriteFailed(format!("Failed to encode filter header: {}", e))
-                })?;
-            }
-
-            writer.flush()?;
-            Ok(())
-        }
-    })
-    .await
-    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
 /// Save index to disk.
