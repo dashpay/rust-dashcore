@@ -5,10 +5,10 @@ use std::ops::Range;
 use dashcore::hash_types::FilterHeader;
 use dashcore_hashes::Hash;
 
-use crate::error::StorageResult;
-use crate::storage::disk::FILTERS_PER_SEGMENT;
 use super::manager::DiskStorageManager;
 use super::segments::{FilterDataIndexEntry, SegmentState};
+use crate::error::StorageResult;
+use crate::storage::disk::FILTERS_PER_SEGMENT;
 
 impl DiskStorageManager {
     /// Store filter headers.
@@ -182,6 +182,11 @@ impl DiskStorageManager {
         Ok(*self.cached_filter_tip_height.read().await)
     }
 
+    /// Get the blockchain height of the filter data tip.
+    pub async fn get_filter_data_tip_height(&self) -> StorageResult<Option<u32>> {
+        Ok(*self.cached_filter_data_tip_height.read().await)
+    }
+
     /// Store a compact filter.
     pub async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         let sync_base_height = *self.sync_base_height.read().await;
@@ -224,6 +229,14 @@ impl DiskStorageManager {
 
                 segment.state = SegmentState::Dirty;
                 segment.last_accessed = std::time::Instant::now();
+            }
+        }
+
+        // Update cached filter data tip height
+        {
+            let mut tip = self.cached_filter_data_tip_height.write().await;
+            if tip.is_none_or(|t| height > t) {
+                *tip = Some(height);
             }
         }
 

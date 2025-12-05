@@ -11,7 +11,7 @@ use crate::error::{StorageError, StorageResult};
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::segments::{FilterSegmentCache, SegmentCache};
-use super::HEADERS_PER_SEGMENT;
+use super::{FILTERS_PER_SEGMENT, HEADERS_PER_SEGMENT};
 
 /// Commands for the background worker
 #[derive(Debug, Clone)]
@@ -72,6 +72,7 @@ pub struct DiskStorageManager {
     // Cached values
     pub(super) cached_tip_height: Arc<RwLock<Option<u32>>>,
     pub(super) cached_filter_tip_height: Arc<RwLock<Option<u32>>>,
+    pub(super) cached_filter_data_tip_height: Arc<RwLock<Option<u32>>>,
 
     // Checkpoint sync support
     pub(super) sync_base_height: Arc<RwLock<u32>>,
@@ -118,6 +119,7 @@ impl DiskStorageManager {
             notification_rx: Arc::new(RwLock::new(mpsc::channel(1).1)), // Temporary placeholder
             cached_tip_height: Arc::new(RwLock::new(None)),
             cached_filter_tip_height: Arc::new(RwLock::new(None)),
+            cached_filter_data_tip_height: Arc::new(RwLock::new(None)),
             sync_base_height: Arc::new(RwLock::new(0)),
             last_index_save_count: Arc::new(RwLock::new(0)),
             mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -196,17 +198,10 @@ impl DiskStorageManager {
                         index,
                         data,
                     } => {
-                        let index_path = worker_base_path
-                            .join(format!("filters/filter_data_segment_{:04}.idx", segment_id));
-                        let data_path = worker_base_path
+                        let segment_path = worker_base_path
                             .join(format!("filters/filter_data_segment_{:04}.dat", segment_id));
-                        if let Err(e) = super::io::save_filter_data_segment(
-                            &index_path,
-                            &data_path,
-                            &index,
-                            &data,
-                        )
-                        .await
+                        if let Err(e) =
+                            super::io::save_filter_data_segment(&segment_path, &index, &data).await
                         {
                             eprintln!("Failed to save filter data segment {}: {}", segment_id, e);
                         } else {
@@ -263,6 +258,16 @@ impl DiskStorageManager {
     /// Get the offset within a segment for a given height.
     pub(super) fn get_segment_offset(height: u32) -> usize {
         (height % HEADERS_PER_SEGMENT) as usize
+    }
+
+    /// Get the filter segment ID for a given height.
+    pub(super) fn get_filter_segment_id(height: u32) -> u32 {
+        height / FILTERS_PER_SEGMENT
+    }
+
+    /// Get the offset within a filter segment for a given height.
+    pub(super) fn get_filter_segment_offset(height: u32) -> usize {
+        (height % FILTERS_PER_SEGMENT) as usize
     }
 
     /// Process notifications from background worker to clear save_pending flags.
@@ -449,6 +454,49 @@ impl DiskStorageManager {
                     };
 
                     *self.cached_filter_tip_height.write().await = Some(blockchain_height);
+                }
+            }
+
+            // Scan for filter data segments
+            let mut max_filter_data_segment_id: Option<u32> = None;
+            let filters_dir = self.base_path.join("filters");
+            if let Ok(entries) = fs::read_dir(&filters_dir) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        if name.starts_with("filter_data_segment_") && name.ends_with(".dat") {
+                            if let Ok(id) = name[20..24].parse::<u32>() {
+                                max_filter_data_segment_id =
+                                    Some(max_filter_data_segment_id.map_or(id, |max| max.max(id)));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If we have filter data segments, load the highest one to find filter data tip
+            if let Some(segment_id) = max_filter_data_segment_id {
+                super::segments::ensure_filter_data_segment_loaded(self, segment_id).await?;
+                let segments = self.active_filter_data_segments.read().await;
+                if let Some(segment) = segments.get(&segment_id) {
+                    // Find highest offset with data
+                    let max_offset = segment
+                        .index
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, e)| e.length > 0)
+                        .map(|(i, _)| i)
+                        .max();
+
+                    if let Some(offset) = max_offset {
+                        let storage_index = segment_id * FILTERS_PER_SEGMENT + offset as u32;
+                        let sync_base_height = *self.sync_base_height.read().await;
+                        let blockchain_height = if sync_base_height > 0 {
+                            sync_base_height + storage_index
+                        } else {
+                            storage_index
+                        };
+                        *self.cached_filter_data_tip_height.write().await = Some(blockchain_height);
+                    }
                 }
             }
         }
