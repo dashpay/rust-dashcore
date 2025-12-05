@@ -17,6 +17,7 @@ pub struct MemoryStorageManager {
     filters: HashMap<u32, Vec<u8>>,
     masternode_state: Option<MasternodeState>,
     chain_state: Option<ChainState>,
+    sync_state: Option<crate::storage::PersistentSyncState>,
     metadata: HashMap<String, Vec<u8>>,
     // Reverse indexes for O(1) lookups
     header_hash_index: HashMap<BlockHash, u32>,
@@ -34,11 +35,18 @@ impl MemoryStorageManager {
             filters: HashMap::new(),
             masternode_state: None,
             chain_state: None,
+            sync_state: None,
             metadata: HashMap::new(),
             header_hash_index: HashMap::new(),
             mempool_transactions: HashMap::new(),
             mempool_state: None,
         })
+    }
+    pub fn sync_base_height(&self) -> u32 {
+        match self.chain_state.as_ref() {
+            Some(state) => state.sync_base_height,
+            None => 0,
+        }
     }
 }
 
@@ -59,15 +67,7 @@ impl StorageManager for MemoryStorageManager {
         // Determine absolute height offset (for checkpoint-based sync) once per batch
         // If syncing from a checkpoint, storage index 0 corresponds to absolute height
         // sync_base_height (base-inclusive). Otherwise, absolute height equals storage index.
-        let (sync_base_height, synced_from_checkpoint) = match self.load_sync_state().await {
-            Ok(Some(state)) => (state.sync_base_height, state.synced_from_checkpoint),
-            _ => (0u32, false),
-        };
-        let abs_offset: u32 = if synced_from_checkpoint && sync_base_height > 0 {
-            sync_base_height
-        } else {
-            0
-        };
+        let sync_base_height = self.sync_base_height();
 
         for header in headers {
             let storage_index = self.headers.len() as u32;
@@ -76,7 +76,7 @@ impl StorageManager for MemoryStorageManager {
             // Check if we already have this header
             if self.header_hash_index.contains_key(&block_hash) {
                 let existing_index = self.header_hash_index.get(&block_hash).copied();
-                let existing_abs = existing_index.map(|i| i.saturating_add(abs_offset));
+                let existing_abs = existing_index.map(|i| i.saturating_add(sync_base_height));
                 tracing::warn!(
                     "MemoryStorage: header {} already exists at storage_index {:?} (abs height {:?}), skipping",
                     block_hash,
@@ -92,7 +92,7 @@ impl StorageManager for MemoryStorageManager {
             // Update the reverse index
             self.header_hash_index.insert(block_hash, storage_index);
 
-            let abs_height = storage_index.saturating_add(abs_offset);
+            let abs_height = storage_index.saturating_add(sync_base_height);
             tracing::debug!(
                 "MemoryStorage: stored header {} at storage_index {} (abs height {})",
                 block_hash,
@@ -112,37 +112,11 @@ impl StorageManager for MemoryStorageManager {
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
         // Interpret range as blockchain (absolute) heights and map to storage indices
-        let (base, has_base) = match self.load_sync_state().await {
-            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
-                (state.sync_base_height, true)
-            }
-            _ => (0u32, false),
-        };
+        let sync_base_height = self.sync_base_height();
+        let start_idx = range.start.saturating_sub(sync_base_height) as usize;
 
-        let start_idx = if has_base {
-            if range.start < base {
-                0usize
-            } else {
-                (range.start - base) as usize
-            }
-        } else {
-            range.start as usize
-        };
-
-        let end_abs = range.end.min(if has_base {
-            base + self.headers.len() as u32
-        } else {
-            self.headers.len() as u32
-        });
-        let end_idx = if has_base {
-            if end_abs <= base {
-                0usize
-            } else {
-                (end_abs - base) as usize
-            }
-        } else {
-            end_abs as usize
-        };
+        let end_abs = range.end.min(sync_base_height + self.headers.len() as u32);
+        let end_idx = end_abs.saturating_sub(sync_base_height) as usize;
 
         if start_idx > self.headers.len() {
             return Ok(Vec::new());
@@ -152,32 +126,18 @@ impl StorageManager for MemoryStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        let sync_base_height = match self.load_sync_state().await {
-            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
-                state.sync_base_height
-            }
-            _ => 0u32,
-        };
-        if sync_base_height > 0 && height < sync_base_height {
-            return Ok(None);
-        }
-
         // Convert absolute height to storage index (base-inclusive mapping)
-        let idx = height.saturating_sub(sync_base_height) as usize;
-        Ok(self.headers.get(idx).copied())
+        let Some(idx) = height.checked_sub(self.sync_base_height()) else {
+            return Ok(None);
+        };
+        Ok(self.headers.get(idx as usize).copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
         if self.headers.is_empty() {
             return Ok(None);
         }
-        let base = match self.load_sync_state().await {
-            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
-                state.sync_base_height
-            }
-            _ => 0u32,
-        };
-        Ok(Some(base + self.headers.len() as u32 - 1))
+        Ok(Some(self.sync_base_height() + self.headers.len() as u32 - 1))
     }
 
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
@@ -189,38 +149,11 @@ impl StorageManager for MemoryStorageManager {
 
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
         // Interpret range as blockchain (absolute) heights and map to storage indices
-        let (base, has_base) = match self.load_sync_state().await {
-            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
-                (state.sync_base_height, true)
-            }
-            _ => (0u32, false),
-        };
+        let sync_base_height = self.sync_base_height();
+        let start_idx = range.start.saturating_sub(sync_base_height) as usize;
 
-        let start_idx = if has_base {
-            if range.start < base {
-                0usize
-            } else {
-                (range.start - base) as usize
-            }
-        } else {
-            range.start as usize
-        };
-
-        let end_abs = range.end.min(if has_base {
-            base + self.filter_headers.len() as u32
-        } else {
-            self.filter_headers.len() as u32
-        });
-
-        let end_idx = if has_base {
-            if end_abs <= base {
-                0usize
-            } else {
-                (end_abs - base) as usize
-            }
-        } else {
-            end_abs as usize
-        };
+        let end_abs = range.end.min(sync_base_height + self.filter_headers.len() as u32);
+        let end_idx = end_abs.saturating_sub(sync_base_height) as usize;
 
         if start_idx > self.filter_headers.len() {
             return Ok(Vec::new());
@@ -232,14 +165,7 @@ impl StorageManager for MemoryStorageManager {
 
     async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
         // Map blockchain (absolute) height to storage index relative to checkpoint base
-        let base = match self.load_sync_state().await {
-            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
-                state.sync_base_height
-            }
-            _ => 0u32,
-        };
-
-        let idx = height.saturating_sub(base) as usize;
+        let idx = height.saturating_sub(self.sync_base_height()) as usize;
         Ok(self.filter_headers.get(idx).copied())
     }
 
@@ -248,13 +174,7 @@ impl StorageManager for MemoryStorageManager {
             Ok(None)
         } else {
             // Return blockchain (absolute) height for the tip, accounting for checkpoint base
-            let base = match self.load_sync_state().await {
-                Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
-                    state.sync_base_height
-                }
-                _ => 0u32,
-            };
-            Ok(Some(base + self.filter_headers.len() as u32 - 1))
+            Ok(Some(self.sync_base_height() + self.filter_headers.len() as u32 - 1))
         }
     }
 
@@ -300,6 +220,7 @@ impl StorageManager for MemoryStorageManager {
         self.filters.clear();
         self.masternode_state = None;
         self.chain_state = None;
+        self.sync_state = None;
         self.metadata.clear();
         self.header_hash_index.clear();
         self.mempool_transactions.clear();
@@ -383,14 +304,7 @@ impl StorageManager for MemoryStorageManager {
             None => return Ok(None),
         };
 
-        let base = match self.load_sync_state().await {
-            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
-                state.sync_base_height
-            }
-            _ => 0u32,
-        };
-
-        Ok(Some(base + storage_index))
+        Ok(Some(self.sync_base_height() + storage_index))
     }
 
     async fn get_headers_batch(
@@ -403,24 +317,14 @@ impl StorageManager for MemoryStorageManager {
         }
 
         // Map absolute heights to storage indices
-        let base = match self.load_sync_state().await {
-            Ok(Some(state)) if state.synced_from_checkpoint && state.sync_base_height > 0 => {
-                state.sync_base_height
-            }
-            _ => 0u32,
-        };
+        let sync_base_height = self.sync_base_height();
 
         let mut results = Vec::with_capacity((end_height - start_height + 1) as usize);
         for abs_h in start_height..=end_height {
-            let idx = if base > 0 {
-                if abs_h < base {
-                    continue;
-                }
-                (abs_h - base) as usize
-            } else {
-                abs_h as usize
+            let Some(idx) = abs_h.checked_sub(sync_base_height) else {
+                continue;
             };
-            if let Some(header) = self.headers.get(idx) {
+            if let Some(header) = self.headers.get(idx as usize) {
                 results.push((abs_h, *header));
             }
         }
@@ -434,31 +338,16 @@ impl StorageManager for MemoryStorageManager {
         &mut self,
         state: &crate::storage::PersistentSyncState,
     ) -> StorageResult<()> {
-        // For in-memory storage, we could store the sync state but it won't persist across restarts
-        // This is mainly for testing and compatibility
-        self.metadata.insert(
-            "sync_state".to_string(),
-            serde_json::to_vec(state).map_err(|e| {
-                StorageError::WriteFailed(format!("Failed to serialize sync state: {}", e))
-            })?,
-        );
+        self.sync_state = Some(state.clone());
         Ok(())
     }
 
     async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::PersistentSyncState>> {
-        // Try to load from metadata (won't persist across restarts)
-        if let Some(data) = self.metadata.get("sync_state") {
-            let state = serde_json::from_slice(data).map_err(|e| {
-                StorageError::ReadFailed(format!("Failed to deserialize sync state: {}", e))
-            })?;
-            Ok(Some(state))
-        } else {
-            Ok(None)
-        }
+        Ok(self.sync_state.clone())
     }
 
     async fn clear_sync_state(&mut self) -> StorageResult<()> {
-        self.metadata.remove("sync_state");
+        self.sync_state = None;
         // Also clear checkpoints
         self.metadata.retain(|k, _| !k.starts_with("checkpoint_"));
         Ok(())
