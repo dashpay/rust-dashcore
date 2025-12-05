@@ -330,8 +330,7 @@ impl<
             let checkpoint_manager = crate::chain::checkpoints::CheckpointManager::new(checkpoints);
 
             // Find the best checkpoint at or before the requested height
-            if let Some(checkpoint) =
-                checkpoint_manager.best_checkpoint_at_or_before_height(start_height)
+            if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)
             {
                 if checkpoint.height > 0 {
                     tracing::info!(
