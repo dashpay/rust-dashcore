@@ -99,11 +99,6 @@ impl<
         let mut last_consistency_check = Instant::now();
         let consistency_check_interval = Duration::from_secs(300); // Every 5 minutes
 
-        // Timer for filter gap checking
-        let mut last_filter_gap_check = Instant::now();
-        let filter_gap_check_interval =
-            Duration::from_secs(self.config.cfheader_gap_check_interval_secs);
-
         // Timer for pending ChainLock validation
         let mut last_chainlock_validation_check = Instant::now();
         let chainlock_validation_interval = Duration::from_secs(30); // Every 30 seconds
@@ -437,18 +432,6 @@ impl<
                 last_consistency_check = Instant::now();
             }
 
-            // Check for missing filters and retry periodically
-            if last_filter_gap_check.elapsed() >= filter_gap_check_interval {
-                if self.config.enable_filters {
-                    // Sequential sync handles filter retries internally
-
-                    // Sequential sync handles CFHeader gap detection and recovery internally
-
-                    // Sequential sync handles filter gap detection and recovery internally
-                }
-                last_filter_gap_check = Instant::now();
-            }
-
             // Check if masternode sync has completed and update ChainLock validation
             if !masternode_engine_updated && self.config.enable_masternodes {
                 // Check if we have a masternode engine available now
@@ -642,7 +625,6 @@ impl<
                 &mut *storage,
                 &mut self.network,
                 &self.config,
-                &self.stats,
                 &self.block_processor_tx,
                 &self.mempool_filter,
                 &self.mempool_state,
@@ -733,35 +715,6 @@ impl<
         // TODO: Get monitored addresses from wallet and report balances
         // Will be implemented when wallet integration is complete
 
-        Ok(())
-    }
-
-    /// Sync filters and check for wallet matches (legacy method).
-    pub async fn sync_and_check_filters_with_monitoring(
-        &mut self,
-        num_blocks: Option<u32>,
-    ) -> Result<Vec<crate::types::FilterMatch>> {
-        self.sync_and_check_filters(num_blocks).await
-    }
-
-    /// Sync filters and check for wallet matches.
-    pub async fn sync_and_check_filters(
-        &mut self,
-        _num_blocks: Option<u32>,
-    ) -> Result<Vec<crate::types::FilterMatch>> {
-        // Sequential sync handles filter sync internally
-        tracing::info!("Sequential sync mode: filter sync handled internally");
-        Ok(Vec::new())
-    }
-
-    /// Sync filters for a specific height range.
-    pub async fn sync_filters_range(
-        &mut self,
-        _start_height: Option<u32>,
-        _count: Option<u32>,
-    ) -> Result<()> {
-        // Sequential sync handles filter range sync internally
-        tracing::info!("Sequential sync mode: filter range sync handled internally");
         Ok(())
     }
 

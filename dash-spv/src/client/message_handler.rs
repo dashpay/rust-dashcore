@@ -6,7 +6,7 @@ use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncManager;
-use crate::types::{MempoolState, SpvEvent, SpvStats};
+use crate::types::{MempoolState, SpvEvent};
 // Removed local ad-hoc compact filter construction in favor of always processing full blocks
 use key_wallet_manager::wallet_interface::WalletInterface;
 use std::sync::Arc;
@@ -18,7 +18,6 @@ pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager, W: WalletInt
     storage: &'a mut S,
     network: &'a mut N,
     config: &'a ClientConfig,
-    stats: &'a Arc<RwLock<SpvStats>>,
     block_processor_tx: &'a tokio::sync::mpsc::UnboundedSender<crate::client::BlockProcessingTask>,
     mempool_filter: &'a Option<Arc<MempoolFilter>>,
     mempool_state: &'a Arc<RwLock<MempoolState>>,
@@ -39,7 +38,6 @@ impl<
         storage: &'a mut S,
         network: &'a mut N,
         config: &'a ClientConfig,
-        stats: &'a Arc<RwLock<SpvStats>>,
         block_processor_tx: &'a tokio::sync::mpsc::UnboundedSender<
             crate::client::BlockProcessingTask,
         >,
@@ -52,7 +50,6 @@ impl<
             storage,
             network,
             config,
-            stats,
             block_processor_tx,
             mempool_filter,
             mempool_state,
@@ -338,17 +335,6 @@ impl<
             }
             NetworkMessage::CFilter(cfilter) => {
                 tracing::debug!("Received CFilter for block {}", cfilter.block_hash);
-
-                // Record the height of this received filter for gap tracking
-                crate::sync::filters::FilterSyncManager::<S, N>::record_filter_received_at_height(
-                    self.stats,
-                    &*self.storage,
-                    &cfilter.block_hash,
-                )
-                .await;
-
-                // Sequential sync manager handles the filter internally
-                // For sequential sync, filter checking is done within the sync manager
             }
             NetworkMessage::SendDsq(wants_dsq) => {
                 tracing::info!("Received SendDsq message - peer wants DSQ messages: {}", wants_dsq);

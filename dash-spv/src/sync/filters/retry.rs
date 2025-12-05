@@ -156,14 +156,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Check for timed out CFHeader requests and retry them.
     ///
-    /// Called periodically when flow control is enabled to detect and recover from
-    /// requests that never received responses.
+    /// Called periodically to detect and recover from requests that never received responses.
     pub async fn check_cfheader_request_timeouts(
         &mut self,
         network: &mut N,
         storage: &S,
     ) -> SyncResult<()> {
-        if !self.cfheaders_flow_control_enabled || !self.syncing_filter_headers {
+        if !self.syncing_filter_headers {
             return Ok(());
         }
 
@@ -234,19 +233,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Check for timed out filter requests and retry them.
-    ///
-    /// When flow control is enabled, checks active requests for timeouts.
-    /// When flow control is disabled, delegates to check_and_retry_missing_filters.
     pub async fn check_filter_request_timeouts(
         &mut self,
         network: &mut N,
         storage: &S,
     ) -> SyncResult<()> {
-        if !self.flow_control_enabled {
-            // Fall back to original timeout checking
-            return self.check_and_retry_missing_filters(network, storage).await;
-        }
-
         let now = std::time::Instant::now();
         let timeout_duration = std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS);
 
@@ -345,37 +336,5 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 Ok(())
             }
         }
-    }
-
-    /// Get filter ranges that have timed out (no response within timeout_duration).
-    ///
-    /// Returns list of (start_height, end_height) tuples for incomplete ranges.
-    pub fn get_timed_out_ranges(&self, timeout_duration: std::time::Duration) -> Vec<(u32, u32)> {
-        let now = std::time::Instant::now();
-        let mut timed_out = Vec::new();
-
-        let heights = match self.received_filter_heights.try_lock() {
-            Ok(heights) => heights.clone(),
-            Err(_) => return timed_out,
-        };
-
-        for ((start, end), request_time) in &self.requested_filter_ranges {
-            if now.duration_since(*request_time) > timeout_duration {
-                // Check if this range is incomplete
-                let mut is_incomplete = false;
-                for height in *start..=*end {
-                    if !heights.contains(&height) {
-                        is_incomplete = true;
-                        break;
-                    }
-                }
-
-                if is_incomplete {
-                    timed_out.push((*start, *end));
-                }
-            }
-        }
-
-        timed_out
     }
 }

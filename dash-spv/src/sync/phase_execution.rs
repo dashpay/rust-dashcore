@@ -112,14 +112,8 @@ impl<
                     self.filter_sync.set_sync_base_height(sync_base_height);
                 }
 
-                // Use flow control if enabled, otherwise use single-request mode
-                let sync_started = if self.config.enable_cfheaders_flow_control {
-                    tracing::info!("Using CFHeaders flow control for parallel sync");
-                    self.filter_sync.start_sync_headers_with_flow_control(network, storage).await?
-                } else {
-                    tracing::info!("Using single-request CFHeaders sync (flow control disabled)");
-                    self.filter_sync.start_sync_headers(network, storage).await?
-                };
+                let sync_started =
+                    self.filter_sync.start_sync_filter_headers(network, storage).await?;
 
                 if !sync_started {
                     // No peers support compact filters or already up to date
@@ -173,12 +167,7 @@ impl<
 
                     // Use the filter sync manager to download filters
                     self.filter_sync
-                        .sync_filters_with_flow_control(
-                            network,
-                            storage,
-                            Some(start_height),
-                            Some(count),
-                        )
+                        .sync_filters(network, storage, Some(start_height), Some(count))
                         .await?;
                 } else {
                     // No filter headers available, skip to next phase
@@ -324,11 +313,7 @@ impl<
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                if self.config.enable_cfheaders_flow_control {
-                    self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
-                } else {
-                    self.filter_sync.check_sync_timeout(storage, network).await?;
-                }
+                self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
             }
             SyncPhase::DownloadingMnList {
                 ..
@@ -480,11 +465,7 @@ impl<
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                if self.config.enable_cfheaders_flow_control {
-                    self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
-                } else {
-                    self.filter_sync.check_sync_timeout(storage, network).await?;
-                }
+                self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
             }
             _ => {
                 // For other phases, we'll need phase-specific recovery

@@ -6,9 +6,7 @@
 //! ## Key Features
 //!
 //! - Efficient filter matching using BIP158 algorithms
-//! - Parallel filter processing via background tasks
 //! - Block download coordination for matches
-//! - Filter processor spawning and management
 
 use dashcore::{
     bip158::{BlockFilterReader, Error as Bip158Error},
@@ -16,9 +14,7 @@ use dashcore::{
     network::message_blockdata::Inventory,
     BlockHash, ScriptBuf,
 };
-use tokio::sync::mpsc;
 
-use super::types::*;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -26,23 +22,6 @@ use crate::storage::StorageManager;
 impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
     super::manager::FilterSyncManager<S, N>
 {
-    pub async fn check_filters_for_matches(
-        &self,
-        _storage: &S,
-        start_height: u32,
-        end_height: u32,
-    ) -> SyncResult<Vec<crate::types::FilterMatch>> {
-        tracing::info!(
-            "Checking filters for matches from height {} to {}",
-            start_height,
-            end_height
-        );
-
-        // TODO: This will be integrated with wallet's check_compact_filter
-        // For now, return empty matches
-        Ok(Vec::new())
-    }
-
     pub async fn check_filter_for_matches<
         W: key_wallet_manager::wallet_interface::WalletInterface,
     >(
@@ -286,168 +265,4 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         tracing::warn!("Received unexpected block: {}", block_hash);
         Ok(None)
     }
-
-    pub fn spawn_filter_processor(
-        _network_message_sender: mpsc::Sender<NetworkMessage>,
-        _processing_thread_requests: std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashSet<BlockHash>>,
-        >,
-        stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
-    ) -> FilterNotificationSender {
-        let (filter_tx, mut filter_rx) =
-            mpsc::unbounded_channel::<dashcore::network::message_filter::CFilter>();
-
-        tokio::spawn(async move {
-            tracing::info!("🔄 Filter processing thread started (wallet integration pending)");
-
-            loop {
-                tokio::select! {
-                    // Handle CFilter messages
-                    Some(cfilter) = filter_rx.recv() => {
-                        // TODO: Process filter with wallet
-                        tracing::debug!("Received CFilter for block {} (wallet integration pending)", cfilter.block_hash);
-                        // Update stats
-                        Self::update_filter_received(&stats).await;
-                    }
-
-                    // Exit when channel is closed
-                    else => {
-                        tracing::info!("🔄 Filter processing thread stopped");
-                        break;
-                    }
-                }
-            }
-        });
-
-        filter_tx
-    }
-
-    /* TODO: Re-implement with wallet integration
-    async fn process_filter_notification(
-        cfilter: dashcore::network::message_filter::CFilter,
-        network_message_sender: &mpsc::Sender<NetworkMessage>,
-        processing_thread_requests: &std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashSet<BlockHash>>,
-        >,
-        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
-    ) -> SyncResult<()> {
-        // Update filter reception tracking
-        Self::update_filter_received(stats).await;
-
-        if watch_items.is_empty() {
-            return Ok(());
-        }
-
-        // Convert watch items to scripts for filter checking
-        let mut scripts = Vec::with_capacity(watch_items.len());
-        for item in watch_items {
-            match item {
-                crate::types::WatchItem::Address {
-                    address,
-                    ..
-                } => {
-                    scripts.push(address.script_pubkey());
-                }
-                crate::types::WatchItem::Script(script) => {
-                    scripts.push(script.clone());
-                }
-                crate::types::WatchItem::Outpoint(_) => {
-                    // Skip outpoints for now
-                }
-            }
-        }
-
-        if scripts.is_empty() {
-            return Ok(());
-        }
-
-        // Check if the filter matches any of our scripts
-        let matches = Self::check_filter_matches(&cfilter.filter, &cfilter.block_hash, &scripts)?;
-
-        if matches {
-            tracing::info!(
-                "🎯 Filter match found in processing thread for block {}",
-                cfilter.block_hash
-            );
-
-            // Update filter match statistics
-            {
-                let mut stats_lock = stats.write().await;
-                stats_lock.filters_matched += 1;
-            }
-
-            // Register this request in the processing thread tracking
-            {
-                let mut requests = processing_thread_requests.lock().await;
-                requests.insert(cfilter.block_hash);
-                tracing::debug!(
-                    "Registered block {} in processing thread requests",
-                    cfilter.block_hash
-                );
-            }
-
-            // Request the full block download
-            let inv = dashcore::network::message_blockdata::Inventory::Block(cfilter.block_hash);
-            let getdata = dashcore::network::message::NetworkMessage::GetData(vec![inv]);
-
-            if let Err(e) = network_message_sender.send(getdata).await {
-                tracing::error!("Failed to request block download for match: {}", e);
-                // Remove from tracking if request failed
-                {
-                    let mut requests = processing_thread_requests.lock().await;
-                    requests.remove(&cfilter.block_hash);
-                }
-            } else {
-                tracing::info!(
-                    "📦 Requested block download for filter match: {}",
-                    cfilter.block_hash
-                );
-            }
-        }
-
-        Ok(())
-    }
-    */
-
-    /* TODO: Re-implement with wallet integration
-    fn check_filter_matches(
-        filter_data: &[u8],
-        block_hash: &BlockHash,
-        scripts: &[ScriptBuf],
-    ) -> SyncResult<bool> {
-        if scripts.is_empty() || filter_data.is_empty() {
-            return Ok(false);
-        }
-
-        // Create a BlockFilterReader with the block hash for proper key derivation
-        let filter_reader = BlockFilterReader::new(block_hash);
-
-        // Convert scripts to byte slices for matching
-        let mut script_bytes = Vec::with_capacity(scripts.len());
-        for script in scripts {
-            script_bytes.push(script.as_bytes());
-        }
-
-        // Use the BIP158 filter to check if any scripts match
-        let mut filter_slice = filter_data;
-        match filter_reader.match_any(&mut filter_slice, script_bytes.into_iter()) {
-            Ok(matches) => {
-                if matches {
-                    tracing::info!(
-                        "BIP158 filter match found! Block {} contains watched scripts",
-                        block_hash
-                    );
-                }
-                Ok(matches)
-            }
-            Err(Bip158Error::Io(e)) => {
-                Err(SyncError::Storage(format!("BIP158 filter IO error: {}", e)))
-            }
-            Err(Bip158Error::UtxoMissing(outpoint)) => {
-                Err(SyncError::Validation(format!("BIP158 filter UTXO missing: {}", outpoint)))
-            }
-            Err(_) => Err(SyncError::Validation("BIP158 filter error".to_string())),
-        }
-    }
-    */
 }

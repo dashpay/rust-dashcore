@@ -5,7 +5,7 @@
 //!
 //! ## Key Features
 //!
-//! - Filter request queue management with flow control
+//! - Filter request queue management
 //! - Parallel filter downloads with concurrency limits
 //! - Filter verification against CFHeaders
 //! - Individual filter header downloads for blocks
@@ -16,7 +16,6 @@ use dashcore::{
     BlockHash,
 };
 
-use super::types::*;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -70,8 +69,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         Ok(matches)
     }
-    /// Scan backward from `abs_height` down to `min_abs_height` (inclusive)
-    /// to find the nearest available block header stored in `storage`.
+
     pub async fn sync_filters(
         &mut self,
         network: &mut N,
@@ -85,108 +83,19 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         self.syncing_filters = true;
 
-        // Determine range to sync
-        let filter_tip_height = storage
-            .get_filter_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
-            .unwrap_or(0);
-
-        let start = start_height.unwrap_or_else(|| {
-            // Default: sync last blocks for recent transaction discovery
-            filter_tip_height.saturating_sub(DEFAULT_FILTER_SYNC_RANGE)
-        });
-
-        let end = count.map(|c| start + c - 1).unwrap_or(filter_tip_height).min(filter_tip_height); // Ensure we don't go beyond available filter headers
-
-        let base_height = self.sync_base_height;
-        let clamped_start = start.max(base_height);
-
-        if clamped_start > end {
-            self.syncing_filters = false;
-            return Ok(SyncProgress::default());
-        }
-
-        tracing::info!(
-            "🔄 Starting compact filter sync from height {} to {} ({} blocks)",
-            clamped_start,
-            end,
-            end - clamped_start + 1
-        );
-
-        // Request filters in batches
-        let batch_size = FILTER_REQUEST_BATCH_SIZE;
-        let mut current_height = clamped_start;
-        let mut filters_downloaded = 0;
-
-        while current_height <= end {
-            let batch_end = (current_height + batch_size - 1).min(end);
-
-            tracing::debug!("Requesting filters for heights {} to {}", current_height, batch_end);
-
-            let stop_hash = storage
-                .get_header(batch_end)
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get stop header: {}", e)))?
-                .ok_or_else(|| SyncError::Storage("Stop header not found".to_string()))?
-                .block_hash();
-
-            self.request_filters(network, current_height, stop_hash).await?;
-
-            // Note: Filter responses will be handled by the monitoring loop
-            // This method now just sends requests and trusts that responses
-            // will be processed by the centralized message handler
-            tracing::debug!("Sent filter request for batch {} to {}", current_height, batch_end);
-
-            let batch_size_actual = batch_end - current_height + 1;
-            filters_downloaded += batch_size_actual;
-            current_height = batch_end + 1;
-        }
-
-        self.syncing_filters = false;
-
-        tracing::info!(
-            "✅ Compact filter synchronization completed. Downloaded {} filters",
-            filters_downloaded
-        );
-
-        Ok(SyncProgress {
-            filters_downloaded: filters_downloaded as u64,
-            ..SyncProgress::default()
-        })
-    }
-
-    pub async fn sync_filters_with_flow_control(
-        &mut self,
-        network: &mut N,
-        storage: &mut S,
-        start_height: Option<u32>,
-        count: Option<u32>,
-    ) -> SyncResult<SyncProgress> {
-        if !self.flow_control_enabled {
-            // Fall back to original method if flow control is disabled
-            return self.sync_filters(network, storage, start_height, count).await;
-        }
-
-        if self.syncing_filters {
-            return Err(SyncError::SyncInProgress);
-        }
-
-        self.syncing_filters = true;
-
         // Clear any stale state from previous attempts
         self.clear_filter_sync_state();
 
         // Build the queue of filter requests
         self.build_filter_request_queue(storage, start_height, count).await?;
 
-        // Start processing the queue with flow control
+        // Start processing the queue
         self.process_filter_request_queue(network, storage).await?;
 
         // Note: Actual completion will be tracked by the monitoring loop
         // This method just queues up requests and starts the flow control process
         tracing::info!(
-            "✅ Filter sync with flow control initiated ({} requests queued, {} active)",
+            "✅ Filter sync initiated ({} requests queued, {} active)",
             self.pending_filter_requests.len(),
             self.active_filter_requests.len()
         );
@@ -206,10 +115,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         block_hash: BlockHash,
         storage: &S,
     ) -> SyncResult<()> {
-        if !self.flow_control_enabled {
-            return Ok(());
-        }
-
         // Record the received filter
         self.record_individual_filter_received(block_hash, storage).await?;
 
@@ -316,48 +221,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(())
     }
 
-    pub async fn request_filters_with_tracking(
-        &mut self,
-        network: &mut N,
-        storage: &S,
-        start_height: u32,
-        stop_hash: BlockHash,
-    ) -> SyncResult<()> {
-        // Find the end height for the stop hash
-        let header_tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
-            .ok_or_else(|| {
-                SyncError::Storage("No headers available for filter sync".to_string())
-            })?;
-
-        let end_height = self
-            .find_height_for_block_hash(&stop_hash, storage, start_height, header_tip_height)
-            .await?
-            .ok_or_else(|| {
-                SyncError::Validation(format!(
-                    "Cannot find height for stop hash {} in range {}-{}",
-                    stop_hash, start_height, header_tip_height
-                ))
-            })?;
-
-        // Safety check: ensure we don't request more than the Dash Core limit
-        let range_size = end_height.saturating_sub(start_height) + 1;
-        if range_size > MAX_FILTER_REQUEST_SIZE {
-            return Err(SyncError::Validation(format!(
-                "Filter request range {}-{} ({} filters) exceeds maximum allowed size of {}",
-                start_height, end_height, range_size, MAX_FILTER_REQUEST_SIZE
-            )));
-        }
-
-        // Record this request for tracking
-        self.record_filter_request(start_height, end_height);
-
-        // Send the actual request
-        self.request_filters(network, start_height, stop_hash).await
-    }
-
     pub(super) async fn find_height_for_block_hash(
         &self,
         block_hash: &BlockHash,
@@ -379,94 +242,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         Ok(None)
-    }
-
-    pub async fn download_filter_header_for_block(
-        &mut self,
-        block_hash: BlockHash,
-        network: &mut N,
-        storage: &mut S,
-    ) -> SyncResult<()> {
-        // Get the block height for this hash by scanning headers
-        let header_tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
-            .ok_or_else(|| {
-                SyncError::Storage("No headers available for filter sync".to_string())
-            })?;
-
-        let height = self
-            .find_height_for_block_hash(&block_hash, storage, 0, header_tip_height)
-            .await?
-            .ok_or_else(|| {
-                SyncError::Validation(format!(
-                    "Cannot find height for block {} - header not found",
-                    block_hash
-                ))
-            })?;
-
-        // Check if we already have this filter header
-        if storage
-            .get_filter_header(height)
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to check filter header: {}", e)))?
-            .is_some()
-        {
-            tracing::debug!(
-                "Filter header for block {} at height {} already exists",
-                block_hash,
-                height
-            );
-            return Ok(());
-        }
-
-        tracing::info!("📥 Requesting filter header for block {} at height {}", block_hash, height);
-
-        // Request filter header using getcfheaders
-        self.request_filter_headers(network, height, block_hash).await?;
-
-        Ok(())
-    }
-
-    pub async fn download_and_check_filter(
-        &mut self,
-        block_hash: BlockHash,
-        network: &mut N,
-        storage: &mut S,
-    ) -> SyncResult<bool> {
-        // TODO: Will check with wallet once integrated
-
-        // Get the block height for this hash by scanning headers
-        let header_tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
-            .unwrap_or(0);
-
-        let height = self
-            .find_height_for_block_hash(&block_hash, storage, 0, header_tip_height)
-            .await?
-            .ok_or_else(|| {
-                SyncError::Validation(format!(
-                    "Cannot find height for block {} - header not found",
-                    block_hash
-                ))
-            })?;
-
-        tracing::info!(
-            "📥 Requesting compact filter for block {} at height {}",
-            block_hash,
-            height
-        );
-
-        // Request the compact filter using getcfilters
-        self.request_filters(network, height, block_hash).await?;
-
-        // Note: The actual filter checking will happen when we receive the CFilter message
-        // This method just initiates the download. The client will need to handle the response.
-
-        Ok(false) // Return false for now, will be updated when we process the response
     }
 
     pub async fn store_filter_headers(

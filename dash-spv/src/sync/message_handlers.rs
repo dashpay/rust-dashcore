@@ -623,6 +623,26 @@ impl<
 
         drop(wallet);
 
+        {
+            let mut stats_lock = self.stats.write().await;
+            stats_lock.filters_received += 1;
+            stats_lock.last_filter_received_time = Some(std::time::Instant::now());
+        }
+
+        // Get the shared filter heights arc from stats
+        let stats_lock = self.stats.read().await;
+        let received_filter_heights = stats_lock.received_filter_heights.clone();
+        drop(stats_lock); // Release the stats lock before acquiring the mutex
+
+        // Now lock the heights and insert
+        let mut heights = received_filter_heights.lock().await;
+        heights.insert(height);
+        tracing::trace!(
+            "📊 Recorded filter received at height {} for block {}",
+            height,
+            cfilter.block_hash
+        );
+
         if matches {
             // Update filter match statistics
             {
@@ -697,7 +717,7 @@ impl<
                 ..
             } = &self.current_phase
             {
-                // For flow control, we need to check:
+                // We need to check:
                 // 1. All expected filters have been received (completed_heights matches total_filters)
                 // 2. No more active or pending requests
                 let has_pending = self.filter_sync.pending_download_count() > 0
