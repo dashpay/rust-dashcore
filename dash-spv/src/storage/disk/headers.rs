@@ -1,11 +1,13 @@
 //! Header storage operations for DiskStorageManager.
 
 use std::ops::Range;
+use std::time::Instant;
 
 use dashcore::block::Header as BlockHeader;
 use dashcore::BlockHash;
 
 use crate::error::StorageResult;
+use crate::storage::disk::segments::SegmentCache;
 
 use super::manager::DiskStorageManager;
 use super::segments::{create_sentinel_header, SegmentState};
@@ -72,7 +74,7 @@ impl DiskStorageManager {
             let offset = Self::get_segment_offset(next_height);
 
             // Ensure segment is loaded
-            super::segments::ensure_segment_loaded(self, segment_id).await?;
+            ensure_segment_loaded(self, segment_id).await?;
 
             // Update segment
             {
@@ -203,7 +205,7 @@ impl DiskStorageManager {
             let offset = Self::get_segment_offset(storage_index);
 
             // Ensure segment is loaded
-            super::segments::ensure_segment_loaded(self, segment_id).await?;
+            ensure_segment_loaded(self, segment_id).await?;
 
             // Update segment
             {
@@ -307,7 +309,7 @@ impl DiskStorageManager {
         let end_segment = Self::get_segment_id(storage_end.saturating_sub(1));
 
         for segment_id in start_segment..=end_segment {
-            super::segments::ensure_segment_loaded(self, segment_id).await?;
+            ensure_segment_loaded(self, segment_id).await?;
 
             let segments = self.active_segments.read().await;
             if let Some(segment) = segments.get(&segment_id) {
@@ -376,7 +378,7 @@ impl DiskStorageManager {
         let segment_id = Self::get_segment_id(storage_index);
         let offset = Self::get_segment_offset(storage_index);
 
-        super::segments::ensure_segment_loaded(self, segment_id).await?;
+        ensure_segment_loaded(self, segment_id).await?;
 
         let segments = self.active_segments.read().await;
         let header = segments.get(&segment_id).and_then(|segment| {
@@ -446,4 +448,58 @@ impl DiskStorageManager {
 
         Ok(results)
     }
+}
+
+/// Ensure a segment is loaded in memory.
+pub(super) async fn ensure_segment_loaded(
+    manager: &DiskStorageManager,
+    segment_id: u32,
+) -> StorageResult<()> {
+    // Process background worker notifications to clear save_pending flags
+    manager.process_worker_notifications().await;
+
+    let mut segments = manager.active_segments.write().await;
+
+    if segments.contains_key(&segment_id) {
+        // Update last accessed time
+        if let Some(segment) = segments.get_mut(&segment_id) {
+            segment.last_accessed = Instant::now();
+        }
+        return Ok(());
+    }
+
+    // Load segment from disk
+    let segment_path = manager.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
+    let mut headers = if segment_path.exists() {
+        super::io::load_headers_from_file(&segment_path).await?
+    } else {
+        Vec::new()
+    };
+
+    // Store the actual number of valid headers before padding
+    let valid_count = headers.len();
+
+    // Ensure the segment has space for all possible headers in this segment
+    // This is crucial for proper indexing
+    let expected_size = super::HEADERS_PER_SEGMENT as usize;
+    if headers.len() < expected_size {
+        // Pad with sentinel headers that cannot be mistaken for valid blocks
+        let sentinel_header = create_sentinel_header();
+        headers.resize(expected_size, sentinel_header);
+    }
+
+    // Evict old segments if needed
+    if segments.len() >= super::MAX_ACTIVE_SEGMENTS {
+        if let Some((oldest_id, oldest_segment_cache)) =
+            segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
+        {
+            oldest_segment_cache.evict(manager)?;
+            segments.remove(&oldest_id);
+        }
+    }
+
+    segments
+        .insert(segment_id, SegmentCache::new_block_header_cache(segment_id, headers, valid_count));
+
+    Ok(())
 }

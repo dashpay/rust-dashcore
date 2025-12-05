@@ -1,11 +1,13 @@
 //! Filter storage operations for DiskStorageManager.
 
 use std::ops::Range;
+use std::time::Instant;
 
 use dashcore::hash_types::FilterHeader;
 use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
+use crate::storage::disk::segments::SegmentCache;
 
 use super::io::atomic_write;
 use super::manager::DiskStorageManager;
@@ -56,19 +58,19 @@ impl DiskStorageManager {
             let offset = Self::get_segment_offset(storage_index);
 
             // Ensure segment is loaded
-            super::segments::ensure_filter_segment_loaded(self, segment_id).await?;
+            ensure_filter_segment_loaded(self, segment_id).await?;
 
             // Update segment
             {
                 let mut segments = self.active_filter_segments.write().await;
                 if let Some(segment) = segments.get_mut(&segment_id) {
                     // Ensure we have space in the segment
-                    if offset >= segment.filter_headers.len() {
+                    if offset >= segment.headers.len() {
                         // Fill with zero filter headers up to the offset
                         let zero_filter_header = FilterHeader::from_byte_array([0u8; 32]);
-                        segment.filter_headers.resize(offset + 1, zero_filter_header);
+                        segment.headers.resize(offset + 1, zero_filter_header);
                     }
-                    segment.filter_headers[offset] = *header;
+                    segment.headers[offset] = *header;
                     // Transition to Dirty state (from Clean, Dirty, or Saving)
                     segment.state = SegmentState::Dirty;
                     segment.last_accessed = std::time::Instant::now();
@@ -113,7 +115,7 @@ impl DiskStorageManager {
         let end_segment = Self::get_segment_id(storage_end.saturating_sub(1));
 
         for segment_id in start_segment..=end_segment {
-            super::segments::ensure_filter_segment_loaded(self, segment_id).await?;
+            ensure_filter_segment_loaded(self, segment_id).await?;
 
             let segments = self.active_filter_segments.read().await;
             if let Some(segment) = segments.get(&segment_id) {
@@ -126,13 +128,11 @@ impl DiskStorageManager {
                 let end_idx = if segment_id == end_segment {
                     Self::get_segment_offset(storage_end.saturating_sub(1)) + 1
                 } else {
-                    segment.filter_headers.len()
+                    segment.headers.len()
                 };
 
-                if start_idx < segment.filter_headers.len()
-                    && end_idx <= segment.filter_headers.len()
-                {
-                    filter_headers.extend_from_slice(&segment.filter_headers[start_idx..end_idx]);
+                if start_idx < segment.headers.len() && end_idx <= segment.headers.len() {
+                    filter_headers.extend_from_slice(&segment.headers[start_idx..end_idx]);
                 }
             }
         }
@@ -169,13 +169,10 @@ impl DiskStorageManager {
         let segment_id = Self::get_segment_id(storage_index);
         let offset = Self::get_segment_offset(storage_index);
 
-        super::segments::ensure_filter_segment_loaded(self, segment_id).await?;
+        ensure_filter_segment_loaded(self, segment_id).await?;
 
         let segments = self.active_filter_segments.read().await;
-        Ok(segments
-            .get(&segment_id)
-            .and_then(|segment| segment.filter_headers.get(offset))
-            .copied())
+        Ok(segments.get(&segment_id).and_then(|segment| segment.headers.get(offset)).copied())
     }
 
     /// Get the blockchain height of the filter tip.
@@ -221,4 +218,47 @@ impl DiskStorageManager {
 
         Ok(())
     }
+}
+
+/// Ensure a filter segment is loaded in memory.
+pub(super) async fn ensure_filter_segment_loaded(
+    manager: &DiskStorageManager,
+    segment_id: u32,
+) -> StorageResult<()> {
+    // Process background worker notifications to clear save_pending flags
+    manager.process_worker_notifications().await;
+
+    let mut segments = manager.active_filter_segments.write().await;
+
+    if segments.contains_key(&segment_id) {
+        // Update last accessed time
+        if let Some(segment) = segments.get_mut(&segment_id) {
+            segment.last_accessed = Instant::now();
+        }
+        return Ok(());
+    }
+
+    // Load segment from disk
+    let segment_path =
+        manager.base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
+    let headers = if segment_path.exists() {
+        super::io::load_filter_headers_from_file(&segment_path).await?
+    } else {
+        Vec::new()
+    };
+
+    // Evict old segments if needed
+    if segments.len() >= super::MAX_ACTIVE_SEGMENTS {
+        if let Some((oldest_id, oldest_segment_cache)) =
+            segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
+        {
+            oldest_segment_cache.evict(manager)?;
+            segments.remove(&oldest_id);
+        }
+    }
+
+    // TODO: Check the 0 existence
+    segments.insert(segment_id, SegmentCache::new_filter_header_cache(segment_id, headers, 0));
+
+    Ok(())
 }

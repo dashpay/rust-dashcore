@@ -1,20 +1,25 @@
 //! Segment management for cached header and filter segments.
 
-use std::collections::HashMap;
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    fs::{File, OpenOptions},
+    io::{BufWriter, Write},
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use dashcore::{
     block::{Header as BlockHeader, Version},
+    consensus::Encodable,
     hash_types::FilterHeader,
     pow::CompactTarget,
     BlockHash,
 };
 use dashcore_hashes::Hash;
 
-use crate::error::StorageResult;
+use crate::{error::StorageResult, StorageError};
 
 use super::manager::DiskStorageManager;
-use super::{HEADERS_PER_SEGMENT, MAX_ACTIVE_SEGMENTS};
 
 /// State of a segment in memory
 #[derive(Debug, Clone, PartialEq)]
@@ -22,27 +27,6 @@ pub(super) enum SegmentState {
     Clean,  // No changes, up to date on disk
     Dirty,  // Has changes, needs saving
     Saving, // Currently being saved in background
-}
-
-/// In-memory cache for a segment of headers
-#[derive(Clone)]
-pub(super) struct SegmentCache {
-    pub(super) segment_id: u32,
-    pub(super) headers: Vec<BlockHeader>,
-    pub(super) valid_count: usize, // Number of actual valid headers (excluding padding)
-    pub(super) state: SegmentState,
-    pub(super) last_saved: Instant,
-    pub(super) last_accessed: Instant,
-}
-
-/// In-memory cache for a segment of filter headers
-#[derive(Clone)]
-pub(super) struct FilterSegmentCache {
-    pub(super) segment_id: u32,
-    pub(super) filter_headers: Vec<FilterHeader>,
-    pub(super) state: SegmentState,
-    pub(super) last_saved: Instant,
-    pub(super) last_accessed: Instant,
 }
 
 /// Creates a sentinel header used for padding segments.
@@ -58,172 +42,120 @@ pub(super) fn create_sentinel_header() -> BlockHeader {
     }
 }
 
-/// Ensure a segment is loaded in memory.
-pub(super) async fn ensure_segment_loaded(
-    manager: &DiskStorageManager,
-    segment_id: u32,
-) -> StorageResult<()> {
-    // Process background worker notifications to clear save_pending flags
-    manager.process_worker_notifications().await;
+trait SegmentableHeader: Sized {
+    fn write_to_disk(&self, writer: &mut BufWriter<File>) -> StorageResult<usize>;
+}
 
-    let mut segments = manager.active_segments.write().await;
+/// In-memory cache for a segment of headers
+#[derive(Clone)]
+pub(super) struct SegmentCache<H: SegmentableHeader> {
+    pub(super) segment_id: u32,
+    pub(super) headers: Vec<H>,
+    pub(super) valid_count: usize, // Number of actual valid headers (excluding padding)
+    pub(super) state: SegmentState,
+    pub(super) last_saved: Instant,
+    pub(super) last_accessed: Instant,
+    disk_path_base: String,
+}
 
-    if segments.contains_key(&segment_id) {
-        // Update last accessed time
-        if let Some(segment) = segments.get_mut(&segment_id) {
-            segment.last_accessed = Instant::now();
+impl SegmentableHeader for BlockHeader {
+    fn write_to_disk(&self, writer: &mut BufWriter<File>) -> StorageResult<usize> {
+        // Skip sentinel headers (used for padding)
+        if self.version.to_consensus() == i32::MAX
+            && self.time == u32::MAX
+            && self.nonce == u32::MAX
+            && self.prev_blockhash == BlockHash::from_byte_array([0xFF; 32])
+        {
+            return Ok(0);
         }
-        return Ok(());
+
+        self.consensus_encode(writer)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to encode header: {}", e)))
     }
+}
 
-    // Load segment from disk
-    let segment_path = manager.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
-    let mut headers = if segment_path.exists() {
-        super::io::load_headers_from_file(&segment_path).await?
-    } else {
-        Vec::new()
-    };
-
-    // Store the actual number of valid headers before padding
-    let valid_count = headers.len();
-
-    // Ensure the segment has space for all possible headers in this segment
-    // This is crucial for proper indexing
-    let expected_size = HEADERS_PER_SEGMENT as usize;
-    if headers.len() < expected_size {
-        // Pad with sentinel headers that cannot be mistaken for valid blocks
-        let sentinel_header = create_sentinel_header();
-        headers.resize(expected_size, sentinel_header);
+impl SegmentableHeader for FilterHeader {
+    fn write_to_disk(&self, writer: &mut BufWriter<File>) -> StorageResult<usize> {
+        self.consensus_encode(writer).map_err(|e| {
+            StorageError::WriteFailed(format!("Failed to encode filter header: {}", e))
+        })
     }
+}
 
-    // Evict old segments if needed
-    if segments.len() >= MAX_ACTIVE_SEGMENTS {
-        evict_oldest_segment(manager, &mut segments).await?;
+impl SegmentCache<FilterHeader> {
+    pub fn new_filter_header_cache(
+        segment_id: u32,
+        headers: Vec<FilterHeader>,
+        valid_count: usize,
+    ) -> Self {
+        Self::new(segment_id, headers, valid_count, String::from("filters/filter_segment"))
     }
+}
 
-    segments.insert(
-        segment_id,
-        SegmentCache {
+impl SegmentCache<BlockHeader> {
+    pub fn new_block_header_cache(
+        segment_id: u32,
+        headers: Vec<BlockHeader>,
+        valid_count: usize,
+    ) -> Self {
+        Self::new(segment_id, headers, valid_count, String::from("headers/segment"))
+    }
+}
+
+impl<H: SegmentableHeader> SegmentCache<H> {
+    fn new(segment_id: u32, headers: Vec<H>, valid_count: usize, disk_path_base: String) -> Self {
+        Self {
             segment_id,
             headers,
             valid_count,
             state: SegmentState::Clean,
             last_saved: Instant::now(),
             last_accessed: Instant::now(),
-        },
-    );
+            disk_path_base,
+        }
+    }
 
-    Ok(())
-}
+    fn relative_disk_path(&self) -> PathBuf {
+        format!("{}_{:04}.dat", self.disk_path_base, self.segment_id).into()
+    }
 
-/// Evict the oldest (least recently accessed) segment.
-pub(super) async fn evict_oldest_segment(
-    manager: &DiskStorageManager,
-    segments: &mut HashMap<u32, SegmentCache>,
-) -> StorageResult<()> {
-    if let Some(oldest_id) = segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, _)| *id)
-    {
-        // Get the segment to check if it needs saving
-        if let Some(oldest_segment) = segments.get(&oldest_id) {
-            // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
-            if oldest_segment.state != SegmentState::Clean {
-                tracing::debug!(
-                    "Synchronously saving segment {} before eviction (state: {:?})",
-                    oldest_segment.segment_id,
-                    oldest_segment.state
-                );
-                let segment_path = manager
-                    .base_path
-                    .join(format!("headers/segment_{:04}.dat", oldest_segment.segment_id));
-                super::io::save_segment_to_disk(&segment_path, &oldest_segment.headers).await?;
-                tracing::debug!("Successfully saved segment {} to disk", oldest_segment.segment_id);
-            }
+    fn save_to_disk(&self, path: impl AsRef<Path>) -> StorageResult<()> {
+        let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
+        let mut writer = BufWriter::new(file);
+
+        for header in self.headers.iter() {
+            header.write_to_disk(&mut writer)?;
         }
 
-        segments.remove(&oldest_id);
+        writer.flush()?;
+        Ok(())
     }
 
-    Ok(())
-}
+    async fn load_from_disk(path: &Path) -> StorageResult<Vec<Self>> {}
 
-/// Ensure a filter segment is loaded in memory.
-pub(super) async fn ensure_filter_segment_loaded(
-    manager: &DiskStorageManager,
-    segment_id: u32,
-) -> StorageResult<()> {
-    // Process background worker notifications to clear save_pending flags
-    manager.process_worker_notifications().await;
-
-    let mut segments = manager.active_filter_segments.write().await;
-
-    if segments.contains_key(&segment_id) {
-        // Update last accessed time
-        if let Some(segment) = segments.get_mut(&segment_id) {
-            segment.last_accessed = Instant::now();
-        }
-        return Ok(());
-    }
-
-    // Load segment from disk
-    let segment_path =
-        manager.base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
-    let filter_headers = if segment_path.exists() {
-        super::io::load_filter_headers_from_file(&segment_path).await?
-    } else {
-        Vec::new()
-    };
-
-    // Evict old segments if needed
-    if segments.len() >= MAX_ACTIVE_SEGMENTS {
-        evict_oldest_filter_segment(manager, &mut segments).await?;
-    }
-
-    segments.insert(
-        segment_id,
-        FilterSegmentCache {
-            segment_id,
-            filter_headers,
-            state: SegmentState::Clean,
-            last_saved: Instant::now(),
-            last_accessed: Instant::now(),
-        },
-    );
-
-    Ok(())
-}
-
-/// Evict the oldest (least recently accessed) filter segment.
-pub(super) async fn evict_oldest_filter_segment(
-    manager: &DiskStorageManager,
-    segments: &mut HashMap<u32, FilterSegmentCache>,
-) -> StorageResult<()> {
-    if let Some((oldest_id, oldest_segment)) =
-        segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
-    {
+    pub fn evict(&self, manager: &DiskStorageManager) -> StorageResult<()> {
         // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
-        if oldest_segment.state != SegmentState::Clean {
-            tracing::trace!(
-                "Synchronously saving filter segment {} before eviction (state: {:?})",
-                oldest_segment.segment_id,
-                oldest_segment.state
-            );
-            let segment_path = manager
-                .base_path
-                .join(format!("filters/filter_segment_{:04}.dat", oldest_segment.segment_id));
-            super::io::save_filter_segment_to_disk(&segment_path, &oldest_segment.filter_headers)
-                .await?;
-            tracing::debug!(
-                "Successfully saved filter segment {} to disk",
-                oldest_segment.segment_id
-            );
+        if self.state != SegmentState::Clean {
+            return Ok(());
         }
 
-        segments.remove(&oldest_id);
-    }
+        tracing::trace!(
+            "Synchronously saving segment {} before eviction (state: {:?})",
+            self.segment_id,
+            self.state
+        );
 
-    Ok(())
+        let segment_path = manager.base_path.join(self.relative_disk_path());
+
+        self.save_to_disk(segment_path)?;
+
+        tracing::debug!("Successfully saved segment cache {} to disk", self.segment_id);
+
+        Ok(())
+    }
 }
 
+// TODO: cleanup needed
 /// Save all dirty segments to disk via background worker.
 pub(super) async fn save_dirty_segments(manager: &DiskStorageManager) -> StorageResult<()> {
     use super::manager::WorkerCommand;
@@ -268,7 +200,7 @@ pub(super) async fn save_dirty_segments(manager: &DiskStorageManager) -> Storage
             let to_save: Vec<_> = segments
                 .values()
                 .filter(|s| s.state == SegmentState::Dirty)
-                .map(|s| (s.segment_id, s.filter_headers.clone()))
+                .map(|s| (s.segment_id, s.headers.clone()))
                 .collect();
             let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
             (to_save, ids_to_mark)
