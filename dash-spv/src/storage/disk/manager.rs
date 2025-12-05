@@ -216,12 +216,10 @@ impl DiskStorageManager {
                         index,
                         data,
                     } => {
-                        let index_path = worker_base_path
-                            .join(format!("filters/filter_data_segment_{:04}.idx", segment_id));
-                        let data_path = worker_base_path
+                        let segment_path = worker_base_path
                             .join(format!("filters/filter_data_segment_{:04}.dat", segment_id));
                         if let Err(e) =
-                            super::io::save_filter_data_segment(&data_path, &index, &data).await
+                            super::io::save_filter_data_segment(&segment_path, &index, &data).await
                         {
                             eprintln!("Failed to save filter data segment {}: {}", segment_id, e);
                         } else {

@@ -51,6 +51,14 @@ impl DiskStorageManager {
             }
         }
 
+        // Update cached filter data tip height
+        {
+            let mut tip = self.cached_filter_data_tip_height.write().await;
+            if tip.is_none_or(|t| height > t) {
+                *tip = Some(height);
+            }
+        }
+
         // Save dirty segments periodically
         if height.is_multiple_of(FILTERS_PER_SEGMENT / 4) {
             super::segments::save_dirty_segments(self).await?;
