@@ -474,7 +474,7 @@ impl DiskStorageManager {
                     last_save_count
                 );
             }
-            
+
             // Collect filter data segments to save (only dirty ones)
             let (filter_data_segments_to_save, filter_data_segment_ids_to_mark) = {
                 let segments = self.active_filter_data_segments.read().await;
@@ -489,7 +489,7 @@ impl DiskStorageManager {
                 let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _, _)| *id).collect();
                 (to_save, ids_to_mark)
             };
-    
+
             // Send filter data segments to worker
             for (segment_id, index, data) in filter_data_segments_to_save {
                 let _ = tx
@@ -500,7 +500,7 @@ impl DiskStorageManager {
                     })
                     .await;
             }
-    
+
             // Mark ONLY the filter data segments we're actually saving as Saving
             {
                 let mut segments = self.active_filter_data_segments.write().await;
@@ -511,11 +511,11 @@ impl DiskStorageManager {
                     }
                 }
             }
-    
+
             // Save the index only if it has grown significantly (every 10k new entries)
             let current_index_size = self.header_hash_index.read().await.len();
             let last_save_count = *self.last_index_save_count.read().await;
-    
+
             // Save if index has grown by 10k entries, or if we've never saved before
             if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
                 let index = self.header_hash_index.read().await.clone();
@@ -524,7 +524,7 @@ impl DiskStorageManager {
                         index,
                     })
                     .await;
-    
+
                 // Update the last save count
                 *self.last_index_save_count.write().await = current_index_size;
                 tracing::debug!(

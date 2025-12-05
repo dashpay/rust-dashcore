@@ -611,6 +611,12 @@ impl<
             return Ok(());
         }
 
+        // Store the verified filter to disk
+        storage
+            .store_filter(height, &cfilter.filter)
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to store filter: {}", e)))?;
+
         let matches = self
             .filter_sync
             .check_filter_for_matches(

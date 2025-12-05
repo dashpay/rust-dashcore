@@ -2,7 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{error::{StorageError, StorageResult}, storage::disk::{FILTER_DATA_HEADER_SIZE, FILTER_DATA_INDEX_ENTRY_SIZE, FILTER_DATA_SEGMENT_MAGIC, FILTER_DATA_SEGMENT_VERSION, segments::FilterDataIndexEntry}};
+use crate::{
+    error::{StorageError, StorageResult},
+    storage::disk::{
+        segments::FilterDataIndexEntry, FILTER_DATA_HEADER_SIZE, FILTER_DATA_INDEX_ENTRY_SIZE,
+        FILTER_DATA_SEGMENT_MAGIC, FILTER_DATA_SEGMENT_VERSION,
+    },
+};
 
 /// Get the temporary file path for atomic writes.
 /// Uses process ID and a counter to ensure uniqueness even with concurrent writes.

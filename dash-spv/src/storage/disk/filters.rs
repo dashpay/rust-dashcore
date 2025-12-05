@@ -1,9 +1,9 @@
 //! Filter storage operations for DiskStorageManager.
 
-use crate::error::StorageResult;
-use crate::storage::disk::FILTERS_PER_SEGMENT;
 use super::manager::DiskStorageManager;
 use super::segments::{FilterDataIndexEntry, SegmentState};
+use crate::error::StorageResult;
+use crate::storage::disk::FILTERS_PER_SEGMENT;
 
 impl DiskStorageManager {
     /// Store a compact filter.
