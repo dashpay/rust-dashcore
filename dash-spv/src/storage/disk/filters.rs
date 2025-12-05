@@ -86,7 +86,7 @@ impl DiskStorageManager {
 
         // Save dirty segments periodically (every 1000 filter headers)
         if headers.len() >= 1000 || next_blockchain_height % 1000 == 0 {
-            super::segments::save_dirty_segments(self).await?;
+            super::segments::save_dirty_segments_cache(self).await?;
         }
 
         Ok(())

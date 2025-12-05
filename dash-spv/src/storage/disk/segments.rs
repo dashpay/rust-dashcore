@@ -1,6 +1,7 @@
 //! Segment management for cached header and filter segments.
 
 use std::{
+    collections::HashMap,
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -151,15 +152,34 @@ impl<H: SegmentableHeader> SegmentCache<H> {
     }
 }
 
-// TODO: cleanup needed
 /// Save all dirty segments to disk via background worker.
-pub(super) async fn save_dirty_segments(manager: &DiskStorageManager) -> StorageResult<()> {
+pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> StorageResult<()> {
     use super::manager::WorkerCommand;
 
     if let Some(tx) = &manager.worker_tx {
+        process_segments(&manager.active_segments, tx, |cache| {
+            WorkerCommand::SaveBlockHeaderSegmentCache(cache)
+        })
+        .await;
+
+        process_segments(&manager.active_filter_segments, tx, |cache| {
+            WorkerCommand::SaveFilterHeaderSegmentCache(cache)
+        })
+        .await;
+
+        process_index(manager, tx).await;
+    }
+
+    return Ok(());
+
+    async fn process_segments<H: SegmentableHeader + Clone>(
+        segments_caches_map: &tokio::sync::RwLock<HashMap<u32, SegmentCache<H>>>,
+        tx: &tokio::sync::mpsc::Sender<WorkerCommand>,
+        make_command: impl Fn(SegmentCache<H>) -> WorkerCommand,
+    ) {
         // Collect segments to save (only dirty ones)
-        let (segments_cache_to_save, segment_ids_to_mark) = {
-            let segments = manager.active_segments.read().await;
+        let (to_save, ids_to_mark) = {
+            let segments = segments_caches_map.read().await;
             let to_save: Vec<_> =
                 segments.values().filter(|s| s.state == SegmentState::Dirty).cloned().collect();
             let ids_to_mark: Vec<_> = to_save.iter().map(|cache| cache.segment_id).collect();
@@ -167,46 +187,26 @@ pub(super) async fn save_dirty_segments(manager: &DiskStorageManager) -> Storage
         };
 
         // Send header segments to worker
-        for cache in segments_cache_to_save {
-            let _ = tx.send(WorkerCommand::SaveBlockHeaderSegmentCache(cache)).await;
+        for cache in to_save {
+            let _ = tx.send(make_command(cache)).await;
         }
 
         // Mark ONLY the header segments we're actually saving as Saving
         {
-            let mut segments = manager.active_segments.write().await;
-            for segment_id in &segment_ids_to_mark {
-                if let Some(segment) = segments.get_mut(segment_id) {
+            let mut segments = segments_caches_map.write().await;
+            for id in &ids_to_mark {
+                if let Some(segment) = segments.get_mut(id) {
                     segment.state = SegmentState::Saving;
                     segment.last_saved = Instant::now();
                 }
             }
         }
+    }
 
-        // Collect filter segments to save (only dirty ones)
-        let (filter_segments_to_save, filter_segment_ids_to_mark) = {
-            let segments = manager.active_filter_segments.read().await;
-            let to_save: Vec<_> =
-                segments.values().filter(|s| s.state == SegmentState::Dirty).cloned().collect();
-            let ids_to_mark: Vec<_> = to_save.iter().map(|cache| cache.segment_id).collect();
-            (to_save, ids_to_mark)
-        };
-
-        // Send filter segments to worker
-        for cache in filter_segments_to_save {
-            let _ = tx.send(WorkerCommand::SaveFilterHeaderSegmentCache(cache.clone())).await;
-        }
-
-        // Mark ONLY the filter segments we're actually saving as Saving
-        {
-            let mut segments = manager.active_filter_segments.write().await;
-            for segment_id in &filter_segment_ids_to_mark {
-                if let Some(segment) = segments.get_mut(segment_id) {
-                    segment.state = SegmentState::Saving;
-                    segment.last_saved = Instant::now();
-                }
-            }
-        }
-
+    async fn process_index(
+        manager: &DiskStorageManager,
+        tx: &tokio::sync::mpsc::Sender<WorkerCommand>,
+    ) {
         // Save the index only if it has grown significantly (every 10k new entries)
         let current_index_size = manager.header_hash_index.read().await.len();
         let last_save_count = *manager.last_index_save_count.read().await;
@@ -229,6 +229,4 @@ pub(super) async fn save_dirty_segments(manager: &DiskStorageManager) -> Storage
             );
         }
     }
-
-    Ok(())
 }

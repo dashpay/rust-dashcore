@@ -155,7 +155,7 @@ impl DiskStorageManager {
 
         // Save dirty segments periodically (every 1000 headers)
         if headers.len() >= 1000 || next_height % 1000 == 0 {
-            super::segments::save_dirty_segments(self).await?;
+            super::segments::save_dirty_segments_cache(self).await?;
         }
 
         Ok(())
@@ -268,7 +268,7 @@ impl DiskStorageManager {
 
         // Save dirty segments periodically (every 1000 headers)
         if headers.len() >= 1000 || blockchain_height.is_multiple_of(1000) {
-            super::segments::save_dirty_segments(self).await?;
+            super::segments::save_dirty_segments_cache(self).await?;
         }
 
         Ok(())
