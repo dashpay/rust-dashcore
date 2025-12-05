@@ -24,6 +24,11 @@ pub(super) enum WorkerCommand {
         segment_id: u32,
         filter_headers: Vec<FilterHeader>,
     },
+    SaveFilterDataSegment {
+        segment_id: u32,
+        index: Vec<super::segments::FilterDataIndexEntry>,
+        data: Vec<u8>,
+    },
     SaveIndex {
         index: HashMap<BlockHash, u32>,
     },
@@ -40,6 +45,9 @@ pub(super) enum WorkerNotification {
     FilterSegmentSaved {
         segment_id: u32,
     },
+    FilterDataSegmentSaved {
+        segment_id: u32,
+    },
     IndexSaved,
 }
 
@@ -50,6 +58,8 @@ pub struct DiskStorageManager {
     // Segmented header storage
     pub(super) active_segments: Arc<RwLock<HashMap<u32, SegmentCache>>>,
     pub(super) active_filter_segments: Arc<RwLock<HashMap<u32, FilterSegmentCache>>>,
+    pub(super) active_filter_data_segments:
+        Arc<RwLock<HashMap<u32, super::segments::FilterDataSegmentCache>>>,
 
     // Reverse index for O(1) lookups
     pub(super) header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
@@ -101,6 +111,7 @@ impl DiskStorageManager {
             base_path,
             active_segments: Arc::new(RwLock::new(HashMap::new())),
             active_filter_segments: Arc::new(RwLock::new(HashMap::new())),
+            active_filter_data_segments: Arc::new(RwLock::new(HashMap::new())),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,
@@ -175,6 +186,36 @@ impl DiskStorageManager {
                             );
                             let _ = worker_notification_tx
                                 .send(WorkerNotification::FilterSegmentSaved {
+                                    segment_id,
+                                })
+                                .await;
+                        }
+                    }
+                    WorkerCommand::SaveFilterDataSegment {
+                        segment_id,
+                        index,
+                        data,
+                    } => {
+                        let index_path = worker_base_path
+                            .join(format!("filters/filter_data_segment_{:04}.idx", segment_id));
+                        let data_path = worker_base_path
+                            .join(format!("filters/filter_data_segment_{:04}.dat", segment_id));
+                        if let Err(e) = super::io::save_filter_data_segment(
+                            &index_path,
+                            &data_path,
+                            &index,
+                            &data,
+                        )
+                        .await
+                        {
+                            eprintln!("Failed to save filter data segment {}: {}", segment_id, e);
+                        } else {
+                            tracing::trace!(
+                                "Background worker completed saving filter data segment {}",
+                                segment_id
+                            );
+                            let _ = worker_notification_tx
+                                .send(WorkerNotification::FilterDataSegmentSaved {
                                     segment_id,
                                 })
                                 .await;
@@ -264,6 +305,22 @@ impl DiskStorageManager {
                             );
                         } else {
                             tracing::debug!("Filter segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
+                        }
+                    }
+                }
+                WorkerNotification::FilterDataSegmentSaved {
+                    segment_id,
+                } => {
+                    let mut segments = self.active_filter_data_segments.write().await;
+                    if let Some(segment) = segments.get_mut(&segment_id) {
+                        if segment.state == SegmentState::Saving {
+                            segment.state = SegmentState::Clean;
+                            tracing::debug!(
+                                "Filter data segment {} save completed, state: Clean",
+                                segment_id
+                            );
+                        } else {
+                            tracing::debug!("Filter data segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
                         }
                     }
                 }

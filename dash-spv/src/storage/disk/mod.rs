@@ -33,3 +33,18 @@ pub(super) const HEADERS_PER_SEGMENT: u32 = 50_000;
 
 /// Maximum number of segments to keep in memory
 pub(super) const MAX_ACTIVE_SEGMENTS: usize = 10;
+
+// Filter data constants
+
+/// Filter data segment magic bytes: "FDSF" (Filter Data Segment Format)
+const FILTER_DATA_SEGMENT_MAGIC: [u8; 4] = [0x46, 0x44, 0x53, 0x46];
+/// Filter data segment format version
+const FILTER_DATA_SEGMENT_VERSION: u16 = 1;
+/// Filter data segment header size: magic (4) + version (2) + count (2) + data_offset (4)
+const FILTER_DATA_HEADER_SIZE: u32 = 12;
+/// Filter data index entry size: offset (8) + length (4)
+const FILTER_DATA_INDEX_ENTRY_SIZE: u32 = 12;
+/// Number of filters per segment file
+pub const FILTERS_PER_SEGMENT: u32 = 50_000;
+/// Maximum number of filter data segments to keep in memory
+const MAX_ACTIVE_FILTER_DATA_SEGMENTS: usize = 5;

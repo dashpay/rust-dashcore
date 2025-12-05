@@ -16,7 +16,7 @@ use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Txid};
 use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
-pub use disk::DiskStorageManager;
+pub use disk::{DiskStorageManager, FILTERS_PER_SEGMENT};
 pub use memory::MemoryStorageManager;
 pub use sync_state::{PersistentSyncState, RecoverySuggestion, SyncStateValidation};
 pub use sync_storage::MemoryStorage;
