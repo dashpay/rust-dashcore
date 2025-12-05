@@ -32,6 +32,101 @@ enum SegmentState {
     Saving, // Currently being saved in background
 }
 
+/// Index entry for a single compact block filter in a data segment.
+/// Stores the byte offset and length needed to read the filter from the data file.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct FilterDataIndexEntry {
+    /// Byte offset in the data file where this filter starts
+    pub(super) offset: u64,
+    /// Length of the filter data in bytes (0 means no filter stored)
+    pub(super) length: u32,
+}
+
+/// In-memory cache for a segment of compact block filters.
+/// Compact filters have variable length (typically 100 bytes to ~5KB).
+/// We store an index of offsets and cache individual filters on demand.
+#[derive(Clone)]
+pub(super) struct FilterDataSegmentCache {
+    pub(super) segment_id: u32,
+    /// Index entries for each filter position in the segment.
+    /// Position corresponds to (height % FILTERS_PER_SEGMENT).
+    /// Length of 0 indicates no filter stored at that position.
+    /// Offsets are RELATIVE to the data section (not file start).
+    pub(super) index: Vec<FilterDataIndexEntry>,
+    /// Cached filter data, keyed by segment offset.
+    /// Not all filters are cached - loaded on demand.
+    pub(super) filters: HashMap<usize, Vec<u8>>,
+    /// Number of filters stored in this segment
+    pub(super) filter_count: usize,
+    /// Current total size of data written (for calculating next offset)
+    pub(super) current_data_size: u64,
+    /// Byte offset where data section starts in the combined file (for loading filters)
+    pub(super) file_data_offset: u64,
+    /// Segment state
+    pub(super) state: SegmentState,
+    /// Last saved time
+    pub(super) last_saved: Instant,
+    /// Last access time
+    pub(super) last_accessed: Instant,
+}
+
+/// Evict the oldest (least recently accessed) filter data segment.
+pub(super) async fn evict_oldest_filter_data_segment(
+    manager: &DiskStorageManager,
+    segments: &mut HashMap<u32, FilterDataSegmentCache>,
+) -> StorageResult<()> {
+    if let Some((oldest_id, oldest_segment)) =
+        segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
+    {
+        if oldest_segment.state != SegmentState::Clean {
+            tracing::trace!(
+                "Synchronously saving filter data segment {} before eviction (state: {:?})",
+                oldest_segment.segment_id,
+                oldest_segment.state
+            );
+
+            // Reconstruct data from cached filters
+            let data = reconstruct_filter_data(&oldest_segment);
+
+            let segment_path = manager
+                .base_path
+                .join(format!("filters/filter_data_segment_{:04}.dat", oldest_segment.segment_id));
+
+            super::io::save_filter_data_segment(&segment_path, &oldest_segment.index, &data)
+                .await?;
+
+            tracing::debug!(
+                "Successfully saved filter data segment {} to disk",
+                oldest_segment.segment_id
+            );
+        }
+
+        segments.remove(&oldest_id);
+    }
+
+    Ok(())
+}
+
+/// Reconstruct filter data bytes from a segment cache for saving.
+fn reconstruct_filter_data(segment: &FilterDataSegmentCache) -> Vec<u8> {
+    let mut data = vec![0u8; segment.current_data_size as usize];
+
+    for (offset, filter) in &segment.filters {
+        if *offset < segment.index.len() {
+            let entry = &segment.index[*offset];
+            if entry.length > 0 {
+                let start = entry.offset as usize;
+                let end = start + entry.length as usize;
+                if end <= data.len() {
+                    data[start..end].copy_from_slice(filter);
+                }
+            }
+        }
+    }
+
+    data
+}
+
 pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const FOLDER_NAME: &'static str;
     const SEGMENT_PREFIX: &'static str = "segment";

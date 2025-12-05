@@ -24,6 +24,11 @@ pub(super) enum WorkerCommand {
     SaveFilterHeaderSegmentCache {
         segment_id: u32,
     },
+    SaveFilterDataSegment {
+        segment_id: u32,
+        index: Vec<super::segments::FilterDataIndexEntry>,
+        data: Vec<u8>,
+    },
     SaveIndex {
         index: HashMap<BlockHash, u32>,
     },
@@ -37,6 +42,8 @@ pub struct DiskStorageManager {
     // Segmented header storage
     pub(super) block_headers: Arc<RwLock<SegmentCache<BlockHeader>>>,
     pub(super) filter_headers: Arc<RwLock<SegmentCache<FilterHeader>>>,
+    pub(super) active_filter_data_segments:
+        Arc<RwLock<HashMap<u32, super::segments::FilterDataSegmentCache>>>,
 
     // Reverse index for O(1) lookups
     pub(super) header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
@@ -107,6 +114,7 @@ impl DiskStorageManager {
             filter_headers: Arc::new(RwLock::new(
                 SegmentCache::load_or_new(base_path.clone(), sync_base_height).await?,
             )),
+            active_filter_data_segments: Arc::new(RwLock::new(HashMap::new())),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,
@@ -201,6 +209,30 @@ impl DiskStorageManager {
                             Err(e) => {
                                 eprintln!("Failed to save segment {}: {}", segment_id, e);
                             }
+                        }
+                    }
+                    WorkerCommand::SaveFilterDataSegment {
+                        segment_id,
+                        index,
+                        data,
+                    } => {
+                        let index_path = worker_base_path
+                            .join(format!("filters/filter_data_segment_{:04}.idx", segment_id));
+                        let data_path = worker_base_path
+                            .join(format!("filters/filter_data_segment_{:04}.dat", segment_id));
+                        if let Err(e) = super::io::save_filter_data_segment(
+                            &data_path,
+                            &index,
+                            &data,
+                        )
+                        .await
+                        {
+                            eprintln!("Failed to save filter data segment {}: {}", segment_id, e);
+                        } else {
+                            tracing::trace!(
+                                "Background worker completed saving filter data segment {}",
+                                segment_id
+                            );
                         }
                     }
                     WorkerCommand::SaveIndex {
