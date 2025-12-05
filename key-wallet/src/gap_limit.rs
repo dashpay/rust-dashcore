@@ -24,6 +24,7 @@ pub const DEFAULT_SPECIAL_GAP_LIMIT: u32 = 5;
 
 /// Gap limit for DIP-17 platform payment addresses
 pub const DIP17_GAP_LIMIT: u32 = 20;
+
 /// Maximum gap limit to prevent excessive address generation
 pub const MAX_GAP_LIMIT: u32 = 1000;
 

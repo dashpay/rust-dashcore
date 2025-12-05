@@ -1560,22 +1560,18 @@ impl FromStr for Address<NetworkUnchecked> {
                 (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..])?))
             }
             // DIP-18: Platform address prefixes
-            PLATFORM_P2PKH_PREFIX_MAIN => (
-                Network::Dash,
-                Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..])?),
-            ),
-            PLATFORM_P2SH_PREFIX_MAIN => (
-                Network::Dash,
-                Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..])?),
-            ),
-            PLATFORM_P2PKH_PREFIX_TEST => (
-                Network::Testnet,
-                Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..])?),
-            ),
-            PLATFORM_P2SH_PREFIX_TEST => (
-                Network::Testnet,
-                Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..])?),
-            ),
+            PLATFORM_P2PKH_PREFIX_MAIN => {
+                (Network::Dash, Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..])?))
+            }
+            PLATFORM_P2SH_PREFIX_MAIN => {
+                (Network::Dash, Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..])?))
+            }
+            PLATFORM_P2PKH_PREFIX_TEST => {
+                (Network::Testnet, Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..])?))
+            }
+            PLATFORM_P2SH_PREFIX_TEST => {
+                (Network::Testnet, Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..])?))
+            }
             x => return Err(Error::Base58(base58::Error::InvalidAddressVersion(x))),
         };
 
