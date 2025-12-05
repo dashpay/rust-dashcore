@@ -252,7 +252,7 @@ pub(super) async fn ensure_filter_segment_loaded(
         if let Some((oldest_id, oldest_segment_cache)) =
             segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
         {
-            oldest_segment_cache.evict(manager)?;
+            oldest_segment_cache.evict(&manager.base_path)?;
             segments.remove(&oldest_id);
         }
     }

@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::disk::segments;
+use crate::storage::disk::segments::{self, SegmentCache};
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::HEADERS_PER_SEGMENT;
@@ -16,14 +16,8 @@ use super::HEADERS_PER_SEGMENT;
 /// Commands for the background worker
 #[derive(Debug, Clone)]
 pub(super) enum WorkerCommand {
-    SaveHeaderSegment {
-        segment_id: u32,
-        headers: Vec<BlockHeader>,
-    },
-    SaveFilterSegment {
-        segment_id: u32,
-        filter_headers: Vec<FilterHeader>,
-    },
+    SaveBlockHeaderSegmentCache(SegmentCache<BlockHeader>),
+    SaveFilterHeaderSegmentCache(SegmentCache<FilterHeader>),
     SaveIndex {
         index: HashMap<BlockHash, u32>,
     },
@@ -34,12 +28,8 @@ pub(super) enum WorkerCommand {
 #[derive(Debug, Clone)]
 #[allow(clippy::enum_variant_names)]
 pub(super) enum WorkerNotification {
-    HeaderSegmentSaved {
-        segment_id: u32,
-    },
-    FilterSegmentSaved {
-        segment_id: u32,
-    },
+    BlockHeaderSegmentCacheSaved(SegmentCache<BlockHeader>),
+    BlockFilterSegmentCacheSaved(SegmentCache<FilterHeader>),
     IndexSaved,
 }
 
@@ -131,23 +121,21 @@ impl DiskStorageManager {
 
     /// Start the background worker and notification channel.
     pub(super) async fn start_worker(&mut self) {
-        use super::io::{save_filter_segment_to_disk, save_index_to_disk, save_segment_to_disk};
+        use super::io::save_index_to_disk;
 
         let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerCommand>(100);
         let (notification_tx, notification_rx) = mpsc::channel::<WorkerNotification>(100);
 
         let worker_base_path = self.base_path.clone();
         let worker_notification_tx = notification_tx.clone();
+        let base_path = self.base_path.clone();
+
         let worker_handle = tokio::spawn(async move {
             while let Some(cmd) = worker_rx.recv().await {
                 match cmd {
-                    WorkerCommand::SaveHeaderSegment {
-                        segment_id,
-                        headers,
-                    } => {
-                        let path =
-                            worker_base_path.join(format!("headers/segment_{:04}.dat", segment_id));
-                        if let Err(e) = save_segment_to_disk(&path, &headers).await {
+                    WorkerCommand::SaveBlockHeaderSegmentCache(cache) => {
+                        let segment_id = cache.segment_id;
+                        if let Err(e) = cache.save(&base_path) {
                             eprintln!("Failed to save segment {}: {}", segment_id, e);
                         } else {
                             tracing::trace!(
@@ -155,19 +143,13 @@ impl DiskStorageManager {
                                 segment_id
                             );
                             let _ = worker_notification_tx
-                                .send(WorkerNotification::HeaderSegmentSaved {
-                                    segment_id,
-                                })
+                                .send(WorkerNotification::BlockHeaderSegmentCacheSaved(cache))
                                 .await;
                         }
                     }
-                    WorkerCommand::SaveFilterSegment {
-                        segment_id,
-                        filter_headers,
-                    } => {
-                        let path = worker_base_path
-                            .join(format!("filters/filter_segment_{:04}.dat", segment_id));
-                        if let Err(e) = save_filter_segment_to_disk(&path, &filter_headers).await {
+                    WorkerCommand::SaveFilterHeaderSegmentCache(cache) => {
+                        let segment_id = cache.segment_id;
+                        if let Err(e) = cache.save(&base_path) {
                             eprintln!("Failed to save filter segment {}: {}", segment_id, e);
                         } else {
                             tracing::trace!(
@@ -175,9 +157,7 @@ impl DiskStorageManager {
                                 segment_id
                             );
                             let _ = worker_notification_tx
-                                .send(WorkerNotification::FilterSegmentSaved {
-                                    segment_id,
-                                })
+                                .send(WorkerNotification::BlockFilterSegmentCacheSaved(cache))
                                 .await;
                         }
                     }
@@ -234,9 +214,8 @@ impl DiskStorageManager {
         // Process all pending notifications without blocking
         while let Ok(notification) = rx.try_recv() {
             match notification {
-                WorkerNotification::HeaderSegmentSaved {
-                    segment_id,
-                } => {
+                WorkerNotification::BlockHeaderSegmentCacheSaved(cache) => {
+                    let segment_id = cache.segment_id;
                     let mut segments = self.active_segments.write().await;
                     if let Some(segment) = segments.get_mut(&segment_id) {
                         // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
@@ -251,9 +230,8 @@ impl DiskStorageManager {
                         }
                     }
                 }
-                WorkerNotification::FilterSegmentSaved {
-                    segment_id,
-                } => {
+                WorkerNotification::BlockFilterSegmentCacheSaved(cache) => {
+                    let segment_id = cache.segment_id;
                     let mut segments = self.active_filter_segments.write().await;
                     if let Some(segment) = segments.get_mut(&segment_id) {
                         // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)

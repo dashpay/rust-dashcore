@@ -1,7 +1,6 @@
 //! Segment management for cached header and filter segments.
 
 use std::{
-    collections::HashMap,
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -42,12 +41,12 @@ pub(super) fn create_sentinel_header() -> BlockHeader {
     }
 }
 
-trait SegmentableHeader: Sized {
+pub(super) trait SegmentableHeader: Sized {
     fn write_to_disk(&self, writer: &mut BufWriter<File>) -> StorageResult<usize>;
 }
 
 /// In-memory cache for a segment of headers
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(super) struct SegmentCache<H: SegmentableHeader> {
     pub(super) segment_id: u32,
     pub(super) headers: Vec<H>,
@@ -119,7 +118,8 @@ impl<H: SegmentableHeader> SegmentCache<H> {
         format!("{}_{:04}.dat", self.disk_path_base, self.segment_id).into()
     }
 
-    fn save_to_disk(&self, path: impl AsRef<Path>) -> StorageResult<()> {
+    pub fn save(&self, base_path: &Path) -> StorageResult<()> {
+        let path = base_path.join(self.relative_disk_path());
         let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
         let mut writer = BufWriter::new(file);
 
@@ -131,9 +131,7 @@ impl<H: SegmentableHeader> SegmentCache<H> {
         Ok(())
     }
 
-    async fn load_from_disk(path: &Path) -> StorageResult<Vec<Self>> {}
-
-    pub fn evict(&self, manager: &DiskStorageManager) -> StorageResult<()> {
+    pub fn evict(&self, base_path: &Path) -> StorageResult<()> {
         // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
         if self.state != SegmentState::Clean {
             return Ok(());
@@ -145,9 +143,7 @@ impl<H: SegmentableHeader> SegmentCache<H> {
             self.state
         );
 
-        let segment_path = manager.base_path.join(self.relative_disk_path());
-
-        self.save_to_disk(segment_path)?;
+        self.save(base_path)?;
 
         tracing::debug!("Successfully saved segment cache {} to disk", self.segment_id);
 
@@ -162,25 +158,17 @@ pub(super) async fn save_dirty_segments(manager: &DiskStorageManager) -> Storage
 
     if let Some(tx) = &manager.worker_tx {
         // Collect segments to save (only dirty ones)
-        let (segments_to_save, segment_ids_to_mark) = {
+        let (segments_cache_to_save, segment_ids_to_mark) = {
             let segments = manager.active_segments.read().await;
-            let to_save: Vec<_> = segments
-                .values()
-                .filter(|s| s.state == SegmentState::Dirty)
-                .map(|s| (s.segment_id, s.headers.clone()))
-                .collect();
-            let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
+            let to_save: Vec<_> =
+                segments.values().filter(|s| s.state == SegmentState::Dirty).cloned().collect();
+            let ids_to_mark: Vec<_> = to_save.iter().map(|cache| cache.segment_id).collect();
             (to_save, ids_to_mark)
         };
 
         // Send header segments to worker
-        for (segment_id, headers) in segments_to_save {
-            let _ = tx
-                .send(WorkerCommand::SaveHeaderSegment {
-                    segment_id,
-                    headers,
-                })
-                .await;
+        for cache in segments_cache_to_save {
+            let _ = tx.send(WorkerCommand::SaveBlockHeaderSegmentCache(cache)).await;
         }
 
         // Mark ONLY the header segments we're actually saving as Saving
@@ -197,23 +185,15 @@ pub(super) async fn save_dirty_segments(manager: &DiskStorageManager) -> Storage
         // Collect filter segments to save (only dirty ones)
         let (filter_segments_to_save, filter_segment_ids_to_mark) = {
             let segments = manager.active_filter_segments.read().await;
-            let to_save: Vec<_> = segments
-                .values()
-                .filter(|s| s.state == SegmentState::Dirty)
-                .map(|s| (s.segment_id, s.headers.clone()))
-                .collect();
-            let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
+            let to_save: Vec<_> =
+                segments.values().filter(|s| s.state == SegmentState::Dirty).cloned().collect();
+            let ids_to_mark: Vec<_> = to_save.iter().map(|cache| cache.segment_id).collect();
             (to_save, ids_to_mark)
         };
 
         // Send filter segments to worker
-        for (segment_id, filter_headers) in filter_segments_to_save {
-            let _ = tx
-                .send(WorkerCommand::SaveFilterSegment {
-                    segment_id,
-                    filter_headers,
-                })
-                .await;
+        for cache in filter_segments_to_save {
+            let _ = tx.send(WorkerCommand::SaveFilterHeaderSegmentCache(cache.clone())).await;
         }
 
         // Mark ONLY the filter segments we're actually saving as Saving
