@@ -78,6 +78,8 @@ pub enum Error {
     Base58(base58::Error),
     /// Bech32 encoding error.
     Bech32(bech32::Error),
+    /// Invalid hash length when parsing address.
+    InvalidHashLength(hashes::Error),
     /// The bech32 payload was empty.
     EmptyBech32Payload,
     /// The wrong checksum algorithm was used. See BIP-0350.
@@ -121,6 +123,7 @@ impl fmt::Display for Error {
         match *self {
             Error::Base58(ref e) => write_err!(f, "base58 address encoding error"; e),
             Error::Bech32(ref e) => write_err!(f, "bech32 address encoding error"; e),
+            Error::InvalidHashLength(ref e) => write_err!(f, "invalid hash length"; e),
             Error::EmptyBech32Payload => write!(f, "the bech32 payload was empty"),
             Error::InvalidBech32Variant { expected, found } => write!(f, "invalid bech32 checksum variant found {:?} when {:?} was expected", found, expected),
             Error::InvalidWitnessVersion(v) => write!(f, "invalid witness script version: {}", v),
@@ -149,6 +152,7 @@ impl std::error::Error for Error {
         match self {
             Base58(e) => Some(e),
             Bech32(e) => Some(e),
+            InvalidHashLength(e) => Some(e),
             UnparsableWitnessVersion(e) => Some(e),
             EmptyBech32Payload
             | InvalidBech32Variant {
@@ -180,6 +184,13 @@ impl From<base58::Error> for Error {
 impl From<bech32::Error> for Error {
     fn from(e: bech32::Error) -> Error {
         Error::Bech32(e)
+    }
+}
+
+#[doc(hidden)]
+impl From<hashes::Error> for Error {
+    fn from(e: hashes::Error) -> Error {
+        Error::InvalidHashLength(e)
     }
 }
 
@@ -1537,33 +1548,33 @@ impl FromStr for Address<NetworkUnchecked> {
 
         let (network, payload) = match data[0] {
             PUBKEY_ADDRESS_PREFIX_MAIN => {
-                (Network::Dash, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
+                (Network::Dash, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..])?))
             }
             SCRIPT_ADDRESS_PREFIX_MAIN => {
-                (Network::Dash, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
+                (Network::Dash, Payload::ScriptHash(ScriptHash::from_slice(&data[1..])?))
             }
             PUBKEY_ADDRESS_PREFIX_TEST => {
-                (Network::Testnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
+                (Network::Testnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..])?))
             }
             SCRIPT_ADDRESS_PREFIX_TEST => {
-                (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
+                (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..])?))
             }
             // DIP-18: Platform address prefixes
             PLATFORM_P2PKH_PREFIX_MAIN => (
                 Network::Dash,
-                Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()),
+                Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..])?),
             ),
             PLATFORM_P2SH_PREFIX_MAIN => (
                 Network::Dash,
-                Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()),
+                Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..])?),
             ),
             PLATFORM_P2PKH_PREFIX_TEST => (
                 Network::Testnet,
-                Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()),
+                Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..])?),
             ),
             PLATFORM_P2SH_PREFIX_TEST => (
                 Network::Testnet,
-                Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()),
+                Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..])?),
             ),
             x => return Err(Error::Base58(base58::Error::InvalidAddressVersion(x))),
         };
