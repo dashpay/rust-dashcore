@@ -8,9 +8,9 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
+use crate::storage::disk::segments;
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
-use super::segments::{FilterSegmentCache, SegmentCache};
 use super::HEADERS_PER_SEGMENT;
 
 /// Commands for the background worker
@@ -48,8 +48,9 @@ pub struct DiskStorageManager {
     pub(super) base_path: PathBuf,
 
     // Segmented header storage
-    pub(super) active_segments: Arc<RwLock<HashMap<u32, SegmentCache>>>,
-    pub(super) active_filter_segments: Arc<RwLock<HashMap<u32, FilterSegmentCache>>>,
+    pub(super) active_segments: Arc<RwLock<HashMap<u32, segments::SegmentCache<BlockHeader>>>>,
+    pub(super) active_filter_segments:
+        Arc<RwLock<HashMap<u32, segments::SegmentCache<FilterHeader>>>>,
 
     // Reverse index for O(1) lookups
     pub(super) header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
@@ -365,7 +366,7 @@ impl DiskStorageManager {
 
             // If we have segments, load the highest one to find tip
             if let Some(segment_id) = max_segment_id {
-                super::segments::ensure_segment_loaded(self, segment_id).await?;
+                super::headers::ensure_segment_loaded(self, segment_id).await?;
                 let segments = self.active_segments.read().await;
                 if let Some(segment) = segments.get(&segment_id) {
                     let tip_height =
@@ -376,12 +377,12 @@ impl DiskStorageManager {
 
             // If we have filter segments, load the highest one to find filter tip
             if let Some(segment_id) = max_filter_segment_id {
-                super::segments::ensure_filter_segment_loaded(self, segment_id).await?;
+                super::filters::ensure_filter_segment_loaded(self, segment_id).await?;
                 let segments = self.active_filter_segments.read().await;
                 if let Some(segment) = segments.get(&segment_id) {
                     // Calculate storage index
                     let storage_index =
-                        segment_id * HEADERS_PER_SEGMENT + segment.filter_headers.len() as u32 - 1;
+                        segment_id * HEADERS_PER_SEGMENT + segment.headers.len() as u32 - 1;
 
                     // Convert storage index to blockchain height
                     let sync_base_height = *self.sync_base_height.read().await;

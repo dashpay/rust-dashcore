@@ -29,7 +29,7 @@ mod state;
 pub use manager::DiskStorageManager;
 
 /// Number of headers per segment file
-pub(super) const HEADERS_PER_SEGMENT: u32 = 50_000;
+const HEADERS_PER_SEGMENT: u32 = 50_000;
 
 /// Maximum number of segments to keep in memory
-pub(super) const MAX_ACTIVE_SEGMENTS: usize = 10;
+const MAX_ACTIVE_SEGMENTS: usize = 10;
