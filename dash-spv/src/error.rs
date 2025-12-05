@@ -1,5 +1,6 @@
 //! Error types for the Dash SPV client.
 
+use crate::storage::RecoverySuggestion;
 use std::io;
 use thiserror::Error;
 
@@ -127,8 +128,8 @@ pub enum StorageError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
-    #[error("Inconsistent state: {0}")]
-    InconsistentState(String),
+    #[error("Inconsistent state: {0}, recovery suggestion: {1:?}")]
+    InconsistentState(String, RecoverySuggestion),
 
     #[error("Lock poisoned: {0}")]
     LockPoisoned(String),
@@ -146,7 +147,9 @@ impl Clone for StorageError {
             StorageError::ReadFailed(s) => StorageError::ReadFailed(s.clone()),
             StorageError::Io(err) => StorageError::Io(io::Error::new(err.kind(), err.to_string())),
             StorageError::Serialization(s) => StorageError::Serialization(s.clone()),
-            StorageError::InconsistentState(s) => StorageError::InconsistentState(s.clone()),
+            StorageError::InconsistentState(s, r) => {
+                StorageError::InconsistentState(s.clone(), r.clone())
+            }
             StorageError::LockPoisoned(s) => StorageError::LockPoisoned(s.clone()),
             StorageError::DirectoryLocked(s) => StorageError::DirectoryLocked(s.clone()),
         }

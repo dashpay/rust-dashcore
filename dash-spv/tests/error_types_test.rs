@@ -11,6 +11,7 @@ use dashcore_hashes::Hash;
 use std::io;
 
 use dash_spv::error::*;
+use dash_spv::storage::RecoverySuggestion;
 
 #[test]
 fn test_network_error_from_io_error() {
@@ -174,8 +175,11 @@ fn test_storage_error_variants() {
             "Serialization error: Invalid encoding",
         ),
         (
-            StorageError::InconsistentState("Height mismatch".to_string()),
-            "Inconsistent state: Height mismatch",
+            StorageError::InconsistentState(
+                "Height mismatch".to_string(),
+                RecoverySuggestion::StartFresh,
+            ),
+            "Inconsistent state: Height mismatch, recovery suggestion: StartFresh",
         ),
         (
             StorageError::LockPoisoned("Mutex poisoned by panic".to_string()),

@@ -18,7 +18,7 @@ use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
 pub use disk::DiskStorageManager;
 pub use memory::MemoryStorageManager;
-pub use sync_state::{PersistentSyncState, RecoverySuggestion, SyncStateValidation};
+pub use sync_state::{PersistentSyncState, RecoverySuggestion};
 pub use sync_storage::MemoryStorage;
 pub use types::*;
 

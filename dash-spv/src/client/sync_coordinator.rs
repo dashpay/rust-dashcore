@@ -13,12 +13,13 @@
 
 use super::{BlockProcessingTask, DashSpvClient, MessageHandler};
 use crate::client::interface::DashSpvClientCommand;
-use crate::error::{Result, SpvError};
+use crate::error::{Result, SpvError, StorageResult};
 use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
+use crate::storage::{PersistentSyncState, RecoverySuggestion, StorageManager};
 use crate::sync::headers::validate_headers;
 use crate::types::{CachedHeader, DetailedSyncProgress, SyncProgress};
+use crate::StorageError;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -725,175 +726,132 @@ impl<
     /// Returns true if state was successfully restored, false if no state was found.
     pub(super) async fn restore_sync_state(&mut self) -> Result<bool> {
         // Load and validate sync state
-        let (saved_state, should_continue) = self.load_and_validate_sync_state().await?;
-        if !should_continue {
-            return Ok(false);
-        }
+        let loaded_state = match self.load_and_validate_sync_state().await {
+            Ok(state) => state,
+            Err(StorageError::NotFound(_)) => {
+                // No saved state found - this is normal for first run
+                return Ok(false);
+            }
+            Err(e) => return Err(e.into()),
+        };
 
-        let saved_state = saved_state.unwrap();
-
-        tracing::info!(
-            "Restoring sync state from height {} (saved at {:?})",
-            saved_state.chain_tip.height,
-            saved_state.saved_at
-        );
+        tracing::info!("Restoring sync state from height {}", loaded_state.chain_tip.height,);
 
         // Restore headers from state
-        if !self.restore_headers_from_state(&saved_state).await? {
+        if !self.restore_headers_from_state(&loaded_state).await? {
             return Ok(false);
         }
 
         // Restore filter headers from state
-        self.restore_filter_headers_from_state(&saved_state).await?;
+        self.restore_filter_headers_from_state(&loaded_state).await?;
 
         // Update stats from state
-        self.update_stats_from_state(&saved_state).await;
+        self.update_stats_from_state(&loaded_state).await;
 
         // Restore sync manager state
-        if !self.restore_sync_manager_state(&saved_state).await? {
+        if !self.restore_sync_manager_state(&loaded_state).await? {
             return Ok(false);
         }
 
         tracing::info!(
             "Sync state restored: headers={}, filter_headers={}, filters_downloaded={}",
-            saved_state.sync_progress.header_height,
-            saved_state.sync_progress.filter_header_height,
-            saved_state.filter_sync.filters_downloaded
+            loaded_state.sync_progress.header_height,
+            loaded_state.sync_progress.filter_header_height,
+            loaded_state.filter_sync.filters_downloaded
         );
 
         Ok(true)
     }
 
     /// Load sync state from storage and validate it, handling recovery if needed.
+    /// Returns NotFound error if no saved state exists.
     pub(super) async fn load_and_validate_sync_state(
         &mut self,
-    ) -> Result<(Option<crate::storage::PersistentSyncState>, bool)> {
+    ) -> StorageResult<PersistentSyncState> {
         // Load sync state from storage
         let sync_state = {
             let storage = self.storage.lock().await;
-            storage.load_sync_state().await.map_err(SpvError::Storage)?
+            storage.load_sync_state().await?
         };
 
-        let Some(saved_state) = sync_state else {
-            return Ok((None, false));
+        let Some(loaded_state) = sync_state else {
+            return Err(StorageError::NotFound("No saved sync state".to_string()));
         };
 
         // Validate the sync state
-        let validation = saved_state.validate(self.config.network);
-
-        if !validation.is_valid {
-            tracing::error!("Sync state validation failed:");
-            for error in &validation.errors {
-                tracing::error!("  - {}", error);
-            }
-
-            // Handle recovery based on suggestion
-            if let Some(suggestion) = validation.recovery_suggestion {
-                return match suggestion {
-                    crate::storage::RecoverySuggestion::StartFresh => {
-                        tracing::warn!("Recovery: Starting fresh sync");
-                        Ok((None, false))
+        let result = loaded_state.validate(self.config.network);
+        match result {
+            Err(StorageError::InconsistentState(error, recovery)) => {
+                tracing::error!(
+                    "Sync state validation failed: {}, recovery: {:?}",
+                    error,
+                    recovery
+                );
+                match recovery {
+                    RecoverySuggestion::StartFresh => Err(StorageError::Corruption(format!(
+                        "Invalid sync state, starting fresh: {}",
+                        error
+                    ))),
+                    RecoverySuggestion::RollbackToHeight(height) => {
+                        match self.handle_rollback_recovery(height).await {
+                            Ok(()) => Ok(loaded_state),
+                            Err(error) => Err(StorageError::Corruption(format!(
+                                "Failed to rollback sync state to height {}, error: {}",
+                                height, error
+                            ))),
+                        }
                     }
-                    crate::storage::RecoverySuggestion::RollbackToHeight(height) => {
-                        let recovered = self.handle_rollback_recovery(height).await?;
-                        Ok((None, recovered))
-                    }
-                    crate::storage::RecoverySuggestion::UseCheckpoint(height) => {
-                        let recovered = self.handle_checkpoint_recovery(height).await?;
-                        Ok((None, recovered))
-                    }
-                    crate::storage::RecoverySuggestion::PartialRecovery => {
-                        tracing::warn!("Recovery: Attempting partial recovery");
+                    RecoverySuggestion::PartialRecovery => {
                         // For partial recovery, we keep headers but reset filter sync
                         if let Err(e) = self.reset_filter_sync_state().await {
                             tracing::error!("Failed to reset filter sync state: {}", e);
                         }
-                        Ok((Some(saved_state), true))
+                        Ok(loaded_state)
                     }
-                };
+                }
             }
-
-            return Ok((None, false));
+            Err(error) => Err(error),
+            Ok(()) => Ok(loaded_state),
         }
-
-        // Log any warnings
-        for warning in &validation.warnings {
-            tracing::warn!("Sync state warning: {}", warning);
-        }
-
-        Ok((Some(saved_state), true))
     }
 
     /// Handle rollback recovery to a specific height.
-    pub(super) async fn handle_rollback_recovery(&mut self, height: u32) -> Result<bool> {
+    pub(super) async fn handle_rollback_recovery(&mut self, height: u32) -> StorageResult<()> {
         tracing::warn!("Recovery: Rolling back to height {}", height);
 
         // Validate the rollback height
         if height == 0 {
-            tracing::error!("Cannot rollback to genesis block (height 0)");
-            return Ok(false);
+            let error = "Cannot rollback to genesis block (height 0)";
+            tracing::error!(error);
+            return Err(StorageError::Corruption(error.to_string()));
         }
 
         // Get current height from storage to validate against
         let current_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
+            storage.get_tip_height().await?.unwrap_or(0)
         };
 
         if height > current_height {
-            tracing::error!(
+            let error = format!(
                 "Cannot rollback to height {} which is greater than current height {}",
-                height,
-                current_height
+                height, current_height
             );
-            return Ok(false);
+            tracing::error!(error);
+            return Err(StorageError::Corruption(error.to_string()));
         }
 
         match self.rollback_to_height(height).await {
             Ok(_) => {
                 tracing::info!("Successfully rolled back to height {}", height);
-                Ok(false) // Start fresh sync from rollback point
+                Ok(()) // Continue sync from rollback point
             }
             Err(e) => {
                 tracing::error!("Failed to rollback to height {}: {}", height, e);
-                Ok(false) // Start fresh sync
-            }
-        }
-    }
-
-    /// Handle checkpoint recovery at a specific height.
-    pub(super) async fn handle_checkpoint_recovery(&mut self, height: u32) -> Result<bool> {
-        tracing::warn!("Recovery: Using checkpoint at height {}", height);
-
-        // Validate the checkpoint height
-        if height == 0 {
-            tracing::error!("Cannot use checkpoint at genesis block (height 0)");
-            return Ok(false);
-        }
-
-        // Check if checkpoint height is reasonable (not in the future)
-        let current_height = {
-            let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
-        };
-
-        if current_height > 0 && height > current_height {
-            tracing::error!(
-                "Cannot use checkpoint at height {} which is greater than current height {}",
-                height,
-                current_height
-            );
-            return Ok(false);
-        }
-
-        match self.recover_from_checkpoint(height).await {
-            Ok(_) => {
-                tracing::info!("Successfully recovered from checkpoint at height {}", height);
-                Ok(true) // State restored from checkpoint
-            }
-            Err(e) => {
-                tracing::error!("Failed to recover from checkpoint {}: {}", height, e);
-                Ok(false) // Start fresh sync
+                Err(StorageError::Corruption(format!(
+                    "Failed to rollback to height {}: {}",
+                    height, e
+                )))
             }
         }
     }
@@ -901,7 +859,7 @@ impl<
     /// Restore headers from saved state into ChainState.
     pub(super) async fn restore_headers_from_state(
         &mut self,
-        saved_state: &crate::storage::PersistentSyncState,
+        saved_state: &PersistentSyncState,
     ) -> Result<bool> {
         if saved_state.chain_tip.height == 0 {
             return Ok(true);
@@ -1017,7 +975,7 @@ impl<
     /// Restore filter headers from saved state.
     pub(super) async fn restore_filter_headers_from_state(
         &mut self,
-        saved_state: &crate::storage::PersistentSyncState,
+        saved_state: &PersistentSyncState,
     ) -> Result<()> {
         if saved_state.sync_progress.filter_header_height == 0 {
             return Ok(());
@@ -1045,10 +1003,7 @@ impl<
     }
 
     /// Update stats from saved state.
-    pub(super) async fn update_stats_from_state(
-        &mut self,
-        saved_state: &crate::storage::PersistentSyncState,
-    ) {
+    pub(super) async fn update_stats_from_state(&mut self, saved_state: &PersistentSyncState) {
         let mut stats = self.stats.write().await;
         stats.headers_downloaded = saved_state.sync_progress.header_height as u64;
         stats.filter_headers_downloaded = saved_state.sync_progress.filter_header_height as u64;
@@ -1154,43 +1109,6 @@ impl<
         Ok(())
     }
 
-    /// Recover from a saved checkpoint.
-    pub(super) async fn recover_from_checkpoint(&mut self, checkpoint_height: u32) -> Result<()> {
-        tracing::info!("Recovering from checkpoint at height {}", checkpoint_height);
-
-        // Load checkpoints around the target height
-        let checkpoints = {
-            let storage = self.storage.lock().await;
-            storage
-                .get_sync_checkpoints(checkpoint_height, checkpoint_height)
-                .await
-                .map_err(SpvError::Storage)?
-        };
-
-        if checkpoints.is_empty() {
-            return Err(SpvError::Config(format!(
-                "No checkpoint found at height {}",
-                checkpoint_height
-            )));
-        }
-
-        let checkpoint = &checkpoints[0];
-
-        // Verify the checkpoint is validated
-        if !checkpoint.validated {
-            return Err(SpvError::Config(format!(
-                "Checkpoint at height {} is not validated",
-                checkpoint_height
-            )));
-        }
-
-        // Rollback to checkpoint height
-        self.rollback_to_height(checkpoint_height).await?;
-
-        tracing::info!("Successfully recovered from checkpoint at height {}", checkpoint_height);
-        Ok(())
-    }
-
     /// Reset filter sync state while keeping headers.
     pub(super) async fn reset_filter_sync_state(&mut self) -> Result<()> {
         tracing::info!("Resetting filter sync state");
@@ -1233,38 +1151,27 @@ impl<
         let chain_state = self.state.read().await;
 
         // Create persistent sync state
-        let persistent_state = crate::storage::PersistentSyncState::from_chain_state(
+        let Some(state) = PersistentSyncState::from_chain_state(
             &chain_state,
             &sync_progress,
             self.config.network,
-        );
+        ) else {
+            tracing::warn!("Cannot save sync state: chain state has no tip");
+            return Ok(());
+        };
 
-        if let Some(state) = persistent_state {
-            // Check if we should create a checkpoint
-            if state.should_checkpoint(state.chain_tip.height) {
-                if let Some(checkpoint) = state.checkpoints.last() {
-                    let mut storage = self.storage.lock().await;
-                    storage
-                        .store_sync_checkpoint(checkpoint.height, checkpoint)
-                        .await
-                        .map_err(SpvError::Storage)?;
-                    tracing::info!("Created sync checkpoint at height {}", checkpoint.height);
-                }
-            }
-
-            // Save the sync state
-            {
-                let mut storage = self.storage.lock().await;
-                storage.store_sync_state(&state).await.map_err(SpvError::Storage)?;
-            }
-
-            tracing::debug!(
-                "Saved sync state: headers={}, filter_headers={}, filters={}",
-                state.sync_progress.header_height,
-                state.sync_progress.filter_header_height,
-                state.filter_sync.filters_downloaded
-            );
+        // Save the sync state
+        {
+            let mut storage = self.storage.lock().await;
+            storage.store_sync_state(&state).await.map_err(SpvError::Storage)?;
         }
+
+        tracing::debug!(
+            "Saved sync state: headers={}, filter_headers={}, filters={}",
+            state.sync_progress.header_height,
+            state.sync_progress.filter_header_height,
+            state.filter_sync.filters_downloaded
+        );
 
         Ok(())
     }

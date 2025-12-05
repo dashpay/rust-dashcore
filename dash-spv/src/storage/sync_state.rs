@@ -1,10 +1,11 @@
 //! Persistent sync state management for resuming sync after restarts.
 
+use crate::error::StorageResult;
+use crate::types::{ChainState, SyncProgress};
+use crate::StorageError;
 use dashcore::{BlockHash, Network};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
-
-use crate::types::{ChainState, SyncProgress};
 
 /// Version for sync state serialization format.
 /// Increment this when making breaking changes to the format.
@@ -25,17 +26,11 @@ pub struct PersistentSyncState {
     /// Sync progress at the time of saving.
     pub sync_progress: SyncProgress,
 
-    /// Checkpoint data for optimized sync resumption.
-    pub checkpoints: Vec<SyncCheckpoint>,
-
     /// Masternode sync state.
     pub masternode_sync: MasternodeSyncState,
 
     /// Filter sync state.
     pub filter_sync: FilterSyncState,
-
-    /// Timestamp when this state was saved.
-    pub saved_at: SystemTime,
 
     /// Chain work up to the tip (for validation).
     pub chain_work: String,
@@ -114,22 +109,6 @@ pub struct FilterSyncState {
     pub filter_sync_available: bool,
 }
 
-/// Sync state validation result.
-#[derive(Debug)]
-pub struct SyncStateValidation {
-    /// Whether the state is valid.
-    pub is_valid: bool,
-
-    /// Validation errors if any.
-    pub errors: Vec<String>,
-
-    /// Warnings that don't prevent loading.
-    pub warnings: Vec<String>,
-
-    /// Suggested recovery action.
-    pub recovery_suggestion: Option<RecoverySuggestion>,
-}
-
 /// Recovery suggestions for invalid or corrupted state.
 #[derive(Debug, Clone)]
 pub enum RecoverySuggestion {
@@ -138,9 +117,6 @@ pub enum RecoverySuggestion {
 
     /// Rollback to a specific height.
     RollbackToHeight(u32),
-
-    /// Use a checkpoint for recovery.
-    UseCheckpoint(u32),
 
     /// Partial recovery - keep headers, resync filters.
     PartialRecovery,
@@ -167,7 +143,6 @@ impl PersistentSyncState {
                 time: tip_header.time,
             },
             sync_progress: sync_progress.clone(),
-            checkpoints: Self::create_checkpoints(chain_state),
             masternode_sync: MasternodeSyncState {
                 last_synced_height: None,
                 is_synced: false,
@@ -186,7 +161,6 @@ impl PersistentSyncState {
                 matched_heights: chain_state.get_filter_matched_heights().unwrap_or_default(),
                 filter_sync_available: sync_progress.filter_sync_available,
             },
-            saved_at: SystemTime::now(),
             chain_work: chain_state
                 .calculate_chain_work()
                 .map(|work| format!("{:?}", work))
@@ -195,152 +169,53 @@ impl PersistentSyncState {
         })
     }
 
-    /// Create checkpoints from chain state for faster recovery.
-    fn create_checkpoints(chain_state: &ChainState) -> Vec<SyncCheckpoint> {
-        let mut checkpoints = Vec::new();
-        let tip_height = chain_state.tip_height();
-
-        // Create checkpoints at strategic intervals
-        let checkpoint_intervals = [1000, 10000, 50000, 100000];
-
-        for &interval in &checkpoint_intervals {
-            let mut height = interval;
-            while height <= tip_height {
-                if let Some(header) = chain_state.header_at_height(height) {
-                    let filter_header = chain_state.filter_header_at_height(height).copied();
-                    checkpoints.push(SyncCheckpoint {
-                        height,
-                        block_hash: header.block_hash(),
-                        filter_header,
-                        validated: true,
-                        created_at: SystemTime::now(),
-                    });
-                }
-                height += interval;
-            }
-        }
-
-        // Always add the tip as a checkpoint
-        if tip_height > 0 {
-            if let Some(header) = chain_state.get_tip_header() {
-                let filter_header = chain_state.filter_header_at_height(tip_height).copied();
-                checkpoints.push(SyncCheckpoint {
-                    height: tip_height,
-                    block_hash: header.block_hash(),
-                    filter_header,
-                    validated: true,
-                    created_at: SystemTime::now(),
-                });
-            }
-        }
-
-        checkpoints
-    }
-
     /// Validate the sync state for consistency and corruption.
-    pub fn validate(&self, network: Network) -> SyncStateValidation {
-        let mut errors = Vec::new();
-        let mut warnings = Vec::new();
-        let mut recovery_suggestion = None;
-
+    pub fn validate(&self, network: Network) -> StorageResult<()> {
         // Check version compatibility
         if self.version > SYNC_STATE_VERSION {
-            errors.push(format!(
-                "Sync state version {} is newer than supported version {}",
-                self.version, SYNC_STATE_VERSION
+            return Err(StorageError::InconsistentState(
+                format!(
+                    "Sync state version {} is newer than supported version {}",
+                    self.version, SYNC_STATE_VERSION
+                ),
+                RecoverySuggestion::StartFresh,
             ));
-            recovery_suggestion = Some(RecoverySuggestion::StartFresh);
         }
 
         // Check network match
         if self.network != network {
-            errors.push(format!(
-                "Sync state is for network {:?} but client is configured for {:?}",
-                self.network, network
+            return Err(StorageError::InconsistentState(
+                format!(
+                    "Sync state is for network {:?} but client is configured for {:?}",
+                    self.network, network
+                ),
+                RecoverySuggestion::StartFresh,
             ));
-            recovery_suggestion = Some(RecoverySuggestion::StartFresh);
-        }
-
-        // Check time consistency
-        if self.saved_at > SystemTime::now() {
-            warnings.push("Sync state has future timestamp".to_string());
         }
 
         // Check height consistency
         if self.sync_progress.header_height > self.chain_tip.height {
-            errors.push(format!(
-                "Sync progress height {} exceeds chain tip height {}",
-                self.sync_progress.header_height, self.chain_tip.height
+            return Err(StorageError::InconsistentState(
+                format!(
+                    "Sync progress height {} exceeds chain tip height {}",
+                    self.sync_progress.header_height, self.chain_tip.height
+                ),
+                RecoverySuggestion::RollbackToHeight(self.chain_tip.height),
             ));
-            recovery_suggestion = Some(RecoverySuggestion::RollbackToHeight(self.chain_tip.height));
         }
 
         // Check filter height consistency
         if self.filter_sync.filter_header_height > self.chain_tip.height {
-            errors.push(format!(
-                "Filter header height {} exceeds chain tip height {}",
-                self.filter_sync.filter_header_height, self.chain_tip.height
+            return Err(StorageError::InconsistentState(
+                format!(
+                    "Filter header height {} exceeds chain tip height {}",
+                    self.filter_sync.filter_header_height, self.chain_tip.height
+                ),
+                RecoverySuggestion::PartialRecovery,
             ));
-            recovery_suggestion = Some(RecoverySuggestion::PartialRecovery);
         }
 
-        // Validate checkpoints
-        let mut prev_height = 0;
-        for checkpoint in &self.checkpoints {
-            if checkpoint.height <= prev_height {
-                errors.push(format!(
-                    "Checkpoint heights not in ascending order: {} <= {}",
-                    checkpoint.height, prev_height
-                ));
-            }
-            if checkpoint.height > self.chain_tip.height {
-                errors.push(format!(
-                    "Checkpoint height {} exceeds chain tip height {}",
-                    checkpoint.height, self.chain_tip.height
-                ));
-            }
-            prev_height = checkpoint.height;
-        }
-
-        // If we have errors but valid checkpoints, suggest using the highest valid checkpoint
-        if !errors.is_empty() && !self.checkpoints.is_empty() {
-            if let Some(last_checkpoint) = self.checkpoints.last() {
-                if last_checkpoint.validated && last_checkpoint.height <= self.chain_tip.height {
-                    recovery_suggestion =
-                        Some(RecoverySuggestion::UseCheckpoint(last_checkpoint.height));
-                }
-            }
-        }
-
-        SyncStateValidation {
-            is_valid: errors.is_empty(),
-            errors,
-            warnings,
-            recovery_suggestion,
-        }
-    }
-
-    pub fn synced_from_checkpoint(&self) -> bool {
-        self.sync_base_height > 0
-    }
-
-    /// Get the best checkpoint to use for recovery.
-    pub fn get_best_checkpoint(&self) -> Option<&SyncCheckpoint> {
-        self.checkpoints.iter().rev().find(|cp| cp.validated)
-    }
-
-    /// Check if we should create a new checkpoint at the given height.
-    pub fn should_checkpoint(&self, height: u32) -> bool {
-        // Checkpoint every 1000 blocks initially, then less frequently
-        let interval = if height < 10000 {
-            1000
-        } else if height < 100000 {
-            10000
-        } else {
-            50000
-        };
-
-        height.is_multiple_of(interval)
+        Ok(())
     }
 }
 
@@ -361,7 +236,6 @@ mod tests {
                 time: 0,
             },
             sync_progress: SyncProgress::default(),
-            checkpoints: vec![],
             masternode_sync: MasternodeSyncState {
                 last_synced_height: None,
                 is_synced: false,
@@ -375,25 +249,18 @@ mod tests {
                 matched_heights: vec![],
                 filter_sync_available: false,
             },
-            saved_at: SystemTime::now(),
             chain_work: String::new(),
             sync_base_height: 0,
         };
 
         // Valid state
-        let validation = state.validate(Network::Testnet);
-        assert!(validation.is_valid);
-        assert!(validation.errors.is_empty());
+        assert!(state.validate(Network::Testnet).is_ok());
 
         // Wrong network
-        let validation = state.validate(Network::Dash);
-        assert!(!validation.is_valid);
-        assert!(!validation.errors.is_empty());
+        assert!(state.validate(Network::Dash).is_err());
 
         // Invalid height
         state.sync_progress.header_height = 2000;
-        let validation = state.validate(Network::Testnet);
-        assert!(!validation.is_valid);
-        assert!(!validation.errors.is_empty());
+        assert!(state.validate(Network::Testnet).is_err());
     }
 }
