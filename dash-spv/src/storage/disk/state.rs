@@ -426,7 +426,7 @@ impl DiskStorageManager {
     /// Shutdown the storage manager.
     pub async fn shutdown(&mut self) -> StorageResult<()> {
         // Save all dirty segments
-        super::segments::save_dirty_segments(self).await?;
+        super::segments::save_dirty_segments_cache(self).await?;
 
         // Shutdown background worker
         if let Some(tx) = self.worker_tx.take() {
@@ -781,7 +781,7 @@ mod tests {
         storage.store_headers(&headers).await?;
 
         // Force save to disk
-        super::super::segments::save_dirty_segments(&storage).await?;
+        super::super::segments::save_dirty_segments_cache(&storage).await?;
 
         // Wait a bit for background save
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -857,7 +857,7 @@ mod tests {
         storage.store_chain_state(&chain_state).await?;
 
         // Force save to disk
-        super::super::segments::save_dirty_segments(&storage).await?;
+        super::super::segments::save_dirty_segments_cache(&storage).await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create a new storage instance to test index rebuilding
@@ -893,7 +893,7 @@ mod tests {
             let mut storage = DiskStorageManager::new(base_path.clone()).await?;
 
             storage.store_headers(&headers[..10_000]).await?;
-            super::super::segments::save_dirty_segments(&storage).await?;
+            super::super::segments::save_dirty_segments_cache(&storage).await?;
 
             storage.store_headers(&headers[10_000..]).await?;
             storage.shutdown().await?;
