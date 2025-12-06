@@ -12,6 +12,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
+use crate::storage::disk::io::atomic_write;
+
 /// Maximum misbehavior score before a peer is banned
 const MAX_MISBEHAVIOR_SCORE: i32 = 100;
 
@@ -424,7 +426,7 @@ impl PeerReputationManager {
             .collect();
 
         let json = serde_json::to_string_pretty(&data)?;
-        tokio::fs::write(path, json).await
+        atomic_write(path, json.as_bytes()).await.map_err(std::io::Error::other)
     }
 
     /// Load reputation data from persistent storage

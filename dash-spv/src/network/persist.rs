@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::error::{SpvError as Error, StorageError};
+use crate::storage::disk::io::atomic_write;
 
 /// Peer persistence for saving and loading known peer addresses
 pub struct PeerStore {
@@ -61,9 +62,7 @@ impl PeerStore {
         let json = serde_json::to_string_pretty(&saved)
             .map_err(|e| Error::Storage(StorageError::Serialization(e.to_string())))?;
 
-        tokio::fs::write(&self.path, json)
-            .await
-            .map_err(|e| Error::Storage(StorageError::WriteFailed(e.to_string())))?;
+        atomic_write(&self.path, json.as_bytes()).await.map_err(Error::Storage)?;
 
         log::debug!("Saved {} peers to {:?}", saved.peers.len(), self.path);
         Ok(())

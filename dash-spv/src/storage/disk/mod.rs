@@ -21,7 +21,7 @@
 
 mod filters;
 mod headers;
-mod io;
+pub(crate) mod io;
 mod manager;
 mod segments;
 mod state;
