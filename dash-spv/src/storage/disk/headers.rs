@@ -468,26 +468,6 @@ pub(super) async fn ensure_segment_loaded(
         return Ok(());
     }
 
-    // Load segment from disk
-    let segment_path = manager.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
-    let mut headers = if segment_path.exists() {
-        super::io::load_headers_from_file(&segment_path).await?
-    } else {
-        Vec::new()
-    };
-
-    // Store the actual number of valid headers before padding
-    let valid_count = headers.len();
-
-    // Ensure the segment has space for all possible headers in this segment
-    // This is crucial for proper indexing
-    let expected_size = super::HEADERS_PER_SEGMENT as usize;
-    if headers.len() < expected_size {
-        // Pad with sentinel headers that cannot be mistaken for valid blocks
-        let sentinel_header = create_sentinel_header();
-        headers.resize(expected_size, sentinel_header);
-    }
-
     // Evict old segments if needed
     if segments.len() >= super::MAX_ACTIVE_SEGMENTS {
         if let Some((oldest_id, oldest_segment_cache)) =
@@ -498,8 +478,10 @@ pub(super) async fn ensure_segment_loaded(
         }
     }
 
-    segments
-        .insert(segment_id, SegmentCache::new_block_header_cache(segment_id, headers, valid_count));
+    let block_header_cache =
+        SegmentCache::load_block_header_cache(&manager.base_path, segment_id).await?;
+
+    segments.insert(segment_id, block_header_cache);
 
     Ok(())
 }

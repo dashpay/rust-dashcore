@@ -238,15 +238,6 @@ pub(super) async fn ensure_filter_segment_loaded(
         return Ok(());
     }
 
-    // Load segment from disk
-    let segment_path =
-        manager.base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
-    let headers = if segment_path.exists() {
-        super::io::load_filter_headers_from_file(&segment_path).await?
-    } else {
-        Vec::new()
-    };
-
     // Evict old segments if needed
     if segments.len() >= super::MAX_ACTIVE_SEGMENTS {
         if let Some((oldest_id, oldest_segment_cache)) =
@@ -257,8 +248,10 @@ pub(super) async fn ensure_filter_segment_loaded(
         }
     }
 
-    // TODO: Check the 0 existence
-    segments.insert(segment_id, SegmentCache::new_filter_header_cache(segment_id, headers, 0));
+    let filter_header_cache =
+        SegmentCache::load_filter_header_cache(&manager.base_path, segment_id).await?;
+
+    segments.insert(segment_id, filter_header_cache);
 
     Ok(())
 }
