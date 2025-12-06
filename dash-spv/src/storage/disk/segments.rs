@@ -155,7 +155,7 @@ impl<H: Persistable> SegmentCache<H> {
 
     pub fn evict(&self, base_path: &Path) -> StorageResult<()> {
         // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
-        if self.state != SegmentState::Clean {
+        if self.state == SegmentState::Clean {
             return Ok(());
         }
 
