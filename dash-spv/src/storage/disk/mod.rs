@@ -21,7 +21,6 @@
 
 mod filters;
 mod headers;
-mod io;
 mod manager;
 mod segments;
 mod state;
