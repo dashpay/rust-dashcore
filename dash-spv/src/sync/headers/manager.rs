@@ -103,19 +103,23 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Load headers from storage into the chain state
     pub async fn load_headers_from_storage(&mut self, storage: &S) -> SyncResult<u32> {
-        // First, try to load the persisted chain state which may contain sync_base_height
-        if let Ok(Some(stored_chain_state)) = storage.load_chain_state().await {
+        // First, try to load the persisted sync state
+        if let Ok(Some(sync_state)) = storage.load_sync_state().await {
             tracing::info!(
-                "Loaded chain state from storage with sync_base_height: {}, synced_from_checkpoint: {}",
-                stored_chain_state.sync_base_height,
-                stored_chain_state.synced_from_checkpoint
+                "Loaded sync state from storage with sync_base_height: {}, synced_from_checkpoint: {}",
+                sync_state.sync_base_height,
+                sync_state.synced_from_checkpoint
             );
-            // Update our chain state with the loaded one to preserve sync_base_height
+            // Update our cached flags and chain state metadata
+            self.cached_synced_from_checkpoint = sync_state.synced_from_checkpoint;
+            self.cached_sync_base_height = sync_state.sync_base_height;
             {
-                self.cached_synced_from_checkpoint = stored_chain_state.synced_from_checkpoint;
-                self.cached_sync_base_height = stored_chain_state.sync_base_height;
                 let mut cs = self.chain_state.write().await;
-                *cs = stored_chain_state;
+                cs.sync_base_height = sync_state.sync_base_height;
+                cs.synced_from_checkpoint = sync_state.synced_from_checkpoint;
+                cs.last_chainlock_height = sync_state.last_chainlock_height;
+                cs.last_chainlock_hash = sync_state.last_chainlock_hash;
+                cs.current_filter_tip = sync_state.current_filter_tip;
             }
         }
 

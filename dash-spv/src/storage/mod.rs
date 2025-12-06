@@ -14,7 +14,7 @@ use std::ops::Range;
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Txid};
 
 use crate::error::StorageResult;
-use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
+use crate::types::{MempoolState, UnconfirmedTransaction};
 
 pub use disk::DiskStorageManager;
 pub use memory::MemoryStorageManager;
@@ -126,18 +126,6 @@ pub trait StorageManager: Send + Sync {
 
     /// Get the current filter tip blockchain height.
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>>;
-
-    /// Store masternode state.
-    async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()>;
-
-    /// Load masternode state.
-    async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>>;
-
-    /// Store chain state.
-    async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()>;
-
-    /// Load chain state.
-    async fn load_chain_state(&self) -> StorageResult<Option<ChainState>>;
 
     /// Store a compact filter at a blockchain height.
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()>;

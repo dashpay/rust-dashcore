@@ -414,8 +414,10 @@ impl<
         } = &mut self.current_phase
         {
             // Update current height from storage
-            if let Ok(Some(state)) = storage.load_masternode_state().await {
-                *current_height = state.last_height;
+            if let Ok(Some(state)) = storage.load_sync_state().await {
+                if let Some(mn_state) = state.masternode_state {
+                    *current_height = mn_state.last_height;
+                }
             }
 
             *diffs_processed += 1;
@@ -481,8 +483,10 @@ impl<
         } = &mut self.current_phase
         {
             // Update current height from storage
-            if let Ok(Some(state)) = storage.load_masternode_state().await {
-                *current_height = state.last_height;
+            if let Ok(Some(state)) = storage.load_sync_state().await {
+                if let Some(mn_state) = state.masternode_state {
+                    *current_height = mn_state.last_height;
+                }
             }
             *diffs_processed += 1;
             self.current_phase.update_progress();

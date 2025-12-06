@@ -207,8 +207,10 @@ impl TransitionManager {
                         })?
                         .unwrap_or(0);
 
-                    let mn_height = match storage.load_masternode_state().await {
-                        Ok(Some(state)) => state.last_height,
+                    let mn_height = match storage.load_sync_state().await {
+                        Ok(Some(state)) => {
+                            state.masternode_state.map(|m| m.last_height).unwrap_or(0)
+                        }
                         _ => 0,
                     };
 
@@ -354,8 +356,9 @@ impl TransitionManager {
             }
 
             // Also check storage to be sure
-            if let Ok(Some(state)) = storage.load_masternode_state().await {
-                Ok(state.last_height >= *target_height)
+            if let Ok(Some(state)) = storage.load_sync_state().await {
+                let mn_height = state.masternode_state.map(|m| m.last_height).unwrap_or(0);
+                Ok(mn_height >= *target_height)
             } else {
                 Ok(false)
             }

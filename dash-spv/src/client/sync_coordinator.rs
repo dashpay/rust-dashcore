@@ -1139,15 +1139,20 @@ impl<
             }
         }
 
-        // Clone the updated state for storage
-        let updated_state = state.clone();
+        // Create sync state from the updated chain state for storage
+        let sync_progress = crate::types::SyncProgress::default();
+        let sync_state = crate::storage::SyncState::from_chain_state(
+            &state,
+            &sync_progress,
+            self.config.network,
+        )
+        .ok_or(SpvError::General("Failed to create sync state for rollback".to_string()))?;
         drop(state);
 
         // Update persistent storage to reflect the rollback
-        // Store the updated chain state
         {
             let mut storage = self.storage.lock().await;
-            storage.store_chain_state(&updated_state).await.map_err(SpvError::Storage)?;
+            storage.store_sync_state(&sync_state).await.map_err(SpvError::Storage)?;
         }
 
         // Clear any cached filter data above the target height

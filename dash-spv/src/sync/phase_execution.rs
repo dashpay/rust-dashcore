@@ -53,11 +53,13 @@ impl<
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get storage tip: {}", e)))?;
 
-                // Debug: Check chain state
-                let chain_state = storage.load_chain_state().await.map_err(|e| {
-                    SyncError::Storage(format!("Failed to load chain state: {}", e))
-                })?;
-                let chain_state_height = chain_state.as_ref().map(|s| s.get_height()).unwrap_or(0);
+                // Debug: Check sync state
+                let sync_state = storage
+                    .load_sync_state()
+                    .await
+                    .map_err(|e| SyncError::Storage(format!("Failed to load sync state: {}", e)))?;
+                let chain_state_height =
+                    sync_state.as_ref().map(|s| s.chain_tip.height).unwrap_or(0);
 
                 tracing::info!(
                     "Starting masternode sync: effective_height={}, sync_base={}, storage_tip={:?}, chain_state_height={}, expected_storage_index={}",

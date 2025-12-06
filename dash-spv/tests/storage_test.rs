@@ -1,7 +1,6 @@
 //! Integration tests for storage layer functionality.
 
-use dash_spv::storage::{MemoryStorageManager, StorageManager};
-use dash_spv::types::ChainState;
+use dash_spv::storage::{MemoryStorageManager, StorageManager, SyncState};
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
 use dashcore_hashes::Hash;
 
@@ -136,24 +135,24 @@ async fn test_memory_storage_filters() {
 }
 
 #[tokio::test]
-async fn test_memory_storage_chain_state() {
+async fn test_memory_storage_sync_state() {
     let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
-    // Create test chain state
-    let chain_state = ChainState::new_for_network(Network::Dash);
+    // Create test sync state
+    let sync_state = SyncState::new(Network::Dash);
 
-    // Store chain state
-    storage.store_chain_state(&chain_state).await.expect("Failed to store chain state");
+    // Store sync state
+    storage.store_sync_state(&sync_state).await.expect("Failed to store sync state");
 
-    // Retrieve chain state
-    let retrieved_state = storage.load_chain_state().await.unwrap();
+    // Retrieve sync state
+    let retrieved_state = storage.load_sync_state().await.unwrap();
     assert!(retrieved_state.is_some());
-    // Note: ChainState doesn't store network directly, but we can verify it was created properly
-    assert!(retrieved_state.is_some());
+    let state = retrieved_state.unwrap();
+    assert_eq!(state.network, Network::Dash);
 
     // Test initial state
     let fresh_storage = MemoryStorageManager::new().await.expect("Failed to create fresh storage");
-    assert!(fresh_storage.load_chain_state().await.unwrap().is_none());
+    assert!(fresh_storage.load_sync_state().await.unwrap().is_none());
 }
 
 #[tokio::test]

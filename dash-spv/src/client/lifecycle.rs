@@ -374,16 +374,22 @@ impl<
                             self.config.network,
                         );
 
-                        // Clone the chain state for storage
-                        let chain_state_for_storage = (*chain_state).clone();
-                        let headers_len = chain_state_for_storage.headers.len() as u32;
+                        // Create sync state from chain state
+                        let sync_progress = crate::types::SyncProgress::default();
+                        let sync_state = crate::storage::SyncState::from_chain_state(
+                            &chain_state,
+                            &sync_progress,
+                            self.config.network,
+                        )
+                        .ok_or(SpvError::General("Failed to create sync state".to_string()))?;
+                        let headers_len = chain_state.headers.len() as u32;
                         drop(chain_state);
 
-                        // Update storage with chain state including sync_base_height
+                        // Update storage with the initial sync state
                         {
                             let mut storage = self.storage.lock().await;
                             storage
-                                .store_chain_state(&chain_state_for_storage)
+                                .store_sync_state(&sync_state)
                                 .await
                                 .map_err(SpvError::Storage)?;
                         }

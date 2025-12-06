@@ -119,10 +119,10 @@ impl DiskStorageManager {
         // Load segment metadata and rebuild index
         storage.load_segment_metadata().await?;
 
-        // Load chain state to get sync_base_height
-        if let Ok(Some(chain_state)) = storage.load_chain_state().await {
-            *storage.sync_base_height.write().await = chain_state.sync_base_height;
-            tracing::debug!("Loaded sync_base_height: {}", chain_state.sync_base_height);
+        // Load sync state to get sync_base_height
+        if let Ok(Some(sync_state)) = storage.load_sync_state().await {
+            *storage.sync_base_height.write().await = sync_state.sync_base_height;
+            tracing::debug!("Loaded sync_base_height: {}", sync_state.sync_base_height);
         }
 
         Ok(storage)
@@ -311,12 +311,11 @@ impl DiskStorageManager {
             if !index_loaded && !all_segment_ids.is_empty() {
                 tracing::info!("Index file not found, rebuilding from segments...");
 
-                // Load chain state to get sync_base_height for proper height calculation
-                let sync_base_height = if let Ok(Some(chain_state)) = self.load_chain_state().await
-                {
-                    chain_state.sync_base_height
+                // Load sync state to get sync_base_height for proper height calculation
+                let sync_base_height = if let Ok(Some(sync_state)) = self.load_sync_state().await {
+                    sync_state.sync_base_height
                 } else {
-                    0 // Assume genesis sync if no chain state
+                    0 // Assume genesis sync if no state
                 };
 
                 let mut new_index = HashMap::new();

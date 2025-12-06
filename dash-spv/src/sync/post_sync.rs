@@ -155,9 +155,11 @@ impl<
         // First, check if we need to catch up on masternode lists for ChainLock validation
         if self.config.enable_masternodes && !headers.is_empty() {
             // Get the current masternode state to check for gaps
-            let mn_state = storage.load_masternode_state().await.map_err(|e| {
-                SyncError::Storage(format!("Failed to load masternode state: {}", e))
-            })?;
+            let sync_state = storage
+                .load_sync_state()
+                .await
+                .map_err(|e| SyncError::Storage(format!("Failed to load sync state: {}", e)))?;
+            let mn_state = sync_state.and_then(|s| s.masternode_state);
 
             if let Some(state) = mn_state {
                 // Get the height of the first new header
@@ -250,8 +252,8 @@ impl<
             // If we have masternodes enabled, request masternode list updates for ChainLock validation
             if self.config.enable_masternodes {
                 // Use the latest persisted masternode state height as base to guarantee base < stop
-                let base_height = match storage.load_masternode_state().await {
-                    Ok(Some(state)) => state.last_height,
+                let base_height = match storage.load_sync_state().await {
+                    Ok(Some(state)) => state.masternode_state.map(|m| m.last_height).unwrap_or(0),
                     _ => 0,
                 };
 
@@ -493,19 +495,21 @@ impl<
         self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await?;
 
         // Log the current masternode state after update
-        if let Ok(Some(mn_state)) = storage.load_masternode_state().await {
-            // Convert masternode storage height to blockchain height
-            let mn_blockchain_height = if is_ckpt && sync_base > 0 {
-                sync_base + mn_state.last_height
-            } else {
-                mn_state.last_height
-            };
+        if let Ok(Some(sync_state)) = storage.load_sync_state().await {
+            if let Some(mn_state) = sync_state.masternode_state {
+                // Convert masternode storage height to blockchain height
+                let mn_blockchain_height = if is_ckpt && sync_base > 0 {
+                    sync_base + mn_state.last_height
+                } else {
+                    mn_state.last_height
+                };
 
-            tracing::debug!(
-                "📊 Masternode state after update: last height = {}, can validate ChainLocks up to height {}",
-                mn_blockchain_height,
-                mn_blockchain_height + CHAINLOCK_VALIDATION_MASTERNODE_OFFSET
-            );
+                tracing::debug!(
+                    "📊 Masternode state after update: last height = {}, can validate ChainLocks up to height {}",
+                    mn_blockchain_height,
+                    mn_blockchain_height + CHAINLOCK_VALIDATION_MASTERNODE_OFFSET
+                );
+            }
         }
 
         // After processing the diff, check if we have any pending ChainLocks that can now be validated

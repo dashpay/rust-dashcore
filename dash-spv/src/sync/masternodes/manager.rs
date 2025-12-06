@@ -469,7 +469,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 // Persist masternode state so phase manager can detect completion
                 match storage.get_tip_height().await {
                     Ok(Some(tip_height)) => {
-                        let state = crate::storage::MasternodeState {
+                        let mn_state = crate::storage::MasternodeState {
                             last_height: tip_height,
                             engine_state: Vec::new(),
                             last_update: std::time::SystemTime::now()
@@ -477,8 +477,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0),
                         };
-                        if let Err(e) = storage.store_masternode_state(&state).await {
-                            tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+                        // Update existing sync state with masternode state
+                        if let Ok(Some(mut sync_state)) = storage.load_sync_state().await {
+                            sync_state.masternode_state = Some(mn_state);
+                            if let Err(e) = storage.store_sync_state(&sync_state).await {
+                                tracing::warn!("⚠️ Failed to store sync state: {}", e);
+                            }
                         }
                     }
                     Ok(None) => {
@@ -583,9 +587,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         self.sync_in_progress = false;
                         self.error = Some("MnListDiff requests timed out after retry".to_string());
 
-                        // Still persist what we have
+                        // Still persist what we have via unified state
                         if let Ok(Some(tip_height)) = storage.get_tip_height().await {
-                            let state = crate::storage::MasternodeState {
+                            let mn_state = crate::storage::MasternodeState {
                                 last_height: tip_height,
                                 engine_state: Vec::new(),
                                 last_update: std::time::SystemTime::now()
@@ -593,8 +597,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                     .map(|d| d.as_secs())
                                     .unwrap_or(0),
                             };
-                            if let Err(e) = storage.store_masternode_state(&state).await {
-                                tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+                            // Update existing sync state with masternode state
+                            if let Ok(Some(mut sync_state)) = storage.load_sync_state().await {
+                                sync_state.masternode_state = Some(mn_state);
+                                if let Err(e) = storage.store_sync_state(&sync_state).await {
+                                    tracing::warn!("⚠️ Failed to store sync state: {}", e);
+                                }
                             }
                         }
                     }
@@ -684,7 +692,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             // Persist masternode state so phase manager can detect completion
             match storage.get_tip_height().await {
                 Ok(Some(tip_height)) => {
-                    let state = crate::storage::MasternodeState {
+                    let mn_state = crate::storage::MasternodeState {
                         last_height: tip_height,
                         engine_state: Vec::new(),
                         last_update: std::time::SystemTime::now()
@@ -692,8 +700,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             .map(|d| d.as_secs())
                             .unwrap_or(0),
                     };
-                    if let Err(e) = storage.store_masternode_state(&state).await {
-                        tracing::warn!("⚠️ Failed to store masternode state: {}", e);
+                    // Update existing sync state with masternode state
+                    if let Ok(Some(mut sync_state)) = storage.load_sync_state().await {
+                        sync_state.masternode_state = Some(mn_state);
+                        if let Err(e) = storage.store_sync_state(&sync_state).await {
+                            tracing::warn!("⚠️ Failed to store sync state: {}", e);
+                        }
                     }
                 }
                 Ok(None) => {

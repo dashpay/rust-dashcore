@@ -5,8 +5,8 @@ use std::time::Duration;
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::{MemoryStorageManager, StorageManager},
-    types::{ChainState, ValidationMode},
+    storage::{MemoryStorageManager, StorageManager, SyncState},
+    types::ValidationMode,
 };
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
 use dashcore_hashes::Hash;
@@ -27,12 +27,12 @@ async fn test_basic_header_sync_from_genesis() {
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
     assert!(storage.load_headers(0..10).await.unwrap().is_empty());
 
-    // Create test chain state for mainnet
-    let chain_state = ChainState::new_for_network(Network::Dash);
-    storage.store_chain_state(&chain_state).await.expect("Failed to store initial chain state");
+    // Create test sync state for mainnet
+    let sync_state = SyncState::new(Network::Dash);
+    storage.store_sync_state(&sync_state).await.expect("Failed to store initial sync state");
 
     // Verify we can load the initial state
-    let loaded_state = storage.load_chain_state().await.unwrap();
+    let loaded_state = storage.load_sync_state().await.unwrap();
     assert!(loaded_state.is_some());
 
     info!("Basic header sync setup completed - ready for network sync");

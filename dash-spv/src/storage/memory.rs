@@ -7,16 +7,14 @@ use std::ops::Range;
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::{MasternodeState, StorageManager, StorageStats};
-use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
+use crate::storage::{StorageManager, StorageStats};
+use crate::types::{MempoolState, UnconfirmedTransaction};
 
 /// In-memory storage manager.
 pub struct MemoryStorageManager {
     headers: Vec<BlockHeader>,
     filter_headers: Vec<FilterHeader>,
     filters: HashMap<u32, Vec<u8>>,
-    masternode_state: Option<MasternodeState>,
-    chain_state: Option<ChainState>,
     sync_state: Option<crate::storage::SyncState>,
     metadata: HashMap<String, Vec<u8>>,
     // Reverse indexes for O(1) lookups
@@ -33,8 +31,6 @@ impl MemoryStorageManager {
             headers: Vec::new(),
             filter_headers: Vec::new(),
             filters: HashMap::new(),
-            masternode_state: None,
-            chain_state: None,
             sync_state: None,
             metadata: HashMap::new(),
             header_hash_index: HashMap::new(),
@@ -43,10 +39,7 @@ impl MemoryStorageManager {
         })
     }
     pub fn sync_base_height(&self) -> u32 {
-        match self.chain_state.as_ref() {
-            Some(state) => state.sync_base_height,
-            None => 0,
-        }
+        self.sync_state.as_ref().map(|s| s.sync_base_height).unwrap_or(0)
     }
 }
 
@@ -178,24 +171,6 @@ impl StorageManager for MemoryStorageManager {
         }
     }
 
-    async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
-        self.masternode_state = Some(state.clone());
-        Ok(())
-    }
-
-    async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
-        Ok(self.masternode_state.clone())
-    }
-
-    async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        self.chain_state = Some(state.clone());
-        Ok(())
-    }
-
-    async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
-        Ok(self.chain_state.clone())
-    }
-
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         self.filters.insert(height, filter.to_vec());
         Ok(())
@@ -218,8 +193,6 @@ impl StorageManager for MemoryStorageManager {
         self.headers.clear();
         self.filter_headers.clear();
         self.filters.clear();
-        self.masternode_state = None;
-        self.chain_state = None;
         self.sync_state = None;
         self.metadata.clear();
         self.header_hash_index.clear();
@@ -243,16 +216,9 @@ impl StorageManager for MemoryStorageManager {
         let filter_size: usize = self.filters.values().map(|f| f.len()).sum();
         let metadata_size: usize = self.metadata.values().map(|v| v.len()).sum();
 
-        // Calculate size of masternode_state (approximate)
-        let masternode_state_size = if self.masternode_state.is_some() {
-            std::mem::size_of::<MasternodeState>()
-        } else {
-            0
-        };
-
-        // Calculate size of chain_state (approximate)
-        let chain_state_size = if self.chain_state.is_some() {
-            std::mem::size_of::<ChainState>()
+        // Calculate size of sync_state (approximate)
+        let sync_state_size = if self.sync_state.is_some() {
+            std::mem::size_of::<crate::storage::SyncState>()
         } else {
             0
         };
@@ -261,31 +227,21 @@ impl StorageManager for MemoryStorageManager {
         let header_hash_index_size = self.header_hash_index.len()
             * (std::mem::size_of::<BlockHash>() + std::mem::size_of::<u32>());
 
-        // UTXO size calculation removed - UTXO management is now handled externally
-        let utxo_size = 0;
-        let utxo_address_index_size = 0;
-
         // Insert all component sizes
         component_sizes.insert("headers".to_string(), header_size as u64);
         component_sizes.insert("filter_headers".to_string(), filter_header_size as u64);
         component_sizes.insert("filters".to_string(), filter_size as u64);
         component_sizes.insert("metadata".to_string(), metadata_size as u64);
-        component_sizes.insert("masternode_state".to_string(), masternode_state_size as u64);
-        component_sizes.insert("chain_state".to_string(), chain_state_size as u64);
+        component_sizes.insert("sync_state".to_string(), sync_state_size as u64);
         component_sizes.insert("header_hash_index".to_string(), header_hash_index_size as u64);
-        component_sizes.insert("utxos".to_string(), utxo_size as u64);
-        component_sizes.insert("utxo_address_index".to_string(), utxo_address_index_size as u64);
 
         // Calculate total size
         let total_size = header_size as u64
             + filter_header_size as u64
             + filter_size as u64
             + metadata_size as u64
-            + masternode_state_size as u64
-            + chain_state_size as u64
-            + header_hash_index_size as u64
-            + utxo_size as u64
-            + utxo_address_index_size as u64;
+            + sync_state_size as u64
+            + header_hash_index_size as u64;
 
         Ok(StorageStats {
             header_count: self.headers.len() as u64,

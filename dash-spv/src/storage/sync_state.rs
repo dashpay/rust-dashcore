@@ -1,14 +1,16 @@
 //! Sync state management for resuming sync after restarts.
 
-use dashcore::{BlockHash, Network};
+use dashcore::{hash_types::FilterHeader, BlockHash, Network};
+use dashcore_hashes::Hash;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
+use crate::storage::MasternodeState;
 use crate::types::{ChainState, SyncProgress};
 
 /// Version for sync state serialization format.
 /// Increment this when making breaking changes to the format.
-const SYNC_STATE_VERSION: u32 = 2;
+const SYNC_STATE_VERSION: u32 = 3;
 
 /// Complete sync state that can be saved and restored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +47,20 @@ pub struct SyncState {
 
     /// Whether the chain was synced from a checkpoint rather than genesis.
     pub synced_from_checkpoint: bool,
+
+    // === Chain state fields (consolidated from state/chain.json) ===
+    /// Last confirmed chainlock height.
+    pub last_chainlock_height: Option<u32>,
+
+    /// Last confirmed chainlock block hash.
+    pub last_chainlock_hash: Option<BlockHash>,
+
+    /// Current filter tip header.
+    pub current_filter_tip: Option<FilterHeader>,
+
+    // === Masternode engine state (consolidated from state/masternode.json) ===
+    /// Serialized masternode engine state for restoration.
+    pub masternode_state: Option<MasternodeState>,
 }
 
 /// Chain tip information.
@@ -150,7 +166,44 @@ pub enum RecoverySuggestion {
 }
 
 impl SyncState {
-    /// Create a new sync state from current chain state.
+    /// Create a new empty persistent sync state for a network.
+    pub fn new(network: Network) -> Self {
+        Self {
+            version: SYNC_STATE_VERSION,
+            network,
+            chain_tip: ChainTip {
+                height: 0,
+                hash: BlockHash::all_zeros(),
+                prev_hash: BlockHash::all_zeros(),
+                time: 0,
+            },
+            sync_progress: SyncProgress::default(),
+            checkpoints: Vec::new(),
+            masternode_sync: MasternodeSyncState {
+                last_synced_height: None,
+                is_synced: false,
+                masternode_count: 0,
+                last_diff_height: None,
+            },
+            filter_sync: FilterSyncState {
+                filter_header_height: 0,
+                filter_height: 0,
+                filters_downloaded: 0,
+                matched_heights: Vec::new(),
+                filter_sync_available: false,
+            },
+            saved_at: SystemTime::now(),
+            chain_work: "0".to_string(),
+            sync_base_height: 0,
+            synced_from_checkpoint: false,
+            last_chainlock_height: None,
+            last_chainlock_hash: None,
+            current_filter_tip: None,
+            masternode_state: None,
+        }
+    }
+
+    /// Create a new persistent sync state from current chain state.
     pub fn from_chain_state(
         chain_state: &ChainState,
         sync_progress: &SyncProgress,
@@ -196,6 +249,10 @@ impl SyncState {
                 .unwrap_or_else(|| String::from("0")),
             sync_base_height: chain_state.sync_base_height,
             synced_from_checkpoint: chain_state.synced_from_checkpoint,
+            last_chainlock_height: chain_state.last_chainlock_height,
+            last_chainlock_hash: chain_state.last_chainlock_hash,
+            current_filter_tip: chain_state.current_filter_tip,
+            masternode_state: None,
         })
     }
 
@@ -379,6 +436,10 @@ mod tests {
             chain_work: String::new(),
             sync_base_height: 0,
             synced_from_checkpoint: false,
+            last_chainlock_height: None,
+            last_chainlock_hash: None,
+            current_filter_tip: None,
+            masternode_state: None,
         };
 
         // Valid state

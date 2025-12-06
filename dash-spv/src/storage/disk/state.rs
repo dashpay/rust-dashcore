@@ -8,130 +8,21 @@ use dashcore::{block::Header as BlockHeader, BlockHash, Txid};
 use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
-use crate::storage::{MasternodeState, StorageManager, StorageStats};
-use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
+use crate::storage::{StorageManager, StorageStats};
+use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::manager::DiskStorageManager;
 
 impl DiskStorageManager {
-    /// Store chain state to disk.
-    pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        // Update our sync_base_height
-        *self.sync_base_height.write().await = state.sync_base_height;
-
-        // First store all headers
-        // For checkpoint sync, we need to store headers starting from the checkpoint height
-        if state.synced_from_checkpoint && state.sync_base_height > 0 && !state.headers.is_empty() {
-            // Store headers starting from the checkpoint height
-            self.store_headers_from_height(&state.headers, state.sync_base_height).await?;
-        } else {
-            self.store_headers_impl(&state.headers, None).await?;
-        }
-
-        // Store filter headers
-        self.store_filter_headers(&state.filter_headers).await?;
-
-        // Store other state as JSON
-        let state_data = serde_json::json!({
-            "last_chainlock_height": state.last_chainlock_height,
-            "last_chainlock_hash": state.last_chainlock_hash,
-            "current_filter_tip": state.current_filter_tip,
-            "last_masternode_diff_height": state.last_masternode_diff_height,
-            "sync_base_height": state.sync_base_height,
-            "synced_from_checkpoint": state.synced_from_checkpoint,
-        });
-
-        let path = self.base_path.join("state/chain.json");
-        tokio::fs::write(path, state_data.to_string()).await?;
-
-        Ok(())
-    }
-
-    /// Load chain state from disk.
-    pub async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
-        let path = self.base_path.join("state/chain.json");
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let content = tokio::fs::read_to_string(path).await?;
-        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-            crate::error::StorageError::Serialization(format!("Failed to parse chain state: {}", e))
-        })?;
-
-        let mut state = ChainState::default();
-
-        // Load all headers
-        if let Some(tip_height) = self.get_tip_height().await? {
-            let range_start = if state.synced_from_checkpoint && state.sync_base_height > 0 {
-                state.sync_base_height
-            } else {
-                0
-            };
-            state.headers = self.load_headers(range_start..tip_height + 1).await?;
-        }
-
-        // Load all filter headers
-        if let Some(filter_tip_height) = self.get_filter_tip_height().await? {
-            state.filter_headers = self.load_filter_headers(0..filter_tip_height + 1).await?;
-        }
-
-        state.last_chainlock_height =
-            value.get("last_chainlock_height").and_then(|v| v.as_u64()).map(|h| h as u32);
-        state.last_chainlock_hash =
-            value.get("last_chainlock_hash").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
-        state.current_filter_tip =
-            value.get("current_filter_tip").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
-        state.last_masternode_diff_height =
-            value.get("last_masternode_diff_height").and_then(|v| v.as_u64()).map(|h| h as u32);
-
-        // Load checkpoint sync fields
-        state.sync_base_height =
-            value.get("sync_base_height").and_then(|v| v.as_u64()).map(|h| h as u32).unwrap_or(0);
-        state.synced_from_checkpoint =
-            value.get("synced_from_checkpoint").and_then(|v| v.as_bool()).unwrap_or(false);
-
-        Ok(Some(state))
-    }
-
-    /// Store masternode state.
-    pub async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
-        let path = self.base_path.join("state/masternode.json");
-        let json = serde_json::to_string_pretty(state).map_err(|e| {
-            crate::error::StorageError::Serialization(format!(
-                "Failed to serialize masternode state: {}",
-                e
-            ))
-        })?;
-
-        tokio::fs::write(path, json).await?;
-        Ok(())
-    }
-
-    /// Load masternode state.
-    pub async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
-        let path = self.base_path.join("state/masternode.json");
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let content = tokio::fs::read_to_string(path).await?;
-        let state = serde_json::from_str(&content).map_err(|e| {
-            crate::error::StorageError::Serialization(format!(
-                "Failed to deserialize masternode state: {}",
-                e
-            ))
-        })?;
-
-        Ok(Some(state))
-    }
-
-    /// Store sync state.
+    /// Store sync state to state.json (unified state file).
     pub async fn store_sync_state(
         &mut self,
         state: &crate::storage::SyncState,
     ) -> StorageResult<()> {
-        let path = self.base_path.join("sync_state.json");
+        // Update our sync_base_height from the state
+        *self.sync_base_height.write().await = state.sync_base_height;
+
+        let path = self.base_path.join("state.json");
 
         // Serialize to JSON for human readability and easy debugging
         let json = serde_json::to_string_pretty(state).map_err(|e| {
@@ -141,44 +32,36 @@ impl DiskStorageManager {
             ))
         })?;
 
-        // Write to a temporary file first for atomicity
-        let temp_path = path.with_extension("tmp");
-        tokio::fs::write(&temp_path, json.as_bytes()).await?;
+        tokio::fs::write(path, json.as_bytes()).await?;
 
-        // Atomically rename to final path
-        tokio::fs::rename(&temp_path, &path).await?;
-
-        tracing::debug!("Saved sync state at height {}", state.chain_tip.height);
+        tracing::debug!("Saved state at height {}", state.chain_tip.height);
         Ok(())
     }
 
-    /// Load sync state.
+    /// Load sync state from state.json (unified state file).
     pub async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::SyncState>> {
-        let path = self.base_path.join("sync_state.json");
+        let path = self.base_path.join("state.json");
 
         if !path.exists() {
-            tracing::debug!("No sync state file found");
+            tracing::debug!("No state file found");
             return Ok(None);
         }
 
         let json = tokio::fs::read_to_string(&path).await?;
         let state: crate::storage::SyncState = serde_json::from_str(&json).map_err(|e| {
-            crate::error::StorageError::ReadFailed(format!(
-                "Failed to deserialize sync state: {}",
-                e
-            ))
+            crate::error::StorageError::ReadFailed(format!("Failed to deserialize state: {}", e))
         })?;
 
-        tracing::debug!("Loaded sync state from height {}", state.chain_tip.height);
+        tracing::debug!("Loaded state from height {}", state.chain_tip.height);
         Ok(Some(state))
     }
 
-    /// Clear sync state.
+    /// Clear sync state (deletes state.json).
     pub async fn clear_sync_state(&mut self) -> StorageResult<()> {
-        let path = self.base_path.join("sync_state.json");
+        let path = self.base_path.join("state.json");
         if path.exists() {
             tokio::fs::remove_file(&path).await?;
-            tracing::debug!("Cleared sync state");
+            tracing::debug!("Cleared state");
         }
         Ok(())
     }
@@ -550,22 +433,6 @@ impl StorageManager for DiskStorageManager {
         Self::get_filter_tip_height(self).await
     }
 
-    async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
-        Self::store_masternode_state(self, state).await
-    }
-
-    async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
-        Self::load_masternode_state(self).await
-    }
-
-    async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        Self::store_chain_state(self, state).await
-    }
-
-    async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
-        Self::load_chain_state(self).await
-    }
-
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         Self::store_filter(self, height, filter).await
     }
@@ -798,7 +665,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_storage_indexing() -> StorageResult<()> {
-        use dashcore::TxMerkleNode;
+        use crate::storage::sync_state::{ChainTip, FilterSyncState, MasternodeSyncState};
+        use crate::storage::SyncState;
+        use crate::types::SyncProgress;
+        use dashcore::{Network, TxMerkleNode};
+        use std::time::SystemTime;
         use tempfile::tempdir;
 
         let temp_dir = tempdir().expect("Failed to create temp dir");
@@ -820,11 +691,41 @@ mod tests {
         // Store headers using checkpoint sync method
         storage.store_headers_from_height(&headers, checkpoint_height).await?;
 
-        // Set sync base height so storage interprets heights as blockchain heights
-        let mut base_state = ChainState::new();
-        base_state.sync_base_height = checkpoint_height;
-        base_state.synced_from_checkpoint = true;
-        storage.store_chain_state(&base_state).await?;
+        // Create a minimal sync state for the test
+        let sync_state = SyncState {
+            version: 3,
+            network: Network::Testnet,
+            chain_tip: ChainTip {
+                height: checkpoint_height + 99,
+                hash: headers[99].block_hash(),
+                prev_hash: headers[98].block_hash(),
+                time: headers[99].time,
+            },
+            sync_progress: SyncProgress::default(),
+            checkpoints: vec![],
+            masternode_sync: MasternodeSyncState {
+                last_synced_height: None,
+                is_synced: false,
+                masternode_count: 0,
+                last_diff_height: None,
+            },
+            filter_sync: FilterSyncState {
+                filter_header_height: 0,
+                filter_height: 0,
+                filters_downloaded: 0,
+                matched_heights: vec![],
+                filter_sync_available: false,
+            },
+            saved_at: SystemTime::now(),
+            chain_work: String::new(),
+            sync_base_height: checkpoint_height,
+            synced_from_checkpoint: true,
+            last_chainlock_height: None,
+            last_chainlock_hash: None,
+            current_filter_tip: None,
+            masternode_state: None,
+        };
+        storage.store_sync_state(&sync_state).await?;
 
         // Verify headers are stored at correct blockchain heights
         let header_at_base = storage.get_header(checkpoint_height).await?;
@@ -851,12 +752,6 @@ mod tests {
             Some(checkpoint_height + 99),
             "Hash should map to blockchain height 1,100,099"
         );
-
-        // Store chain state to persist sync_base_height
-        let mut chain_state = ChainState::new();
-        chain_state.sync_base_height = checkpoint_height;
-        chain_state.synced_from_checkpoint = true;
-        storage.store_chain_state(&chain_state).await?;
 
         // Force save to disk
         super::super::segments::save_dirty_segments(&storage).await?;
