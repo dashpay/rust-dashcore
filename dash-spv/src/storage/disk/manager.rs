@@ -121,8 +121,6 @@ impl DiskStorageManager {
 
     /// Start the background worker and notification channel.
     pub(super) async fn start_worker(&mut self) {
-        use super::io::save_index_to_disk;
-
         let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerCommand>(100);
         let (notification_tx, notification_rx) = mpsc::channel::<WorkerNotification>(100);
 
@@ -165,7 +163,7 @@ impl DiskStorageManager {
                         index,
                     } => {
                         let path = worker_base_path.join("headers/index.dat");
-                        if let Err(e) = save_index_to_disk(&path, &index).await {
+                        if let Err(e) = super::headers::save_index_to_disk(&path, &index).await {
                             eprintln!("Failed to save index: {}", e);
                         } else {
                             tracing::trace!("Background worker completed saving index");
@@ -261,7 +259,7 @@ impl DiskStorageManager {
         let index_path = self.base_path.join("headers/index.dat");
         let mut index_loaded = false;
         if index_path.exists() {
-            if let Ok(index) = super::io::load_index_from_file(&index_path).await {
+            if let Ok(index) = super::headers::load_index_from_file(&index_path).await {
                 *self.header_hash_index.write().await = index;
                 index_loaded = true;
             }

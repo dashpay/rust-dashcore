@@ -1,6 +1,9 @@
 //! Header storage operations for DiskStorageManager.
 
+use std::collections::HashMap;
+use std::fs;
 use std::ops::Range;
+use std::path::Path;
 use std::time::Instant;
 
 use dashcore::block::Header as BlockHeader;
@@ -8,6 +11,7 @@ use dashcore::BlockHash;
 
 use crate::error::StorageResult;
 use crate::storage::disk::segments::SegmentCache;
+use crate::StorageError;
 
 use super::manager::DiskStorageManager;
 use super::segments::{create_sentinel_header, SegmentState};
@@ -448,6 +452,41 @@ impl DiskStorageManager {
 
         Ok(results)
     }
+}
+
+/// Load index from file.
+pub(super) async fn load_index_from_file(path: &Path) -> StorageResult<HashMap<BlockHash, u32>> {
+    tokio::task::spawn_blocking({
+        let path = path.to_path_buf();
+        move || {
+            let content = fs::read(&path)?;
+            bincode::deserialize(&content).map_err(|e| {
+                StorageError::ReadFailed(format!("Failed to deserialize index: {}", e))
+            })
+        }
+    })
+    .await
+    .map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
+}
+
+/// Save index to disk.
+pub(super) async fn save_index_to_disk(
+    path: &Path,
+    index: &HashMap<BlockHash, u32>,
+) -> StorageResult<()> {
+    tokio::task::spawn_blocking({
+        let path = path.to_path_buf();
+        let index = index.clone();
+        move || {
+            let data = bincode::serialize(&index).map_err(|e| {
+                StorageError::WriteFailed(format!("Failed to serialize index: {}", e))
+            })?;
+            fs::write(&path, data)?;
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
 /// Ensure a segment is loaded in memory.
