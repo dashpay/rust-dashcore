@@ -60,31 +60,40 @@ impl DiskStorageManager {
             crate::error::StorageError::Serialization(format!("Failed to parse chain state: {}", e))
         })?;
 
-        let mut state = ChainState::default();
+        let mut state = ChainState {
+            last_chainlock_height: value
+                .get("last_chainlock_height")
+                .and_then(|v| v.as_u64())
+                .map(|h| h as u32),
+            last_chainlock_hash: value
+                .get("last_chainlock_hash")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok()),
+            current_filter_tip: value
+                .get("current_filter_tip")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok()),
+            masternode_engine: None,
+            last_masternode_diff_height: value
+                .get("last_masternode_diff_height")
+                .and_then(|v| v.as_u64())
+                .map(|h| h as u32),
+            sync_base_height: value
+                .get("sync_base_height")
+                .and_then(|v| v.as_u64())
+                .map(|h| h as u32)
+                .unwrap_or(0),
+            ..Default::default()
+        };
 
-        // Load all headers
+        let range_start = state.sync_base_height;
         if let Some(tip_height) = self.get_tip_height().await? {
-            let range_start = state.sync_base_height;
             state.headers = self.load_headers(range_start..tip_height + 1).await?;
         }
-
-        // Load all filter headers
         if let Some(filter_tip_height) = self.get_filter_tip_height().await? {
-            state.filter_headers = self.load_filter_headers(0..filter_tip_height + 1).await?;
+            state.filter_headers =
+                self.load_filter_headers(range_start..filter_tip_height + 1).await?;
         }
-
-        state.last_chainlock_height =
-            value.get("last_chainlock_height").and_then(|v| v.as_u64()).map(|h| h as u32);
-        state.last_chainlock_hash =
-            value.get("last_chainlock_hash").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
-        state.current_filter_tip =
-            value.get("current_filter_tip").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
-        state.last_masternode_diff_height =
-            value.get("last_masternode_diff_height").and_then(|v| v.as_u64()).map(|h| h as u32);
-
-        // Load checkpoint sync fields
-        state.sync_base_height =
-            value.get("sync_base_height").and_then(|v| v.as_u64()).map(|h| h as u32).unwrap_or(0);
 
         Ok(Some(state))
     }
