@@ -18,7 +18,7 @@ use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::headers::validate_headers;
-use crate::types::{DetailedSyncProgress, SyncProgress};
+use crate::types::{CachedHeader, DetailedSyncProgress, SyncProgress};
 use crate::ValidationMode;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use std::time::{Duration, Instant, SystemTime};
@@ -950,7 +950,9 @@ impl<
                 // Validate the batch of headers
                 // Use basic validation only, the headers anyway are already validated since they
                 // come from storage.
-                if let Err(e) = validate_headers(&headers, ValidationMode::Basic) {
+                let cached_headers =
+                    headers.iter().map(|h| CachedHeader::new(*h)).collect::<Vec<CachedHeader>>();
+                if let Err(e) = validate_headers(&cached_headers, ValidationMode::Basic) {
                     tracing::error!(
                         "Header validation failed for range {}..{}: {:?}",
                         current_height,
