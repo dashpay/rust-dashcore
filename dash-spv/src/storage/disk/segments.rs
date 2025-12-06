@@ -3,14 +3,14 @@
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    io::{BufWriter, Write},
+    io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     time::Instant,
 };
 
 use dashcore::{
     block::{Header as BlockHeader, Version},
-    consensus::Encodable,
+    consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
     pow::CompactTarget,
     BlockHash,
@@ -42,24 +42,24 @@ pub(super) fn create_sentinel_header() -> BlockHeader {
     }
 }
 
-pub(super) trait SegmentableHeader: Sized {
-    fn write_to_disk(&self, writer: &mut BufWriter<File>) -> StorageResult<usize>;
+pub(super) trait Persistable: Sized + Encodable + Decodable {
+    fn persist(&self, writer: &mut BufWriter<File>) -> StorageResult<usize>;
+    fn relative_disk_path(segment_id: u32) -> PathBuf;
 }
 
 /// In-memory cache for a segment of headers
 #[derive(Debug, Clone)]
-pub(super) struct SegmentCache<H: SegmentableHeader> {
+pub(super) struct SegmentCache<H: Persistable> {
     pub(super) segment_id: u32,
     pub(super) headers: Vec<H>,
     pub(super) valid_count: usize, // Number of actual valid headers (excluding padding)
     pub(super) state: SegmentState,
     pub(super) last_saved: Instant,
     pub(super) last_accessed: Instant,
-    disk_path_base: String,
 }
 
-impl SegmentableHeader for BlockHeader {
-    fn write_to_disk(&self, writer: &mut BufWriter<File>) -> StorageResult<usize> {
+impl Persistable for BlockHeader {
+    fn persist(&self, writer: &mut BufWriter<File>) -> StorageResult<usize> {
         // Skip sentinel headers (used for padding)
         if self.version.to_consensus() == i32::MAX
             && self.time == u32::MAX
@@ -72,38 +72,71 @@ impl SegmentableHeader for BlockHeader {
         self.consensus_encode(writer)
             .map_err(|e| StorageError::WriteFailed(format!("Failed to encode header: {}", e)))
     }
+
+    fn relative_disk_path(segment_id: u32) -> PathBuf {
+        format!("headers/segment_{:04}.dat", segment_id).into()
+    }
 }
 
-impl SegmentableHeader for FilterHeader {
-    fn write_to_disk(&self, writer: &mut BufWriter<File>) -> StorageResult<usize> {
+impl Persistable for FilterHeader {
+    fn persist(&self, writer: &mut BufWriter<File>) -> StorageResult<usize> {
         self.consensus_encode(writer).map_err(|e| {
             StorageError::WriteFailed(format!("Failed to encode filter header: {}", e))
         })
     }
+
+    fn relative_disk_path(segment_id: u32) -> PathBuf {
+        format!("filters/filter_segment_{:04}.dat", segment_id).into()
+    }
 }
 
 impl SegmentCache<FilterHeader> {
-    pub fn new_filter_header_cache(
+    pub async fn load_filter_header_cache(
+        base_path: &Path,
         segment_id: u32,
-        headers: Vec<FilterHeader>,
-        valid_count: usize,
-    ) -> Self {
-        Self::new(segment_id, headers, valid_count, String::from("filters/filter_segment"))
+    ) -> StorageResult<Self> {
+        // Load segment from disk
+        let segment_path = base_path.join(FilterHeader::relative_disk_path(segment_id));
+
+        let headers = if segment_path.exists() {
+            load_header_segments(&segment_path)?
+        } else {
+            Vec::new()
+        };
+
+        Ok(Self::new(segment_id, headers, 0))
     }
 }
 
 impl SegmentCache<BlockHeader> {
-    pub fn new_block_header_cache(
-        segment_id: u32,
-        headers: Vec<BlockHeader>,
-        valid_count: usize,
-    ) -> Self {
-        Self::new(segment_id, headers, valid_count, String::from("headers/segment"))
+    pub async fn load_block_header_cache(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
+        // Load segment from disk
+        let segment_path = base_path.join(BlockHeader::relative_disk_path(segment_id));
+
+        let mut headers = if segment_path.exists() {
+            load_header_segments(&segment_path)?
+        } else {
+            Vec::new()
+        };
+
+        // Store the actual number of valid headers before padding
+        let valid_count = headers.len();
+
+        // Ensure the segment has space for all possible headers in this segment
+        // This is crucial for proper indexing
+        let expected_size = super::HEADERS_PER_SEGMENT as usize;
+        if headers.len() < expected_size {
+            // Pad with sentinel headers that cannot be mistaken for valid blocks
+            let sentinel_header = create_sentinel_header();
+            headers.resize(expected_size, sentinel_header);
+        }
+
+        Ok(Self::new(segment_id, headers, valid_count))
     }
 }
 
-impl<H: SegmentableHeader> SegmentCache<H> {
-    fn new(segment_id: u32, headers: Vec<H>, valid_count: usize, disk_path_base: String) -> Self {
+impl<H: Persistable> SegmentCache<H> {
+    fn new(segment_id: u32, headers: Vec<H>, valid_count: usize) -> Self {
         Self {
             segment_id,
             headers,
@@ -111,25 +144,13 @@ impl<H: SegmentableHeader> SegmentCache<H> {
             state: SegmentState::Clean,
             last_saved: Instant::now(),
             last_accessed: Instant::now(),
-            disk_path_base,
         }
-    }
-
-    fn relative_disk_path(&self) -> PathBuf {
-        format!("{}_{:04}.dat", self.disk_path_base, self.segment_id).into()
     }
 
     pub fn save(&self, base_path: &Path) -> StorageResult<()> {
-        let path = base_path.join(self.relative_disk_path());
-        let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
-        let mut writer = BufWriter::new(file);
+        let path = base_path.join(H::relative_disk_path(self.segment_id));
 
-        for header in self.headers.iter() {
-            header.write_to_disk(&mut writer)?;
-        }
-
-        writer.flush()?;
-        Ok(())
+        save_header_segments(&self.headers, &path)
     }
 
     pub fn evict(&self, base_path: &Path) -> StorageResult<()> {
@@ -172,7 +193,7 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
 
     return Ok(());
 
-    async fn process_segments<H: SegmentableHeader + Clone>(
+    async fn process_segments<H: Persistable + Clone>(
         segments_caches_map: &tokio::sync::RwLock<HashMap<u32, SegmentCache<H>>>,
         tx: &tokio::sync::mpsc::Sender<WorkerCommand>,
         make_command: impl Fn(SegmentCache<H>) -> WorkerCommand,
@@ -229,4 +250,33 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
             );
         }
     }
+}
+
+pub fn load_header_segments<H: Decodable>(path: &Path) -> StorageResult<Vec<H>> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut headers = Vec::new();
+
+    loop {
+        match H::consensus_decode(&mut reader) {
+            Ok(header) => headers.push(header),
+            Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => {
+                return Err(StorageError::ReadFailed(format!("Failed to decode header: {}", e)))
+            }
+        }
+    }
+
+    Ok(headers)
+}
+
+fn save_header_segments<H: Persistable>(headers: &[H], path: &PathBuf) -> StorageResult<()> {
+    let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
+    let mut writer = BufWriter::new(file);
+
+    for header in headers {
+        header.persist(&mut writer)?;
+    }
+
+    writer.flush().map_err(|e| e.into())
 }

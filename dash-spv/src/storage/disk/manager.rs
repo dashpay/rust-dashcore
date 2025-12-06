@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::disk::segments::{self, SegmentCache};
+use crate::storage::disk::segments::{self, load_header_segments, SegmentCache};
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::HEADERS_PER_SEGMENT;
@@ -306,7 +306,7 @@ impl DiskStorageManager {
                 for segment_id in all_segment_ids {
                     let segment_path =
                         self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
-                    if let Ok(headers) = super::io::load_headers_from_file(&segment_path).await {
+                    if let Ok(headers) = load_header_segments::<BlockHeader>(&segment_path) {
                         // Calculate the storage index range for this segment
                         let storage_start = segment_id * HEADERS_PER_SEGMENT;
                         for (offset, header) in headers.iter().enumerate() {
