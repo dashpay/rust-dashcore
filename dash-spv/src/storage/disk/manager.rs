@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::disk::segments::{self, load_header_segments, Segment};
+use crate::storage::disk::segments::{load_header_segments, Segment, SegmentCache};
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::HEADERS_PER_SEGMENT;
@@ -38,8 +38,8 @@ pub struct DiskStorageManager {
     pub(super) base_path: PathBuf,
 
     // Segmented header storage
-    pub(super) active_segments: Arc<RwLock<HashMap<u32, segments::Segment<BlockHeader>>>>,
-    pub(super) active_filter_segments: Arc<RwLock<HashMap<u32, segments::Segment<FilterHeader>>>>,
+    pub(super) active_segments: Arc<RwLock<SegmentCache<BlockHeader>>>,
+    pub(super) active_filter_segments: Arc<RwLock<SegmentCache<FilterHeader>>>,
 
     // Reverse index for O(1) lookups
     pub(super) header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
@@ -48,13 +48,6 @@ pub struct DiskStorageManager {
     pub(super) worker_tx: Option<mpsc::Sender<WorkerCommand>>,
     pub(super) worker_handle: Option<tokio::task::JoinHandle<()>>,
     pub(super) notification_rx: Arc<RwLock<mpsc::Receiver<WorkerNotification>>>,
-
-    // Cached values
-    pub(super) cached_tip_height: Arc<RwLock<Option<u32>>>,
-    pub(super) cached_filter_tip_height: Arc<RwLock<Option<u32>>>,
-
-    // Checkpoint sync support
-    pub(super) sync_base_height: Arc<RwLock<u32>>,
 
     // Index save tracking to avoid redundant saves
     pub(super) last_index_save_count: Arc<RwLock<usize>>,
@@ -89,15 +82,12 @@ impl DiskStorageManager {
 
         let mut storage = Self {
             base_path,
-            active_segments: Arc::new(RwLock::new(HashMap::new())),
-            active_filter_segments: Arc::new(RwLock::new(HashMap::new())),
+            active_segments: Arc::new(RwLock::new(SegmentCache::new())),
+            active_filter_segments: Arc::new(RwLock::new(SegmentCache::new())),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,
             notification_rx: Arc::new(RwLock::new(mpsc::channel(1).1)), // Temporary placeholder
-            cached_tip_height: Arc::new(RwLock::new(None)),
-            cached_filter_tip_height: Arc::new(RwLock::new(None)),
-            sync_base_height: Arc::new(RwLock::new(0)),
             last_index_save_count: Arc::new(RwLock::new(0)),
             mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
             mempool_state: Arc::new(RwLock::new(None)),

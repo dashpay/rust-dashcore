@@ -380,21 +380,6 @@ impl DiskStorageManager {
         Ok(header)
     }
 
-    /// Get the blockchain height of the tip.
-    pub async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
-        let tip_index_opt = *self.cached_tip_height.read().await;
-        if let Some(tip_index) = tip_index_opt {
-            let base = *self.sync_base_height.read().await;
-            if base > 0 {
-                Ok(Some(base + tip_index))
-            } else {
-                Ok(Some(tip_index))
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Get header height by hash.
     pub async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
         Ok(self.header_hash_index.read().await.get(hash).copied())
