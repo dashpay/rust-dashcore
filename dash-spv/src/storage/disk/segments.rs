@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Write},
+    ops::Range,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -30,24 +31,16 @@ pub(super) enum SegmentState {
 }
 
 pub(super) trait Persistable: Sized + Encodable + Decodable + Clone {
+    const FOLDER_NAME: &'static str;
     fn relative_disk_path(segment_id: u32) -> PathBuf;
     fn new_sentinel() -> Self;
 }
 
-/// In-memory cache for a segment of headers
-#[derive(Debug, Clone)]
-pub(super) struct Segment<H: Persistable> {
-    pub(super) segment_id: u32,
-    pub(super) headers: Vec<H>,
-    pub(super) valid_count: usize, // Number of actual valid headers (excluding padding)
-    pub(super) state: SegmentState,
-    pub(super) last_saved: Instant,
-    pub(super) last_accessed: Instant,
-}
-
 impl Persistable for BlockHeader {
+    const FOLDER_NAME: &'static str = "headers";
+
     fn relative_disk_path(segment_id: u32) -> PathBuf {
-        format!("headers/segment_{:04}.dat", segment_id).into()
+        format!("{}/segment_{:04}.dat", Self::FOLDER_NAME, segment_id).into()
     }
 
     fn new_sentinel() -> Self {
@@ -63,13 +56,63 @@ impl Persistable for BlockHeader {
 }
 
 impl Persistable for FilterHeader {
+    const FOLDER_NAME: &'static str = "filters";
+
     fn relative_disk_path(segment_id: u32) -> PathBuf {
-        format!("filters/filter_segment_{:04}.dat", segment_id).into()
+        format!("{}/filter_segment_{:04}.dat", Self::FOLDER_NAME, segment_id).into()
     }
 
     fn new_sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
     }
+}
+
+/// In-memory cache for all segments of headers
+#[derive(Debug)]
+pub struct SegmentCache<H: Persistable> {
+    segments: HashMap<u32, Segment<H>>,
+    tip_height: Option<u32>,
+    sync_base_height: u32,
+}
+
+impl<H: Persistable> SegmentCache<H> {
+    pub fn new() -> Self {
+        Self {
+            segments: HashMap::new(),
+            tip_height: None,
+            sync_base_height: 0,
+        }
+    }
+
+    pub async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
+        todo!()
+    }
+
+    pub async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
+        todo!()
+    }
+
+    pub fn tip_height(&self) -> Option<u32> {
+        let tip_index = self.tip_height?;
+        let base = self.sync_base_height;
+
+        if base > 0 {
+            Some(base + tip_index)
+        } else {
+            Some(tip_index)
+        }
+    }
+}
+
+/// In-memory cache for a segment of headers
+#[derive(Debug, Clone)]
+pub(super) struct Segment<H: Persistable> {
+    pub(super) segment_id: u32,
+    pub(super) headers: Vec<H>,
+    pub(super) valid_count: usize, // Number of actual valid headers (excluding padding)
+    pub(super) state: SegmentState,
+    pub(super) last_saved: Instant,
+    pub(super) last_accessed: Instant,
 }
 
 impl<H: Persistable> Segment<H> {

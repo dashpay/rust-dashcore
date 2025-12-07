@@ -518,7 +518,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
-        Self::get_tip_height(self).await
+        Ok(self.active_segments.read().await.tip_height())
     }
 
     async fn store_filter_headers(
@@ -543,7 +543,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
-        Self::get_filter_tip_height(self).await
+        Ok(self.active_filter_segments.read().await.tip_height())
     }
 
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {

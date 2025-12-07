@@ -163,11 +163,6 @@ impl DiskStorageManager {
         Ok(segments.get(&segment_id).and_then(|segment| segment.headers.get(offset)).copied())
     }
 
-    /// Get the blockchain height of the filter tip.
-    pub async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
-        Ok(*self.cached_filter_tip_height.read().await)
-    }
-
     /// Store a compact filter.
     pub async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("filters/{}.dat", height));
