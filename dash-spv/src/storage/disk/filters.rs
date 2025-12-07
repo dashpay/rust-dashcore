@@ -237,8 +237,7 @@ pub(super) async fn ensure_filter_segment_loaded(
         }
     }
 
-    let filter_header_cache =
-        SegmentCache::load_filter_header_cache(&manager.base_path, segment_id).await?;
+    let filter_header_cache = SegmentCache::load(&manager.base_path, segment_id).await?;
 
     segments.insert(segment_id, filter_header_cache);
 
