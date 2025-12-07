@@ -42,9 +42,14 @@ pub(super) fn create_sentinel_header() -> BlockHeader {
     }
 }
 
-pub(super) trait Persistable: Sized + Encodable + Decodable {
+pub(super) fn create_sentinel_filter_header() -> FilterHeader {
+    FilterHeader::from_byte_array([0u8; 32])
+}
+
+pub(super) trait Persistable: Sized + Encodable + Decodable + Clone {
     fn persist(&self, writer: &mut BufWriter<File>) -> StorageResult<usize>;
     fn relative_disk_path(segment_id: u32) -> PathBuf;
+    fn new_sentinel() -> Self;
 }
 
 /// In-memory cache for a segment of headers
@@ -76,6 +81,10 @@ impl Persistable for BlockHeader {
     fn relative_disk_path(segment_id: u32) -> PathBuf {
         format!("headers/segment_{:04}.dat", segment_id).into()
     }
+
+    fn new_sentinel() -> Self {
+        create_sentinel_header()
+    }
 }
 
 impl Persistable for FilterHeader {
@@ -87,6 +96,10 @@ impl Persistable for FilterHeader {
 
     fn relative_disk_path(segment_id: u32) -> PathBuf {
         format!("filters/filter_segment_{:04}.dat", segment_id).into()
+    }
+
+    fn new_sentinel() -> Self {
+        create_sentinel_filter_header()
     }
 }
 
@@ -151,6 +164,26 @@ impl<H: Persistable> SegmentCache<H> {
         let path = base_path.join(H::relative_disk_path(self.segment_id));
 
         save_header_segments(&self.headers, &path)
+    }
+
+    pub fn store(&mut self, item: H, offset: usize) {
+        // Ensure we have space in the segment
+        if offset >= self.headers.len() {
+            // Fill with sentinel headers up to the offset
+            let sentinel_header = H::new_sentinel();
+            self.headers.resize(offset + 1, sentinel_header);
+        }
+
+        // Only increment valid_count when offset equals the current valid_count
+        // This ensures valid_count represents contiguous valid headers without gaps
+        if offset == self.valid_count {
+            self.valid_count += 1;
+        }
+
+        self.headers[offset] = item;
+        // Transition to Dirty state (from Clean, Dirty, or Saving)
+        self.state = SegmentState::Dirty;
+        self.last_accessed = std::time::Instant::now();
     }
 
     pub fn evict(&self, base_path: &Path) -> StorageResult<()> {

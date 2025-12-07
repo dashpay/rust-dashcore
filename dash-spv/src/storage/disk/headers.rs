@@ -14,7 +14,6 @@ use crate::storage::disk::segments::SegmentCache;
 use crate::StorageError;
 
 use super::manager::DiskStorageManager;
-use super::segments::{create_sentinel_header, SegmentState};
 
 impl DiskStorageManager {
     /// Internal implementation that optionally accepts pre-computed hashes
@@ -84,21 +83,7 @@ impl DiskStorageManager {
             {
                 let mut segments = self.active_segments.write().await;
                 if let Some(segment) = segments.get_mut(&segment_id) {
-                    // Ensure we have space in the segment
-                    if offset >= segment.headers.len() {
-                        // Fill with sentinel headers up to the offset
-                        let sentinel_header = create_sentinel_header();
-                        segment.headers.resize(offset + 1, sentinel_header);
-                    }
-                    segment.headers[offset] = *header;
-                    // Only increment valid_count when offset equals the current valid_count
-                    // This ensures valid_count represents contiguous valid headers without gaps
-                    if offset == segment.valid_count {
-                        segment.valid_count += 1;
-                    }
-                    // Transition to Dirty state (from Clean, Dirty, or Saving)
-                    segment.state = SegmentState::Dirty;
-                    segment.last_accessed = std::time::Instant::now();
+                    segment.store(*header, offset);
                 }
             }
 
@@ -215,21 +200,7 @@ impl DiskStorageManager {
             {
                 let mut segments = self.active_segments.write().await;
                 if let Some(segment) = segments.get_mut(&segment_id) {
-                    // Ensure we have space in the segment
-                    if offset >= segment.headers.len() {
-                        // Fill with sentinel headers up to the offset
-                        let sentinel_header = create_sentinel_header();
-                        segment.headers.resize(offset + 1, sentinel_header);
-                    }
-                    segment.headers[offset] = *header;
-                    // Only increment valid_count when offset equals the current valid_count
-                    // This ensures valid_count represents contiguous valid headers without gaps
-                    if offset == segment.valid_count {
-                        segment.valid_count += 1;
-                    }
-                    // Transition to Dirty state (from Clean, Dirty, or Saving)
-                    segment.state = SegmentState::Dirty;
-                    segment.last_accessed = std::time::Instant::now();
+                    segment.store(*header, offset);
                 }
             }
 
