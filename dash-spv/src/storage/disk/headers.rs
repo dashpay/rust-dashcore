@@ -10,7 +10,7 @@ use dashcore::block::Header as BlockHeader;
 use dashcore::BlockHash;
 
 use crate::error::StorageResult;
-use crate::storage::disk::segments::SegmentCache;
+use crate::storage::disk::segments::Segment;
 use crate::StorageError;
 
 use super::manager::DiskStorageManager;
@@ -83,7 +83,7 @@ impl DiskStorageManager {
             {
                 let mut segments = self.active_segments.write().await;
                 if let Some(segment) = segments.get_mut(&segment_id) {
-                    segment.store(*header, offset);
+                    segment.insert(*header, offset);
                 }
             }
 
@@ -200,7 +200,7 @@ impl DiskStorageManager {
             {
                 let mut segments = self.active_segments.write().await;
                 if let Some(segment) = segments.get_mut(&segment_id) {
-                    segment.store(*header, offset);
+                    segment.insert(*header, offset);
                 }
             }
 
@@ -488,7 +488,7 @@ pub(super) async fn ensure_segment_loaded(
         }
     }
 
-    let block_header_cache = SegmentCache::load(&manager.base_path, segment_id).await?;
+    let block_header_cache = Segment::load(&manager.base_path, segment_id).await?;
 
     segments.insert(segment_id, block_header_cache);
 

@@ -36,7 +36,7 @@ pub(super) trait Persistable: Sized + Encodable + Decodable + Clone {
 
 /// In-memory cache for a segment of headers
 #[derive(Debug, Clone)]
-pub(super) struct SegmentCache<H: Persistable> {
+pub(super) struct Segment<H: Persistable> {
     pub(super) segment_id: u32,
     pub(super) headers: Vec<H>,
     pub(super) valid_count: usize, // Number of actual valid headers (excluding padding)
@@ -72,7 +72,7 @@ impl Persistable for FilterHeader {
     }
 }
 
-impl<H: Persistable> SegmentCache<H> {
+impl<H: Persistable> Segment<H> {
     fn new(segment_id: u32, headers: Vec<H>, valid_count: usize) -> Self {
         Self {
             segment_id,
@@ -108,7 +108,7 @@ impl<H: Persistable> SegmentCache<H> {
         Ok(Self::new(segment_id, headers, valid_count))
     }
 
-    pub fn save(&self, base_path: &Path) -> StorageResult<()> {
+    pub fn persist(&self, base_path: &Path) -> StorageResult<()> {
         let path = base_path.join(H::relative_disk_path(self.segment_id));
 
         let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
@@ -123,7 +123,7 @@ impl<H: Persistable> SegmentCache<H> {
         writer.flush().map_err(|e| e.into())
     }
 
-    pub fn store(&mut self, item: H, offset: usize) {
+    pub fn insert(&mut self, item: H, offset: usize) {
         // Only increment valid_count when offset equals the current valid_count
         // This ensures valid_count represents contiguous valid headers without gaps
         if offset == self.valid_count {
@@ -148,7 +148,7 @@ impl<H: Persistable> SegmentCache<H> {
             self.state
         );
 
-        self.save(base_path)?;
+        self.persist(base_path)?;
 
         tracing::debug!("Successfully saved segment cache {} to disk", self.segment_id);
 
@@ -177,9 +177,9 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
     return Ok(());
 
     async fn process_segments<H: Persistable + Clone>(
-        segments_caches_map: &tokio::sync::RwLock<HashMap<u32, SegmentCache<H>>>,
+        segments_caches_map: &tokio::sync::RwLock<HashMap<u32, Segment<H>>>,
         tx: &tokio::sync::mpsc::Sender<WorkerCommand>,
-        make_command: impl Fn(SegmentCache<H>) -> WorkerCommand,
+        make_command: impl Fn(Segment<H>) -> WorkerCommand,
     ) {
         // Collect segments to save (only dirty ones)
         let (to_save, ids_to_mark) = {
