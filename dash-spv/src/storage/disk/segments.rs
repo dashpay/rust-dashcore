@@ -6,6 +6,7 @@ use std::{
     io::{BufReader, BufWriter, Write},
     ops::Range,
     path::{Path, PathBuf},
+    slice::SliceIndex,
     time::Instant,
 };
 
@@ -72,7 +73,7 @@ impl Persistable for FilterHeader {
 pub struct SegmentCache<H: Persistable> {
     segments: HashMap<u32, Segment<H>>,
     tip_height: Option<u32>,
-    sync_base_height: u32,
+    sync_base_height: u32, // TODO: This looks common for both, if needed extract to the Manager
 }
 
 impl<H: Persistable> SegmentCache<H> {
@@ -84,12 +85,72 @@ impl<H: Persistable> SegmentCache<H> {
         }
     }
 
-    pub async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        todo!()
+    /// Get the segment ID for a given height.
+    pub(super) fn height_to_segment_id(height: u32) -> u32 {
+        height / super::HEADERS_PER_SEGMENT
     }
 
-    pub async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        todo!()
+    /// Get the segment offset for a given height.
+    pub(super) fn height_to_offset(height: u32) -> usize {
+        (height % super::HEADERS_PER_SEGMENT) as usize
+    }
+
+    pub async fn get_headers(&self, range: Range<u32>) -> StorageResult<Vec<H>> {
+        let mut headers = Vec::new();
+
+        // Convert blockchain height range to storage index range using sync_base_height
+        let sync_base_height = self.sync_base_height;
+
+        let storage_start = if sync_base_height > 0 && range.start >= sync_base_height {
+            range.start - sync_base_height
+        } else {
+            range.start
+        };
+
+        let storage_end = if sync_base_height > 0 && range.end > sync_base_height {
+            range.end - sync_base_height
+        } else {
+            range.end
+        };
+
+        let start_segment = Self::height_to_segment_id(storage_start);
+        let end_segment = Self::height_to_segment_id(storage_end.saturating_sub(1));
+
+        for segment_id in start_segment..=end_segment {
+            let segment = if let Some(segment) = self.segments.get(&segment_id) {
+                segment
+            } else {
+                // TODO: Replace with Segment::load
+                let segment = ensure_segment_loaded(self, segment_id).await?;
+                let entry = self.segments.entry(segment_id);
+                let occupied_entry = entry.insert_entry(segment);
+                occupied_entry.get()
+            };
+
+            let start_idx = if segment_id == start_segment {
+                Self::height_to_offset(storage_start)
+            } else {
+                0
+            };
+
+            let end_idx = if segment_id == end_segment {
+                Self::height_to_offset(storage_end.saturating_sub(1)) + 1
+            } else {
+                segment.headers.len()
+            };
+
+            // Only include headers up to valid_count to avoid returning sentinel headers
+            let actual_end_idx = end_idx.min(segment.valid_count);
+
+            if start_idx < segment.headers.len()
+                && actual_end_idx <= segment.headers.len()
+                && start_idx < actual_end_idx
+            {
+                headers.extend_from_slice(&segment.headers[start_idx..actual_end_idx]);
+            }
+        }
+
+        Ok(headers)
     }
 
     pub fn tip_height(&self) -> Option<u32> {
