@@ -30,7 +30,6 @@ pub(super) enum SegmentState {
 }
 
 pub(super) trait Persistable: Sized + Encodable + Decodable + Clone {
-    fn persist(&self, writer: &mut BufWriter<File>) -> StorageResult<usize>;
     fn relative_disk_path(segment_id: u32) -> PathBuf;
     fn new_sentinel() -> Self;
 }
@@ -47,20 +46,6 @@ pub(super) struct SegmentCache<H: Persistable> {
 }
 
 impl Persistable for BlockHeader {
-    fn persist(&self, writer: &mut BufWriter<File>) -> StorageResult<usize> {
-        // Skip sentinel headers (used for padding)
-        if self.version.to_consensus() == i32::MAX
-            && self.time == u32::MAX
-            && self.nonce == u32::MAX
-            && self.prev_blockhash == BlockHash::from_byte_array([0xFF; 32])
-        {
-            return Ok(0);
-        }
-
-        self.consensus_encode(writer)
-            .map_err(|e| StorageError::WriteFailed(format!("Failed to encode header: {}", e)))
-    }
-
     fn relative_disk_path(segment_id: u32) -> PathBuf {
         format!("headers/segment_{:04}.dat", segment_id).into()
     }
@@ -78,63 +63,12 @@ impl Persistable for BlockHeader {
 }
 
 impl Persistable for FilterHeader {
-    fn persist(&self, writer: &mut BufWriter<File>) -> StorageResult<usize> {
-        self.consensus_encode(writer).map_err(|e| {
-            StorageError::WriteFailed(format!("Failed to encode filter header: {}", e))
-        })
-    }
-
     fn relative_disk_path(segment_id: u32) -> PathBuf {
         format!("filters/filter_segment_{:04}.dat", segment_id).into()
     }
 
     fn new_sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
-    }
-}
-
-impl SegmentCache<FilterHeader> {
-    pub async fn load_filter_header_cache(
-        base_path: &Path,
-        segment_id: u32,
-    ) -> StorageResult<Self> {
-        // Load segment from disk
-        let segment_path = base_path.join(FilterHeader::relative_disk_path(segment_id));
-
-        let headers = if segment_path.exists() {
-            load_header_segments(&segment_path)?
-        } else {
-            Vec::new()
-        };
-
-        Ok(Self::new(segment_id, headers, 0))
-    }
-}
-
-impl SegmentCache<BlockHeader> {
-    pub async fn load_block_header_cache(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
-        // Load segment from disk
-        let segment_path = base_path.join(BlockHeader::relative_disk_path(segment_id));
-
-        let mut headers = if segment_path.exists() {
-            load_header_segments(&segment_path)?
-        } else {
-            Vec::new()
-        };
-
-        // Store the actual number of valid headers before padding
-        let valid_count = headers.len();
-
-        // Ensure the segment has space for all possible headers in this segment
-        // This is crucial for proper indexing
-        let expected_size = super::HEADERS_PER_SEGMENT as usize;
-        if headers.len() < expected_size {
-            // Pad with sentinel headers that cannot be mistaken for valid blocks
-            let sentinel_header = BlockHeader::new_sentinel();
-            headers.resize(expected_size, sentinel_header);
-        }
-
-        Ok(Self::new(segment_id, headers, valid_count))
     }
 }
 
@@ -150,20 +84,46 @@ impl<H: Persistable> SegmentCache<H> {
         }
     }
 
+    pub async fn load(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
+        // Load segment from disk
+        let segment_path = base_path.join(H::relative_disk_path(segment_id));
+
+        let mut headers = if segment_path.exists() {
+            load_header_segments(&segment_path)?
+        } else {
+            Vec::with_capacity(super::HEADERS_PER_SEGMENT as usize)
+        };
+
+        // Store the actual number of valid headers before padding
+        let valid_count = headers.len();
+
+        // Ensure the segment has space for all possible headers in this segment
+        // This is crucial for proper indexing
+        if headers.len() < super::HEADERS_PER_SEGMENT as usize {
+            // Pad with sentinel headers that cannot be mistaken for valid blocks
+            let sentinel_header = H::new_sentinel();
+            headers.resize(super::HEADERS_PER_SEGMENT as usize, sentinel_header);
+        }
+
+        Ok(Self::new(segment_id, headers, valid_count))
+    }
+
     pub fn save(&self, base_path: &Path) -> StorageResult<()> {
         let path = base_path.join(H::relative_disk_path(self.segment_id));
 
-        save_header_segments(&self.headers, &path)
+        let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
+        let mut writer = BufWriter::new(file);
+
+        for header in self.headers.iter() {
+            header.consensus_encode(&mut writer).map_err(|e| {
+                StorageError::WriteFailed(format!("Failed to encode segment item: {}", e))
+            })?;
+        }
+
+        writer.flush().map_err(|e| e.into())
     }
 
     pub fn store(&mut self, item: H, offset: usize) {
-        // Ensure we have space in the segment
-        if offset >= self.headers.len() {
-            // Fill with sentinel headers up to the offset
-            let sentinel_header = H::new_sentinel();
-            self.headers.resize(offset + 1, sentinel_header);
-        }
-
         // Only increment valid_count when offset equals the current valid_count
         // This ensures valid_count represents contiguous valid headers without gaps
         if offset == self.valid_count {
@@ -278,7 +238,7 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
 pub fn load_header_segments<H: Decodable>(path: &Path) -> StorageResult<Vec<H>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let mut headers = Vec::new();
+    let mut headers = Vec::with_capacity(super::HEADERS_PER_SEGMENT as usize);
 
     loop {
         match H::consensus_decode(&mut reader) {
@@ -291,15 +251,4 @@ pub fn load_header_segments<H: Decodable>(path: &Path) -> StorageResult<Vec<H>> 
     }
 
     Ok(headers)
-}
-
-fn save_header_segments<H: Persistable>(headers: &[H], path: &PathBuf) -> StorageResult<()> {
-    let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
-    let mut writer = BufWriter::new(file);
-
-    for header in headers {
-        header.persist(&mut writer)?;
-    }
-
-    writer.flush().map_err(|e| e.into())
 }

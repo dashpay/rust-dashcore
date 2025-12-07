@@ -758,44 +758,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sentinel_headers_not_saved_to_disk() -> Result<(), Box<dyn std::error::Error>> {
-        // Create a temporary directory for the test
-        let temp_dir = TempDir::new()?;
-        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
-
-        // Create test headers
-        let headers: Vec<BlockHeader> = (0..3)
-            .map(|i| BlockHeader {
-                version: Version::from_consensus(1),
-                prev_blockhash: BlockHash::from_byte_array([i as u8; 32]),
-                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([(i + 1) as u8; 32])
-                    .into(),
-                time: 12345 + i,
-                bits: CompactTarget::from_consensus(0x1d00ffff),
-                nonce: 67890 + i,
-            })
-            .collect();
-
-        // Store headers
-        storage.store_headers(&headers).await?;
-
-        // Force save to disk
-        super::super::segments::save_dirty_segments_cache(&storage).await?;
-
-        // Wait a bit for background save
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Create a new storage instance to load from disk
-        let storage2 = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
-
-        // Load headers - should only get the 3 we stored
-        let loaded_headers = storage2.load_headers(0..super::super::HEADERS_PER_SEGMENT).await?;
-        assert_eq!(loaded_headers.len(), 3);
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_checkpoint_storage_indexing() -> StorageResult<()> {
         use dashcore::TxMerkleNode;
         use tempfile::tempdir;
