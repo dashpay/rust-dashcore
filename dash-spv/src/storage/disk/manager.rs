@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::disk::segments::{self, load_header_segments, SegmentCache};
+use crate::storage::disk::segments::{self, load_header_segments, Segment};
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::HEADERS_PER_SEGMENT;
@@ -16,8 +16,8 @@ use super::HEADERS_PER_SEGMENT;
 /// Commands for the background worker
 #[derive(Debug, Clone)]
 pub(super) enum WorkerCommand {
-    SaveBlockHeaderSegmentCache(SegmentCache<BlockHeader>),
-    SaveFilterHeaderSegmentCache(SegmentCache<FilterHeader>),
+    SaveBlockHeaderSegmentCache(Segment<BlockHeader>),
+    SaveFilterHeaderSegmentCache(Segment<FilterHeader>),
     SaveIndex {
         index: HashMap<BlockHash, u32>,
     },
@@ -28,8 +28,8 @@ pub(super) enum WorkerCommand {
 #[derive(Debug, Clone)]
 #[allow(clippy::enum_variant_names)]
 pub(super) enum WorkerNotification {
-    BlockHeaderSegmentCacheSaved(SegmentCache<BlockHeader>),
-    BlockFilterSegmentCacheSaved(SegmentCache<FilterHeader>),
+    BlockHeaderSegmentCacheSaved(Segment<BlockHeader>),
+    BlockFilterSegmentCacheSaved(Segment<FilterHeader>),
     IndexSaved,
 }
 
@@ -38,9 +38,8 @@ pub struct DiskStorageManager {
     pub(super) base_path: PathBuf,
 
     // Segmented header storage
-    pub(super) active_segments: Arc<RwLock<HashMap<u32, segments::SegmentCache<BlockHeader>>>>,
-    pub(super) active_filter_segments:
-        Arc<RwLock<HashMap<u32, segments::SegmentCache<FilterHeader>>>>,
+    pub(super) active_segments: Arc<RwLock<HashMap<u32, segments::Segment<BlockHeader>>>>,
+    pub(super) active_filter_segments: Arc<RwLock<HashMap<u32, segments::Segment<FilterHeader>>>>,
 
     // Reverse index for O(1) lookups
     pub(super) header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
@@ -133,7 +132,7 @@ impl DiskStorageManager {
                 match cmd {
                     WorkerCommand::SaveBlockHeaderSegmentCache(cache) => {
                         let segment_id = cache.segment_id;
-                        if let Err(e) = cache.save(&base_path) {
+                        if let Err(e) = cache.persist(&base_path) {
                             eprintln!("Failed to save segment {}: {}", segment_id, e);
                         } else {
                             tracing::trace!(
@@ -147,7 +146,7 @@ impl DiskStorageManager {
                     }
                     WorkerCommand::SaveFilterHeaderSegmentCache(cache) => {
                         let segment_id = cache.segment_id;
-                        if let Err(e) = cache.save(&base_path) {
+                        if let Err(e) = cache.persist(&base_path) {
                             eprintln!("Failed to save filter segment {}: {}", segment_id, e);
                         } else {
                             tracing::trace!(

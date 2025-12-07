@@ -6,7 +6,7 @@ use std::time::Instant;
 use dashcore::hash_types::FilterHeader;
 
 use crate::error::StorageResult;
-use crate::storage::disk::segments::SegmentCache;
+use crate::storage::disk::segments::Segment;
 
 use super::io::atomic_write;
 use super::manager::DiskStorageManager;
@@ -62,7 +62,7 @@ impl DiskStorageManager {
             {
                 let mut segments = self.active_filter_segments.write().await;
                 if let Some(segment) = segments.get_mut(&segment_id) {
-                    segment.store(*header, offset);
+                    segment.insert(*header, offset);
                 }
             }
 
@@ -237,7 +237,7 @@ pub(super) async fn ensure_filter_segment_loaded(
         }
     }
 
-    let filter_header_cache = SegmentCache::load(&manager.base_path, segment_id).await?;
+    let filter_header_cache = Segment::load(&manager.base_path, segment_id).await?;
 
     segments.insert(segment_id, filter_header_cache);
 
