@@ -33,6 +33,9 @@ pub enum SpvError {
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),
 
+    #[error("Logging error: {0}")]
+    Logging(#[from] LoggingError),
+
     #[error("Wallet error: {0}")]
     Wallet(#[from] WalletError),
 
@@ -54,6 +57,19 @@ pub enum ParseError {
 
     #[error("Invalid argument value for {0}: {1}")]
     InvalidArgument(String, String),
+}
+
+/// Logging-related errors.
+#[derive(Debug, Error)]
+pub enum LoggingError {
+    #[error("Failed to create log directory: {0}")]
+    DirectoryCreation(#[from] std::io::Error),
+
+    #[error("Subscriber initialization failed: {0}")]
+    SubscriberInit(String),
+
+    #[error("Log rotation failed: {0}")]
+    RotationFailed(String),
 }
 
 /// Network-related errors.
@@ -240,6 +256,9 @@ pub type ValidationResult<T> = std::result::Result<T, ValidationError>;
 
 /// Type alias for sync operation results.
 pub type SyncResult<T> = std::result::Result<T, SyncError>;
+
+/// Type alias for logging operation results.
+pub type LoggingResult<T> = std::result::Result<T, LoggingError>;
 
 /// Wallet-related errors.
 #[derive(Debug, Error)]

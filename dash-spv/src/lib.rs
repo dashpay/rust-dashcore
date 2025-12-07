@@ -62,6 +62,7 @@ pub mod bloom;
 pub mod chain;
 pub mod client;
 pub mod error;
+pub mod logging;
 pub mod mempool_filter;
 pub mod network;
 pub mod storage;
@@ -73,7 +74,11 @@ pub mod validation;
 
 // Re-export main types for convenience
 pub use client::{ClientConfig, DashSpvClient};
-pub use error::{NetworkError, SpvError, StorageError, SyncError, ValidationError};
+pub use error::{
+    LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
+};
+pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
+pub use tracing::level_filters::LevelFilter;
 pub use types::{ChainState, FilterMatch, PeerInfo, SpvStats, SyncProgress, ValidationMode};
 
 // Re-export commonly used dashcore types
@@ -93,27 +98,3 @@ pub use dashcore::sml::llmq_type::LLMQType;
 
 /// Current version of the dash-spv library.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Initialize logging with the given level.
-///
-/// This is a convenience function that sets up tracing-subscriber
-/// with a simple format suitable for most applications.
-pub fn init_logging(level: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use tracing_subscriber::fmt;
-
-    let level = match level {
-        "error" => tracing::Level::ERROR,
-        "warn" => tracing::Level::WARN,
-        "info" => tracing::Level::INFO,
-        "debug" => tracing::Level::DEBUG,
-        "trace" => tracing::Level::TRACE,
-        _ => tracing::Level::INFO,
-    };
-
-    fmt()
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_max_level(level)
-        .try_init()
-        .map_err(|e| format!("Failed to initialize logging: {}", e).into())
-}

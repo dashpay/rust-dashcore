@@ -979,11 +979,22 @@ void dash_spv_ffi_unconfirmed_transaction_destroy_addresses(struct FFIString *ad
 /**
  * Initialize logging for the SPV library.
  *
+ * # Arguments
+ * - `level`: Log level string (null uses RUST_LOG env var or defaults to INFO).
+ *   Valid values: "error", "warn", "info", "debug", "trace"
+ * - `enable_console`: Whether to output logs to console (stderr)
+ * - `log_dir`: Directory for log files (null to disable file logging)
+ * - `max_files`: Maximum archived log files to retain (ignored if log_dir is null)
+ *
  * # Safety
- * - `level` may be null or point to a valid, NUL-terminated C string.
- * - If non-null, the pointer must remain valid for the duration of this call.
+ * - `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
  */
- int32_t dash_spv_ffi_init_logging(const char *level) ;
+
+int32_t dash_spv_ffi_init_logging(const char *level,
+                                  bool enable_console,
+                                  const char *log_dir,
+                                  uintptr_t max_files)
+;
 
  const char *dash_spv_ffi_version(void) ;
 

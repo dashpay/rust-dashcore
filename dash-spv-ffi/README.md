@@ -47,7 +47,7 @@ See `examples/basic_usage.c` for a simple example of using the FFI bindings.
 #include "dash_spv_ffi.h"
 
 // Initialize logging
-dash_spv_ffi_init_logging("info");
+dash_spv_ffi_init_logging("info", true, NULL, 0);
 
 // Create configuration
 FFIClientConfig* config = dash_spv_ffi_config_testnet();
