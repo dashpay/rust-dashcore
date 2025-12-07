@@ -29,23 +29,6 @@ pub(super) enum SegmentState {
     Saving, // Currently being saved in background
 }
 
-/// Creates a sentinel header used for padding segments.
-/// This header has invalid values that cannot be mistaken for valid blocks.
-pub(super) fn create_sentinel_header() -> BlockHeader {
-    BlockHeader {
-        version: Version::from_consensus(i32::MAX), // Invalid version
-        prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
-        merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
-        time: u32::MAX,                                  // Far future timestamp
-        bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
-        nonce: u32::MAX,                                 // Max nonce value
-    }
-}
-
-pub(super) fn create_sentinel_filter_header() -> FilterHeader {
-    FilterHeader::from_byte_array([0u8; 32])
-}
-
 pub(super) trait Persistable: Sized + Encodable + Decodable + Clone {
     fn persist(&self, writer: &mut BufWriter<File>) -> StorageResult<usize>;
     fn relative_disk_path(segment_id: u32) -> PathBuf;
@@ -83,7 +66,14 @@ impl Persistable for BlockHeader {
     }
 
     fn new_sentinel() -> Self {
-        create_sentinel_header()
+        BlockHeader {
+            version: Version::from_consensus(i32::MAX), // Invalid version
+            prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
+            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
+            time: u32::MAX,                                  // Far future timestamp
+            bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
+            nonce: u32::MAX,                                 // Max nonce value
+        }
     }
 }
 
@@ -99,7 +89,7 @@ impl Persistable for FilterHeader {
     }
 
     fn new_sentinel() -> Self {
-        create_sentinel_filter_header()
+        FilterHeader::from_byte_array([0u8; 32])
     }
 }
 
@@ -140,7 +130,7 @@ impl SegmentCache<BlockHeader> {
         let expected_size = super::HEADERS_PER_SEGMENT as usize;
         if headers.len() < expected_size {
             // Pad with sentinel headers that cannot be mistaken for valid blocks
-            let sentinel_header = create_sentinel_header();
+            let sentinel_header = BlockHeader::new_sentinel();
             headers.resize(expected_size, sentinel_header);
         }
 
