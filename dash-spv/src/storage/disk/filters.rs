@@ -4,14 +4,12 @@ use std::ops::Range;
 use std::time::Instant;
 
 use dashcore::hash_types::FilterHeader;
-use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
 use crate::storage::disk::segments::SegmentCache;
 
 use super::io::atomic_write;
 use super::manager::DiskStorageManager;
-use super::segments::SegmentState;
 
 impl DiskStorageManager {
     /// Store filter headers.
@@ -64,16 +62,7 @@ impl DiskStorageManager {
             {
                 let mut segments = self.active_filter_segments.write().await;
                 if let Some(segment) = segments.get_mut(&segment_id) {
-                    // Ensure we have space in the segment
-                    if offset >= segment.headers.len() {
-                        // Fill with zero filter headers up to the offset
-                        let zero_filter_header = FilterHeader::from_byte_array([0u8; 32]);
-                        segment.headers.resize(offset + 1, zero_filter_header);
-                    }
-                    segment.headers[offset] = *header;
-                    // Transition to Dirty state (from Clean, Dirty, or Saving)
-                    segment.state = SegmentState::Dirty;
-                    segment.last_accessed = std::time::Instant::now();
+                    segment.store(*header, offset);
                 }
             }
 
