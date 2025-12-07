@@ -1,0 +1,16 @@
+# No-std build checks
+#
+# Lists crates that support no-std and their test configurations.
+# Each entry runs: cargo check --no-default-features --features <entry>
+
+dashcore_hashes:
+  - bare              # --no-default-features only
+  - alloc
+  - alloc serde       # multiple features
+
+dashcore-private:
+  - bare
+  - alloc
+
+dash-network:
+  - no-std

@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - master
-      - 'test-ci/**'
+      - 'v**-dev'
   pull_request:
 
 permissions:
@@ -18,12 +18,11 @@ concurrency:
 jobs:
   fuzz:
     if: ${{ !github.event.act }}
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         fuzz_target: [
-          dash_outpoint_string,
           dash_deserialize_amount,
           # TODO fix the inputs placed in fuzz/hfuzz_input/deserialize_transaction/input
 #          dash_deserialize_transaction,
@@ -33,20 +32,21 @@ jobs:
 #          dash_deserialize_prefilled_transaction,
           dash_deserialize_witness,
 #          dash_deserialize_psbt,
-          dash_deserialize_block,
+          dash_outpoint_string,
           dash_deserialize_script,
+          dash_deserialize_block,
+          hashes_sha1,
+          hashes_sha256,
+          hashes_sha512,
           hashes_json,
           hashes_cbor,
-          hashes_sha256,
           hashes_ripemd160,
           hashes_sha512_256,
-          hashes_sha512,
-          hashes_sha1,
         ]
     steps:
       - name: Install test dependencies
         run: sudo apt-get update -y && sudo apt-get install -y binutils-dev libunwind8-dev libcurl4-openssl-dev libelf-dev libdw-dev cmake gcc libiberty-dev
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -58,7 +58,7 @@ jobs:
       - name: fuzz
         run: cd fuzz && ./fuzz.sh "${{ matrix.fuzz_target }}"
       - run: echo "${{ matrix.fuzz_target }}" >executed_${{ matrix.fuzz_target }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: executed_${{ matrix.fuzz_target }}
           path: executed_${{ matrix.fuzz_target }}
@@ -66,11 +66,13 @@ jobs:
   verify-execution:
     if: ${{ !github.event.act }}
     needs: fuzz
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v6
       - name: Display structure of downloaded files
         run: ls -R
-      - run: find executed_* -type f -exec cat {} + | sort > executed
-      - run: source ./fuzz/fuzz-util.sh && listTargetNames | sort | diff - executed
+      - name: Verify all fuzz targets were executed
+        run: |
+          find executed_* -type f -exec cat {} + | sort > executed
+          source ./fuzz/fuzz-util.sh && listTargetNames | sort | diff - executed
