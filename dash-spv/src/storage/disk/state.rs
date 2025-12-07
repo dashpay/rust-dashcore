@@ -510,11 +510,11 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn load_headers(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        Self::load_headers(self, range).await
+        self.active_segments.read().await.get_headers(range).await
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        Self::get_header(self, height).await
+        Ok(self.active_segments.read().await.get_headers(height..height + 1).await?.get(0).copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
@@ -532,14 +532,21 @@ impl StorageManager for DiskStorageManager {
         &self,
         range: std::ops::Range<u32>,
     ) -> StorageResult<Vec<dashcore::hash_types::FilterHeader>> {
-        Self::load_filter_headers(self, range).await
+        self.active_filter_segments.read().await.get_headers(range).await
     }
 
     async fn get_filter_header(
         &self,
         height: u32,
     ) -> StorageResult<Option<dashcore::hash_types::FilterHeader>> {
-        Self::get_filter_header(self, height).await
+        Ok(self
+            .active_filter_segments
+            .read()
+            .await
+            .get_headers(height..height + 1)
+            .await?
+            .get(0)
+            .copied())
     }
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
