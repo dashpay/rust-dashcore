@@ -231,7 +231,7 @@ impl<H: Persistable> SegmentCache<H> {
         Ok(())
     }
 
-    async fn save_dirty(&self, manager: &DiskStorageManager) -> StorageResult<()> {
+    async fn save_dirty(&self, _manager: &DiskStorageManager) -> StorageResult<()> {
         todo!()
     }
 

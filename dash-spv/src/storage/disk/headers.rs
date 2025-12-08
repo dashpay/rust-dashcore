@@ -1,13 +1,11 @@
 //! Header storage operations for DiskStorageManager.
 
 use std::collections::HashMap;
-use std::ops::Range;
+use std::fs;
 use std::path::Path;
 use std::time::Instant;
-use std::{fs, hash};
 
 use dashcore::block::Header as BlockHeader;
-use dashcore::secp256k1::hashes;
 use dashcore::BlockHash;
 
 use crate::error::StorageResult;
