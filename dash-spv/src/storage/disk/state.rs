@@ -784,9 +784,6 @@ mod tests {
             })
             .collect();
 
-        // Store headers using checkpoint sync method
-        storage.store_headers_from_height(&headers, checkpoint_height).await?;
-
         // Set sync base height so storage interprets heights as blockchain heights
         let mut base_state = ChainState::new();
         base_state.sync_base_height = checkpoint_height;
