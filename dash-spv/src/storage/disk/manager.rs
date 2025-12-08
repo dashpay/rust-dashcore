@@ -187,16 +187,6 @@ impl DiskStorageManager {
         }
     }
 
-    /// Get the segment ID for a given height.
-    pub(super) fn get_segment_id(height: u32) -> u32 {
-        height / HEADERS_PER_SEGMENT
-    }
-
-    /// Get the offset within a segment for a given height.
-    pub(super) fn get_segment_offset(height: u32) -> usize {
-        (height % HEADERS_PER_SEGMENT) as usize
-    }
-
     /// Process notifications from background worker to clear save_pending flags.
     pub(super) async fn process_worker_notifications(&self) {
         use super::segments::SegmentState;
