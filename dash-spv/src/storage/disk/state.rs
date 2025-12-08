@@ -526,7 +526,7 @@ impl StorageManager for DiskStorageManager {
         &mut self,
         headers: &[dashcore::hash_types::FilterHeader],
     ) -> StorageResult<()> {
-        Self::store_filter_headers(self, headers).await
+        self.active_filter_segments.write().await.store_headers(headers, self).await
     }
 
     async fn load_filter_headers(

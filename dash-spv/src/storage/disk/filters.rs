@@ -1,9 +1,6 @@
 //! Filter storage operations for DiskStorageManager.
 
-use std::ops::Range;
 use std::time::Instant;
-
-use dashcore::hash_types::FilterHeader;
 
 use crate::error::StorageResult;
 use crate::storage::disk::segments::Segment;
@@ -12,76 +9,6 @@ use super::io::atomic_write;
 use super::manager::DiskStorageManager;
 
 impl DiskStorageManager {
-    /// Store filter headers.
-    pub async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
-        let sync_base_height = *self.sync_base_height.read().await;
-
-        // Determine the next blockchain height
-        let mut next_blockchain_height = {
-            let current_tip = self.cached_filter_tip_height.read().await;
-            match *current_tip {
-                Some(tip) => tip + 1,
-                None => {
-                    // If we have a checkpoint, start from there, otherwise from 0
-                    if sync_base_height > 0 {
-                        sync_base_height
-                    } else {
-                        0
-                    }
-                }
-            }
-        };
-
-        for header in headers {
-            // Convert blockchain height to storage index
-            let storage_index = if sync_base_height > 0 {
-                // For checkpoint sync, storage index is relative to sync_base_height
-                if next_blockchain_height >= sync_base_height {
-                    next_blockchain_height - sync_base_height
-                } else {
-                    // This shouldn't happen in normal operation
-                    tracing::warn!(
-                        "Attempting to store filter header at height {} below sync_base_height {}",
-                        next_blockchain_height,
-                        sync_base_height
-                    );
-                    next_blockchain_height
-                }
-            } else {
-                // For genesis sync, storage index equals blockchain height
-                next_blockchain_height
-            };
-
-            let segment_id = Self::get_segment_id(storage_index);
-            let offset = Self::get_segment_offset(storage_index);
-
-            // Ensure segment is loaded
-            ensure_filter_segment_loaded(self, segment_id).await?;
-
-            // Update segment
-            {
-                let mut segments = self.active_filter_segments.write().await;
-                if let Some(segment) = segments.get_mut(&segment_id) {
-                    segment.insert(*header, offset);
-                }
-            }
-
-            next_blockchain_height += 1;
-        }
-
-        // Update cached tip height with blockchain height
-        if next_blockchain_height > 0 {
-            *self.cached_filter_tip_height.write().await = Some(next_blockchain_height - 1);
-        }
-
-        // Save dirty segments periodically (every 1000 filter headers)
-        if headers.len() >= 1000 || next_blockchain_height % 1000 == 0 {
-            super::segments::save_dirty_segments_cache(self).await?;
-        }
-
-        Ok(())
-    }
-
     /// Store a compact filter.
     pub async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("filters/{}.dat", height));
@@ -106,7 +33,6 @@ impl DiskStorageManager {
 
         // Clear in-memory filter state
         self.active_filter_segments.write().await.clear();
-        *self.cached_filter_tip_height.write().await = None;
 
         // Remove filter headers and compact filter files
         let filters_dir = self.base_path.join("filters");

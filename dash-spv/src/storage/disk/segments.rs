@@ -81,18 +81,47 @@ impl<H: Persistable> SegmentCache<H> {
         Self {
             segments: HashMap::new(),
             tip_height: None,
-            sync_base_height: 0,
+            sync_base_height: 0, // TODO: Asks for this value in the function call
         }
     }
 
     /// Get the segment ID for a given height.
-    pub(super) fn height_to_segment_id(height: u32) -> u32 {
+    pub(super) fn index_to_segment_id(height: u32) -> u32 {
         height / super::HEADERS_PER_SEGMENT
     }
 
     /// Get the segment offset for a given height.
-    pub(super) fn height_to_offset(height: u32) -> usize {
+    pub(super) fn index_to_offset(height: u32) -> usize {
         (height % super::HEADERS_PER_SEGMENT) as usize
+    }
+
+    pub fn clear(&mut self) {
+        self.segments.clear();
+        self.tip_height = None;
+    }
+
+    pub async fn get_segment(&self, segment_id: u32) -> StorageResult<&Segment<H>> {
+        if let Some(segment) = self.segments.get(&segment_id) {
+            Ok(segment)
+        } else {
+            // TODO: Replace with Segment::load
+            let segment = ensure_segment_loaded(self, segment_id).await?;
+            let entry = self.segments.entry(segment_id);
+            let occupied_entry = entry.insert_entry(segment);
+            Ok(occupied_entry.get())
+        }
+    }
+
+    pub async fn get_segment_mut(&self, segment_id: u32) -> StorageResult<&mut Segment<H>> {
+        if let Some(segment) = self.segments.get_mut(&segment_id) {
+            Ok(segment)
+        } else {
+            // TODO: Replace with Segment::load
+            let segment = ensure_segment_loaded(self, segment_id).await?;
+            let entry = self.segments.entry(segment_id);
+            let occupied_entry = entry.insert_entry(segment);
+            Ok(occupied_entry.get_mut())
+        }
     }
 
     pub async fn get_headers(&self, range: Range<u32>) -> StorageResult<Vec<H>> {
@@ -113,28 +142,20 @@ impl<H: Persistable> SegmentCache<H> {
             range.end
         };
 
-        let start_segment = Self::height_to_segment_id(storage_start);
-        let end_segment = Self::height_to_segment_id(storage_end.saturating_sub(1));
+        let start_segment = Self::index_to_segment_id(storage_start);
+        let end_segment = Self::index_to_segment_id(storage_end.saturating_sub(1));
 
         for segment_id in start_segment..=end_segment {
-            let segment = if let Some(segment) = self.segments.get(&segment_id) {
-                segment
-            } else {
-                // TODO: Replace with Segment::load
-                let segment = ensure_segment_loaded(self, segment_id).await?;
-                let entry = self.segments.entry(segment_id);
-                let occupied_entry = entry.insert_entry(segment);
-                occupied_entry.get()
-            };
+            let segment = self.get_segment(segment_id).await?;
 
             let start_idx = if segment_id == start_segment {
-                Self::height_to_offset(storage_start)
+                Self::index_to_offset(storage_start)
             } else {
                 0
             };
 
             let end_idx = if segment_id == end_segment {
-                Self::height_to_offset(storage_end.saturating_sub(1)) + 1
+                Self::index_to_offset(storage_end.saturating_sub(1)) + 1
             } else {
                 segment.headers.len()
             };
@@ -153,15 +174,89 @@ impl<H: Persistable> SegmentCache<H> {
         Ok(headers)
     }
 
-    pub fn tip_height(&self) -> Option<u32> {
-        let tip_index = self.tip_height?;
-        let base = self.sync_base_height;
-
-        if base > 0 {
-            Some(base + tip_index)
-        } else {
-            Some(tip_index)
+    pub async fn store_headers(
+        &mut self,
+        headers: &[H],
+        manager: &DiskStorageManager,
+    ) -> StorageResult<()> {
+        // Early return if no headers to store
+        if headers.is_empty() {
+            tracing::trace!("DiskStorage: no headers to store");
+            return Ok(());
         }
+
+        // Determine the next blockchain height
+        let start_height = self.next_height();
+
+        let mut storage_index = self.height_to_storage_index(start_height);
+
+        // Use trace for single headers, debug for small batches, info for large batches
+        match headers.len() {
+            1 => tracing::trace!("SegmentsCache: storing 1 header at blockchain height {} (storage index {})",
+                start_height, storage_index),
+            2..=10 => tracing::debug!(
+                "SegmentsCache: storing {} headers starting at blockchain height {} (storage index {})",
+                headers.len(),
+                start_height,
+                storage_index
+            ),
+            _ => tracing::info!(
+                "SegmentsCache: storing {} headers starting at blockchain height {} (storage index {})",
+                headers.len(),
+                start_height,
+                storage_index
+            ),
+        }
+
+        for header in headers {
+            let segment_id = Self::index_to_segment_id(storage_index);
+            let offset = Self::index_to_offset(storage_index);
+
+            // Update segment
+            let segments = self.get_segment_mut(segment_id).await?;
+            segments.insert(header.clone(), offset);
+
+            storage_index += 1;
+        }
+
+        // Update cached tip height with blockchain height
+        if start_height + storage_index > 0 {
+            self.tip_height = Some(start_height + storage_index - 1);
+        }
+
+        // Save dirty segments periodically (every 1000 filter headers)
+        if headers.len() >= 1000 || start_height % 1000 == 0 {
+            self.save_dirty(manager).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn save_dirty(&self, manager: &DiskStorageManager) -> StorageResult<()> {
+        todo!()
+    }
+
+    pub fn tip_height(&self) -> Option<u32> {
+        self.tip_height
+    }
+
+    pub fn next_height(&self) -> u32 {
+        let current_tip = self.tip_height();
+        match current_tip {
+            Some(tip) => tip + 1,
+            None => self.sync_base_height,
+        }
+    }
+
+    /// Convert blockchain height to storage index
+    /// For checkpoint sync, storage index is relative to sync_base_height
+    fn height_to_storage_index(&self, height: u32) -> u32 {
+        debug_assert!(
+            height >= self.sync_base_height,
+            "Height must be greater than or equal to sync_base_height"
+        );
+
+        height - self.sync_base_height
     }
 }
 
@@ -311,6 +406,7 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
         }
     }
 
+    // TODO: Dont yet understand what we are saving here
     async fn process_index(
         manager: &DiskStorageManager,
         tx: &tokio::sync::mpsc::Sender<WorkerCommand>,
