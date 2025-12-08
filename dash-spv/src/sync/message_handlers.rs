@@ -629,20 +629,6 @@ impl<
             stats_lock.last_filter_received_time = Some(std::time::Instant::now());
         }
 
-        // Get the shared filter heights arc from stats
-        let stats_lock = self.stats.read().await;
-        let received_filter_heights = stats_lock.received_filter_heights.clone();
-        drop(stats_lock); // Release the stats lock before acquiring the mutex
-
-        // Now lock the heights and insert
-        let mut heights = received_filter_heights.lock().await;
-        heights.insert(height);
-        tracing::trace!(
-            "📊 Recorded filter received at height {} for block {}",
-            height,
-            cfilter.block_hash
-        );
-
         if matches {
             // Update filter match statistics
             {
