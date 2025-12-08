@@ -81,9 +81,9 @@ impl DiskStorageManager {
         })?;
 
         let mut storage = Self {
-            base_path,
-            active_segments: Arc::new(RwLock::new(SegmentCache::new())),
-            active_filter_segments: Arc::new(RwLock::new(SegmentCache::new())),
+            base_path: base_path.clone(),
+            active_segments: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()))),
+            active_filter_segments: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()))),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,
@@ -93,17 +93,22 @@ impl DiskStorageManager {
             mempool_state: Arc::new(RwLock::new(None)),
         };
 
+        // Load chain state to get sync_base_height
+        if let Ok(Some(state)) = storage.load_chain_state().await {
+            storage
+                .active_filter_segments
+                .write()
+                .await
+                .set_sync_base_height(state.sync_base_height);
+            storage.active_segments.write().await.set_sync_base_height(state.sync_base_height);
+            tracing::debug!("Loaded sync_base_height: {}", state.sync_base_height);
+        }
+
         // Start background worker
         storage.start_worker().await;
 
         // Load segment metadata and rebuild index
         storage.load_segment_metadata().await?;
-
-        // Load chain state to get sync_base_height
-        if let Ok(Some(chain_state)) = storage.load_chain_state().await {
-            *storage.sync_base_height.write().await = chain_state.sync_base_height;
-            tracing::debug!("Loaded sync_base_height: {}", chain_state.sync_base_height);
-        }
 
         Ok(storage)
     }

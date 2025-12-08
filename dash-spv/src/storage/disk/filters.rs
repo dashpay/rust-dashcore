@@ -1,9 +1,6 @@
 //! Filter storage operations for DiskStorageManager.
 
-use std::time::Instant;
-
 use crate::error::StorageResult;
-use crate::storage::disk::segments::Segment;
 
 use super::io::atomic_write;
 use super::manager::DiskStorageManager;
@@ -46,39 +43,4 @@ impl DiskStorageManager {
 
         Ok(())
     }
-}
-
-/// Ensure a filter segment is loaded in memory.
-pub(super) async fn ensure_filter_segment_loaded(
-    manager: &DiskStorageManager,
-    segment_id: u32,
-) -> StorageResult<()> {
-    // Process background worker notifications to clear save_pending flags
-    manager.process_worker_notifications().await;
-
-    let mut segments = manager.active_filter_segments.write().await;
-
-    if segments.contains_key(&segment_id) {
-        // Update last accessed time
-        if let Some(segment) = segments.get_mut(&segment_id) {
-            segment.last_accessed = Instant::now();
-        }
-        return Ok(());
-    }
-
-    // Evict old segments if needed
-    if segments.len() >= super::MAX_ACTIVE_SEGMENTS {
-        if let Some((oldest_id, oldest_segment_cache)) =
-            segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
-        {
-            oldest_segment_cache.evict(&manager.base_path)?;
-            segments.remove(&oldest_id);
-        }
-    }
-
-    let filter_header_cache = Segment::load(&manager.base_path, segment_id).await?;
-
-    segments.insert(segment_id, filter_header_cache);
-
-    Ok(())
 }
