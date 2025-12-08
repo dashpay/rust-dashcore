@@ -72,7 +72,7 @@ impl Persistable for FilterHeader {
 pub struct SegmentCache<H: Persistable> {
     segments: HashMap<u32, Segment<H>>,
     tip_height: Option<u32>,
-    sync_base_height: u32, // TODO: This looks common for both, if needed extract to the Manager
+    sync_base_height: u32,
     base_path: PathBuf,
 }
 
