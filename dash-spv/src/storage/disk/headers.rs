@@ -150,30 +150,6 @@ impl DiskStorageManager {
     pub async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
         Ok(self.header_hash_index.read().await.get(hash).copied())
     }
-
-    /// Get a batch of headers with their heights.
-    pub async fn get_headers_batch(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<(u32, BlockHeader)>> {
-        if start_height > end_height {
-            return Ok(Vec::new());
-        }
-
-        // Use the existing load_headers method which handles segmentation internally
-        // Note: Range is exclusive at the end, so we need end_height + 1
-        let range_end = end_height.saturating_add(1);
-        let headers = self.load_headers(start_height..range_end).await?;
-
-        // Convert to the expected format with heights
-        let mut results = Vec::with_capacity(headers.len());
-        for (idx, header) in headers.into_iter().enumerate() {
-            results.push((start_height + idx as u32, header));
-        }
-
-        Ok(results)
-    }
 }
 
 /// Load index from file.

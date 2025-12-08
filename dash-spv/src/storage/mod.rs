@@ -166,14 +166,6 @@ pub trait StorageManager: Send + Sync {
         hash: &dashcore::BlockHash,
     ) -> StorageResult<Option<u32>>;
 
-    /// Get multiple headers in a single batch operation using blockchain heights.
-    /// Returns headers with their heights. More efficient than calling get_header multiple times.
-    async fn get_headers_batch(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<(u32, BlockHeader)>>;
-
     // UTXO methods removed - handled by external wallet
 
     /// Store persistent sync state.

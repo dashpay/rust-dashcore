@@ -601,14 +601,6 @@ impl StorageManager for DiskStorageManager {
         Self::get_header_height_by_hash(self, hash).await
     }
 
-    async fn get_headers_batch(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<(u32, BlockHeader)>> {
-        Self::get_headers_batch(self, start_height, end_height).await
-    }
-
     async fn store_sync_state(
         &mut self,
         state: &crate::storage::PersistentSyncState,
