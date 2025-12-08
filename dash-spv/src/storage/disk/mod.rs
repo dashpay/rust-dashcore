@@ -30,6 +30,3 @@ pub use manager::DiskStorageManager;
 
 /// Number of headers per segment file
 const HEADERS_PER_SEGMENT: u32 = 50_000;
-
-/// Maximum number of segments to keep in memory
-const MAX_ACTIVE_SEGMENTS: usize = 10;

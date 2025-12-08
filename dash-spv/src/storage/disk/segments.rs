@@ -77,6 +77,9 @@ pub struct SegmentCache<H: Persistable> {
 }
 
 impl<H: Persistable> SegmentCache<H> {
+    /// Maximum number of segments to keep in memory
+    const MAX_ACTIVE_SEGMENTS: usize = 10;
+
     pub fn new(base_path: impl Into<PathBuf>) -> Self {
         Self {
             segments: HashMap::new(),
@@ -124,7 +127,7 @@ impl<H: Persistable> SegmentCache<H> {
             return Ok(segment);
         }
 
-        if segments_len >= super::MAX_ACTIVE_SEGMENTS {
+        if segments_len >= Self::MAX_ACTIVE_SEGMENTS {
             let key_to_evict =
                 segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
 
