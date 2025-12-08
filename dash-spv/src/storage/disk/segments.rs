@@ -150,10 +150,6 @@ impl<H: Persistable> SegmentCache<H> {
         self.tip_height = None;
     }
 
-    pub fn get_segment_if_loaded(&mut self, segment_id: &u32) -> Option<&Segment<H>> {
-        self.segments.get(segment_id)
-    }
-
     pub fn get_segment_if_loaded_mut(&mut self, segment_id: &u32) -> Option<&mut Segment<H>> {
         self.segments.get_mut(segment_id)
     }
