@@ -404,9 +404,10 @@ impl DiskStorageManager {
             }
         }
 
-        let header_count = self.cached_tip_height.read().await.map_or(0, |h| h as u64 + 1);
+        let header_count =
+            self.active_segments.read().await.tip_height().map_or(0, |h| h as u64 + 1);
         let filter_header_count =
-            self.cached_filter_tip_height.read().await.map_or(0, |h| h as u64 + 1);
+            self.active_filter_segments.read().await.tip_height().map_or(0, |h| h as u64 + 1);
 
         component_sizes.insert("headers".to_string(), header_count * 80);
         component_sizes.insert("filter_headers".to_string(), filter_header_count * 32);

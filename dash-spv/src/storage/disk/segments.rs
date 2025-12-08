@@ -108,7 +108,15 @@ impl<H: Persistable> SegmentCache<H> {
         self.tip_height = None;
     }
 
-    pub async fn get_segment(&mut self, segment_id: u32) -> StorageResult<&Segment<H>> {
+    pub fn get_segment_if_loaded(&mut self, segment_id: &u32) -> Option<&Segment<H>> {
+        self.segments.get(segment_id)
+    }
+
+    pub fn get_segment_if_loaded_mut(&mut self, segment_id: &u32) -> Option<&mut Segment<H>> {
+        self.segments.get_mut(segment_id)
+    }
+
+    pub async fn get_segment(&mut self, segment_id: &u32) -> StorageResult<&Segment<H>> {
         let segment = self.get_segment_mut(segment_id).await?;
         Ok(&*segment)
     }
@@ -116,7 +124,7 @@ impl<H: Persistable> SegmentCache<H> {
     // TODO: This logic can be improved for sure but for now it works (I guess)
     pub async fn get_segment_mut<'a>(
         &'a mut self,
-        segment_id: u32,
+        segment_id: &u32,
     ) -> StorageResult<&'a mut Segment<H>> {
         let segments_len = self.segments.len();
         let segments = &mut self.segments;
@@ -138,8 +146,8 @@ impl<H: Persistable> SegmentCache<H> {
         }
 
         // Load and insert
-        let segment = Segment::load(&self.base_path, segment_id).await?;
-        let segment = segments.entry(segment_id).or_insert(segment);
+        let segment = Segment::load(&self.base_path, *segment_id).await?;
+        let segment = segments.entry(*segment_id).or_insert(segment);
         Ok(segment)
     }
 
@@ -165,7 +173,7 @@ impl<H: Persistable> SegmentCache<H> {
         let end_segment = Self::index_to_segment_id(storage_end.saturating_sub(1));
 
         for segment_id in start_segment..=end_segment {
-            let segment = self.get_segment(segment_id).await?;
+            let segment = self.get_segment(&segment_id).await?;
 
             let start_idx = if segment_id == start_segment {
                 Self::index_to_offset(storage_start)
@@ -198,14 +206,20 @@ impl<H: Persistable> SegmentCache<H> {
         headers: &[H],
         manager: &DiskStorageManager,
     ) -> StorageResult<()> {
+        self.store_headers_at_height(headers, self.next_height(), manager).await
+    }
+
+    pub async fn store_headers_at_height(
+        &mut self,
+        headers: &[H],
+        start_height: u32,
+        manager: &DiskStorageManager,
+    ) -> StorageResult<()> {
         // Early return if no headers to store
         if headers.is_empty() {
             tracing::trace!("DiskStorage: no headers to store");
             return Ok(());
         }
-
-        // Determine the next blockchain height
-        let start_height = self.next_height();
 
         let mut storage_index = self.height_to_storage_index(start_height);
 
@@ -232,7 +246,7 @@ impl<H: Persistable> SegmentCache<H> {
             let offset = Self::index_to_offset(storage_index);
 
             // Update segment
-            let segments = self.get_segment_mut(segment_id).await?;
+            let segments = self.get_segment_mut(&segment_id).await?;
             segments.insert(header.clone(), offset);
 
             storage_index += 1;
@@ -253,6 +267,10 @@ impl<H: Persistable> SegmentCache<H> {
 
     async fn save_dirty(&self, _manager: &DiskStorageManager) -> StorageResult<()> {
         todo!()
+    }
+
+    pub fn set_tip_height(&mut self, height: u32) {
+        self.tip_height = Some(height);
     }
 
     pub fn tip_height(&self) -> Option<u32> {
@@ -276,6 +294,10 @@ impl<H: Persistable> SegmentCache<H> {
         );
 
         height - self.sync_base_height
+    }
+
+    pub fn storage_index_to_height(&self, storage_index: u32) -> u32 {
+        storage_index + self.sync_base_height
     }
 }
 
