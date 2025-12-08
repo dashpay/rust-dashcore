@@ -1176,14 +1176,14 @@ dash_spv_ffi_enable_test_mode() -> ()
 #### `dash_spv_ffi_init_logging`
 
 ```c
-dash_spv_ffi_init_logging(level: *const c_char) -> i32
+dash_spv_ffi_init_logging(level: *const c_char, enable_console: bool, log_dir: *const c_char, max_files: usize,) -> i32
 ```
 
 **Description:**
-Initialize logging for the SPV library.  # Safety - `level` may be null or point to a valid, NUL-terminated C string. - If non-null, the pointer must remain valid for the duration of this call.
+Initialize logging for the SPV library.  # Arguments - `level`: Log level string (null uses RUST_LOG env var or defaults to INFO). Valid values: "error", "warn", "info", "debug", "trace" - `enable_console`: Whether to output logs to console (stderr) - `log_dir`: Directory for log files (null to disable file logging) - `max_files`: Maximum archived log files to retain (ignored if log_dir is null)  # Safety - `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
 
 **Safety:**
-- `level` may be null or point to a valid, NUL-terminated C string. - If non-null, the pointer must remain valid for the duration of this call.
+- `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
 
 **Module:** `utils`
 

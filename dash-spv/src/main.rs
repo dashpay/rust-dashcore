@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use clap::{Arg, Command};
 use dash_spv::terminal::TerminalGuard;
-use dash_spv::{ClientConfig, DashSpvClient, Network};
+use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use tokio_util::sync::CancellationToken;
@@ -67,10 +67,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             Arg::new("log-level")
                 .short('l')
                 .long("log-level")
+                .env("RUST_LOG")
+                .default_value("info")
                 .value_name("LEVEL")
-                .help("Log level")
-                .value_parser(["error", "warn", "info", "debug", "trace"])
-                .default_value("info"),
+                .help("Log level (CLI overrides RUST_LOG env var)")
+                .value_parser(["error", "warn", "info", "debug", "trace"]),
         )
         .arg(
             Arg::new("no-filters")
@@ -125,10 +126,39 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .help("Start syncing from a specific block height using the nearest checkpoint. Use 'now' for the latest checkpoint")
                 .value_name("HEIGHT"),
         )
+        .arg(
+            Arg::new("no-log-file")
+                .long("no-log-file")
+                .help("Disable log file output (enables console logging as fallback)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("print-to-console")
+                .long("print-to-console")
+                .help("Print logs to the console")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("log-dir")
+                .long("log-dir")
+                .value_name("DIR")
+                .help("Directory for log files (default: <data-dir>/logs)"),
+        )
+        .arg(
+            Arg::new("max-log-files")
+                .long("max-log-files")
+                .help("Maximum number of archived log files to keep")
+                .value_name("COUNT")
+                .default_value("20")
+                .value_parser(clap::value_parser!(usize)),
+        )
         .get_matches();
 
-    // Get log level (will be used after we know if terminal UI is enabled)
-    let log_level = matches.get_one::<String>("log-level").ok_or("Missing log-level argument")?;
+    let log_level: LevelFilter = matches
+        .get_one::<String>("log-level")
+        .expect("log-level has default value")
+        .parse()
+        .expect("log-level value_parser ensures valid level");
 
     // Parse network
     let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
@@ -162,10 +192,52 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let dir_name = format!("dash-spv-{}-{}", timestamp, pid);
         std::env::temp_dir().join(dir_name)
     };
+
+    // Parse logging flags and initialize logging early
+    let no_log_file = matches.get_flag("no-log-file");
+    let print_to_console = matches.get_flag("print-to-console");
+    let enable_terminal_ui = matches.get_flag("terminal-ui");
+    let max_log_files = *matches.get_one::<usize>("max-log-files").unwrap();
+    let log_dir = matches
+        .get_one::<String>("log-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data_dir.join("logs"));
+
+    // When terminal UI is enabled, force file logging and disable console to avoid mixing
+    let file_config = if !no_log_file || enable_terminal_ui {
+        Some(dash_spv::LogFileConfig {
+            log_dir,
+            max_files: max_log_files,
+        })
+    } else {
+        None
+    };
+
+    // Disable console logging when terminal UI is enabled
+    let console_enabled = if enable_terminal_ui {
+        false
+    } else {
+        no_log_file || print_to_console
+    };
+
+    let logging_config = dash_spv::LoggingConfig {
+        level: Some(log_level),
+        console: console_enabled,
+        file: file_config,
+    };
+
+    // Initialize logging, keep guard alive for the duration of run()
+    let _logging_guard = dash_spv::init_logging(logging_config)?;
+
+    tracing::info!("Starting Dash SPV client");
+    tracing::info!("Network: {:?}", network);
+    tracing::info!("Data directory: {}", data_dir.display());
+    tracing::info!("Validation mode: {:?}", validation_mode);
+
+    // Create configuration
     let mut config = ClientConfig::new(network)
         .with_storage_path(data_dir.clone())
-        .with_validation_mode(validation_mode)
-        .with_log_level(log_level);
+        .with_validation_mode(validation_mode);
 
     // Add custom peers if specified
     if let Some(peers) = matches.get_many::<String>("peer") {
@@ -174,7 +246,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             match peer.parse() {
                 Ok(addr) => config.add_peer(addr),
                 Err(e) => {
-                    eprintln!("Invalid peer address '{}': {}", peer, e);
+                    tracing::error!("Invalid peer address '{}': {}", peer, e);
                     process::exit(1);
                 }
             };
@@ -209,26 +281,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Validate configuration
     if let Err(e) = config.validate() {
-        eprintln!("Configuration error: {}", e);
+        tracing::error!("Configuration error: {}", e);
         process::exit(1);
     }
 
-    tracing::info!("Starting Dash SPV client");
-    tracing::info!("Network: {:?}", network);
-    if let Some(path) = config.storage_path.as_ref() {
-        tracing::info!("Data directory: {}", path.display());
-    }
-    tracing::info!("Validation mode: {:?}", validation_mode);
     tracing::info!("Sync strategy: Sequential");
-
-    // Check if terminal UI should be enabled
-    let enable_terminal_ui = matches.get_flag("terminal-ui");
-
-    // Initialize logging first (without terminal UI)
-    dash_spv::init_logging(log_level)?;
-
-    // Log the data directory being used
-    tracing::info!("Using data directory: {}", data_dir.display());
 
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new();

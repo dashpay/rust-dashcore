@@ -2,7 +2,7 @@
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::MemoryStorageManager;
-use dash_spv::{init_logging, ClientConfig, DashSpvClient};
+use dash_spv::{init_console_logging, ClientConfig, DashSpvClient, LevelFilter};
 use dashcore::Address;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    init_logging("info")?;
+    let _logging_guard = init_console_logging(LevelFilter::INFO)?;
 
     // Parse a Dash address to watch
     let watch_address = Address::<dashcore::address::NetworkUnchecked>::from_str(
