@@ -13,6 +13,18 @@ use crate::StorageError;
 use super::manager::DiskStorageManager;
 
 impl DiskStorageManager {
+    pub async fn store_headers_from_height(
+        &mut self,
+        headers: &[BlockHeader],
+        start_height: u32,
+    ) -> StorageResult<()> {
+        // TODO: This is not updating the reverse index
+        self.active_segments
+            .write()
+            .await
+            .store_headers_at_height(headers, start_height, self)
+            .await
+    }
     /// Store headers with optional precomputed hashes for performance optimization.
     ///
     /// This is a performance optimization for hot paths that have already computed header hashes.

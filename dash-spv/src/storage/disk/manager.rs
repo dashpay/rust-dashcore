@@ -209,7 +209,7 @@ impl DiskStorageManager {
                 WorkerNotification::BlockHeaderSegmentCacheSaved(cache) => {
                     let segment_id = cache.segment_id;
                     let mut segments = self.active_segments.write().await;
-                    if let Some(segment) = segments.get_mut(&segment_id) {
+                    if let Some(segment) = segments.get_segment_if_loaded_mut(&segment_id) {
                         // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
                         if segment.state == SegmentState::Saving {
                             segment.state = SegmentState::Clean;
@@ -225,7 +225,7 @@ impl DiskStorageManager {
                 WorkerNotification::BlockFilterSegmentCacheSaved(cache) => {
                     let segment_id = cache.segment_id;
                     let mut segments = self.active_filter_segments.write().await;
-                    if let Some(segment) = segments.get_mut(&segment_id) {
+                    if let Some(segment) = segments.get_segment_if_loaded_mut(&segment_id) {
                         // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
                         if segment.state == SegmentState::Saving {
                             segment.state = SegmentState::Clean;
@@ -336,34 +336,23 @@ impl DiskStorageManager {
 
             // If we have segments, load the highest one to find tip
             if let Some(segment_id) = max_segment_id {
-                super::headers::ensure_segment_loaded(self, segment_id).await?;
-                let segments = self.active_segments.read().await;
-                if let Some(segment) = segments.get(&segment_id) {
-                    let tip_height =
-                        segment_id * HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
-                    *self.cached_tip_height.write().await = Some(tip_height);
-                }
+                let mut segments_cache = self.active_segments.write().await;
+                let segment = segments_cache.get_segment(&segment_id).await?;
+                let storage_index =
+                    segment_id * HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
+                let tip_height = segments_cache.storage_index_to_height(storage_index);
+                segments_cache.set_tip_height(tip_height);
             }
 
             // If we have filter segments, load the highest one to find filter tip
             if let Some(segment_id) = max_filter_segment_id {
-                super::filters::ensure_filter_segment_loaded(self, segment_id).await?;
-                let segments = self.active_filter_segments.read().await;
-                if let Some(segment) = segments.get(&segment_id) {
-                    // Calculate storage index
-                    let storage_index =
-                        segment_id * HEADERS_PER_SEGMENT + segment.headers.len() as u32 - 1;
+                let mut segments_cache = self.active_filter_segments.write().await;
+                let segment = segments_cache.get_segment(&segment_id).await?;
+                let storage_index =
+                    segment_id * HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
 
-                    // Convert storage index to blockchain height
-                    let sync_base_height = *self.sync_base_height.read().await;
-                    let blockchain_height = if sync_base_height > 0 {
-                        sync_base_height + storage_index
-                    } else {
-                        storage_index
-                    };
-
-                    *self.cached_filter_tip_height.write().await = Some(blockchain_height);
-                }
+                let tip_height = segments_cache.storage_index_to_height(storage_index);
+                segments_cache.set_tip_height(tip_height);
             }
         }
 
