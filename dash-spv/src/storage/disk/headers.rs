@@ -1,12 +1,13 @@
 //! Header storage operations for DiskStorageManager.
 
 use std::collections::HashMap;
-use std::fs;
 use std::ops::Range;
 use std::path::Path;
 use std::time::Instant;
+use std::{fs, hash};
 
 use dashcore::block::Header as BlockHeader;
+use dashcore::secp256k1::hashes;
 use dashcore::BlockHash;
 
 use crate::error::StorageResult;
@@ -22,12 +23,6 @@ impl DiskStorageManager {
         headers: &[BlockHeader],
         precomputed_hashes: Option<&[BlockHash]>,
     ) -> StorageResult<()> {
-        // Early return if no headers to store
-        if headers.is_empty() {
-            tracing::trace!("DiskStorage: no headers to store");
-            return Ok(());
-        }
-
         // Validate that if hashes are provided, the count matches
         if let Some(hashes) = precomputed_hashes {
             if hashes.len() != headers.len() {
@@ -37,115 +32,30 @@ impl DiskStorageManager {
             }
         }
 
-        // Load chain state to get sync_base_height for proper blockchain height calculation
-        let chain_state = self.load_chain_state().await?;
-        let sync_base_height = chain_state.as_ref().map(|cs| cs.sync_base_height).unwrap_or(0);
-
-        // Acquire write locks for the entire operation to prevent race conditions
-        let mut cached_tip = self.cached_tip_height.write().await;
-        let mut reverse_index = self.header_hash_index.write().await;
-
-        let mut next_height = match *cached_tip {
-            Some(tip) => tip + 1,
-            None => 0, // Start at height 0 if no headers stored yet
+        let hashes = if let Some(hashes) = precomputed_hashes {
+            hashes
+        } else {
+            &headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>()
         };
 
-        let initial_height = next_height;
-        // Calculate the blockchain height based on sync_base_height + storage index
-        let initial_blockchain_height = sync_base_height + initial_height;
-
-        // Use trace for single headers, debug for small batches, info for large batches
-        match headers.len() {
-            1 => tracing::trace!("DiskStorage: storing 1 header at blockchain height {} (storage index {})",
-                initial_blockchain_height, initial_height),
-            2..=10 => tracing::debug!(
-                "DiskStorage: storing {} headers starting at blockchain height {} (storage index {})",
-                headers.len(),
-                initial_blockchain_height,
-                initial_height
-            ),
-            _ => tracing::info!(
-                "DiskStorage: storing {} headers starting at blockchain height {} (storage index {})",
-                headers.len(),
-                initial_blockchain_height,
-                initial_height
-            ),
-        }
-
-        for (i, header) in headers.iter().enumerate() {
-            let segment_id = Self::get_segment_id(next_height);
-            let offset = Self::get_segment_offset(next_height);
-
-            // Ensure segment is loaded
-            ensure_segment_loaded(self, segment_id).await?;
-
-            // Update segment
-            {
-                let mut segments = self.active_segments.write().await;
-                if let Some(segment) = segments.get_mut(&segment_id) {
-                    segment.insert(*header, offset);
-                }
-            }
-
-            // Update reverse index with blockchain height (not storage index)
-            let blockchain_height = sync_base_height + next_height;
-
-            // Use precomputed hash if available, otherwise compute it
-            let header_hash = if let Some(hashes) = precomputed_hashes {
-                hashes[i]
-            } else {
-                header.block_hash()
-            };
-
-            reverse_index.insert(header_hash, blockchain_height);
-
-            next_height += 1;
-        }
-
-        // Update cached tip height atomically with reverse index
-        // Only update if we actually stored headers
-        if !headers.is_empty() {
-            *cached_tip = Some(next_height - 1);
-        }
-
-        let final_height = if next_height > 0 {
-            next_height - 1
+        let mut height = if let Some(height) = self.active_segments.read().await.tip_height() {
+            height + 1
         } else {
             0
         };
 
-        let final_blockchain_height = sync_base_height + final_height;
+        self.active_segments.write().await.store_headers(headers, self).await?;
 
-        // Use appropriate log level based on batch size
-        match headers.len() {
-            1 => tracing::trace!("DiskStorage: stored header at blockchain height {} (storage index {})",
-                final_blockchain_height, final_height),
-            2..=10 => tracing::debug!(
-                "DiskStorage: stored {} headers. Blockchain height: {} -> {} (storage index: {} -> {})",
-                headers.len(),
-                initial_blockchain_height,
-                final_blockchain_height,
-                initial_height,
-                final_height
-            ),
-            _ => tracing::info!(
-                "DiskStorage: stored {} headers. Blockchain height: {} -> {} (storage index: {} -> {})",
-                headers.len(),
-                initial_blockchain_height,
-                final_blockchain_height,
-                initial_height,
-                final_height
-            ),
+        // Update reverse index
+        let mut reverse_index = self.header_hash_index.write().await;
+
+        for hash in hashes {
+            reverse_index.insert(*hash, height);
+            height += 1;
         }
 
         // Release locks before saving (to avoid deadlocks during background saves)
         drop(reverse_index);
-        drop(cached_tip);
-
-        // Save dirty segments periodically (every 1000 headers)
-        if headers.len() >= 1000 || next_height % 1000 == 0 {
-            super::segments::save_dirty_segments_cache(self).await?;
-        }
 
         Ok(())
     }
