@@ -73,14 +73,16 @@ pub struct SegmentCache<H: Persistable> {
     segments: HashMap<u32, Segment<H>>,
     tip_height: Option<u32>,
     sync_base_height: u32, // TODO: This looks common for both, if needed extract to the Manager
+    base_path: PathBuf,
 }
 
 impl<H: Persistable> SegmentCache<H> {
-    pub fn new() -> Self {
+    pub fn new(base_path: impl Into<PathBuf>) -> Self {
         Self {
             segments: HashMap::new(),
             tip_height: None,
-            sync_base_height: 0, // TODO: Asks for this value in the function call
+            sync_base_height: 0,
+            base_path: base_path.into(),
         }
     }
 
@@ -94,36 +96,51 @@ impl<H: Persistable> SegmentCache<H> {
         (height % super::HEADERS_PER_SEGMENT) as usize
     }
 
+    pub fn set_sync_base_height(&mut self, height: u32) {
+        self.sync_base_height = height;
+    }
+
     pub fn clear(&mut self) {
         self.segments.clear();
         self.tip_height = None;
     }
 
-    pub async fn get_segment(&self, segment_id: u32) -> StorageResult<&Segment<H>> {
-        if let Some(segment) = self.segments.get(&segment_id) {
-            Ok(segment)
-        } else {
-            // TODO: Replace with Segment::load
-            let segment = ensure_segment_loaded(self, segment_id).await?;
-            let entry = self.segments.entry(segment_id);
-            let occupied_entry = entry.insert_entry(segment);
-            Ok(occupied_entry.get())
-        }
+    pub async fn get_segment(&mut self, segment_id: u32) -> StorageResult<&Segment<H>> {
+        let segment = self.get_segment_mut(segment_id).await?;
+        Ok(&*segment)
     }
 
-    pub async fn get_segment_mut(&self, segment_id: u32) -> StorageResult<&mut Segment<H>> {
-        if let Some(segment) = self.segments.get_mut(&segment_id) {
-            Ok(segment)
-        } else {
-            // TODO: Replace with Segment::load
-            let segment = ensure_segment_loaded(self, segment_id).await?;
-            let entry = self.segments.entry(segment_id);
-            let occupied_entry = entry.insert_entry(segment);
-            Ok(occupied_entry.get_mut())
+    // TODO: This logic can be improved for sure but for now it works (I guess)
+    pub async fn get_segment_mut<'a>(
+        &'a mut self,
+        segment_id: u32,
+    ) -> StorageResult<&'a mut Segment<H>> {
+        let segments_len = self.segments.len();
+        let segments = &mut self.segments;
+
+        if segments.contains_key(&segment_id) {
+            let segment = segments.get_mut(&segment_id).expect("We already checked that it exists");
+            segment.last_accessed = Instant::now();
+            return Ok(segment);
         }
+
+        if segments_len >= super::MAX_ACTIVE_SEGMENTS {
+            let key_to_evict =
+                segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
+
+            if let Some((key, v)) = key_to_evict {
+                v.evict(&self.base_path)?;
+                segments.remove(&key);
+            }
+        }
+
+        // Load and insert
+        let segment = Segment::load(&self.base_path, segment_id).await?;
+        let segment = segments.entry(segment_id).or_insert(segment);
+        Ok(segment)
     }
 
-    pub async fn get_headers(&self, range: Range<u32>) -> StorageResult<Vec<H>> {
+    pub async fn get_headers(&mut self, range: Range<u32>) -> StorageResult<Vec<H>> {
         let mut headers = Vec::new();
 
         // Convert blockchain height range to storage index range using sync_base_height

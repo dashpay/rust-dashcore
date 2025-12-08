@@ -17,7 +17,8 @@ impl DiskStorageManager {
     /// Store chain state to disk.
     pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
         // Update our sync_base_height
-        *self.sync_base_height.write().await = state.sync_base_height;
+        self.active_filter_segments.write().await.set_sync_base_height(state.sync_base_height);
+        self.active_segments.write().await.set_sync_base_height(state.sync_base_height);
 
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
@@ -352,8 +353,6 @@ impl DiskStorageManager {
         self.active_segments.write().await.clear();
         self.active_filter_segments.write().await.clear();
         self.header_hash_index.write().await.clear();
-        *self.cached_tip_height.write().await = None;
-        *self.cached_filter_tip_height.write().await = None;
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
 
@@ -510,11 +509,18 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn load_headers(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        self.active_segments.read().await.get_headers(range).await
+        self.active_segments.write().await.get_headers(range).await
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        Ok(self.active_segments.read().await.get_headers(height..height + 1).await?.get(0).copied())
+        Ok(self
+            .active_segments
+            .write()
+            .await
+            .get_headers(height..height + 1)
+            .await?
+            .get(0)
+            .copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
@@ -532,7 +538,7 @@ impl StorageManager for DiskStorageManager {
         &self,
         range: std::ops::Range<u32>,
     ) -> StorageResult<Vec<dashcore::hash_types::FilterHeader>> {
-        self.active_filter_segments.read().await.get_headers(range).await
+        self.active_filter_segments.write().await.get_headers(range).await
     }
 
     async fn get_filter_header(
@@ -541,7 +547,7 @@ impl StorageManager for DiskStorageManager {
     ) -> StorageResult<Option<dashcore::hash_types::FilterHeader>> {
         Ok(self
             .active_filter_segments
-            .read()
+            .write()
             .await
             .get_headers(height..height + 1)
             .await?
