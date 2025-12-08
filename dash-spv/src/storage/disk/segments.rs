@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Write},
     ops::Range,
     path::{Path, PathBuf},
@@ -32,16 +32,25 @@ pub(super) enum SegmentState {
 
 pub(super) trait Persistable: Sized + Encodable + Decodable + Clone {
     const FOLDER_NAME: &'static str;
-    fn relative_disk_path(segment_id: u32) -> PathBuf;
+    const SEGMENT_PREFIX: &'static str = "segment";
+    const DATA_FILE_EXTENSION: &'static str = "dat";
+
+    fn relative_disk_path(segment_id: u32) -> PathBuf {
+        format!(
+            "{}/{}_{:04}.{}",
+            Self::FOLDER_NAME,
+            Self::SEGMENT_PREFIX,
+            segment_id,
+            Self::DATA_FILE_EXTENSION
+        )
+        .into()
+    }
+
     fn new_sentinel() -> Self;
 }
 
 impl Persistable for BlockHeader {
-    const FOLDER_NAME: &'static str = "headers";
-
-    fn relative_disk_path(segment_id: u32) -> PathBuf {
-        format!("{}/segment_{:04}.dat", Self::FOLDER_NAME, segment_id).into()
-    }
+    const FOLDER_NAME: &'static str = "block_headers";
 
     fn new_sentinel() -> Self {
         BlockHeader {
@@ -56,11 +65,7 @@ impl Persistable for BlockHeader {
 }
 
 impl Persistable for FilterHeader {
-    const FOLDER_NAME: &'static str = "filters";
-
-    fn relative_disk_path(segment_id: u32) -> PathBuf {
-        format!("{}/filter_segment_{:04}.dat", Self::FOLDER_NAME, segment_id).into()
-    }
+    const FOLDER_NAME: &'static str = "filter_headers";
 
     fn new_sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
@@ -80,13 +85,50 @@ impl<H: Persistable> SegmentCache<H> {
     /// Maximum number of segments to keep in memory
     const MAX_ACTIVE_SEGMENTS: usize = 10;
 
-    pub fn new(base_path: impl Into<PathBuf>) -> Self {
-        Self {
+    pub async fn new(base_path: impl Into<PathBuf>) -> StorageResult<Self> {
+        let base_path = base_path.into();
+        let headers_dir = base_path.join(H::FOLDER_NAME);
+
+        let sync_base_height = 0; // TODO: This needs to have a value at this point
+
+        let mut cache = Self {
             segments: HashMap::new(),
             tip_height: None,
-            sync_base_height: 0,
-            base_path: base_path.into(),
+            sync_base_height,
+            base_path: base_path,
+        };
+
+        // Building the metadata
+        if let Ok(entries) = fs::read_dir(&headers_dir) {
+            let mut max_segment_id = None;
+
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.starts_with(H::SEGMENT_PREFIX)
+                        && name.ends_with(&format!(".{}", H::DATA_FILE_EXTENSION))
+                    {
+                        let segment_id_start = H::SEGMENT_PREFIX.len() + 1;
+                        let segment_id_end = segment_id_start + 4;
+
+                        if let Ok(id) = name[segment_id_start..segment_id_end].parse::<u32>() {
+                            max_segment_id =
+                                Some(max_segment_id.map_or(id, |max: u32| max.max(id)));
+                        }
+                    }
+                }
+            }
+
+            if let Some(segment_id) = max_segment_id {
+                let segment = cache.get_segment(&segment_id).await?;
+                let last_storage_index =
+                    segment_id * super::HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
+
+                let tip_height = cache.storage_index_to_height(last_storage_index);
+                cache.set_tip_height(tip_height);
+            }
         }
+
+        Ok(cache)
     }
 
     /// Get the segment ID for a given height.
