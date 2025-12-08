@@ -18,7 +18,7 @@ use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
 pub use disk::DiskStorageManager;
 pub use memory::MemoryStorageManager;
-pub use sync_state::{PersistentSyncState, RecoverySuggestion, SyncStateValidation};
+pub use sync_state::{RecoverySuggestion, SyncState, SyncStateValidation};
 pub use sync_storage::MemoryStorage;
 pub use types::*;
 
@@ -176,11 +176,11 @@ pub trait StorageManager: Send + Sync {
 
     // UTXO methods removed - handled by external wallet
 
-    /// Store persistent sync state.
-    async fn store_sync_state(&mut self, state: &PersistentSyncState) -> StorageResult<()>;
+    /// Store sync state.
+    async fn store_sync_state(&mut self, state: &SyncState) -> StorageResult<()>;
 
-    /// Load persistent sync state.
-    async fn load_sync_state(&self) -> StorageResult<Option<PersistentSyncState>>;
+    /// Load sync state.
+    async fn load_sync_state(&self) -> StorageResult<Option<SyncState>>;
 
     /// Clear sync state (for recovery).
     async fn clear_sync_state(&mut self) -> StorageResult<()>;

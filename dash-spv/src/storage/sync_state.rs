@@ -1,4 +1,4 @@
-//! Persistent sync state management for resuming sync after restarts.
+//! Sync state management for resuming sync after restarts.
 
 use dashcore::{BlockHash, Network};
 use serde::{Deserialize, Serialize};
@@ -10,9 +10,9 @@ use crate::types::{ChainState, SyncProgress};
 /// Increment this when making breaking changes to the format.
 const SYNC_STATE_VERSION: u32 = 2;
 
-/// Complete persistent sync state that can be saved and restored.
+/// Complete sync state that can be saved and restored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistentSyncState {
+pub struct SyncState {
     /// Version of the sync state format.
     pub version: u32,
 
@@ -149,8 +149,8 @@ pub enum RecoverySuggestion {
     PartialRecovery,
 }
 
-impl PersistentSyncState {
-    /// Create a new persistent sync state from current chain state.
+impl SyncState {
+    /// Create a new sync state from current chain state.
     pub fn from_chain_state(
         chain_state: &ChainState,
         sync_progress: &SyncProgress,
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_sync_state_validation() {
-        let mut state = PersistentSyncState {
+        let mut state = SyncState {
             version: SYNC_STATE_VERSION,
             network: Network::Testnet,
             chain_tip: ChainTip {

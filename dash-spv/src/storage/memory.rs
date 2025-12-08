@@ -17,7 +17,7 @@ pub struct MemoryStorageManager {
     filters: HashMap<u32, Vec<u8>>,
     masternode_state: Option<MasternodeState>,
     chain_state: Option<ChainState>,
-    sync_state: Option<crate::storage::PersistentSyncState>,
+    sync_state: Option<crate::storage::SyncState>,
     metadata: HashMap<String, Vec<u8>>,
     // Reverse indexes for O(1) lookups
     header_hash_index: HashMap<BlockHash, u32>,
@@ -334,15 +334,12 @@ impl StorageManager for MemoryStorageManager {
 
     // UTXO methods removed - handled by external wallet
 
-    async fn store_sync_state(
-        &mut self,
-        state: &crate::storage::PersistentSyncState,
-    ) -> StorageResult<()> {
+    async fn store_sync_state(&mut self, state: &crate::storage::SyncState) -> StorageResult<()> {
         self.sync_state = Some(state.clone());
         Ok(())
     }
 
-    async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::PersistentSyncState>> {
+    async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::SyncState>> {
         Ok(self.sync_state.clone())
     }
 

@@ -768,7 +768,7 @@ impl<
     /// Load sync state from storage and validate it, handling recovery if needed.
     pub(super) async fn load_and_validate_sync_state(
         &mut self,
-    ) -> Result<(Option<crate::storage::PersistentSyncState>, bool)> {
+    ) -> Result<(Option<crate::storage::SyncState>, bool)> {
         // Load sync state from storage
         let sync_state = {
             let storage = self.storage.lock().await;
@@ -902,7 +902,7 @@ impl<
     /// Restore headers from saved state into ChainState.
     pub(super) async fn restore_headers_from_state(
         &mut self,
-        saved_state: &crate::storage::PersistentSyncState,
+        saved_state: &crate::storage::SyncState,
     ) -> Result<bool> {
         if saved_state.chain_tip.height == 0 {
             return Ok(true);
@@ -1021,7 +1021,7 @@ impl<
     /// Restore filter headers from saved state.
     pub(super) async fn restore_filter_headers_from_state(
         &mut self,
-        saved_state: &crate::storage::PersistentSyncState,
+        saved_state: &crate::storage::SyncState,
     ) -> Result<()> {
         if saved_state.sync_progress.filter_header_height == 0 {
             return Ok(());
@@ -1051,7 +1051,7 @@ impl<
     /// Update stats from saved state.
     pub(super) async fn update_stats_from_state(
         &mut self,
-        saved_state: &crate::storage::PersistentSyncState,
+        saved_state: &crate::storage::SyncState,
     ) {
         let mut stats = self.stats.write().await;
         stats.headers_downloaded = saved_state.sync_progress.header_height as u64;
@@ -1070,7 +1070,7 @@ impl<
     /// Restore sync manager state.
     pub(super) async fn restore_sync_manager_state(
         &mut self,
-        saved_state: &crate::storage::PersistentSyncState,
+        saved_state: &crate::storage::SyncState,
     ) -> Result<bool> {
         // Update sync manager state
         tracing::debug!("Sequential sync manager will resume from stored state");
@@ -1236,14 +1236,14 @@ impl<
         // Get current chain state
         let chain_state = self.state.read().await;
 
-        // Create persistent sync state
-        let persistent_state = crate::storage::PersistentSyncState::from_chain_state(
+        // Create sync state
+        let sync_state = crate::storage::SyncState::from_chain_state(
             &chain_state,
             &sync_progress,
             self.config.network,
         );
 
-        if let Some(state) = persistent_state {
+        if let Some(state) = sync_state {
             // Check if we should create a checkpoint
             if state.should_checkpoint(state.chain_tip.height) {
                 if let Some(checkpoint) = state.checkpoints.last() {

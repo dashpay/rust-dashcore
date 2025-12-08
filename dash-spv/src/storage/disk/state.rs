@@ -129,7 +129,7 @@ impl DiskStorageManager {
     /// Store sync state.
     pub async fn store_sync_state(
         &mut self,
-        state: &crate::storage::PersistentSyncState,
+        state: &crate::storage::SyncState,
     ) -> StorageResult<()> {
         let path = self.base_path.join("sync_state.json");
 
@@ -153,9 +153,7 @@ impl DiskStorageManager {
     }
 
     /// Load sync state.
-    pub async fn load_sync_state(
-        &self,
-    ) -> StorageResult<Option<crate::storage::PersistentSyncState>> {
+    pub async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::SyncState>> {
         let path = self.base_path.join("sync_state.json");
 
         if !path.exists() {
@@ -164,13 +162,12 @@ impl DiskStorageManager {
         }
 
         let json = tokio::fs::read_to_string(&path).await?;
-        let state: crate::storage::PersistentSyncState =
-            serde_json::from_str(&json).map_err(|e| {
-                crate::error::StorageError::ReadFailed(format!(
-                    "Failed to deserialize sync state: {}",
-                    e
-                ))
-            })?;
+        let state: crate::storage::SyncState = serde_json::from_str(&json).map_err(|e| {
+            crate::error::StorageError::ReadFailed(format!(
+                "Failed to deserialize sync state: {}",
+                e
+            ))
+        })?;
 
         tracing::debug!("Loaded sync state from height {}", state.chain_tip.height);
         Ok(Some(state))
@@ -609,14 +606,11 @@ impl StorageManager for DiskStorageManager {
         Self::get_headers_batch(self, start_height, end_height).await
     }
 
-    async fn store_sync_state(
-        &mut self,
-        state: &crate::storage::PersistentSyncState,
-    ) -> StorageResult<()> {
+    async fn store_sync_state(&mut self, state: &crate::storage::SyncState) -> StorageResult<()> {
         Self::store_sync_state(self, state).await
     }
 
-    async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::PersistentSyncState>> {
+    async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::SyncState>> {
         Self::load_sync_state(self).await
     }
 
