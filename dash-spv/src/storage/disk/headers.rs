@@ -17,49 +17,6 @@ use crate::StorageError;
 use super::manager::DiskStorageManager;
 
 impl DiskStorageManager {
-    /// Internal implementation that optionally accepts pre-computed hashes
-    pub(super) async fn store_headers_impl(
-        &mut self,
-        headers: &[BlockHeader],
-        precomputed_hashes: Option<&[BlockHash]>,
-    ) -> StorageResult<()> {
-        // Validate that if hashes are provided, the count matches
-        if let Some(hashes) = precomputed_hashes {
-            if hashes.len() != headers.len() {
-                return Err(crate::error::StorageError::WriteFailed(
-                    "Precomputed hash count doesn't match header count".to_string(),
-                ));
-            }
-        }
-
-        let hashes = if let Some(hashes) = precomputed_hashes {
-            hashes
-        } else {
-            &headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>()
-        };
-
-        let mut height = if let Some(height) = self.active_segments.read().await.tip_height() {
-            height + 1
-        } else {
-            0
-        };
-
-        self.active_segments.write().await.store_headers(headers, self).await?;
-
-        // Update reverse index
-        let mut reverse_index = self.header_hash_index.write().await;
-
-        for hash in hashes {
-            reverse_index.insert(*hash, height);
-            height += 1;
-        }
-
-        // Release locks before saving (to avoid deadlocks during background saves)
-        drop(reverse_index);
-
-        Ok(())
-    }
-
     /// Store headers starting from a specific height (used for checkpoint sync)
     pub async fn store_headers_from_height(
         &mut self,
@@ -164,12 +121,29 @@ impl DiskStorageManager {
     /// This is a performance optimization for hot paths that have already computed header hashes.
     /// When called from header sync with CachedHeader wrappers, passing precomputed hashes avoids
     /// recomputing the expensive X11 hash for indexing (saves ~35% of CPU during sync).
-    pub async fn store_headers_internal(
-        &mut self,
-        headers: &[BlockHeader],
-        precomputed_hashes: Option<&[BlockHash]>,
-    ) -> StorageResult<()> {
-        self.store_headers_impl(headers, precomputed_hashes).await
+    pub async fn store_headers_internal(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
+        let hashes = headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>();
+
+        let mut height = if let Some(height) = self.active_segments.read().await.tip_height() {
+            height + 1
+        } else {
+            0
+        };
+
+        self.active_segments.write().await.store_headers(headers, self).await?;
+
+        // Update reverse index
+        let mut reverse_index = self.header_hash_index.write().await;
+
+        for hash in hashes {
+            reverse_index.insert(hash, height);
+            height += 1;
+        }
+
+        // Release locks before saving (to avoid deadlocks during background saves)
+        drop(reverse_index);
+
+        Ok(())
     }
 
     /// Get header height by hash.

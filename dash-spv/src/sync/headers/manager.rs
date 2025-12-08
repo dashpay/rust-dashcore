@@ -332,17 +332,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         }
 
-        // Store Headers in Bulk: Single atomic database operation
-        // Extract precomputed hashes from cached headers to avoid redundant X11 in storage
-        let precomputed_hashes: Vec<BlockHash> =
-            cached_headers.iter().map(|ch| ch.block_hash()).collect();
-
         // Use the internal storage method if available (DiskStorageManager optimization)
         if let Some(disk_storage) =
             storage.as_any_mut().downcast_mut::<crate::storage::disk::DiskStorageManager>()
         {
             disk_storage
-                .store_headers_internal(&headers, Some(&precomputed_hashes))
+                .store_headers_internal(&headers)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
         } else {
