@@ -6,7 +6,6 @@ use std::{
     io::{BufReader, BufWriter, Write},
     ops::Range,
     path::{Path, PathBuf},
-    slice::SliceIndex,
     time::Instant,
 };
 
