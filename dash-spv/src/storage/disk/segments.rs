@@ -395,15 +395,19 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
     return Ok(());
 
     async fn process_segments<H: Persistable + Clone>(
-        segments_caches_map: &tokio::sync::RwLock<HashMap<u32, Segment<H>>>,
+        segments_cache: &tokio::sync::RwLock<SegmentCache<H>>,
         tx: &tokio::sync::mpsc::Sender<WorkerCommand>,
         make_command: impl Fn(Segment<H>) -> WorkerCommand,
     ) {
         // Collect segments to save (only dirty ones)
         let (to_save, ids_to_mark) = {
-            let segments = segments_caches_map.read().await;
-            let to_save: Vec<_> =
-                segments.values().filter(|s| s.state == SegmentState::Dirty).cloned().collect();
+            let segments_cache = segments_cache.read().await;
+            let to_save: Vec<_> = segments_cache
+                .segments
+                .values()
+                .filter(|s| s.state == SegmentState::Dirty)
+                .cloned()
+                .collect();
             let ids_to_mark: Vec<_> = to_save.iter().map(|cache| cache.segment_id).collect();
             (to_save, ids_to_mark)
         };
@@ -415,9 +419,9 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
 
         // Mark ONLY the header segments we're actually saving as Saving
         {
-            let mut segments = segments_caches_map.write().await;
+            let mut segments_cache = segments_cache.write().await;
             for id in &ids_to_mark {
-                if let Some(segment) = segments.get_mut(id) {
+                if let Some(segment) = segments_cache.segments.get_mut(id) {
                     segment.state = SegmentState::Saving;
                     segment.last_saved = Instant::now();
                 }
