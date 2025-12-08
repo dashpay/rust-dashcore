@@ -82,8 +82,10 @@ impl DiskStorageManager {
 
         let mut storage = Self {
             base_path: base_path.clone(),
-            active_segments: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()))),
-            active_filter_segments: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()))),
+            active_segments: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()).await?)),
+            active_filter_segments: Arc::new(RwLock::new(
+                SegmentCache::new(base_path.clone()).await?,
+            )),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,
@@ -187,6 +189,8 @@ impl DiskStorageManager {
         }
     }
 
+    // TODO: Find a place where this function should be call
+    #[allow(unused)]
     /// Process notifications from background worker to clear save_pending flags.
     pub(super) async fn process_worker_notifications(&self) {
         use super::segments::SegmentState;
@@ -252,8 +256,6 @@ impl DiskStorageManager {
         // Find highest segment to determine tip height
         let headers_dir = self.base_path.join("headers");
         if let Ok(entries) = fs::read_dir(&headers_dir) {
-            let mut max_segment_id = None;
-            let mut max_filter_segment_id = None;
             let mut all_segment_ids = Vec::new();
 
             for entry in entries.flatten() {
@@ -261,8 +263,6 @@ impl DiskStorageManager {
                     if name.starts_with("segment_") && name.ends_with(".dat") {
                         if let Ok(id) = name[8..12].parse::<u32>() {
                             all_segment_ids.push(id);
-                            max_segment_id =
-                                Some(max_segment_id.map_or(id, |max: u32| max.max(id)));
                         }
                     }
                 }
@@ -307,42 +307,6 @@ impl DiskStorageManager {
                     self.header_hash_index.read().await.len(),
                     sync_base_height
                 );
-            }
-
-            // Also check the filters directory for filter segments
-            let filters_dir = self.base_path.join("filters");
-            if let Ok(entries) = fs::read_dir(&filters_dir) {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        if name.starts_with("filter_segment_") && name.ends_with(".dat") {
-                            if let Ok(id) = name[15..19].parse::<u32>() {
-                                max_filter_segment_id =
-                                    Some(max_filter_segment_id.map_or(id, |max: u32| max.max(id)));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // If we have segments, load the highest one to find tip
-            if let Some(segment_id) = max_segment_id {
-                let mut segments_cache = self.active_segments.write().await;
-                let segment = segments_cache.get_segment(&segment_id).await?;
-                let storage_index =
-                    segment_id * HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
-                let tip_height = segments_cache.storage_index_to_height(storage_index);
-                segments_cache.set_tip_height(tip_height);
-            }
-
-            // If we have filter segments, load the highest one to find filter tip
-            if let Some(segment_id) = max_filter_segment_id {
-                let mut segments_cache = self.active_filter_segments.write().await;
-                let segment = segments_cache.get_segment(&segment_id).await?;
-                let storage_index =
-                    segment_id * HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
-
-                let tip_height = segments_cache.storage_index_to_height(storage_index);
-                segments_cache.set_tip_height(tip_height);
             }
         }
 
