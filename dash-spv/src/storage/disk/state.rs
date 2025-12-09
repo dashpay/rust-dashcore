@@ -713,7 +713,8 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn shutdown(&mut self) -> StorageResult<()> {
-        Ok(Self::shutdown(self).await)
+        Self::shutdown(self).await;
+        Ok(())
     }
 }
 
