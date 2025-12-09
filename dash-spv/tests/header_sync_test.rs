@@ -5,7 +5,8 @@ use std::time::Duration;
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::{MemoryStorageManager, StorageManager},
+    storage::{DiskStorageManager, MemoryStorageManager, StorageManager},
+    sync::{HeaderSyncManager, ReorgConfig},
     types::{ChainState, ValidationMode},
 };
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
@@ -13,7 +14,9 @@ use dashcore_hashes::Hash;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::{debug, info};
+use test_case::test_case;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 #[tokio::test]
@@ -331,4 +334,49 @@ async fn test_header_storage_consistency() {
     }
 
     info!("Header storage consistency test completed");
+}
+
+#[test_case(0, 0 ; "genesis_0_blocks")]
+#[test_case(0, 1 ; "genesis_1_block")]
+#[test_case(0, 60000 ; "genesis_60000_blocks")]
+#[test_case(0, 0 ; "checkpoint_0_blocks")]
+#[test_case(170000, 1 ; "checkpoint_1_block")]
+#[test_case(12345, 60000 ; "checkpoint_60000_blocks")]
+#[tokio::test]
+async fn test_load_headers_from_storage(
+    sync_base_height: u32,
+    header_count: usize,
+) {
+    // Setup: Create storage with 100 headers
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
+        .await
+        .expect("Failed to create storage");
+
+    let test_headers = create_test_header_chain(header_count);
+
+    // Store chain state
+    let mut chain_state = ChainState::new_for_network(Network::Dash);
+    chain_state.sync_base_height = sync_base_height;
+    chain_state.headers = test_headers.clone();
+    storage.store_chain_state(&chain_state).await.expect("Failed to store chain state");
+
+    // Create HeaderSyncManager and load headers
+    let config = ClientConfig::new(Network::Dash);
+    let chain_state = Arc::new(RwLock::new(ChainState::new_for_network(Network::Dash)));
+    let mut header_sync = HeaderSyncManager::<DiskStorageManager, PeerNetworkManager>::new(
+        &config,
+        ReorgConfig::default(),
+        chain_state.clone(),
+    )
+    .expect("Failed to create HeaderSyncManager");
+
+    // Load headers from storage
+    let loaded_count =
+        header_sync.load_headers_from_storage(&storage).await.expect("Failed to load headers");
+
+    let cs = chain_state.read().await;
+
+    assert_eq!(loaded_count as usize, header_count, "Loaded count mismatch");
+    assert_eq!(header_count, cs.headers.len(), "Chain state count mismatch");
 }
