@@ -108,12 +108,15 @@ impl DiskStorageManager {
         Ok(storage)
     }
 
-    /// Start the background worker and notification channel.
+    /// Start the background worker
     pub(super) async fn start_worker(&mut self) {
         let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerCommand>(100);
 
         let worker_base_path = self.base_path.clone();
         let base_path = self.base_path.clone();
+
+        let block_header = Arc::clone(&self.active_segments);
+        let filter_header = Arc::clone(&self.active_filter_segments);
 
         let worker_handle = tokio::spawn(async move {
             while let Some(cmd) = worker_rx.recv().await {
@@ -121,9 +124,9 @@ impl DiskStorageManager {
                     WorkerCommand::SaveBlockHeaderSegmentCache {
                         segment_id,
                     } => {
-                        let cache =
-                            self.active_segments.write().await.get_segment(&segment_id).await;
-                        if let Err(e) = cache.and_then(|cache| cache.persist(&base_path)) {
+                        let mut cache = block_header.write().await;
+                        let segment = cache.get_segment_mut(&segment_id).await;
+                        if let Err(e) = segment.and_then(|segment| segment.persist(&base_path)) {
                             eprintln!("Failed to save segment {}: {}", segment_id, e);
                         } else {
                             tracing::trace!(
@@ -135,9 +138,9 @@ impl DiskStorageManager {
                     WorkerCommand::SaveFilterHeaderSegmentCache {
                         segment_id,
                     } => {
-                        let cache =
-                            self.active_segments.write().await.get_segment(&segment_id).await;
-                        if let Err(e) = cache.and_then(|cache| cache.persist(&base_path)) {
+                        let mut cache = filter_header.write().await;
+                        let segment = cache.get_segment_mut(&segment_id).await;
+                        if let Err(e) = segment.and_then(|segment| segment.persist(&base_path)) {
                             eprintln!("Failed to save filter segment {}: {}", segment_id, e);
                         } else {
                             tracing::trace!(
