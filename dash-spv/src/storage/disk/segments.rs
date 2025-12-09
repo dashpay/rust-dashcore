@@ -108,7 +108,7 @@ impl<H: Persistable> SegmentCache<H> {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
             tip_height: None,
             sync_base_height,
-            base_path: base_path,
+            base_path,
         };
 
         // Building the metadata
@@ -176,8 +176,8 @@ impl<H: Persistable> SegmentCache<H> {
         let segments_len = self.segments.len();
         let segments = &mut self.segments;
 
-        if segments.contains_key(&segment_id) {
-            let segment = segments.get_mut(&segment_id).expect("We already checked that it exists");
+        if segments.contains_key(segment_id) {
+            let segment = segments.get_mut(segment_id).expect("We already checked that it exists");
             segment.last_accessed = Instant::now();
             return Ok(segment);
         }
@@ -305,7 +305,7 @@ impl<H: Persistable> SegmentCache<H> {
         }
 
         // Save dirty segments periodically (every 1000 filter headers)
-        if headers.len() >= 1000 || start_height % 1000 == 0 {
+        if headers.len() >= 1000 || start_height.is_multiple_of(1000) {
             self.save_dirty(manager).await?;
         }
 
