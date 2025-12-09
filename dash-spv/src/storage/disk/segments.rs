@@ -300,9 +300,11 @@ impl<H: Persistable> SegmentCache<H> {
         }
 
         // Update cached tip height with blockchain height
-        if start_height + storage_index > 0 {
-            self.tip_height = Some(start_height + storage_index - 1);
-        }
+        let last_item_height = self.storage_index_to_height(storage_index).saturating_sub(1);
+        self.tip_height = match self.tip_height {
+            Some(current) => Some(current.max(last_item_height)),
+            None => Some(last_item_height),
+        };
 
         // Save dirty segments periodically (every 1000 filter headers)
         if headers.len() >= 1000 || start_height.is_multiple_of(1000) {
