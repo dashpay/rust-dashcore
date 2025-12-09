@@ -26,6 +26,3 @@ mod segments;
 mod state;
 
 pub use manager::DiskStorageManager;
-
-/// Number of headers per segment file
-const HEADERS_PER_SEGMENT: u32 = 50_000;

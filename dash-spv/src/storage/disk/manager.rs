@@ -8,10 +8,9 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
+use crate::storage;
 use crate::storage::disk::segments::{load_header_segments, SegmentCache};
 use crate::types::{MempoolState, UnconfirmedTransaction};
-
-use super::HEADERS_PER_SEGMENT;
 
 /// Commands for the background worker
 #[derive(Debug, Clone)]
