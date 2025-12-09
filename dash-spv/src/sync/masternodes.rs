@@ -16,9 +16,8 @@ use dashcore::{
     BlockHash, QuorumHash,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 
 use crate::client::ClientConfig;
 use crate::error::{SpvError, SyncError, SyncResult};
@@ -71,21 +70,22 @@ impl SharedMasternodeState {
     }
 
     /// Check if the masternode engine is available (sync has completed at least once).
-    ///
-    /// This is a blocking call that acquires a read lock.
     pub fn is_available(&self) -> bool {
-        self.engine.blocking_read().is_some()
+        self.engine
+            .read()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
     }
 
     /// Get the masternode list at a specific block height (synchronous).
     ///
     /// Returns `None` if the masternode engine is not available or if no list
     /// exists at the specified height.
-    ///
-    /// This is a blocking call that acquires a read lock.
     pub fn get_masternode_list_at_height_sync(&self, height: u32) -> Option<MasternodeList> {
-        let guard = self.engine.blocking_read();
-        guard.as_ref().and_then(|e| e.masternode_lists.get(&height).cloned())
+        self.engine
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().and_then(|e| e.masternode_lists.get(&height).cloned()))
     }
 
     /// Get a quorum entry by type and hash at a specific block height (synchronous).
@@ -100,15 +100,15 @@ impl SharedMasternodeState {
     /// # Returns
     /// * `Ok(QualifiedQuorumEntry)` - The quorum entry if found
     /// * `Err(SpvError)` - If the engine is unavailable or the quorum is not found
-    ///
-    /// This is a blocking call that acquires a read lock.
     pub fn get_quorum_at_height_sync(
         &self,
         height: u32,
         quorum_type: LLMQType,
         quorum_hash: QuorumHash,
     ) -> Result<QualifiedQuorumEntry, SpvError> {
-        let guard = self.engine.blocking_read();
+        let guard = self.engine.read().map_err(|_| {
+            SpvError::QuorumLookupError("Lock poisoned".to_string())
+        })?;
 
         let engine = guard.as_ref().ok_or_else(|| {
             SpvError::QuorumLookupError("Masternode engine not available".to_string())
@@ -149,8 +149,6 @@ impl SharedMasternodeState {
     /// # Returns
     /// * `Ok(BLSPublicKey)` - The quorum's threshold public key
     /// * `Err(SpvError)` - If the engine is unavailable or the quorum is not found
-    ///
-    /// This is a blocking call that acquires a read lock.
     pub fn get_quorum_public_key_sync(
         &self,
         height: u32,
@@ -164,40 +162,47 @@ impl SharedMasternodeState {
     /// Get all available masternode list heights (synchronous).
     ///
     /// Returns an empty vector if the engine is not available.
-    ///
-    /// This is a blocking call that acquires a read lock.
     pub fn available_heights_sync(&self) -> Vec<u32> {
-        let guard = self.engine.blocking_read();
-        guard
-            .as_ref()
-            .map(|e| e.masternode_lists.keys().copied().collect())
+        self.engine
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|e| e.masternode_lists.keys().copied().collect()))
             .unwrap_or_default()
     }
 
     /// Update the engine (called by MasternodeSyncManager).
-    pub(crate) async fn update_engine(&self, engine: Option<MasternodeListEngine>) {
-        let mut guard = self.engine.write().await;
-        *guard = engine;
+    ///
+    /// Note: This method is synchronous despite being used in async contexts.
+    /// The std::sync::RwLock is used intentionally to allow sync reads from
+    /// async contexts without blocking the runtime.
+    pub(crate) fn update_engine(&self, engine: Option<MasternodeListEngine>) {
+        if let Ok(mut guard) = self.engine.write() {
+            *guard = engine;
+        }
     }
 
     /// Get mutable access for sync operations (called by MasternodeSyncManager).
     #[allow(dead_code)]
-    pub(crate) async fn with_engine_mut<F, R>(&self, f: F) -> Option<R>
+    pub(crate) fn with_engine_mut<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&mut MasternodeListEngine) -> R,
     {
-        let mut guard = self.engine.write().await;
-        guard.as_mut().map(f)
+        self.engine
+            .write()
+            .ok()
+            .and_then(|mut guard| guard.as_mut().map(f))
     }
 
     /// Get read access for sync operations that need the full engine.
     #[allow(dead_code)]
-    pub(crate) async fn read_engine<F, R>(&self, f: F) -> Option<R>
+    pub(crate) fn read_engine<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&MasternodeListEngine) -> R,
     {
-        let guard = self.engine.read().await;
-        guard.as_ref().map(f)
+        self.engine
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(f))
     }
 }
 
@@ -816,8 +821,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Sync the shared state with the current engine state.
     ///
     /// This should be called after significant engine updates (like after QRInfo processing).
-    pub async fn sync_shared_state(&self) {
-        self.shared_state.update_engine(self.engine.clone()).await;
+    pub fn sync_shared_state(&self) {
+        self.shared_state.update_engine(self.engine.clone());
     }
 
     /// Check if sync is in progress
@@ -883,7 +888,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.last_qrinfo_block_hash = Some(block_hash);
 
         // Sync shared state with updated engine
-        self.sync_shared_state().await;
+        self.sync_shared_state();
 
         // Check if we need to wait for MnListDiff responses
         if self.pending_mnlistdiff_requests == 0 {
