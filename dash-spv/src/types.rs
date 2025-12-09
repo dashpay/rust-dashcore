@@ -277,9 +277,6 @@ pub struct ChainState {
 
     /// Base height when syncing from a checkpoint (0 if syncing from genesis).
     pub sync_base_height: u32,
-
-    /// Whether the chain was synced from a checkpoint rather than genesis.
-    pub synced_from_checkpoint: bool,
 }
 
 impl ChainState {
@@ -323,9 +320,13 @@ impl ChainState {
 
         // Initialize checkpoint fields
         state.sync_base_height = 0;
-        state.synced_from_checkpoint = false;
 
         state
+    }
+
+    /// Whether the chain was synced from a checkpoint rather than genesis.
+    pub fn synced_from_checkpoint(&self) -> bool {
+        self.sync_base_height > 0
     }
 
     /// Get the current tip height.
@@ -461,7 +462,6 @@ impl ChainState {
 
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
-        self.synced_from_checkpoint = true;
 
         // Add the checkpoint header as our first header
         self.headers.push(checkpoint_header);
@@ -504,7 +504,6 @@ impl std::fmt::Debug for ChainState {
             .field("current_filter_tip", &self.current_filter_tip)
             .field("last_masternode_diff_height", &self.last_masternode_diff_height)
             .field("sync_base_height", &self.sync_base_height)
-            .field("synced_from_checkpoint", &self.synced_from_checkpoint)
             .finish()
     }
 }

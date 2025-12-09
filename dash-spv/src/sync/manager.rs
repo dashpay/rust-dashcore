@@ -378,17 +378,8 @@ impl<
     }
 
     /// Update the chain state (used for checkpoint sync initialization)
-    pub fn update_chain_state_cache(
-        &mut self,
-        synced_from_checkpoint: bool,
-        sync_base_height: u32,
-        headers_len: u32,
-    ) {
-        self.header_sync.update_cached_from_state_snapshot(
-            synced_from_checkpoint,
-            sync_base_height,
-            headers_len,
-        );
+    pub fn update_chain_state_cache(&mut self, sync_base_height: u32, headers_len: u32) {
+        self.header_sync.update_cached_from_state_snapshot(sync_base_height, headers_len);
     }
 
     /// Get reference to the masternode engine if available.
@@ -420,9 +411,7 @@ impl<
             .unwrap_or(0);
 
         // Check if we're syncing from a checkpoint
-        if self.header_sync.is_synced_from_checkpoint()
-            && self.header_sync.get_sync_base_height() > 0
-        {
+        if self.header_sync.is_synced_from_checkpoint() {
             // For checkpoint sync, blockchain height = sync_base_height + storage_height
             Ok(self.header_sync.get_sync_base_height() + storage_height)
         } else {

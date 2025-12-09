@@ -108,10 +108,7 @@ impl ForkDetector {
         // Check if this connects to the main chain (creates new fork)
         if let Ok(Some(height)) = storage.get_header_height(&prev_hash) {
             // Check if this would create a fork from before our checkpoint
-            if chain_state.synced_from_checkpoint
-                && chain_state.sync_base_height > 0
-                && height < chain_state.sync_base_height
-            {
+            if chain_state.synced_from_checkpoint() && height < chain_state.sync_base_height {
                 tracing::warn!(
                         "Rejecting header that would create fork from height {} (before checkpoint base {}). \
                         This likely indicates headers from genesis were received during checkpoint sync.",
@@ -140,11 +137,7 @@ impl ForkDetector {
         for (height, state_header) in chain_state.headers.iter().enumerate() {
             if prev_hash == state_header.block_hash() {
                 // Calculate the actual blockchain height for this index
-                let actual_height = if chain_state.synced_from_checkpoint {
-                    chain_state.sync_base_height + (height as u32)
-                } else {
-                    height as u32
-                };
+                let actual_height = chain_state.sync_base_height + (height as u32);
 
                 // This connects to a header in chain state but not in storage
                 // Treat it as extending main chain if it's the tip

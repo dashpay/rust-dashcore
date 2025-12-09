@@ -21,7 +21,7 @@ impl DiskStorageManager {
 
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
-        if state.synced_from_checkpoint && state.sync_base_height > 0 && !state.headers.is_empty() {
+        if state.synced_from_checkpoint() && !state.headers.is_empty() {
             // Store headers starting from the checkpoint height
             self.store_headers_from_height(&state.headers, state.sync_base_height).await?;
         } else {
@@ -38,7 +38,6 @@ impl DiskStorageManager {
             "current_filter_tip": state.current_filter_tip,
             "last_masternode_diff_height": state.last_masternode_diff_height,
             "sync_base_height": state.sync_base_height,
-            "synced_from_checkpoint": state.synced_from_checkpoint,
         });
 
         let path = self.base_path.join("state/chain.json");
@@ -63,11 +62,7 @@ impl DiskStorageManager {
 
         // Load all headers
         if let Some(tip_height) = self.get_tip_height().await? {
-            let range_start = if state.synced_from_checkpoint && state.sync_base_height > 0 {
-                state.sync_base_height
-            } else {
-                0
-            };
+            let range_start = state.sync_base_height;
             state.headers = self.load_headers(range_start..tip_height + 1).await?;
         }
 
@@ -88,8 +83,6 @@ impl DiskStorageManager {
         // Load checkpoint sync fields
         state.sync_base_height =
             value.get("sync_base_height").and_then(|v| v.as_u64()).map(|h| h as u32).unwrap_or(0);
-        state.synced_from_checkpoint =
-            value.get("synced_from_checkpoint").and_then(|v| v.as_bool()).unwrap_or(false);
 
         Ok(Some(state))
     }
@@ -829,7 +822,6 @@ mod tests {
         // Set sync base height so storage interprets heights as blockchain heights
         let mut base_state = ChainState::new();
         base_state.sync_base_height = checkpoint_height;
-        base_state.synced_from_checkpoint = true;
         storage.store_chain_state(&base_state).await?;
 
         // Verify headers are stored at correct blockchain heights
@@ -861,7 +853,6 @@ mod tests {
         // Store chain state to persist sync_base_height
         let mut chain_state = ChainState::new();
         chain_state.sync_base_height = checkpoint_height;
-        chain_state.synced_from_checkpoint = true;
         storage.store_chain_state(&chain_state).await?;
 
         // Force save to disk

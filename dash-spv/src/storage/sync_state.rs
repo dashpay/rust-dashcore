@@ -42,9 +42,6 @@ pub struct PersistentSyncState {
 
     /// Base height when syncing from a checkpoint (0 if syncing from genesis).
     pub sync_base_height: u32,
-
-    /// Whether the chain was synced from a checkpoint rather than genesis.
-    pub synced_from_checkpoint: bool,
 }
 
 /// Chain tip information.
@@ -195,7 +192,6 @@ impl PersistentSyncState {
                 .map(|work| format!("{:?}", work))
                 .unwrap_or_else(|| String::from("0")),
             sync_base_height: chain_state.sync_base_height,
-            synced_from_checkpoint: chain_state.synced_from_checkpoint,
         })
     }
 
@@ -324,6 +320,10 @@ impl PersistentSyncState {
         }
     }
 
+    pub fn synced_from_checkpoint(&self) -> bool {
+        self.sync_base_height > 0
+    }
+
     /// Get the best checkpoint to use for recovery.
     pub fn get_best_checkpoint(&self) -> Option<&SyncCheckpoint> {
         self.checkpoints.iter().rev().find(|cp| cp.validated)
@@ -378,7 +378,6 @@ mod tests {
             saved_at: SystemTime::now(),
             chain_work: String::new(),
             sync_base_height: 0,
-            synced_from_checkpoint: false,
         };
 
         // Valid state
