@@ -2011,7 +2011,10 @@ mod tests {
 
         assert_eq!(Amount::from_str("x DASH"), Err(E::InvalidCharacter('x')));
         assert_eq!(Amount::from_str("xDASH"), Err(E::UnknownDenomination("xDASH".into())));
-        assert_eq!(Amount::from_str("5 DASH DASH"), Err(E::UnknownDenomination("DASH DASH".into())));
+        assert_eq!(
+            Amount::from_str("5 DASH DASH"),
+            Err(E::UnknownDenomination("DASH DASH".into()))
+        );
         assert_eq!(Amount::from_str("5DASH DASH"), Err(E::InvalidCharacter('D')));
         assert_eq!(Amount::from_str("5 5 DASH"), Err(E::UnknownDenomination("5 DASH".into())));
 
@@ -2374,7 +2377,8 @@ mod tests {
 
     #[test]
     fn disallow_confusing_forms() {
-        let confusing = ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MDASH", "MDash", "PDASH"];
+        let confusing =
+            ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MDASH", "MDash", "PDASH"];
         for denom in confusing.iter() {
             match Denomination::from_str(denom) {
                 Ok(_) => panic!("from_str should error for {}", denom),
