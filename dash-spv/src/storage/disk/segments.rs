@@ -30,7 +30,7 @@ enum SegmentState {
     Saving, // Currently being saved in background
 }
 
-trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
+pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const FOLDER_NAME: &'static str;
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
@@ -94,6 +94,52 @@ pub struct SegmentCache<H: Persistable> {
     base_path: PathBuf,
 }
 
+impl SegmentCache<BlockHeader> {
+    pub async fn build_block_index_from_segments(
+        &mut self,
+    ) -> StorageResult<HashMap<BlockHash, u32>> {
+        let segments_dir = self.base_path.join(BlockHeader::FOLDER_NAME);
+
+        let blocks_count = self.next_height() - self.sync_base_height;
+        let mut block_index = HashMap::with_capacity(blocks_count as usize);
+
+        let entries = fs::read_dir(&segments_dir)?;
+
+        for entry in entries.flatten() {
+            let name = match entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if !name.starts_with(BlockHeader::SEGMENT_PREFIX) {
+                continue;
+            }
+
+            if !name.ends_with(&format!(".{}", BlockHeader::DATA_FILE_EXTENSION)) {
+                continue;
+            }
+
+            let segment_id = match name[8..12].parse::<u32>() {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let storage_start_idx = Self::segment_id_to_start_index(segment_id);
+            let mut block_height = self.storage_index_to_height(storage_start_idx);
+
+            let segment = self.get_segment(&segment_id).await?;
+
+            for header in segment.items.iter() {
+                block_index.insert(header.block_hash(), block_height);
+
+                block_height += 1;
+            }
+        }
+
+        Ok(block_index)
+    }
+}
+
 impl<H: Persistable> SegmentCache<H> {
     /// Maximum number of segments to keep in memory
     const MAX_ACTIVE_SEGMENTS: usize = 10;
@@ -147,6 +193,10 @@ impl<H: Persistable> SegmentCache<H> {
     /// Get the segment ID for a given height.
     fn index_to_segment_id(height: u32) -> u32 {
         height / Segment::<H>::ITEMS_PER_SEGMENT
+    }
+
+    fn segment_id_to_start_index(segment_id: u32) -> u32 {
+        segment_id * Segment::<H>::ITEMS_PER_SEGMENT
     }
 
     /// Get the segment offset for a given height.
@@ -386,7 +436,28 @@ impl<H: Persistable> Segment<H> {
         let segment_path = base_path.join(H::relative_disk_path(segment_id));
 
         let mut headers = if segment_path.exists() {
-            load_header_segments(&segment_path)?
+            let file = File::open(&segment_path)?;
+            let mut reader = BufReader::new(file);
+            let mut headers = Vec::with_capacity(Segment::<H>::ITEMS_PER_SEGMENT as usize);
+
+            loop {
+                match H::consensus_decode(&mut reader) {
+                    Ok(header) => headers.push(header),
+                    Err(encode::Error::Io(ref e))
+                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        break
+                    }
+                    Err(e) => {
+                        return Err(StorageError::ReadFailed(format!(
+                            "Failed to decode header: {}",
+                            e
+                        )))
+                    }
+                }
+            }
+
+            headers
         } else {
             Vec::with_capacity(Self::ITEMS_PER_SEGMENT as usize)
         };
@@ -454,22 +525,4 @@ impl<H: Persistable> Segment<H> {
         self.state = SegmentState::Dirty;
         self.last_accessed = std::time::Instant::now();
     }
-}
-
-pub fn load_header_segments<H: Persistable>(path: &Path) -> StorageResult<Vec<H>> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
-    let mut headers = Vec::with_capacity(Segment::<H>::ITEMS_PER_SEGMENT as usize);
-
-    loop {
-        match H::consensus_decode(&mut reader) {
-            Ok(header) => headers.push(header),
-            Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(e) => {
-                return Err(StorageError::ReadFailed(format!("Failed to decode header: {}", e)))
-            }
-        }
-    }
-
-    Ok(headers)
 }

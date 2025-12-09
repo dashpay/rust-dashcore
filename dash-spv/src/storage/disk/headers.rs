@@ -51,19 +51,22 @@ impl DiskStorageManager {
     }
 }
 
-/// Load index from file.
-pub(super) async fn load_index_from_file(path: &Path) -> StorageResult<HashMap<BlockHash, u32>> {
-    tokio::task::spawn_blocking({
-        let path = path.to_path_buf();
-        move || {
-            let content = fs::read(&path)?;
-            bincode::deserialize(&content).map_err(|e| {
-                StorageError::ReadFailed(format!("Failed to deserialize index: {}", e))
-            })
-        }
-    })
-    .await
-    .map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
+/// Load index from file, if it fails it tries to build it from block
+/// header segments and, if that also fails, it return an empty index.
+///
+/// IO and deserialize errors are returned, the empty index is only built
+/// if there is no persisted data to recreate it.
+pub(super) async fn load_block_index(
+    manager: &DiskStorageManager,
+) -> StorageResult<HashMap<BlockHash, u32>> {
+    let index_path = manager.base_path.join("headers/index.dat");
+
+    if let Ok(content) = fs::read(&index_path) {
+        bincode::deserialize(&content)
+            .map_err(|e| StorageError::ReadFailed(format!("Failed to deserialize index: {}", e)))
+    } else {
+        manager.block_headers.write().await.build_block_index_from_segments().await
+    }
 }
 
 /// Save index to disk.

@@ -758,7 +758,9 @@ mod tests {
     async fn test_sentinel_headers_not_returned() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
         let temp_dir = TempDir::new()?;
-        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
+        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("Unable to create storage");
 
         // Create a test header
         let test_header = BlockHeader {
