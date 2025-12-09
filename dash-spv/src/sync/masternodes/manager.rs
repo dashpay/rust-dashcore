@@ -71,10 +71,7 @@ impl SharedMasternodeState {
 
     /// Check if the masternode engine is available (sync has completed at least once).
     pub fn is_available(&self) -> bool {
-        self.engine
-            .read()
-            .map(|guard| guard.is_some())
-            .unwrap_or(false)
+        self.engine.read().map(|guard| guard.is_some()).unwrap_or(false)
     }
 
     /// Get the masternode list at a specific block height (synchronous).
@@ -106,9 +103,10 @@ impl SharedMasternodeState {
         quorum_type: LLMQType,
         quorum_hash: QuorumHash,
     ) -> Result<QualifiedQuorumEntry, SpvError> {
-        let guard = self.engine.read().map_err(|_| {
-            SpvError::QuorumLookupError("Lock poisoned".to_string())
-        })?;
+        let guard = self
+            .engine
+            .read()
+            .map_err(|_| SpvError::QuorumLookupError("Lock poisoned".to_string()))?;
 
         let engine = guard.as_ref().ok_or_else(|| {
             SpvError::QuorumLookupError("Masternode engine not available".to_string())
@@ -187,10 +185,7 @@ impl SharedMasternodeState {
     where
         F: FnOnce(&mut MasternodeListEngine) -> R,
     {
-        self.engine
-            .write()
-            .ok()
-            .and_then(|mut guard| guard.as_mut().map(f))
+        self.engine.write().ok().and_then(|mut guard| guard.as_mut().map(f))
     }
 
     /// Get read access for sync operations that need the full engine.
@@ -199,10 +194,7 @@ impl SharedMasternodeState {
     where
         F: FnOnce(&MasternodeListEngine) -> R,
     {
-        self.engine
-            .read()
-            .ok()
-            .and_then(|guard| guard.as_ref().map(f))
+        self.engine.read().ok().and_then(|guard| guard.as_ref().map(f))
     }
 }
 
