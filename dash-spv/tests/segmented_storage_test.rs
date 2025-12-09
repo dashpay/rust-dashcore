@@ -61,7 +61,7 @@ async fn test_segmented_storage_basic_operations() {
     assert_eq!(loaded[3].time, 50_001);
 
     // Ensure proper shutdown
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -82,7 +82,7 @@ async fn test_segmented_storage_persistence() {
         // Wait for background save
         sleep(Duration::from_millis(500)).await;
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Load data in new instance
@@ -134,7 +134,7 @@ async fn test_reverse_index_with_segments() {
     let fake_hash = create_test_header(u32::MAX).block_hash();
     assert_eq!(storage.get_header_height_by_hash(&fake_hash).await.unwrap(), None);
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -165,7 +165,7 @@ async fn test_filter_header_segments() {
         assert_eq!(*fh, create_test_filter_header(49_998 + i as u32));
     }
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -178,7 +178,7 @@ async fn test_concurrent_access() {
         let mut storage = DiskStorageManager::new(path.clone()).await.unwrap();
         let headers: Vec<BlockHeader> = (0..100_000).map(create_test_header).collect();
         storage.store_headers(&headers).await.unwrap();
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Test concurrent reads with multiple storage instances
@@ -232,7 +232,7 @@ async fn test_segment_eviction() {
     assert_eq!(storage.get_header(0).await.unwrap().unwrap().time, 0);
     assert_eq!(storage.get_header(599_999).await.unwrap().unwrap().time, 599_999);
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -257,7 +257,7 @@ async fn test_background_save_timing() {
         // Wait for background save
         sleep(Duration::from_millis(500)).await;
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Verify data was saved
@@ -326,7 +326,7 @@ async fn test_mixed_operations() {
     assert_eq!(stats.header_count, 75_000);
     assert_eq!(stats.filter_header_count, 75_000);
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -349,7 +349,7 @@ async fn test_filter_header_persistence() {
         assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(74_999));
 
         // Properly shutdown to ensure data is saved
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Phase 2: Create new storage instance and verify filter headers are loaded
@@ -420,5 +420,5 @@ async fn test_performance_improvement() {
     println!("1000 hash lookups in {:?}", lookup_time);
     assert!(lookup_time < Duration::from_secs(1), "Hash lookups should be fast");
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }

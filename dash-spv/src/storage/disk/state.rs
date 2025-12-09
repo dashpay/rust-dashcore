@@ -8,6 +8,7 @@ use dashcore::{block::Header as BlockHeader, BlockHash, Txid};
 use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
+use crate::storage::disk::manager::WorkerCommand;
 use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
@@ -423,9 +424,9 @@ impl DiskStorageManager {
     }
 
     /// Shutdown the storage manager.
-    pub async fn shutdown(&mut self) -> StorageResult<()> {
-        // Save all dirty segments
-        super::segments::save_dirty_segments_cache(self).await?;
+    pub async fn shutdown(&mut self) {
+        // Persist all dirty data
+        self.save_dirty().await;
 
         // Shutdown background worker
         if let Some(tx) = self.worker_tx.take() {
@@ -442,8 +443,37 @@ impl DiskStorageManager {
         if let Some(handle) = self.worker_handle.take() {
             let _ = handle.await;
         }
+    }
 
-        Ok(())
+    /// Save all dirty segments to disk via background worker.
+    pub(super) async fn save_dirty(&self) {
+        self.filter_headers.write().await.save_dirty(self).await;
+
+        self.block_headers.write().await.save_dirty(self).await;
+
+        if let Some(tx) = &self.worker_tx {
+            // Save the index only if it has grown significantly (every 10k new entries)
+            let current_index_size = self.header_hash_index.read().await.len();
+            let last_save_count = *self.last_index_save_count.read().await;
+
+            // Save if index has grown by 10k entries, or if we've never saved before
+            if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
+                let index = self.header_hash_index.read().await.clone();
+                let _ = tx
+                    .send(WorkerCommand::SaveIndex {
+                        index,
+                    })
+                    .await;
+
+                // Update the last save count
+                *self.last_index_save_count.write().await = current_index_size;
+                tracing::debug!(
+                    "Scheduled index save (size: {}, last_save: {})",
+                    current_index_size,
+                    last_save_count
+                );
+            }
+        }
     }
 }
 
@@ -690,7 +720,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn shutdown(&mut self) -> StorageResult<()> {
-        Self::shutdown(self).await
+        Ok(Self::shutdown(self).await)
     }
 }
 
@@ -814,7 +844,7 @@ mod tests {
         storage.store_chain_state(&chain_state).await?;
 
         // Force save to disk
-        super::super::segments::save_dirty_segments_cache(&storage).await?;
+        storage.save_dirty().await;
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create a new storage instance to test index rebuilding
@@ -850,10 +880,10 @@ mod tests {
             let mut storage = DiskStorageManager::new(base_path.clone()).await?;
 
             storage.store_headers(&headers[..10_000]).await?;
-            super::super::segments::save_dirty_segments_cache(&storage).await?;
+            storage.save_dirty().await;
 
             storage.store_headers(&headers[10_000..]).await?;
-            storage.shutdown().await?;
+            storage.shutdown().await;
         }
 
         let storage = DiskStorageManager::new(base_path).await?;
