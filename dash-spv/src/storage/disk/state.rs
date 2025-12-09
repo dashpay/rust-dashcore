@@ -351,8 +351,8 @@ impl DiskStorageManager {
         self.stop_worker().await;
 
         // Clear in-memory state
-        self.block_headers.write().await.clear();
-        self.filter_headers.write().await.clear();
+        self.block_headers.write().await.clear_in_memory();
+        self.filter_headers.write().await.clear_in_memory();
         self.header_hash_index.write().await.clear();
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
