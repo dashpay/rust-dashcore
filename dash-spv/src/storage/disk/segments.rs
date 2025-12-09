@@ -440,14 +440,14 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
     use super::manager::WorkerCommand;
 
     if let Some(tx) = &manager.worker_tx {
-        process_segments(&manager.active_segments, tx, |cache| {
+        process_segments(&manager.block_headers, tx, |cache| {
             WorkerCommand::SaveBlockHeaderSegmentCache {
                 segment_id: cache.segment_id,
             }
         })
         .await;
 
-        process_segments(&manager.active_filter_segments, tx, |cache| {
+        process_segments(&manager.filter_headers, tx, |cache| {
             WorkerCommand::SaveFilterHeaderSegmentCache {
                 segment_id: cache.segment_id,
             }

@@ -29,7 +29,7 @@ impl DiskStorageManager {
         self.stop_worker().await;
 
         // Clear in-memory filter state
-        self.active_filter_segments.write().await.clear();
+        self.filter_headers.write().await.clear();
 
         // Remove filter headers and compact filter files
         let filters_dir = self.base_path.join("filters");

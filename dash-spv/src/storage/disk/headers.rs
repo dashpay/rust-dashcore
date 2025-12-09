@@ -19,11 +19,7 @@ impl DiskStorageManager {
         start_height: u32,
     ) -> StorageResult<()> {
         // TODO: This is not updating the reverse index
-        self.active_segments
-            .write()
-            .await
-            .store_headers_at_height(headers, start_height, self)
-            .await
+        self.block_headers.write().await.store_headers_at_height(headers, start_height, self).await
     }
     /// Store headers with optional precomputed hashes for performance optimization.
     ///
@@ -33,13 +29,13 @@ impl DiskStorageManager {
     pub async fn store_headers_internal(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
         let hashes = headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>();
 
-        let mut height = if let Some(height) = self.active_segments.read().await.tip_height() {
+        let mut height = if let Some(height) = self.block_headers.read().await.tip_height() {
             height + 1
         } else {
             0
         };
 
-        self.active_segments.write().await.store_headers(headers, self).await?;
+        self.block_headers.write().await.store_headers(headers, self).await?;
 
         // Update reverse index
         let mut reverse_index = self.header_hash_index.write().await;
