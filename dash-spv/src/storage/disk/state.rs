@@ -447,9 +447,9 @@ impl DiskStorageManager {
 
     /// Save all dirty segments to disk via background worker.
     pub(super) async fn save_dirty(&self) {
-        self.filter_headers.write().await.save_dirty(self).await;
+        self.filter_headers.write().await.persist_dirty(self).await;
 
-        self.block_headers.write().await.save_dirty(self).await;
+        self.block_headers.write().await.persist_dirty(self).await;
 
         if let Some(tx) = &self.worker_tx {
             // Save the index only if it has grown significantly (every 10k new entries)
@@ -540,11 +540,11 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn load_headers(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        self.block_headers.write().await.get_headers(range).await
+        self.block_headers.write().await.get_items(range).await
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        Ok(self.block_headers.write().await.get_headers(height..height + 1).await?.first().copied())
+        Ok(self.block_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
@@ -555,28 +555,21 @@ impl StorageManager for DiskStorageManager {
         &mut self,
         headers: &[dashcore::hash_types::FilterHeader],
     ) -> StorageResult<()> {
-        self.filter_headers.write().await.store_headers(headers, self).await
+        self.filter_headers.write().await.store_items(headers, self).await
     }
 
     async fn load_filter_headers(
         &self,
         range: std::ops::Range<u32>,
     ) -> StorageResult<Vec<dashcore::hash_types::FilterHeader>> {
-        self.filter_headers.write().await.get_headers(range).await
+        self.filter_headers.write().await.get_items(range).await
     }
 
     async fn get_filter_header(
         &self,
         height: u32,
     ) -> StorageResult<Option<dashcore::hash_types::FilterHeader>> {
-        Ok(self
-            .filter_headers
-            .write()
-            .await
-            .get_headers(height..height + 1)
-            .await?
-            .first()
-            .copied())
+        Ok(self.filter_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
