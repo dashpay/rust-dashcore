@@ -191,19 +191,23 @@ impl<H: Persistable> SegmentCache<H> {
     }
 
     /// Get the segment ID for a given height.
+    #[inline]
     fn index_to_segment_id(height: u32) -> u32 {
         height / Segment::<H>::ITEMS_PER_SEGMENT
     }
 
+    #[inline]
     fn segment_id_to_start_index(segment_id: u32) -> u32 {
         segment_id * Segment::<H>::ITEMS_PER_SEGMENT
     }
 
     /// Get the segment offset for a given height.
+    #[inline]
     fn index_to_offset(height: u32) -> u32 {
         height % Segment::<H>::ITEMS_PER_SEGMENT
     }
 
+    #[inline]
     pub fn set_sync_base_height(&mut self, height: u32) {
         self.sync_base_height = height;
     }
@@ -380,10 +384,12 @@ impl<H: Persistable> SegmentCache<H> {
         }
     }
 
+    #[inline]
     pub fn tip_height(&self) -> Option<u32> {
         self.tip_height
     }
 
+    #[inline]
     pub fn next_height(&self) -> u32 {
         let current_tip = self.tip_height();
         match current_tip {
@@ -394,6 +400,7 @@ impl<H: Persistable> SegmentCache<H> {
 
     /// Convert blockchain height to storage index
     /// For checkpoint sync, storage index is relative to sync_base_height
+    #[inline]
     fn height_to_storage_index(&self, height: u32) -> u32 {
         debug_assert!(
             height >= self.sync_base_height,
@@ -403,6 +410,7 @@ impl<H: Persistable> SegmentCache<H> {
         height - self.sync_base_height
     }
 
+    #[inline]
     pub fn storage_index_to_height(&self, storage_index: u32) -> u32 {
         storage_index + self.sync_base_height
     }
