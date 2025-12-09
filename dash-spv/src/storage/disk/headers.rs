@@ -13,29 +13,14 @@ use crate::StorageError;
 use super::manager::DiskStorageManager;
 
 impl DiskStorageManager {
-    pub async fn store_headers_from_height(
+    pub async fn store_headers_at_height(
         &mut self,
         headers: &[BlockHeader],
-        start_height: u32,
+        mut height: u32,
     ) -> StorageResult<()> {
-        // TODO: This is not updating the reverse index
-        self.block_headers.write().await.store_headers_at_height(headers, start_height, self).await
-    }
-    /// Store headers with optional precomputed hashes for performance optimization.
-    ///
-    /// This is a performance optimization for hot paths that have already computed header hashes.
-    /// When called from header sync with CachedHeader wrappers, passing precomputed hashes avoids
-    /// recomputing the expensive X11 hash for indexing (saves ~35% of CPU during sync).
-    pub async fn store_headers_internal(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
         let hashes = headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>();
 
-        let mut height = if let Some(height) = self.block_headers.read().await.tip_height() {
-            height + 1
-        } else {
-            0
-        };
-
-        self.block_headers.write().await.store_headers(headers, self).await?;
+        self.block_headers.write().await.store_headers_at_height(headers, height, self).await?;
 
         // Update reverse index
         let mut reverse_index = self.header_hash_index.write().await;
@@ -49,6 +34,15 @@ impl DiskStorageManager {
         drop(reverse_index);
 
         Ok(())
+    }
+    /// Store headers with optional precomputed hashes for performance optimization.
+    ///
+    /// This is a performance optimization for hot paths that have already computed header hashes.
+    /// When called from header sync with CachedHeader wrappers, passing precomputed hashes avoids
+    /// recomputing the expensive X11 hash for indexing (saves ~35% of CPU during sync).
+    pub async fn store_headers_internal(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
+        let height = self.block_headers.read().await.next_height();
+        self.store_headers_at_height(headers, height).await
     }
 
     /// Get header height by hash.

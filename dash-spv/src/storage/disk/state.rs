@@ -24,13 +24,14 @@ impl DiskStorageManager {
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
         if state.synced_from_checkpoint() && !state.headers.is_empty() {
-            // Store headers starting from the checkpoint height
-            self.store_headers_from_height(&state.headers, state.sync_base_height).await?;
+            // Store headers starting at the checkpoint height
+            self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
         } else {
             self.store_headers_internal(&state.headers).await?;
         }
 
         // Store filter headers
+        // TODO: Shouldn't we use the sync base height here???
         self.store_filter_headers(&state.filter_headers).await?;
 
         // Store other state as JSON
@@ -811,14 +812,20 @@ mod tests {
         base_state.sync_base_height = checkpoint_height;
         storage.store_chain_state(&base_state).await?;
 
+        storage.store_headers(&headers).await?;
+
         // Verify headers are stored at correct blockchain heights
         let header_at_base = storage.get_header(checkpoint_height).await?;
-        assert!(header_at_base.is_some(), "Header at base blockchain height should exist");
-        assert_eq!(header_at_base.unwrap(), headers[0]);
+        assert_eq!(
+            header_at_base.expect("Header at base blockchain height should exist"),
+            headers[0]
+        );
 
         let header_at_ending = storage.get_header(checkpoint_height + 99).await?;
-        assert!(header_at_ending.is_some(), "Header at ending blockchain height should exist");
-        assert_eq!(header_at_ending.unwrap(), headers[99]);
+        assert_eq!(
+            header_at_ending.expect("Header at ending blockchain height should exist"),
+            headers[99]
+        );
 
         // Test the reverse index (hash -> blockchain height)
         let hash_0 = headers[0].block_hash();
