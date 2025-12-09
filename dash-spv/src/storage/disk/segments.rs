@@ -92,7 +92,7 @@ impl<H: Persistable> SegmentCache<H> {
         let sync_base_height = 0; // TODO: This needs to have a value at this point
 
         let mut cache = Self {
-            segments: HashMap::new(),
+            segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
             tip_height: None,
             sync_base_height,
             base_path: base_path,
@@ -124,7 +124,7 @@ impl<H: Persistable> SegmentCache<H> {
                     segment_id * super::HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
 
                 let tip_height = cache.storage_index_to_height(last_storage_index);
-                cache.set_tip_height(tip_height);
+                cache.tip_height = Some(tip_height);
             }
         }
 
@@ -175,7 +175,7 @@ impl<H: Persistable> SegmentCache<H> {
 
         if segments_len >= Self::MAX_ACTIVE_SEGMENTS {
             let key_to_evict =
-                segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
+                segments.iter_mut().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
 
             if let Some((key, v)) = key_to_evict {
                 v.evict(&self.base_path)?;
@@ -222,17 +222,17 @@ impl<H: Persistable> SegmentCache<H> {
             let end_idx = if segment_id == end_segment {
                 Self::index_to_offset(storage_end.saturating_sub(1)) + 1
             } else {
-                segment.headers.len()
+                segment.items.len()
             };
 
             // Only include headers up to valid_count to avoid returning sentinel headers
             let actual_end_idx = end_idx.min(segment.valid_count);
 
-            if start_idx < segment.headers.len()
-                && actual_end_idx <= segment.headers.len()
+            if start_idx < segment.items.len()
+                && actual_end_idx <= segment.items.len()
                 && start_idx < actual_end_idx
             {
-                headers.extend_from_slice(&segment.headers[start_idx..actual_end_idx]);
+                headers.extend_from_slice(&segment.items[start_idx..actual_end_idx]);
             }
         }
 
@@ -307,10 +307,6 @@ impl<H: Persistable> SegmentCache<H> {
         todo!()
     }
 
-    pub fn set_tip_height(&mut self, height: u32) {
-        self.tip_height = Some(height);
-    }
-
     pub fn tip_height(&self) -> Option<u32> {
         self.tip_height
     }
@@ -341,20 +337,20 @@ impl<H: Persistable> SegmentCache<H> {
 
 /// In-memory cache for a segment of headers
 #[derive(Debug, Clone)]
-pub(super) struct Segment<H: Persistable> {
-    pub(super) segment_id: u32,
-    pub(super) headers: Vec<H>,
-    pub(super) valid_count: usize, // Number of actual valid headers (excluding padding)
-    pub(super) state: SegmentState,
-    pub(super) last_saved: Instant,
-    pub(super) last_accessed: Instant,
+pub struct Segment<H: Persistable> {
+    segment_id: u32,
+    items: Vec<H>,
+    valid_count: usize, // Number of actual valid headers (excluding padding)
+    state: SegmentState,
+    last_saved: Instant,
+    last_accessed: Instant,
 }
 
 impl<H: Persistable> Segment<H> {
-    fn new(segment_id: u32, headers: Vec<H>, valid_count: usize) -> Self {
+    fn new(segment_id: u32, items: Vec<H>, valid_count: usize) -> Self {
         Self {
             segment_id,
-            headers,
+            items,
             valid_count,
             state: SegmentState::Clean,
             last_saved: Instant::now(),
@@ -386,19 +382,24 @@ impl<H: Persistable> Segment<H> {
         Ok(Self::new(segment_id, headers, valid_count))
     }
 
-    pub fn persist(&self, base_path: &Path) -> StorageResult<()> {
+    pub fn persist(&mut self, base_path: &Path) -> StorageResult<()> {
         let path = base_path.join(H::relative_disk_path(self.segment_id));
+
+        self.state = SegmentState::Saving;
 
         let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
         let mut writer = BufWriter::new(file);
 
-        for header in self.headers.iter() {
+        for header in self.items.iter() {
             header.consensus_encode(&mut writer).map_err(|e| {
                 StorageError::WriteFailed(format!("Failed to encode segment item: {}", e))
             })?;
         }
 
-        writer.flush().map_err(|e| e.into())
+        writer.flush()?;
+
+        self.state = SegmentState::Clean;
+        Ok(())
     }
 
     pub fn insert(&mut self, item: H, offset: usize) {
@@ -408,13 +409,13 @@ impl<H: Persistable> Segment<H> {
             self.valid_count += 1;
         }
 
-        self.headers[offset] = item;
+        self.items[offset] = item;
         // Transition to Dirty state (from Clean, Dirty, or Saving)
         self.state = SegmentState::Dirty;
         self.last_accessed = std::time::Instant::now();
     }
 
-    pub fn evict(&self, base_path: &Path) -> StorageResult<()> {
+    pub fn evict(&mut self, base_path: &Path) -> StorageResult<()> {
         // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
         if self.state == SegmentState::Clean {
             return Ok(());
@@ -440,12 +441,16 @@ pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> S
 
     if let Some(tx) = &manager.worker_tx {
         process_segments(&manager.active_segments, tx, |cache| {
-            WorkerCommand::SaveBlockHeaderSegmentCache(cache)
+            WorkerCommand::SaveBlockHeaderSegmentCache {
+                segment_id: cache.segment_id,
+            }
         })
         .await;
 
         process_segments(&manager.active_filter_segments, tx, |cache| {
-            WorkerCommand::SaveFilterHeaderSegmentCache(cache)
+            WorkerCommand::SaveFilterHeaderSegmentCache {
+                segment_id: cache.segment_id,
+            }
         })
         .await;
 

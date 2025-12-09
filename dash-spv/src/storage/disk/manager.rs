@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::disk::segments::{load_header_segments, Segment, SegmentCache};
+use crate::storage::disk::segments::{load_header_segments, SegmentCache};
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::HEADERS_PER_SEGMENT;
@@ -16,21 +16,16 @@ use super::HEADERS_PER_SEGMENT;
 /// Commands for the background worker
 #[derive(Debug, Clone)]
 pub(super) enum WorkerCommand {
-    SaveBlockHeaderSegmentCache(Segment<BlockHeader>),
-    SaveFilterHeaderSegmentCache(Segment<FilterHeader>),
+    SaveBlockHeaderSegmentCache {
+        segment_id: u32,
+    },
+    SaveFilterHeaderSegmentCache {
+        segment_id: u32,
+    },
     SaveIndex {
         index: HashMap<BlockHash, u32>,
     },
     Shutdown,
-}
-
-/// Notifications from the background worker
-#[derive(Debug, Clone)]
-#[allow(clippy::enum_variant_names)]
-pub(super) enum WorkerNotification {
-    BlockHeaderSegmentCacheSaved(Segment<BlockHeader>),
-    BlockFilterSegmentCacheSaved(Segment<FilterHeader>),
-    IndexSaved,
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -47,7 +42,6 @@ pub struct DiskStorageManager {
     // Background worker
     pub(super) worker_tx: Option<mpsc::Sender<WorkerCommand>>,
     pub(super) worker_handle: Option<tokio::task::JoinHandle<()>>,
-    pub(super) notification_rx: Arc<RwLock<mpsc::Receiver<WorkerNotification>>>,
 
     // Index save tracking to avoid redundant saves
     pub(super) last_index_save_count: Arc<RwLock<usize>>,
@@ -89,7 +83,6 @@ impl DiskStorageManager {
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,
-            notification_rx: Arc::new(RwLock::new(mpsc::channel(1).1)), // Temporary placeholder
             last_index_save_count: Arc::new(RwLock::new(0)),
             mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
             mempool_state: Arc::new(RwLock::new(None)),
@@ -118,41 +111,39 @@ impl DiskStorageManager {
     /// Start the background worker and notification channel.
     pub(super) async fn start_worker(&mut self) {
         let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerCommand>(100);
-        let (notification_tx, notification_rx) = mpsc::channel::<WorkerNotification>(100);
 
         let worker_base_path = self.base_path.clone();
-        let worker_notification_tx = notification_tx.clone();
         let base_path = self.base_path.clone();
 
         let worker_handle = tokio::spawn(async move {
             while let Some(cmd) = worker_rx.recv().await {
                 match cmd {
-                    WorkerCommand::SaveBlockHeaderSegmentCache(cache) => {
-                        let segment_id = cache.segment_id;
-                        if let Err(e) = cache.persist(&base_path) {
+                    WorkerCommand::SaveBlockHeaderSegmentCache {
+                        segment_id,
+                    } => {
+                        let cache =
+                            self.active_segments.write().await.get_segment(&segment_id).await;
+                        if let Err(e) = cache.and_then(|cache| cache.persist(&base_path)) {
                             eprintln!("Failed to save segment {}: {}", segment_id, e);
                         } else {
                             tracing::trace!(
                                 "Background worker completed saving header segment {}",
                                 segment_id
                             );
-                            let _ = worker_notification_tx
-                                .send(WorkerNotification::BlockHeaderSegmentCacheSaved(cache))
-                                .await;
                         }
                     }
-                    WorkerCommand::SaveFilterHeaderSegmentCache(cache) => {
-                        let segment_id = cache.segment_id;
-                        if let Err(e) = cache.persist(&base_path) {
+                    WorkerCommand::SaveFilterHeaderSegmentCache {
+                        segment_id,
+                    } => {
+                        let cache =
+                            self.active_segments.write().await.get_segment(&segment_id).await;
+                        if let Err(e) = cache.and_then(|cache| cache.persist(&base_path)) {
                             eprintln!("Failed to save filter segment {}: {}", segment_id, e);
                         } else {
                             tracing::trace!(
                                 "Background worker completed saving filter segment {}",
                                 segment_id
                             );
-                            let _ = worker_notification_tx
-                                .send(WorkerNotification::BlockFilterSegmentCacheSaved(cache))
-                                .await;
                         }
                     }
                     WorkerCommand::SaveIndex {
@@ -163,8 +154,6 @@ impl DiskStorageManager {
                             eprintln!("Failed to save index: {}", e);
                         } else {
                             tracing::trace!("Background worker completed saving index");
-                            let _ =
-                                worker_notification_tx.send(WorkerNotification::IndexSaved).await;
                         }
                     }
                     WorkerCommand::Shutdown => {
@@ -176,7 +165,6 @@ impl DiskStorageManager {
 
         self.worker_tx = Some(worker_tx);
         self.worker_handle = Some(worker_handle);
-        self.notification_rx = Arc::new(RwLock::new(notification_rx));
     }
 
     /// Stop the background worker without forcing a save.
@@ -186,56 +174,6 @@ impl DiskStorageManager {
         }
         if let Some(handle) = self.worker_handle.take() {
             let _ = handle.await;
-        }
-    }
-
-    // TODO: Find a place where this function should be call
-    #[allow(unused)]
-    /// Process notifications from background worker to clear save_pending flags.
-    pub(super) async fn process_worker_notifications(&self) {
-        use super::segments::SegmentState;
-
-        let mut rx = self.notification_rx.write().await;
-
-        // Process all pending notifications without blocking
-        while let Ok(notification) = rx.try_recv() {
-            match notification {
-                WorkerNotification::BlockHeaderSegmentCacheSaved(cache) => {
-                    let segment_id = cache.segment_id;
-                    let mut segments = self.active_segments.write().await;
-                    if let Some(segment) = segments.get_segment_if_loaded_mut(&segment_id) {
-                        // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
-                        if segment.state == SegmentState::Saving {
-                            segment.state = SegmentState::Clean;
-                            tracing::debug!(
-                                "Header segment {} save completed, state: Clean",
-                                segment_id
-                            );
-                        } else {
-                            tracing::debug!("Header segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
-                        }
-                    }
-                }
-                WorkerNotification::BlockFilterSegmentCacheSaved(cache) => {
-                    let segment_id = cache.segment_id;
-                    let mut segments = self.active_filter_segments.write().await;
-                    if let Some(segment) = segments.get_segment_if_loaded_mut(&segment_id) {
-                        // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
-                        if segment.state == SegmentState::Saving {
-                            segment.state = SegmentState::Clean;
-                            tracing::debug!(
-                                "Filter segment {} save completed, state: Clean",
-                                segment_id
-                            );
-                        } else {
-                            tracing::debug!("Filter segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
-                        }
-                    }
-                }
-                WorkerNotification::IndexSaved => {
-                    tracing::debug!("Index save completed");
-                }
-            }
         }
     }
 
