@@ -30,7 +30,7 @@ pub(super) enum SegmentState {
     Saving, // Currently being saved in background
 }
 
-pub(super) trait Persistable: Sized + Encodable + Decodable + Clone {
+pub(super) trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const FOLDER_NAME: &'static str;
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
@@ -416,7 +416,18 @@ impl<H: Persistable> Segment<H> {
         let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
         let mut writer = BufWriter::new(file);
 
+        let sentinel: H = H::new_sentinel();
+
         for header in self.items.iter() {
+            // Sentinels are expected to fill the last empty positions of the segment
+            // If there is a gap, that could be considered a bug since valid_count
+            // stops making sense. We can talk in a future about removing sentinels
+            // but that implies that we cannot insert with and offset or that we have
+            // to make sure that the offset is not out of bounds.
+            if *header == sentinel {
+                break;
+            }
+
             header.consensus_encode(&mut writer).map_err(|e| {
                 StorageError::WriteFailed(format!("Failed to encode segment item: {}", e))
             })?;
