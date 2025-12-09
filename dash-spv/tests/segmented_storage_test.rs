@@ -27,9 +27,7 @@ fn create_test_filter_header(height: u32) -> FilterHeader {
     // Create unique filter headers
     let mut bytes = [0u8; 32];
     // This is made to avoid having a header
-    // full of 0, what matches with its sentinel value
-    bytes[0] = 1;
-    bytes[1..5].copy_from_slice(&height.to_le_bytes());
+    bytes[0..4].copy_from_slice(&height.to_le_bytes());
     FilterHeader::from_raw_hash(dashcore_hashes::sha256d::Hash::from_byte_array(bytes))
 }
 

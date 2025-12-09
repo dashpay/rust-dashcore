@@ -10,13 +10,11 @@ use std::{
 };
 
 use dashcore::{
-    block::{Header as BlockHeader, Version},
+    block::Header as BlockHeader,
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
-    pow::CompactTarget,
     BlockHash,
 };
-use dashcore_hashes::Hash;
 
 use crate::{error::StorageResult, storage::disk::manager::WorkerCommand, StorageError};
 
@@ -46,23 +44,11 @@ pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
         .into()
     }
 
-    fn new_sentinel() -> Self;
     fn make_save_command(segment: &Segment<Self>) -> WorkerCommand;
 }
 
 impl Persistable for BlockHeader {
     const FOLDER_NAME: &'static str = "block_headers";
-
-    fn new_sentinel() -> Self {
-        BlockHeader {
-            version: Version::from_consensus(i32::MAX), // Invalid version
-            prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
-            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
-            time: u32::MAX,                                  // Far future timestamp
-            bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
-            nonce: u32::MAX,                                 // Max nonce value
-        }
-    }
 
     fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
         WorkerCommand::SaveBlockHeaderSegmentCache {
@@ -73,10 +59,6 @@ impl Persistable for BlockHeader {
 
 impl Persistable for FilterHeader {
     const FOLDER_NAME: &'static str = "filter_headers";
-
-    fn new_sentinel() -> Self {
-        FilterHeader::from_byte_array([0u8; 32])
-    }
 
     fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
         WorkerCommand::SaveFilterHeaderSegmentCache {
@@ -180,7 +162,7 @@ impl<I: Persistable> SegmentCache<I> {
             if let Some(segment_id) = max_segment_id {
                 let segment = cache.get_segment(&segment_id).await?;
                 let last_storage_index =
-                    segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.valid_count - 1;
+                    segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.items.len() as u32 - 1;
 
                 let tip_height = cache.storage_index_to_height(last_storage_index);
                 cache.tip_height = Some(tip_height);
@@ -271,7 +253,7 @@ impl<I: Persistable> SegmentCache<I> {
         let mut items = Vec::with_capacity((storage_end_idx - storage_start_idx) as usize);
 
         let start_segment = Self::index_to_segment_id(storage_start_idx);
-        let end_segment = Self::index_to_segment_id(storage_end_idx.saturating_sub(1));
+        let end_segment = Self::index_to_segment_id(storage_end_idx);
 
         for segment_id in start_segment..=end_segment {
             let segment = self.get_segment(&segment_id).await?;
@@ -284,20 +266,14 @@ impl<I: Persistable> SegmentCache<I> {
             };
 
             let seg_end_idx = if segment_id == end_segment {
-                Self::index_to_offset(storage_end_idx.saturating_sub(1)) + 1
+                Self::index_to_offset(storage_end_idx).min(item_count)
             } else {
                 item_count
             };
 
-            // Only include items up to valid_count to avoid returning sentinel items
-            let actual_end_idx = seg_end_idx.min(segment.valid_count);
-
-            if seg_start_idx < item_count
-                && actual_end_idx <= item_count
-                && seg_start_idx < actual_end_idx
-            {
+            if seg_start_idx < item_count && seg_end_idx <= item_count {
                 items.extend_from_slice(
-                    &segment.items[seg_start_idx as usize..actual_end_idx as usize],
+                    &segment.items[seg_start_idx as usize..seg_end_idx as usize],
                 );
             }
         }
@@ -411,7 +387,6 @@ impl<I: Persistable> SegmentCache<I> {
 pub struct Segment<I: Persistable> {
     segment_id: u32,
     items: Vec<I>,
-    valid_count: u32, // Number of actual valid items (excluding padding)
     state: SegmentState,
     last_accessed: Instant,
 }
@@ -419,11 +394,10 @@ pub struct Segment<I: Persistable> {
 impl<I: Persistable> Segment<I> {
     const ITEMS_PER_SEGMENT: u32 = 50_000;
 
-    fn new(segment_id: u32, items: Vec<I>, valid_count: u32) -> Self {
+    fn new(segment_id: u32, items: Vec<I>) -> Self {
         Self {
             segment_id,
             items,
-            valid_count,
             state: SegmentState::Clean,
             last_accessed: Instant::now(),
         }
@@ -433,7 +407,7 @@ impl<I: Persistable> Segment<I> {
         // Load segment from disk
         let segment_path = base_path.join(I::relative_disk_path(segment_id));
 
-        let mut items = if segment_path.exists() {
+        let items = if segment_path.exists() {
             let file = File::open(&segment_path)?;
             let mut reader = BufReader::new(file);
             let mut items = Vec::with_capacity(Segment::<I>::ITEMS_PER_SEGMENT as usize);
@@ -460,16 +434,7 @@ impl<I: Persistable> Segment<I> {
             Vec::with_capacity(Self::ITEMS_PER_SEGMENT as usize)
         };
 
-        // Store the actual number of valid items before padding
-        let valid_count = items.len() as u32;
-
-        // Ensure the segment has space for all possible items in this segment
-        // This is crucial for proper indexing
-        if items.len() < Self::ITEMS_PER_SEGMENT as usize {
-            items.resize(Self::ITEMS_PER_SEGMENT as usize, I::new_sentinel());
-        }
-
-        Ok(Self::new(segment_id, items, valid_count))
+        Ok(Self::new(segment_id, items))
     }
 
     pub fn persist(&mut self, base_path: &Path) -> StorageResult<()> {
@@ -488,18 +453,7 @@ impl<I: Persistable> Segment<I> {
         let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
         let mut writer = BufWriter::new(file);
 
-        let sentinel: I = I::new_sentinel();
-
         for item in self.items.iter() {
-            // Sentinels are expected to fill the last empty positions of the segment
-            // If there is a gap, that could be considered a bug since valid_count
-            // stops making sense. We can talk in a future about removing sentinels
-            // but that implies that we cannot insert with and offset or that we have
-            // to make sure that the offset is not out of bounds.
-            if *item == sentinel {
-                break;
-            }
-
             item.consensus_encode(&mut writer).map_err(|e| {
                 StorageError::WriteFailed(format!("Failed to encode segment item: {}", e))
             })?;
@@ -512,13 +466,21 @@ impl<I: Persistable> Segment<I> {
     }
 
     pub fn insert(&mut self, item: I, offset: u32) {
-        // Only increment valid_count when offset equals the current valid_count
-        // This ensures valid_count represents contiguous valid items without gaps
-        if offset == self.valid_count {
-            self.valid_count += 1;
+        let offset = offset as usize;
+
+        debug_assert!(offset <= self.items.len());
+
+        if offset < self.items.len() {
+            self.items[offset] = item;
+        } else if offset == self.items.len() {
+            self.items.push(item);
+        } else {
+            tracing::error!(
+                "Tried to store an item out of the allowed bounds in segment with id {}",
+                self.segment_id
+            );
         }
 
-        self.items[offset as usize] = item;
         // Transition to Dirty state (from Clean, Dirty, or Saving)
         self.state = SegmentState::Dirty;
         self.last_accessed = std::time::Instant::now();

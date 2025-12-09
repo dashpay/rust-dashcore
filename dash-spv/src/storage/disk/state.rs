@@ -748,7 +748,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sentinel_headers_not_returned() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_load_headers() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
         let temp_dir = TempDir::new()?;
         let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
@@ -771,13 +771,13 @@ mod tests {
         // Load headers for a range that would include padding
         let loaded_headers = storage.load_headers(0..10).await?;
 
-        // Should only get back the one header we stored, not the sentinel padding
+        // Should only get back the one header we stored
         assert_eq!(loaded_headers.len(), 1);
         assert_eq!(loaded_headers[0], test_header);
 
-        // Try to get a header at index 5 (which would be a sentinel)
+        // Try to get a header at index 5 (which doesn't exist)
         let header_at_5 = storage.get_header(5).await?;
-        assert!(header_at_5.is_none(), "Should not return sentinel headers");
+        assert!(header_at_5.is_none(), "Should not return any header");
 
         Ok(())
     }
