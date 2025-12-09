@@ -59,7 +59,7 @@ async fn test_reverse_index_disk_storage() {
 
         // Explicitly shutdown to ensure all data is saved
         if let Some(disk_storage) = storage.as_any_mut().downcast_mut::<DiskStorageManager>() {
-            disk_storage.shutdown().await.unwrap();
+            disk_storage.shutdown().await;
         }
     }
 

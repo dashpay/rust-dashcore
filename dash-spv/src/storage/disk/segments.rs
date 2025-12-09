@@ -306,29 +306,23 @@ impl<H: Persistable> SegmentCache<H> {
 
         // Save dirty segments periodically (every 1000 filter headers)
         if headers.len() >= 1000 || start_height.is_multiple_of(1000) {
-            self.save_dirty(manager).await?;
+            self.save_dirty(manager).await;
         }
 
         Ok(())
     }
 
-    async fn save_dirty(&mut self, manager: &DiskStorageManager) -> StorageResult<()> {
+    pub async fn save_dirty(&mut self, manager: &DiskStorageManager) {
         // Collect segments to save (only dirty ones)
-        let mut segment_to_save: Vec<_> =
-            self.segments.values_mut().filter(|s| s.state == SegmentState::Dirty).collect();
+        let segment_to_save: Vec<_> =
+            self.segments.values().filter(|s| s.state == SegmentState::Dirty).collect();
 
         // Send header segments to worker if exists
         if let Some(tx) = &manager.worker_tx {
             for segment in segment_to_save {
                 let _ = tx.send(H::make_save_command(segment)).await;
             }
-        } else {
-            for segment in segment_to_save.iter_mut() {
-                let _ = segment.persist(&self.base_path);
-            }
         }
-
-        Ok(())
     }
 
     pub fn tip_height(&self) -> Option<u32> {
@@ -440,37 +434,6 @@ impl<H: Persistable> Segment<H> {
         self.state = SegmentState::Dirty;
         self.last_accessed = std::time::Instant::now();
     }
-}
-
-/// Save all dirty segments to disk via background worker.
-pub(super) async fn save_dirty_segments_cache(manager: &DiskStorageManager) -> StorageResult<()> {
-    use super::manager::WorkerCommand;
-
-    if let Some(tx) = &manager.worker_tx {
-        // Save the index only if it has grown significantly (every 10k new entries)
-        let current_index_size = manager.header_hash_index.read().await.len();
-        let last_save_count = *manager.last_index_save_count.read().await;
-
-        // Save if index has grown by 10k entries, or if we've never saved before
-        if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
-            let index = manager.header_hash_index.read().await.clone();
-            let _ = tx
-                .send(WorkerCommand::SaveIndex {
-                    index,
-                })
-                .await;
-
-            // Update the last save count
-            *manager.last_index_save_count.write().await = current_index_size;
-            tracing::debug!(
-                "Scheduled index save (size: {}, last_save: {})",
-                current_index_size,
-                last_save_count
-            );
-        }
-    }
-
-    Ok(())
 }
 
 pub fn load_header_segments<H: Decodable>(path: &Path) -> StorageResult<Vec<H>> {
