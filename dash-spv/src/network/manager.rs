@@ -423,19 +423,20 @@ impl PeerNetworkManager {
                                     headers.len()
                                 );
                                 // Check if peer supports headers2
-                                // TODO: Re-enable this warning once headers2 is fixed
-                                // Currently suppressed since headers2 is disabled
-                                /*
                                 let peer_guard = peer.read().await;
-                                if peer_guard.peer_info().services.map(|s| {
-                                    dashcore::network::constants::ServiceFlags::from(s).has(
-                                        dashcore::network::constants::ServiceFlags::from(2048u64)
-                                    )
-                                }).unwrap_or(false) {
+                                if peer_guard
+                                    .peer_info()
+                                    .services
+                                    .map(|s| {
+                                        dashcore::network::constants::ServiceFlags::from(s).has(
+                                            dashcore::network::constants::NODE_HEADERS_COMPRESSED,
+                                        )
+                                    })
+                                    .unwrap_or(false)
+                                {
                                     log::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
                                 }
                                 drop(peer_guard);
-                                */
                                 // Forward to client
                             }
                             NetworkMessage::Headers2(headers2) => {
@@ -1296,9 +1297,7 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn has_headers2_peer(&self) -> bool {
-        // Headers2 is currently disabled due to protocol compatibility issues
-        // TODO: Fix headers2 decompression before re-enabling
-        false
+        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
     }
 
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {

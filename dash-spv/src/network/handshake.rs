@@ -252,8 +252,8 @@ impl HandshakeManager {
             .unwrap_or(Duration::from_secs(0))
             .as_secs() as i64;
 
-        // SPV client doesn't advertise any special services since headers2 is disabled
-        let services = ServiceFlags::NONE;
+        // Advertise headers2 support (NODE_HEADERS_COMPRESSED)
+        let services = ServiceFlags::NONE | NODE_HEADERS_COMPRESSED;
 
         // Parse the local address safely
         let local_addr = "127.0.0.1:0"
@@ -310,10 +310,13 @@ impl HandshakeManager {
 
     /// Negotiate headers2 support with the peer after handshake completion.
     async fn negotiate_headers2(&self, connection: &mut Peer) -> NetworkResult<()> {
-        // Headers2 is currently disabled due to protocol compatibility issues
-        // Always send SendHeaders regardless of peer support
-        tracing::info!("Headers2 is disabled - sending SendHeaders only");
-        connection.send_message(NetworkMessage::SendHeaders).await?;
+        if self.peer_supports_headers2() {
+            tracing::info!("Peer supports headers2 - sending SendHeaders2");
+            connection.send_message(NetworkMessage::SendHeaders2).await?;
+        } else {
+            tracing::info!("Peer does not support headers2 - sending SendHeaders");
+            connection.send_message(NetworkMessage::SendHeaders).await?;
+        }
         Ok(())
     }
 }

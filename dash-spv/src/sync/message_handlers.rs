@@ -312,7 +312,7 @@ impl<
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
-
+            received_empty_response,
             last_progress,
             ..
         } = &mut self.current_phase
@@ -323,11 +323,16 @@ impl<
             // Note: We can't easily track headers_downloaded for compressed headers
             // without decompressing first, so we rely on the header sync manager's internal stats
 
+            // Mark sync complete if continue_sync is false (no more headers)
+            if !continue_sync {
+                *received_empty_response = true;
+            }
+
             // Update progress time
             *last_progress = Instant::now();
 
             // Check if phase is complete
-            !continue_sync
+            !continue_sync || *received_empty_response
         } else {
             false
         };
