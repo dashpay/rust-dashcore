@@ -173,8 +173,8 @@ impl<H: Persistable> SegmentCache<H> {
             let key_to_evict =
                 segments.iter_mut().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
 
-            if let Some((key, v)) = key_to_evict {
-                v.evict(&self.base_path)?;
+            if let Some((key, segment)) = key_to_evict {
+                segment.persist(&self.base_path)?;
                 segments.remove(&key);
             }
         }
@@ -379,6 +379,10 @@ impl<H: Persistable> Segment<H> {
     }
 
     pub fn persist(&mut self, base_path: &Path) -> StorageResult<()> {
+        if self.state == SegmentState::Clean {
+            return Ok(());
+        }
+
         let path = base_path.join(H::relative_disk_path(self.segment_id));
 
         self.state = SegmentState::Saving;
@@ -409,25 +413,6 @@ impl<H: Persistable> Segment<H> {
         // Transition to Dirty state (from Clean, Dirty, or Saving)
         self.state = SegmentState::Dirty;
         self.last_accessed = std::time::Instant::now();
-    }
-
-    pub fn evict(&mut self, base_path: &Path) -> StorageResult<()> {
-        // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
-        if self.state == SegmentState::Clean {
-            return Ok(());
-        }
-
-        tracing::trace!(
-            "Synchronously saving segment {} before eviction (state: {:?})",
-            self.segment_id,
-            self.state
-        );
-
-        self.persist(base_path)?;
-
-        tracing::debug!("Successfully saved segment cache {} to disk", self.segment_id);
-
-        Ok(())
     }
 }
 
