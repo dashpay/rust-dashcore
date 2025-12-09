@@ -11,4 +11,4 @@ pub mod masternodes;
 pub mod sequential;
 pub use filters::FilterSyncManager;
 pub use headers::{HeaderSyncManager, ReorgConfig};
-pub use masternodes::MasternodeSyncManager;
+pub use masternodes::{MasternodeSyncManager, SharedMasternodeState};
