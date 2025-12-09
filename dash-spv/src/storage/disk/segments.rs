@@ -328,25 +328,12 @@ impl<I: Persistable> SegmentCache<I> {
         let mut storage_index = self.height_to_storage_index(start_height);
 
         // Use trace for single items, debug for small batches, info for large batches
-        match items.len() {
-            1 => tracing::trace!(
-                "SegmentsCache: storing 1 item at height {} (storage index {})",
-                start_height,
-                storage_index
-            ),
-            2..=10 => tracing::debug!(
-                "SegmentsCache: storing {} items starting at height {} (storage index {})",
-                items.len(),
-                start_height,
-                storage_index
-            ),
-            _ => tracing::info!(
-                "SegmentsCache: storing {} items starting at height {} (storage index {})",
-                items.len(),
-                start_height,
-                storage_index
-            ),
-        }
+        tracing::debug!(
+            "SegmentsCache: storing {} items starting at height {} (storage index {})",
+            items.len(),
+            start_height,
+            storage_index
+        );
 
         for item in items {
             let segment_id = Self::index_to_segment_id(storage_index);
