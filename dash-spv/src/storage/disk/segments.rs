@@ -210,50 +210,38 @@ impl<H: Persistable> SegmentCache<H> {
         Ok(segment)
     }
 
-    pub async fn get_headers(&mut self, range: Range<u32>) -> StorageResult<Vec<H>> {
-        let mut headers = Vec::new();
+    pub async fn get_headers(&mut self, height_range: Range<u32>) -> StorageResult<Vec<H>> {
+        let storage_start_idx = self.height_to_storage_index(height_range.start);
+        let storage_end_idx = self.height_to_storage_index(height_range.end);
 
-        // Convert blockchain height range to storage index range using sync_base_height
-        let sync_base_height = self.sync_base_height;
+        let mut headers = Vec::with_capacity((storage_end_idx - storage_start_idx) as usize);
 
-        let storage_start = if sync_base_height > 0 && range.start >= sync_base_height {
-            range.start - sync_base_height
-        } else {
-            range.start
-        };
-
-        let storage_end = if sync_base_height > 0 && range.end > sync_base_height {
-            range.end - sync_base_height
-        } else {
-            range.end
-        };
-
-        let start_segment = Self::index_to_segment_id(storage_start);
-        let end_segment = Self::index_to_segment_id(storage_end.saturating_sub(1));
+        let start_segment = Self::index_to_segment_id(storage_start_idx);
+        let end_segment = Self::index_to_segment_id(storage_end_idx.saturating_sub(1));
 
         for segment_id in start_segment..=end_segment {
             let segment = self.get_segment(&segment_id).await?;
 
-            let start_idx = if segment_id == start_segment {
-                Self::index_to_offset(storage_start)
+            let seg_start_idx = if segment_id == start_segment {
+                Self::index_to_offset(storage_start_idx)
             } else {
                 0
             };
 
-            let end_idx = if segment_id == end_segment {
-                Self::index_to_offset(storage_end.saturating_sub(1)) + 1
+            let seg_end_idx = if segment_id == end_segment {
+                Self::index_to_offset(storage_end_idx.saturating_sub(1)) + 1
             } else {
                 segment.items.len()
             };
 
             // Only include headers up to valid_count to avoid returning sentinel headers
-            let actual_end_idx = end_idx.min(segment.valid_count);
+            let actual_end_idx = seg_end_idx.min(segment.valid_count);
 
-            if start_idx < segment.items.len()
+            if seg_start_idx < segment.items.len()
                 && actual_end_idx <= segment.items.len()
-                && start_idx < actual_end_idx
+                && seg_start_idx < actual_end_idx
             {
-                headers.extend_from_slice(&segment.items[start_idx..actual_end_idx]);
+                headers.extend_from_slice(&segment.items[seg_start_idx..actual_end_idx]);
             }
         }
 
