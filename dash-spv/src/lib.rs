@@ -78,6 +78,7 @@ pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
+pub use sync::SharedMasternodeState;
 pub use tracing::level_filters::LevelFilter;
 pub use types::{ChainState, FilterMatch, PeerInfo, SpvStats, SyncProgress, ValidationMode};
 

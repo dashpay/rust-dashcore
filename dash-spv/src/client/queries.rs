@@ -9,6 +9,7 @@
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::sync::SharedMasternodeState;
 use crate::types::AddressBalance;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
@@ -62,6 +63,29 @@ impl<
     /// Returns None if masternode sync is not enabled in config.
     pub fn masternode_list_engine(&self) -> Option<&MasternodeListEngine> {
         self.sync_manager.masternode_list_engine()
+    }
+
+    /// Get the shared masternode state for synchronous access.
+    ///
+    /// This returns a clonable handle that can be used to query quorum data
+    /// synchronously (without async/await), making it suitable for use in
+    /// `ContextProvider` implementations that require sync methods.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Get the shared state once (can be cloned and stored)
+    /// let shared_state = client.shared_masternode_state();
+    ///
+    /// // Later, query synchronously - no async needed!
+    /// let public_key = shared_state.get_quorum_public_key_sync(
+    ///     height,
+    ///     quorum_type,
+    ///     quorum_hash,
+    /// )?;
+    /// ```
+    pub fn shared_masternode_state(&self) -> SharedMasternodeState {
+        self.sync_manager.shared_masternode_state()
     }
 
     /// Get the masternode list at a specific block height.
@@ -164,5 +188,43 @@ impl<
         self.network
             .has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS)
             .await
+    }
+
+    // ============ Interface Creation ============
+
+    /// Create a client interface for sending commands and querying state.
+    ///
+    /// This creates a `DashSpvClientInterface` that can be used to interact with
+    /// the running client via command channels, as well as query quorum data
+    /// synchronously via the shared masternode state.
+    ///
+    /// # Arguments
+    ///
+    /// * `command_sender` - The sender half of the command channel used to send
+    ///   commands to the client's event loop.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    /// let interface = client.create_interface(command_sender);
+    ///
+    /// // Use synchronous quorum queries
+    /// let shared_state = interface.shared_masternode_state();
+    /// let public_key = shared_state.get_quorum_public_key_sync(height, quorum_type, quorum_hash)?;
+    ///
+    /// // Or use async command-based queries
+    /// let entry = interface.get_quorum_by_height(height, quorum_type, quorum_hash).await?;
+    /// ```
+    pub fn create_interface(
+        &self,
+        command_sender: tokio::sync::mpsc::UnboundedSender<
+            crate::client::interface::DashSpvClientCommand,
+        >,
+    ) -> crate::client::interface::DashSpvClientInterface {
+        crate::client::interface::DashSpvClientInterface::new(
+            command_sender,
+            self.shared_masternode_state(),
+        )
     }
 }

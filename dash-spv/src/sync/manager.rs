@@ -377,6 +377,14 @@ impl<
         self.masternode_sync.engine()
     }
 
+    /// Get the shared masternode state for synchronous access.
+    ///
+    /// This returns a clonable handle that can be used to query quorum data
+    /// synchronously, without going through async command channels.
+    pub fn shared_masternode_state(&self) -> crate::sync::SharedMasternodeState {
+        self.masternode_sync.shared_state()
+    }
+
     /// Update the chain state (used for checkpoint sync initialization)
     pub fn update_chain_state_cache(&mut self, sync_base_height: u32, headers_len: u32) {
         self.header_sync.update_cached_from_state_snapshot(sync_base_height, headers_len);

@@ -3,4 +3,4 @@
 pub mod embedded_data;
 mod manager;
 
-pub use manager::MasternodeSyncManager;
+pub use manager::{MasternodeSyncManager, SharedMasternodeState};

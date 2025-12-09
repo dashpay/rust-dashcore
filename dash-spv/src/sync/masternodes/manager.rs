@@ -4,20 +4,202 @@
 //! from dash-evo-tool for simple, reliable QRInfo sync.
 
 use dashcore::{
+    bls_sig_utils::BLSPublicKey,
     network::constants::NetworkExt,
     network::message::NetworkMessage,
     network::message_qrinfo::{GetQRInfo, QRInfo},
     network::message_sml::MnListDiff,
+    sml::llmq_type::LLMQType,
+    sml::masternode_list::MasternodeList,
     sml::masternode_list_engine::MasternodeListEngine,
+    sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry,
     BlockHash, QuorumHash,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 use crate::client::ClientConfig;
-use crate::error::{SyncError, SyncResult};
+use crate::error::{SpvError, SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+
+/// Thread-safe, clonable handle for synchronous access to masternode/quorum data.
+///
+/// This type provides synchronous access to quorum data that would otherwise require
+/// going through async command channels. It's designed for consumers (like ContextProvider
+/// implementations) that need to query quorum public keys synchronously.
+///
+/// # Usage
+///
+/// ```ignore
+/// // Get the shared state from the SPV client
+/// let shared_state = client.shared_masternode_state();
+///
+/// // Query synchronously - no async/await needed
+/// let public_key = shared_state.get_quorum_public_key_sync(
+///     height,
+///     quorum_type,
+///     quorum_hash,
+/// )?;
+/// ```
+///
+/// # Thread Safety
+///
+/// The `SharedMasternodeState` can be cloned and shared across threads. All reads
+/// are protected by an `RwLock`, allowing multiple concurrent readers. The underlying
+/// data is updated by the SPV client during masternode sync phases.
+#[derive(Clone)]
+pub struct SharedMasternodeState {
+    engine: Arc<RwLock<Option<MasternodeListEngine>>>,
+}
+
+impl SharedMasternodeState {
+    /// Create a new shared masternode state (internal use).
+    pub(crate) fn new() -> Self {
+        Self {
+            engine: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Create a new shared masternode state with an existing engine (internal use).
+    pub(crate) fn with_engine(engine: MasternodeListEngine) -> Self {
+        Self {
+            engine: Arc::new(RwLock::new(Some(engine))),
+        }
+    }
+
+    /// Check if the masternode engine is available (sync has completed at least once).
+    ///
+    /// This is a blocking call that acquires a read lock.
+    pub fn is_available(&self) -> bool {
+        self.engine.blocking_read().is_some()
+    }
+
+    /// Get the masternode list at a specific block height (synchronous).
+    ///
+    /// Returns `None` if the masternode engine is not available or if no list
+    /// exists at the specified height.
+    ///
+    /// This is a blocking call that acquires a read lock.
+    pub fn get_masternode_list_at_height_sync(&self, height: u32) -> Option<MasternodeList> {
+        let guard = self.engine.blocking_read();
+        guard.as_ref().and_then(|e| e.masternode_lists.get(&height).cloned())
+    }
+
+    /// Get a quorum entry by type and hash at a specific block height (synchronous).
+    ///
+    /// This is the main method for consumers needing sync quorum access.
+    ///
+    /// # Arguments
+    /// * `height` - The block height at which to look up the quorum
+    /// * `quorum_type` - The LLMQ type (e.g., `LLMQType::Llmq100_67`)
+    /// * `quorum_hash` - The hash identifying the specific quorum
+    ///
+    /// # Returns
+    /// * `Ok(QualifiedQuorumEntry)` - The quorum entry if found
+    /// * `Err(SpvError)` - If the engine is unavailable or the quorum is not found
+    ///
+    /// This is a blocking call that acquires a read lock.
+    pub fn get_quorum_at_height_sync(
+        &self,
+        height: u32,
+        quorum_type: LLMQType,
+        quorum_hash: QuorumHash,
+    ) -> Result<QualifiedQuorumEntry, SpvError> {
+        let guard = self.engine.blocking_read();
+
+        let engine = guard.as_ref().ok_or_else(|| {
+            SpvError::QuorumLookupError("Masternode engine not available".to_string())
+        })?;
+
+        let ml = engine.masternode_lists.get(&height).ok_or_else(|| {
+            SpvError::QuorumLookupError(format!("No masternode list found at height {}", height))
+        })?;
+
+        let quorums = ml.quorums.get(&quorum_type).ok_or_else(|| {
+            SpvError::QuorumLookupError(format!(
+                "No quorums of type {} found at height {}",
+                quorum_type, height
+            ))
+        })?;
+
+        quorums.get(&quorum_hash).cloned().ok_or_else(|| {
+            SpvError::QuorumLookupError(format!(
+                "Quorum not found: type {} at height {} with hash {} (masternode list has {} quorums of this type)",
+                quorum_type,
+                height,
+                hex::encode(quorum_hash),
+                quorums.len()
+            ))
+        })
+    }
+
+    /// Get a quorum's public key by type and hash at a specific block height (synchronous).
+    ///
+    /// This is a convenience method that extracts just the public key from the quorum entry.
+    /// It's commonly used by `ContextProvider` implementations.
+    ///
+    /// # Arguments
+    /// * `height` - The block height at which to look up the quorum
+    /// * `quorum_type` - The LLMQ type (e.g., `LLMQType::Llmq100_67`)
+    /// * `quorum_hash` - The hash identifying the specific quorum
+    ///
+    /// # Returns
+    /// * `Ok(BLSPublicKey)` - The quorum's threshold public key
+    /// * `Err(SpvError)` - If the engine is unavailable or the quorum is not found
+    ///
+    /// This is a blocking call that acquires a read lock.
+    pub fn get_quorum_public_key_sync(
+        &self,
+        height: u32,
+        quorum_type: LLMQType,
+        quorum_hash: QuorumHash,
+    ) -> Result<BLSPublicKey, SpvError> {
+        let entry = self.get_quorum_at_height_sync(height, quorum_type, quorum_hash)?;
+        Ok(entry.quorum_entry.quorum_public_key)
+    }
+
+    /// Get all available masternode list heights (synchronous).
+    ///
+    /// Returns an empty vector if the engine is not available.
+    ///
+    /// This is a blocking call that acquires a read lock.
+    pub fn available_heights_sync(&self) -> Vec<u32> {
+        let guard = self.engine.blocking_read();
+        guard
+            .as_ref()
+            .map(|e| e.masternode_lists.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Update the engine (called by MasternodeSyncManager).
+    pub(crate) async fn update_engine(&self, engine: Option<MasternodeListEngine>) {
+        let mut guard = self.engine.write().await;
+        *guard = engine;
+    }
+
+    /// Get mutable access for sync operations (called by MasternodeSyncManager).
+    #[allow(dead_code)]
+    pub(crate) async fn with_engine_mut<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut MasternodeListEngine) -> R,
+    {
+        let mut guard = self.engine.write().await;
+        guard.as_mut().map(f)
+    }
+
+    /// Get read access for sync operations that need the full engine.
+    #[allow(dead_code)]
+    pub(crate) async fn read_engine<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&MasternodeListEngine) -> R,
+    {
+        let guard = self.engine.read().await;
+        guard.as_ref().map(f)
+    }
+}
 
 /// Simplified masternode synchronization following dash-evo-tool pattern.
 pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
@@ -25,6 +207,11 @@ pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
     _phantom_n: std::marker::PhantomData<N>,
     config: ClientConfig,
     engine: Option<MasternodeListEngine>,
+
+    /// Shared state for synchronous access to quorum data.
+    /// This is updated whenever the engine changes, providing a thread-safe
+    /// way for external consumers to query quorum data without async overhead.
+    shared_state: SharedMasternodeState,
 
     // Simple caches matching dash-evo-tool pattern
     mnlist_diffs: HashMap<(u32, u32), MnListDiff>,
@@ -56,7 +243,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 {
     /// Create a new masternode sync manager.
     pub fn new(config: &ClientConfig) -> Self {
-        let (engine, mnlist_diffs) = if config.enable_masternodes {
+        let (engine, mnlist_diffs, shared_state) = if config.enable_masternodes {
             // Try to load embedded MNListDiff data for faster initial sync
             if let Some(embedded) = super::embedded_data::get_embedded_diff(config.network) {
                 tracing::info!(
@@ -75,7 +262,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         // Store the embedded diff in our cache
                         let mut diffs = HashMap::new();
                         diffs.insert((embedded.base_height, embedded.target_height), embedded.diff);
-                        (Some(engine), diffs)
+                        // Create shared state with the initialized engine
+                        let shared_state = SharedMasternodeState::with_engine(engine.clone());
+                        (Some(engine), diffs, shared_state)
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -87,7 +276,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         if let Some(genesis_hash) = config.network.known_genesis_block_hash() {
                             engine.feed_block_height(0, genesis_hash);
                         }
-                        (Some(engine), HashMap::new())
+                        let shared_state = SharedMasternodeState::with_engine(engine.clone());
+                        (Some(engine), HashMap::new(), shared_state)
                     }
                 }
             } else {
@@ -100,15 +290,17 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 if let Some(genesis_hash) = config.network.known_genesis_block_hash() {
                     engine.feed_block_height(0, genesis_hash);
                 }
-                (Some(engine), HashMap::new())
+                let shared_state = SharedMasternodeState::with_engine(engine.clone());
+                (Some(engine), HashMap::new(), shared_state)
             }
         } else {
-            (None, HashMap::new())
+            (None, HashMap::new(), SharedMasternodeState::new())
         };
 
         Self {
             config: config.clone(),
             engine,
+            shared_state,
             mnlist_diffs,
             qr_infos: HashMap::new(),
             last_qrinfo_block_hash: None,
@@ -610,6 +802,24 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.engine.as_ref()
     }
 
+    /// Get the shared masternode state for synchronous access.
+    ///
+    /// This returns a clonable handle that can be used to query quorum data
+    /// synchronously, without going through async command channels.
+    ///
+    /// The shared state is automatically kept in sync with the internal engine
+    /// after each QRInfo processing completes.
+    pub fn shared_state(&self) -> SharedMasternodeState {
+        self.shared_state.clone()
+    }
+
+    /// Sync the shared state with the current engine state.
+    ///
+    /// This should be called after significant engine updates (like after QRInfo processing).
+    pub async fn sync_shared_state(&self) {
+        self.shared_state.update_engine(self.engine.clone()).await;
+    }
+
     /// Check if sync is in progress
     pub fn is_syncing(&self) -> bool {
         self.sync_in_progress
@@ -671,6 +881,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Update last successful QRInfo block for progressive sync
         self.last_qrinfo_block_hash = Some(block_hash);
+
+        // Sync shared state with updated engine
+        self.sync_shared_state().await;
 
         // Check if we need to wait for MnListDiff responses
         if self.pending_mnlistdiff_requests == 0 {
