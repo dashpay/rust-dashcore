@@ -33,8 +33,8 @@ pub struct DiskStorageManager {
     pub(super) base_path: PathBuf,
 
     // Segmented header storage
-    pub(super) active_segments: Arc<RwLock<SegmentCache<BlockHeader>>>,
-    pub(super) active_filter_segments: Arc<RwLock<SegmentCache<FilterHeader>>>,
+    pub(super) block_headers: Arc<RwLock<SegmentCache<BlockHeader>>>,
+    pub(super) filter_headers: Arc<RwLock<SegmentCache<FilterHeader>>>,
 
     // Reverse index for O(1) lookups
     pub(super) header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
@@ -76,10 +76,8 @@ impl DiskStorageManager {
 
         let mut storage = Self {
             base_path: base_path.clone(),
-            active_segments: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()).await?)),
-            active_filter_segments: Arc::new(RwLock::new(
-                SegmentCache::new(base_path.clone()).await?,
-            )),
+            block_headers: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()).await?)),
+            filter_headers: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()).await?)),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,
@@ -90,12 +88,8 @@ impl DiskStorageManager {
 
         // Load chain state to get sync_base_height
         if let Ok(Some(state)) = storage.load_chain_state().await {
-            storage
-                .active_filter_segments
-                .write()
-                .await
-                .set_sync_base_height(state.sync_base_height);
-            storage.active_segments.write().await.set_sync_base_height(state.sync_base_height);
+            storage.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
+            storage.block_headers.write().await.set_sync_base_height(state.sync_base_height);
             tracing::debug!("Loaded sync_base_height: {}", state.sync_base_height);
         }
 
@@ -115,8 +109,8 @@ impl DiskStorageManager {
         let worker_base_path = self.base_path.clone();
         let base_path = self.base_path.clone();
 
-        let block_header = Arc::clone(&self.active_segments);
-        let filter_header = Arc::clone(&self.active_filter_segments);
+        let block_headers = Arc::clone(&self.block_headers);
+        let filter_headers = Arc::clone(&self.filter_headers);
 
         let worker_handle = tokio::spawn(async move {
             while let Some(cmd) = worker_rx.recv().await {
@@ -124,7 +118,7 @@ impl DiskStorageManager {
                     WorkerCommand::SaveBlockHeaderSegmentCache {
                         segment_id,
                     } => {
-                        let mut cache = block_header.write().await;
+                        let mut cache = block_headers.write().await;
                         let segment = cache.get_segment_mut(&segment_id).await;
                         if let Err(e) = segment.and_then(|segment| segment.persist(&base_path)) {
                             eprintln!("Failed to save segment {}: {}", segment_id, e);
@@ -138,7 +132,7 @@ impl DiskStorageManager {
                     WorkerCommand::SaveFilterHeaderSegmentCache {
                         segment_id,
                     } => {
-                        let mut cache = filter_header.write().await;
+                        let mut cache = filter_headers.write().await;
                         let segment = cache.get_segment_mut(&segment_id).await;
                         if let Err(e) = segment.and_then(|segment| segment.persist(&base_path)) {
                             eprintln!("Failed to save filter segment {}: {}", segment_id, e);

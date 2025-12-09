@@ -18,8 +18,8 @@ impl DiskStorageManager {
     /// Store chain state to disk.
     pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
         // Update our sync_base_height
-        self.active_filter_segments.write().await.set_sync_base_height(state.sync_base_height);
-        self.active_segments.write().await.set_sync_base_height(state.sync_base_height);
+        self.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
+        self.block_headers.write().await.set_sync_base_height(state.sync_base_height);
 
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
@@ -351,8 +351,8 @@ impl DiskStorageManager {
         self.stop_worker().await;
 
         // Clear in-memory state
-        self.active_segments.write().await.clear();
-        self.active_filter_segments.write().await.clear();
+        self.block_headers.write().await.clear();
+        self.filter_headers.write().await.clear();
         self.header_hash_index.write().await.clear();
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
@@ -404,10 +404,9 @@ impl DiskStorageManager {
             }
         }
 
-        let header_count =
-            self.active_segments.read().await.tip_height().map_or(0, |h| h as u64 + 1);
+        let header_count = self.block_headers.read().await.tip_height().map_or(0, |h| h as u64 + 1);
         let filter_header_count =
-            self.active_filter_segments.read().await.tip_height().map_or(0, |h| h as u64 + 1);
+            self.filter_headers.read().await.tip_height().map_or(0, |h| h as u64 + 1);
 
         component_sizes.insert("headers".to_string(), header_count * 80);
         component_sizes.insert("filter_headers".to_string(), filter_header_count * 32);
@@ -511,54 +510,40 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn load_headers(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        self.active_segments.write().await.get_headers(range).await
+        self.block_headers.write().await.get_headers(range).await
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        Ok(self
-            .active_segments
-            .write()
-            .await
-            .get_headers(height..height + 1)
-            .await?
-            .get(0)
-            .copied())
+        Ok(self.block_headers.write().await.get_headers(height..height + 1).await?.get(0).copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
-        Ok(self.active_segments.read().await.tip_height())
+        Ok(self.block_headers.read().await.tip_height())
     }
 
     async fn store_filter_headers(
         &mut self,
         headers: &[dashcore::hash_types::FilterHeader],
     ) -> StorageResult<()> {
-        self.active_filter_segments.write().await.store_headers(headers, self).await
+        self.filter_headers.write().await.store_headers(headers, self).await
     }
 
     async fn load_filter_headers(
         &self,
         range: std::ops::Range<u32>,
     ) -> StorageResult<Vec<dashcore::hash_types::FilterHeader>> {
-        self.active_filter_segments.write().await.get_headers(range).await
+        self.filter_headers.write().await.get_headers(range).await
     }
 
     async fn get_filter_header(
         &self,
         height: u32,
     ) -> StorageResult<Option<dashcore::hash_types::FilterHeader>> {
-        Ok(self
-            .active_filter_segments
-            .write()
-            .await
-            .get_headers(height..height + 1)
-            .await?
-            .get(0)
-            .copied())
+        Ok(self.filter_headers.write().await.get_headers(height..height + 1).await?.get(0).copied())
     }
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
-        Ok(self.active_filter_segments.read().await.tip_height())
+        Ok(self.filter_headers.read().await.tip_height())
     }
 
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
