@@ -24,13 +24,13 @@ use super::manager::DiskStorageManager;
 
 /// State of a segment in memory
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum SegmentState {
+enum SegmentState {
     Clean,  // No changes, up to date on disk
     Dirty,  // Has changes, needs saving
     Saving, // Currently being saved in background
 }
 
-pub(super) trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
+trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const FOLDER_NAME: &'static str;
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
@@ -134,7 +134,7 @@ impl<H: Persistable> SegmentCache<H> {
             if let Some(segment_id) = max_segment_id {
                 let segment = cache.get_segment(&segment_id).await?;
                 let last_storage_index =
-                    segment_id * super::HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
+                    segment_id * Segment::<H>::ITEMS_PER_SEGMENT + segment.valid_count - 1;
 
                 let tip_height = cache.storage_index_to_height(last_storage_index);
                 cache.tip_height = Some(tip_height);
@@ -145,13 +145,13 @@ impl<H: Persistable> SegmentCache<H> {
     }
 
     /// Get the segment ID for a given height.
-    pub(super) fn index_to_segment_id(height: u32) -> u32 {
-        height / super::HEADERS_PER_SEGMENT
+    fn index_to_segment_id(height: u32) -> u32 {
+        height / Segment::<H>::ITEMS_PER_SEGMENT
     }
 
     /// Get the segment offset for a given height.
-    pub(super) fn index_to_offset(height: u32) -> usize {
-        (height % super::HEADERS_PER_SEGMENT) as usize
+    fn index_to_offset(height: u32) -> u32 {
+        height % Segment::<H>::ITEMS_PER_SEGMENT
     }
 
     pub fn set_sync_base_height(&mut self, height: u32) {
@@ -221,6 +221,7 @@ impl<H: Persistable> SegmentCache<H> {
 
         for segment_id in start_segment..=end_segment {
             let segment = self.get_segment(&segment_id).await?;
+            let item_count = segment.items.len() as u32;
 
             let seg_start_idx = if segment_id == start_segment {
                 Self::index_to_offset(storage_start_idx)
@@ -231,17 +232,19 @@ impl<H: Persistable> SegmentCache<H> {
             let seg_end_idx = if segment_id == end_segment {
                 Self::index_to_offset(storage_end_idx.saturating_sub(1)) + 1
             } else {
-                segment.items.len()
+                item_count
             };
 
             // Only include headers up to valid_count to avoid returning sentinel headers
             let actual_end_idx = seg_end_idx.min(segment.valid_count);
 
-            if seg_start_idx < segment.items.len()
-                && actual_end_idx <= segment.items.len()
+            if seg_start_idx < item_count
+                && actual_end_idx <= item_count
                 && seg_start_idx < actual_end_idx
             {
-                headers.extend_from_slice(&segment.items[seg_start_idx..actual_end_idx]);
+                headers.extend_from_slice(
+                    &segment.items[seg_start_idx as usize..actual_end_idx as usize],
+                );
             }
         }
 
@@ -360,13 +363,15 @@ impl<H: Persistable> SegmentCache<H> {
 pub struct Segment<H: Persistable> {
     segment_id: u32,
     items: Vec<H>,
-    valid_count: usize, // Number of actual valid headers (excluding padding)
+    valid_count: u32, // Number of actual valid headers (excluding padding)
     state: SegmentState,
     last_accessed: Instant,
 }
 
 impl<H: Persistable> Segment<H> {
-    fn new(segment_id: u32, items: Vec<H>, valid_count: usize) -> Self {
+    const ITEMS_PER_SEGMENT: u32 = 50_000;
+
+    fn new(segment_id: u32, items: Vec<H>, valid_count: u32) -> Self {
         Self {
             segment_id,
             items,
@@ -383,18 +388,16 @@ impl<H: Persistable> Segment<H> {
         let mut headers = if segment_path.exists() {
             load_header_segments(&segment_path)?
         } else {
-            Vec::with_capacity(super::HEADERS_PER_SEGMENT as usize)
+            Vec::with_capacity(Self::ITEMS_PER_SEGMENT as usize)
         };
 
         // Store the actual number of valid headers before padding
-        let valid_count = headers.len();
+        let valid_count = headers.len() as u32;
 
         // Ensure the segment has space for all possible headers in this segment
         // This is crucial for proper indexing
-        if headers.len() < super::HEADERS_PER_SEGMENT as usize {
-            // Pad with sentinel headers that cannot be mistaken for valid blocks
-            let sentinel_header = H::new_sentinel();
-            headers.resize(super::HEADERS_PER_SEGMENT as usize, sentinel_header);
+        if headers.len() < Self::ITEMS_PER_SEGMENT as usize {
+            headers.resize(Self::ITEMS_PER_SEGMENT as usize, H::new_sentinel());
         }
 
         Ok(Self::new(segment_id, headers, valid_count))
@@ -439,24 +442,24 @@ impl<H: Persistable> Segment<H> {
         Ok(())
     }
 
-    pub fn insert(&mut self, item: H, offset: usize) {
+    pub fn insert(&mut self, item: H, offset: u32) {
         // Only increment valid_count when offset equals the current valid_count
         // This ensures valid_count represents contiguous valid headers without gaps
         if offset == self.valid_count {
             self.valid_count += 1;
         }
 
-        self.items[offset] = item;
+        self.items[offset as usize] = item;
         // Transition to Dirty state (from Clean, Dirty, or Saving)
         self.state = SegmentState::Dirty;
         self.last_accessed = std::time::Instant::now();
     }
 }
 
-pub fn load_header_segments<H: Decodable>(path: &Path) -> StorageResult<Vec<H>> {
+pub fn load_header_segments<H: Persistable>(path: &Path) -> StorageResult<Vec<H>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let mut headers = Vec::with_capacity(super::HEADERS_PER_SEGMENT as usize);
+    let mut headers = Vec::with_capacity(Segment::<H>::ITEMS_PER_SEGMENT as usize);
 
     loop {
         match H::consensus_decode(&mut reader) {
