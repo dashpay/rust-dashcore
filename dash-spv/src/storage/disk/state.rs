@@ -514,7 +514,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        Ok(self.block_headers.write().await.get_headers(height..height + 1).await?.get(0).copied())
+        Ok(self.block_headers.write().await.get_headers(height..height + 1).await?.first().copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
@@ -539,7 +539,14 @@ impl StorageManager for DiskStorageManager {
         &self,
         height: u32,
     ) -> StorageResult<Option<dashcore::hash_types::FilterHeader>> {
-        Ok(self.filter_headers.write().await.get_headers(height..height + 1).await?.get(0).copied())
+        Ok(self
+            .filter_headers
+            .write()
+            .await
+            .get_headers(height..height + 1)
+            .await?
+            .first()
+            .copied())
     }
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
