@@ -8,8 +8,8 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage;
-use crate::storage::disk::segments::{load_header_segments, SegmentCache};
+use crate::storage::disk::headers::load_block_index;
+use crate::storage::disk::segments::SegmentCache;
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 /// Commands for the background worker
@@ -95,8 +95,18 @@ impl DiskStorageManager {
         // Start background worker
         storage.start_worker().await;
 
-        // Load segment metadata and rebuild index
-        storage.load_segment_metadata().await?;
+        // Rebuild index
+        let block_index = match load_block_index(&storage).await {
+            Ok(index) => index,
+            Err(e) => {
+                tracing::error!(
+                    "An unexpected IO or deserialization error didn't allow the block index to be built: {}",
+                    e
+                );
+                HashMap::new()
+            }
+        };
+        storage.header_hash_index = Arc::new(RwLock::new(block_index));
 
         Ok(storage)
     }
@@ -171,80 +181,5 @@ impl DiskStorageManager {
         if let Some(handle) = self.worker_handle.take() {
             let _ = handle.await;
         }
-    }
-
-    /// Load segment metadata and rebuild indexes.
-    async fn load_segment_metadata(&mut self) -> StorageResult<()> {
-        use std::fs;
-
-        // Load header index if it exists
-        let index_path = self.base_path.join("headers/index.dat");
-        let mut index_loaded = false;
-        if index_path.exists() {
-            if let Ok(index) = super::headers::load_index_from_file(&index_path).await {
-                *self.header_hash_index.write().await = index;
-                index_loaded = true;
-            }
-        }
-
-        // Find highest segment to determine tip height
-        let headers_dir = self.base_path.join("filter_headers");
-        if let Ok(entries) = fs::read_dir(&headers_dir) {
-            let mut all_segment_ids = Vec::new();
-
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.starts_with("segment_") && name.ends_with(".dat") {
-                        if let Ok(id) = name[8..12].parse::<u32>() {
-                            all_segment_ids.push(id);
-                        }
-                    }
-                }
-            }
-
-            // If index wasn't loaded but we have segments, rebuild it
-            if !index_loaded && !all_segment_ids.is_empty() {
-                tracing::info!("Index file not found, rebuilding from segments...");
-
-                // Load chain state to get sync_base_height for proper height calculation
-                let sync_base_height = if let Ok(Some(chain_state)) = self.load_chain_state().await
-                {
-                    chain_state.sync_base_height
-                } else {
-                    0 // Assume genesis sync if no chain state
-                };
-
-                let mut new_index = HashMap::new();
-
-                // Sort segment IDs to process in order
-                all_segment_ids.sort();
-
-                for segment_id in all_segment_ids {
-                    let segment_path = self
-                        .base_path
-                        .join(format!("filter_headers/segment_{:04}.dat", segment_id));
-                    if let Ok(headers) = load_header_segments::<BlockHeader>(&segment_path) {
-                        // Calculate the storage index range for this segment
-                        let storage_start = segment_id * HEADERS_PER_SEGMENT;
-                        for (offset, header) in headers.iter().enumerate() {
-                            // Convert storage index to blockchain height
-                            let storage_index = storage_start + offset as u32;
-                            let blockchain_height = sync_base_height + storage_index;
-                            let hash = header.block_hash();
-                            new_index.insert(hash, blockchain_height);
-                        }
-                    }
-                }
-
-                *self.header_hash_index.write().await = new_index;
-                tracing::info!(
-                    "Index rebuilt with {} entries (sync_base_height: {})",
-                    self.header_hash_index.read().await.len(),
-                    sync_base_height
-                );
-            }
-        }
-
-        Ok(())
     }
 }
