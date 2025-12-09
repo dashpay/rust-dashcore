@@ -189,7 +189,7 @@ impl DiskStorageManager {
         }
 
         // Find highest segment to determine tip height
-        let headers_dir = self.base_path.join("headers");
+        let headers_dir = self.base_path.join("filter_headers");
         if let Ok(entries) = fs::read_dir(&headers_dir) {
             let mut all_segment_ids = Vec::new();
 
@@ -221,8 +221,9 @@ impl DiskStorageManager {
                 all_segment_ids.sort();
 
                 for segment_id in all_segment_ids {
-                    let segment_path =
-                        self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
+                    let segment_path = self
+                        .base_path
+                        .join(format!("filter_headers/segment_{:04}.dat", segment_id));
                     if let Ok(headers) = load_header_segments::<BlockHeader>(&segment_path) {
                         // Calculate the storage index range for this segment
                         let storage_start = segment_id * HEADERS_PER_SEGMENT;
