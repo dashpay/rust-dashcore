@@ -405,6 +405,10 @@ impl<H: Persistable> Segment<H> {
 
         let path = base_path.join(H::relative_disk_path(self.segment_id));
 
+        if let Err(e) = fs::create_dir_all(path.parent().unwrap()) {
+            return Err(StorageError::WriteFailed(format!("Failed to persist segment: {}", e)));
+        }
+
         self.state = SegmentState::Saving;
 
         let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
