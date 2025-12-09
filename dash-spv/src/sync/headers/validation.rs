@@ -1,13 +1,13 @@
 //! Header validation functionality.
 
-use dashcore::{block::Header as BlockHeader, error::Error as DashError};
+use dashcore::error::Error as DashError;
 use std::time::Instant;
 
 use crate::error::{ValidationError, ValidationResult};
-use crate::types::ValidationMode;
+use crate::types::{CachedHeader, ValidationMode};
 
 /// Validate a chain of headers considering the validation mode.
-pub fn validate_headers(headers: &[BlockHeader], mode: ValidationMode) -> ValidationResult<()> {
+pub fn validate_headers(headers: &[CachedHeader], mode: ValidationMode) -> ValidationResult<()> {
     if mode == ValidationMode::None {
         tracing::debug!("Skipping header validation: disabled");
         return Ok(());
@@ -64,7 +64,7 @@ pub fn validate_headers(headers: &[BlockHeader], mode: ValidationMode) -> Valida
 mod tests {
     use super::validate_headers;
     use crate::error::ValidationError;
-    use crate::types::ValidationMode;
+    use crate::types::{CachedHeader, ValidationMode};
     use dashcore::{
         block::{Header as BlockHeader, Version},
         blockdata::constants::genesis_block,
@@ -78,15 +78,15 @@ mod tests {
         nonce: u32,
         bits: u32,
         time: u32,
-    ) -> BlockHeader {
-        BlockHeader {
+    ) -> CachedHeader {
+        CachedHeader::new(BlockHeader {
             version: Version::from_consensus(0x20000000),
             prev_blockhash: prev_hash,
             merkle_root: dashcore::TxMerkleNode::from_byte_array([0; 32]),
             time,
             bits: dashcore::CompactTarget::from_consensus(bits),
             nonce,
-        }
+        })
     }
 
     /// Create a test header with specific parameters
@@ -97,15 +97,15 @@ mod tests {
         time: u32,
         bits: u32,
         nonce: u32,
-    ) -> BlockHeader {
-        BlockHeader {
+    ) -> CachedHeader {
+        CachedHeader::new(BlockHeader {
             version: Version::from_consensus(version as i32),
             prev_blockhash: prev_hash,
             merkle_root: dashcore::TxMerkleNode::from_byte_array(merkle_root),
             time,
             bits: CompactTarget::from_consensus(bits),
             nonce,
-        }
+        })
     }
 
     // ==================== Basic Tests ====================
@@ -122,7 +122,7 @@ mod tests {
         );
 
         // Should pass with no previous header
-        assert!(validate_headers(&[header], ValidationMode::None).is_ok());
+        assert!(validate_headers(std::slice::from_ref(&header), ValidationMode::None).is_ok());
 
         // Should pass even with invalid chain continuity
         let prev_header = create_test_header(
@@ -150,7 +150,7 @@ mod tests {
         let header2 = create_test_header(header1.block_hash(), 2, 0x1e0fffff, 1234567900);
 
         // Should pass when headers connect
-        assert!(validate_headers(&[header1, header2], ValidationMode::Basic).is_ok());
+        assert!(validate_headers(&[header1.clone(), header2], ValidationMode::Basic).is_ok());
 
         // Should fail when headers don't connect
         let disconnected_header = create_test_header(
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn test_validate_headers_empty() {
         for mode in [ValidationMode::None, ValidationMode::Basic, ValidationMode::Full] {
-            let headers: Vec<BlockHeader> = vec![];
+            let headers: Vec<CachedHeader> = vec![];
             // Empty chain should pass
             assert!(validate_headers(&headers, mode).is_ok());
         }
@@ -281,7 +281,7 @@ mod tests {
         );
 
         // Should fail when PoW validation is enabled
-        let result = validate_headers(&[header1], ValidationMode::Full);
+        let result = validate_headers(std::slice::from_ref(&header1), ValidationMode::Full);
         assert!(matches!(result, Err(ValidationError::InvalidProofOfWork)));
     }
 
@@ -290,13 +290,13 @@ mod tests {
     #[test]
     fn test_genesis_block_validation() {
         for network in [Network::Dash, Network::Testnet, Network::Regtest] {
-            let genesis = genesis_block(network).header;
+            let genesis = CachedHeader::new(genesis_block(network).header);
 
             // Genesis block should validate with no previous header
-            assert!(validate_headers(&[genesis], ValidationMode::Full).is_ok());
+            assert!(validate_headers(std::slice::from_ref(&genesis), ValidationMode::Full).is_ok());
 
             // Genesis block with itself as previous should fail
-            let result = validate_headers(&[genesis, genesis], ValidationMode::Full);
+            let result = validate_headers(&[genesis.clone(), genesis], ValidationMode::Full);
             assert!(matches!(result, Err(ValidationError::InvalidHeaderChain(_))));
         }
     }
@@ -365,7 +365,7 @@ mod tests {
         );
 
         // Should validate single header
-        assert!(validate_headers(&[header1], ValidationMode::Basic).is_ok());
+        assert!(validate_headers(std::slice::from_ref(&header1), ValidationMode::Basic).is_ok());
 
         // Should validate chain continuity
         assert!(validate_headers(&[header1, header2], ValidationMode::Basic).is_ok());
@@ -386,7 +386,7 @@ mod tests {
         );
 
         // Should validate when single header
-        assert!(validate_headers(&[header], ValidationMode::Basic).is_ok());
+        assert!(validate_headers(std::slice::from_ref(&header), ValidationMode::Basic).is_ok());
 
         // Create a previous header that would NOT match
         let prev_header = create_test_header_with_params(
@@ -530,7 +530,7 @@ mod tests {
         );
 
         // Chain with duplicate headers (same header repeated)
-        let headers = vec![header, header];
+        let headers = vec![header.clone(), header];
 
         // Should fail because second header's prev_blockhash won't match first header's hash
         let result = validate_headers(&headers, ValidationMode::Basic);
@@ -562,7 +562,7 @@ mod tests {
             );
 
             // All merkle roots should be valid for basic validation
-            assert!(validate_headers(&[header], ValidationMode::Basic).is_ok());
+            assert!(validate_headers(std::slice::from_ref(&header), ValidationMode::Basic).is_ok());
 
             prev_hash = header.block_hash();
         }
