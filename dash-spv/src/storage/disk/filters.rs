@@ -28,10 +28,10 @@ impl DiskStorageManager {
         // Stop worker to prevent concurrent writes to filter directories
         self.stop_worker().await;
 
-        // Clear in-memory filter state
-        self.filter_headers.write().await.clear();
+        // Clear in-memory and on-disk filter headers segments
+        self.filter_headers.write().await.clear_all().await?;
 
-        // Remove filter headers and compact filter files
+        // Remove on-disk compact filter files
         let filters_dir = self.base_path.join("filters");
         if filters_dir.exists() {
             tokio::fs::remove_dir_all(&filters_dir).await?;

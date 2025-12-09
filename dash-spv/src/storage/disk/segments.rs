@@ -158,9 +158,21 @@ impl<H: Persistable> SegmentCache<H> {
         self.sync_base_height = height;
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear_in_memory(&mut self) {
         self.segments.clear();
         self.tip_height = None;
+    }
+
+    pub async fn clear_all(&mut self) -> StorageResult<()> {
+        self.clear_in_memory();
+
+        let persistence_dir = self.base_path.join(H::FOLDER_NAME);
+        if persistence_dir.exists() {
+            tokio::fs::remove_dir_all(&persistence_dir).await?;
+        }
+        tokio::fs::create_dir_all(&persistence_dir).await?;
+
+        Ok(())
     }
 
     pub async fn get_segment(&mut self, segment_id: &u32) -> StorageResult<&Segment<H>> {
