@@ -106,8 +106,7 @@ pub enum ManagedAccountType {
     },
     /// Platform Payment account (DIP-17)
     /// Path: m/9'/coin_type'/17'/account'/key_class'/index
-    /// These addresses are encoded with DIP-18 format ("D"/"d" prefix for P2PKH).
-    /// **Warning**: Platform addresses MUST NOT be used in Core chain transactions.
+    /// Address encoding (DIP-18 bech32m) is handled by the Platform repo.
     PlatformPayment {
         /// Account index (hardened)
         account: u32,
