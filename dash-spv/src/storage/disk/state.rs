@@ -11,6 +11,7 @@ use crate::error::StorageResult;
 use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
+use super::io::atomic_write;
 use super::manager::DiskStorageManager;
 
 impl DiskStorageManager {
@@ -41,7 +42,8 @@ impl DiskStorageManager {
         });
 
         let path = self.base_path.join("state/chain.json");
-        tokio::fs::write(path, state_data.to_string()).await?;
+        let json = state_data.to_string();
+        atomic_write(&path, json.as_bytes()).await?;
 
         Ok(())
     }
@@ -97,7 +99,7 @@ impl DiskStorageManager {
             ))
         })?;
 
-        tokio::fs::write(path, json).await?;
+        atomic_write(&path, json.as_bytes()).await?;
         Ok(())
     }
 
@@ -134,12 +136,7 @@ impl DiskStorageManager {
             ))
         })?;
 
-        // Write to a temporary file first for atomicity
-        let temp_path = path.with_extension("tmp");
-        tokio::fs::write(&temp_path, json.as_bytes()).await?;
-
-        // Atomically rename to final path
-        tokio::fs::rename(&temp_path, &path).await?;
+        atomic_write(&path, json.as_bytes()).await?;
 
         tracing::debug!("Saved sync state at height {}", state.chain_tip.height);
         Ok(())
@@ -185,10 +182,8 @@ impl DiskStorageManager {
         height: u32,
         checkpoint: &crate::storage::sync_state::SyncCheckpoint,
     ) -> StorageResult<()> {
-        let checkpoints_dir = self.base_path.join("checkpoints");
-        tokio::fs::create_dir_all(&checkpoints_dir).await?;
-
-        let path = checkpoints_dir.join(format!("checkpoint_{:08}.json", height));
+        let path =
+            self.base_path.join("checkpoints").join(format!("checkpoint_{:08}.json", height));
         let json = serde_json::to_string(checkpoint).map_err(|e| {
             crate::error::StorageError::WriteFailed(format!(
                 "Failed to serialize checkpoint: {}",
@@ -196,7 +191,7 @@ impl DiskStorageManager {
             ))
         })?;
 
-        tokio::fs::write(&path, json.as_bytes()).await?;
+        atomic_write(&path, json.as_bytes()).await?;
         tracing::debug!("Stored checkpoint at height {}", height);
         Ok(())
     }
@@ -250,10 +245,7 @@ impl DiskStorageManager {
         height: u32,
         chain_lock: &dashcore::ChainLock,
     ) -> StorageResult<()> {
-        let chainlocks_dir = self.base_path.join("chainlocks");
-        tokio::fs::create_dir_all(&chainlocks_dir).await?;
-
-        let path = chainlocks_dir.join(format!("chainlock_{:08}.bin", height));
+        let path = self.base_path.join("chainlocks").join(format!("chainlock_{:08}.bin", height));
         let data = bincode::serialize(chain_lock).map_err(|e| {
             crate::error::StorageError::WriteFailed(format!(
                 "Failed to serialize chain lock: {}",
@@ -261,7 +253,7 @@ impl DiskStorageManager {
             ))
         })?;
 
-        tokio::fs::write(&path, &data).await?;
+        atomic_write(&path, &data).await?;
         tracing::debug!("Stored chain lock at height {}", height);
         Ok(())
     }
@@ -328,7 +320,7 @@ impl DiskStorageManager {
     /// Store metadata.
     pub async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("state/{}.dat", key));
-        tokio::fs::write(path, value).await?;
+        atomic_write(&path, value).await?;
         Ok(())
     }
 

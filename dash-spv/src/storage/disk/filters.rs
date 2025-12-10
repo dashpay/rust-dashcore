@@ -7,6 +7,7 @@ use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
 
+use super::io::atomic_write;
 use super::manager::DiskStorageManager;
 use super::segments::SegmentState;
 
@@ -185,8 +186,7 @@ impl DiskStorageManager {
     /// Store a compact filter.
     pub async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("filters/{}.dat", height));
-        tokio::fs::write(path, filter).await?;
-        Ok(())
+        atomic_write(&path, filter).await
     }
 
     /// Load a compact filter.
