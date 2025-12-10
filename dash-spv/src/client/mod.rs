@@ -6,12 +6,12 @@
 //!
 //! - `core.rs` - Core DashSpvClient struct definition and simple accessors
 //! - `lifecycle.rs` - Client lifecycle (new, start, stop, shutdown)
-//! - `events.rs` - Event emission and progress tracking receivers
+//! - `event` - Event emission and progress tracking receivers
 //! - `mempool.rs` - Mempool tracking and coordination
 //! - `queries.rs` - Peer, masternode, and balance queries
 //! - `transactions.rs` - Transaction operations (e.g., broadcast)
 //! - `chainlock.rs` - ChainLock and InstantLock processing
-//! - `sync_coordinator.rs` - Sync orchestration and network monitoring (the largest module)
+//! - `coordinator` - Sync orchestration and network monitoring (the largest module)
 //!
 //! ## Already Extracted Modules
 //!

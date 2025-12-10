@@ -13,7 +13,7 @@ use dashcore::{
     block::{Header as BlockHeader, Version},
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
-    BlockHash, CompactTarget,
+    Block, BlockHash, CompactTarget,
 };
 use dashcore_hashes::Hash;
 
@@ -56,6 +56,22 @@ impl Persistable for HashedBlockHeader {
 impl Persistable for FilterHeader {
     fn sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
+    }
+}
+
+impl Persistable for Block {
+    fn sentinel() -> Self {
+        Self {
+            header: BlockHeader {
+                version: Version::from_consensus(i32::MAX),
+                prev_blockhash: BlockHash::from_byte_array([0xFF; 32]),
+                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
+                time: u32::MAX,
+                bits: CompactTarget::from_consensus(0xFFFFFFFF),
+                nonce: u32::MAX,
+            },
+            txdata: Vec::new(),
+        }
     }
 }
 
@@ -245,10 +261,6 @@ impl<I: Persistable> SegmentCache<I> {
         }
 
         Ok(items)
-    }
-
-    pub async fn store_items(&mut self, items: &[I]) -> StorageResult<()> {
-        self.store_items_at_height(items, self.next_height()).await
     }
 
     pub async fn store_items_at_height(
@@ -567,7 +579,7 @@ mod tests {
 
         let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2);
 
-        cache.store_items(&items).await.expect("Failed to store items");
+        cache.store_items_at_height(&items, 0).await.expect("Failed to store items");
 
         assert_eq!(
             items[0..ITEMS_PER_SEGMENT as usize],

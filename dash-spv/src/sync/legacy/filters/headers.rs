@@ -864,9 +864,12 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
         };
 
         if !new_filter_headers.is_empty() {
-            storage.store_filter_headers(&new_filter_headers).await.map_err(|e| {
-                SyncError::Storage(format!("Failed to store filter headers: {}", e))
-            })?;
+            storage
+                .store_filter_headers(&new_filter_headers, expected_start_height)
+                .await
+                .map_err(|e| {
+                    SyncError::Storage(format!("Failed to store filter headers: {}", e))
+                })?;
 
             tracing::info!(
                 "✅ Stored {} new filter headers (skipped {} overlapping)",

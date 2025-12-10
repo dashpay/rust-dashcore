@@ -128,7 +128,7 @@ pub fn init_logging(config: LoggingConfig) -> LoggingResult<LoggingGuard> {
 
     // Set up console layer if requested
     let console_layer =
-        config.console.then(|| fmt::layer().with_target(false).with_thread_ids(false));
+        config.console.then(|| fmt::layer().with_target(true).with_thread_ids(false));
 
     // Combine layers and initialize
     tracing_subscriber::registry()

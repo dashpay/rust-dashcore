@@ -322,12 +322,14 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
                         // If this is the first batch (starting at height 1), store the genesis filter header first
                         if start_height == 1 && current_filter_tip < 1 {
                             let genesis_header = vec![cfheaders.previous_filter_header];
-                            storage.store_filter_headers(&genesis_header).await.map_err(|e| {
-                                SyncError::Storage(format!(
-                                    "Failed to store genesis filter header: {}",
-                                    e
-                                ))
-                            })?;
+                            storage.store_filter_headers(&genesis_header, 0).await.map_err(
+                                |e| {
+                                    SyncError::Storage(format!(
+                                        "Failed to store genesis filter header: {}",
+                                        e
+                                    ))
+                                },
+                            )?;
                             tracing::debug!(
                                 "Stored genesis filter header at height 0: {:?}",
                                 cfheaders.previous_filter_header
@@ -341,14 +343,15 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
                         {
                             // Store the previous_filter_header as the filter header for the checkpoint block
                             let checkpoint_header = vec![cfheaders.previous_filter_header];
-                            storage.store_filter_headers(&checkpoint_header).await.map_err(
-                                |e| {
+                            storage
+                                .store_filter_headers(&checkpoint_header, self.sync_base_height)
+                                .await
+                                .map_err(|e| {
                                     SyncError::Storage(format!(
                                         "Failed to store checkpoint filter header: {}",
                                         e
                                     ))
-                                },
-                            )?;
+                                })?;
                             tracing::info!(
                                 "Stored checkpoint filter header at height {}: {:?}",
                                 self.sync_base_height,
@@ -357,9 +360,12 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
                         }
 
                         // Store the new filter headers
-                        storage.store_filter_headers(&new_filter_headers).await.map_err(|e| {
-                            SyncError::Storage(format!("Failed to store filter headers: {}", e))
-                        })?;
+                        storage
+                            .store_filter_headers(&new_filter_headers, start_height)
+                            .await
+                            .map_err(|e| {
+                                SyncError::Storage(format!("Failed to store filter headers: {}", e))
+                            })?;
 
                         tracing::info!(
                             "✅ Successfully stored {} new filter headers",

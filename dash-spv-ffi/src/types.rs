@@ -1,6 +1,10 @@
 use dash_spv::client::config::MempoolStrategy;
+use dash_spv::sync::{
+    BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
+    FiltersProgress, InstantSendProgress, MasternodesProgress, SyncProgress, SyncState,
+};
 use dash_spv::types::{DetailedSyncProgress, MempoolRemovalReason, SyncStage};
-use dash_spv::{ChainState, SpvStats, SyncProgress};
+use dash_spv::{ChainState, SpvStats, SyncProgress as LegacySyncProgress};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
@@ -43,7 +47,7 @@ impl FFIString {
 }
 
 #[repr(C)]
-pub struct FFISyncProgress {
+pub struct FFILegacySyncProgress {
     pub header_height: u32,
     pub filter_header_height: u32,
     pub masternode_height: u32,
@@ -53,9 +57,9 @@ pub struct FFISyncProgress {
     pub last_synced_filter_height: u32,
 }
 
-impl From<SyncProgress> for FFISyncProgress {
-    fn from(progress: SyncProgress) -> Self {
-        FFISyncProgress {
+impl From<LegacySyncProgress> for FFILegacySyncProgress {
+    fn from(progress: LegacySyncProgress) -> Self {
+        FFILegacySyncProgress {
             header_height: progress.header_height,
             filter_header_height: progress.filter_header_height,
             masternode_height: progress.masternode_height,
@@ -111,6 +115,271 @@ impl From<SyncStage> for FFISyncStage {
     }
 }
 
+/// New sync state enum for the parallel sync system.
+/// Replaces the sequential phase-based `FFISyncStage` with simpler states.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFISyncState {
+    Initializing = 0,
+    WaitingForConnections = 1,
+    WaitForEvents = 2,
+    Syncing = 3,
+    Synced = 4,
+    Error = 5,
+}
+
+impl From<SyncState> for FFISyncState {
+    fn from(state: SyncState) -> Self {
+        match state {
+            SyncState::Initializing => FFISyncState::Initializing,
+            SyncState::WaitingForConnections => FFISyncState::WaitingForConnections,
+            SyncState::WaitForEvents => FFISyncState::WaitForEvents,
+            SyncState::Syncing => FFISyncState::Syncing,
+            SyncState::Synced => FFISyncState::Synced,
+            SyncState::Error => FFISyncState::Error,
+        }
+    }
+}
+
+/// Progress for headers or filter headers synchronization.
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct FFIBlockHeadersProgress {
+    pub state: FFISyncState,
+    pub current_height: u32,
+    pub target_height: u32,
+    pub processed: u32,
+    pub percentage: f64,
+    pub last_activity_secs: u64,
+}
+
+impl From<&BlockHeadersProgress> for FFIBlockHeadersProgress {
+    fn from(progress: &BlockHeadersProgress) -> Self {
+        FFIBlockHeadersProgress {
+            state: progress.state().into(),
+            current_height: progress.current_height(),
+            target_height: progress.target_height(),
+            processed: progress.processed(),
+            percentage: progress.percentage(),
+            last_activity_secs: progress.last_activity().elapsed().as_secs(),
+        }
+    }
+}
+
+impl From<&FilterHeadersProgress> for FFIBlockHeadersProgress {
+    fn from(progress: &FilterHeadersProgress) -> Self {
+        FFIBlockHeadersProgress {
+            state: progress.state().into(),
+            current_height: progress.current_height(),
+            target_height: progress.target_height(),
+            processed: progress.processed(),
+            percentage: progress.percentage(),
+            last_activity_secs: progress.last_activity().elapsed().as_secs(),
+        }
+    }
+}
+
+/// Progress for compact block filters synchronization.
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct FFIFiltersProgress {
+    pub state: FFISyncState,
+    pub current_height: u32,
+    pub target_height: u32,
+    pub downloaded: u32,
+    pub processed: u32,
+    pub matched: u32,
+    pub percentage: f64,
+    pub last_activity_secs: u64,
+}
+
+impl From<&FiltersProgress> for FFIFiltersProgress {
+    fn from(progress: &FiltersProgress) -> Self {
+        FFIFiltersProgress {
+            state: progress.state().into(),
+            current_height: progress.current_height(),
+            target_height: progress.target_height(),
+            downloaded: progress.downloaded(),
+            processed: progress.processed(),
+            matched: progress.matched(),
+            percentage: progress.percentage(),
+            last_activity_secs: 0, // Not exposed by FiltersProgress
+        }
+    }
+}
+
+/// Progress for full block synchronization.
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct FFIBlocksProgress {
+    pub state: FFISyncState,
+    pub last_processed_height: u32,
+    pub requested: u32,
+    pub from_storage: u32,
+    pub downloaded: u32,
+    pub processed: u32,
+    pub relevant: u32,
+    pub transactions_found: u32,
+    pub last_activity_secs: u64,
+}
+
+impl From<&BlocksProgress> for FFIBlocksProgress {
+    fn from(progress: &BlocksProgress) -> Self {
+        FFIBlocksProgress {
+            state: progress.state().into(),
+            last_processed_height: progress.last_processed(),
+            requested: progress.requested(),
+            from_storage: progress.from_storage(),
+            downloaded: progress.downloaded(),
+            processed: progress.processed(),
+            relevant: progress.relevant(),
+            transactions_found: progress.transactions(),
+            last_activity_secs: 0, // BlocksProgress doesn't expose last_activity directly
+        }
+    }
+}
+
+/// Progress for masternode list synchronization.
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct FFIMasternodesProgress {
+    pub state: FFISyncState,
+    pub current_height: u32,
+    pub target_height: u32,
+    pub diffs_processed: u32,
+    pub last_activity_secs: u64,
+}
+
+impl From<&MasternodesProgress> for FFIMasternodesProgress {
+    fn from(progress: &MasternodesProgress) -> Self {
+        FFIMasternodesProgress {
+            state: progress.state().into(),
+            current_height: progress.current_height(),
+            target_height: progress.target_height(),
+            diffs_processed: progress.diffs_processed(),
+            last_activity_secs: 0, // MasternodesProgress doesn't expose last_activity directly
+        }
+    }
+}
+
+/// Progress for ChainLock synchronization.
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct FFIChainLockProgress {
+    pub state: FFISyncState,
+    pub best_validated_height: u32,
+    pub pending: u32,
+    pub processed: u32,
+    pub last_activity_secs: u64,
+}
+
+impl From<&ChainLockProgress> for FFIChainLockProgress {
+    fn from(progress: &ChainLockProgress) -> Self {
+        FFIChainLockProgress {
+            state: progress.state().into(),
+            best_validated_height: progress.best_validated_height(),
+            pending: progress.pending() as u32,
+            processed: progress.processed(),
+            last_activity_secs: 0, // ChainLockProgress doesn't expose last_activity directly
+        }
+    }
+}
+
+/// Progress for InstantSend synchronization.
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct FFIInstantSendProgress {
+    pub state: FFISyncState,
+    pub pending: u32,
+    pub processed: u32,
+    pub last_activity_secs: u64,
+}
+
+impl From<&InstantSendProgress> for FFIInstantSendProgress {
+    fn from(progress: &InstantSendProgress) -> Self {
+        FFIInstantSendProgress {
+            state: progress.state().into(),
+            pending: progress.pending() as u32,
+            processed: progress.processed(),
+            last_activity_secs: 0, // InstantSendProgress doesn't expose last_activity directly
+        }
+    }
+}
+
+/// Aggregate progress for all sync managers.
+/// Provides a complete view of the parallel sync system's state.
+#[repr(C)]
+pub struct FFISyncProgress {
+    pub state: FFISyncState,
+    pub percentage: f64,
+    /// Per-manager progress (null if manager not started).
+    pub headers: *mut FFIBlockHeadersProgress,
+    pub filter_headers: *mut FFIBlockHeadersProgress,
+    pub filters: *mut FFIFiltersProgress,
+    pub blocks: *mut FFIBlocksProgress,
+    pub masternodes: *mut FFIMasternodesProgress,
+    pub chainlocks: *mut FFIChainLockProgress,
+    pub instantsend: *mut FFIInstantSendProgress,
+}
+
+impl From<SyncProgress> for FFISyncProgress {
+    fn from(progress: SyncProgress) -> Self {
+        let headers = progress
+            .headers()
+            .ok()
+            .map(|p| Box::into_raw(Box::new(FFIBlockHeadersProgress::from(p))))
+            .unwrap_or(std::ptr::null_mut());
+
+        let filter_headers = progress
+            .filter_headers()
+            .ok()
+            .map(|p| Box::into_raw(Box::new(FFIBlockHeadersProgress::from(p))))
+            .unwrap_or(std::ptr::null_mut());
+
+        let filters = progress
+            .filters()
+            .ok()
+            .map(|p| Box::into_raw(Box::new(FFIFiltersProgress::from(p))))
+            .unwrap_or(std::ptr::null_mut());
+
+        let blocks = progress
+            .blocks()
+            .ok()
+            .map(|p| Box::into_raw(Box::new(FFIBlocksProgress::from(p))))
+            .unwrap_or(std::ptr::null_mut());
+
+        let masternodes = progress
+            .masternodes()
+            .ok()
+            .map(|p| Box::into_raw(Box::new(FFIMasternodesProgress::from(p))))
+            .unwrap_or(std::ptr::null_mut());
+
+        let chainlocks = progress
+            .chainlocks()
+            .ok()
+            .map(|p| Box::into_raw(Box::new(FFIChainLockProgress::from(p))))
+            .unwrap_or(std::ptr::null_mut());
+
+        let instantsend = progress
+            .instantsend()
+            .ok()
+            .map(|p| Box::into_raw(Box::new(FFIInstantSendProgress::from(p))))
+            .unwrap_or(std::ptr::null_mut());
+
+        Self {
+            state: progress.state().into(),
+            percentage: progress.percentage(),
+            headers,
+            filter_headers,
+            filters,
+            blocks,
+            masternodes,
+            chainlocks,
+            instantsend,
+        }
+    }
+}
+
 #[repr(C)]
 pub struct FFIDetailedSyncProgress {
     pub total_height: u32,
@@ -119,7 +388,7 @@ pub struct FFIDetailedSyncProgress {
     pub estimated_seconds_remaining: i64, // -1 if unknown
     pub stage: FFISyncStage,
     pub stage_message: FFIString,
-    pub overview: FFISyncProgress,
+    pub overview: FFILegacySyncProgress,
     pub total_headers: u64,
     pub sync_start_timestamp: i64,
 }
@@ -156,7 +425,7 @@ impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
             SyncStage::Failed(err) => err.clone(),
         };
 
-        let overview = FFISyncProgress::from(progress.sync_progress.clone());
+        let overview = FFILegacySyncProgress::from(progress.sync_progress.clone());
 
         FFIDetailedSyncProgress {
             total_height: progress.peer_best_height,
@@ -202,18 +471,40 @@ impl From<ChainState> for FFIChainState {
 
 #[repr(C)]
 pub struct FFISpvStats {
+    // Peer info
     pub connected_peers: u32,
     pub total_peers: u32,
+
+    // Heights
     pub header_height: u32,
     pub filter_height: u32,
+
+    // Headers/filters downloaded
     pub headers_downloaded: u64,
     pub filter_headers_downloaded: u64,
     pub filters_downloaded: u64,
     pub filters_matched: u64,
+
+    // Blocks
+    pub blocks_requested: u64,
     pub blocks_processed: u64,
+    pub blocks_with_relevant_transactions: u64,
+
+    // Masternode/ChainLock/InstantSend
+    pub masternode_diffs_processed: u64,
+
+    // Network
     pub bytes_received: u64,
     pub bytes_sent: u64,
     pub uptime: u64,
+
+    // Filter sync stats
+    pub filters_requested: u64,
+    pub filters_received: u64,
+    pub active_filter_requests: u32,
+    pub pending_filter_requests: u32,
+    pub filter_request_timeouts: u64,
+    pub filter_requests_retried: u64,
 }
 
 impl From<SpvStats> for FFISpvStats {
@@ -227,10 +518,19 @@ impl From<SpvStats> for FFISpvStats {
             filter_headers_downloaded: stats.filter_headers_downloaded,
             filters_downloaded: stats.filters_downloaded,
             filters_matched: stats.filters_matched,
+            blocks_requested: stats.blocks_requested,
             blocks_processed: stats.blocks_processed,
+            blocks_with_relevant_transactions: stats.blocks_with_relevant_transactions,
+            masternode_diffs_processed: stats.masternode_diffs_processed,
             bytes_received: stats.bytes_received,
             bytes_sent: stats.bytes_sent,
             uptime: stats.uptime.as_secs(),
+            filters_requested: stats.filters_requested,
+            filters_received: stats.filters_received,
+            active_filter_requests: stats.active_filter_requests,
+            pending_filter_requests: stats.pending_filter_requests,
+            filter_request_timeouts: stats.filter_request_timeouts,
+            filter_requests_retried: stats.filter_requests_retried,
         }
     }
 }
@@ -511,5 +811,121 @@ pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy(
         }
 
         // The Box will be dropped here, freeing the FFIUnconfirmedTransaction itself
+    }
+}
+
+// ============================================================================
+// Destroy functions for new manager progress types
+// ============================================================================
+
+/// Destroy an `FFIBlockHeadersProgress` object.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_block_headers_progress_destroy(
+    progress: *mut FFIBlockHeadersProgress,
+) {
+    if !progress.is_null() {
+        let _ = Box::from_raw(progress);
+    }
+}
+
+/// Destroy an `FFIFiltersProgress` object.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_filters_progress_destroy(progress: *mut FFIFiltersProgress) {
+    if !progress.is_null() {
+        let _ = Box::from_raw(progress);
+    }
+}
+
+/// Destroy an `FFIBlocksProgress` object.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_blocks_progress_destroy(progress: *mut FFIBlocksProgress) {
+    if !progress.is_null() {
+        let _ = Box::from_raw(progress);
+    }
+}
+
+/// Destroy an `FFIMasternodesProgress` object.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_masternode_progress_destroy(
+    progress: *mut FFIMasternodesProgress,
+) {
+    if !progress.is_null() {
+        let _ = Box::from_raw(progress);
+    }
+}
+
+/// Destroy an `FFIChainLockProgress` object.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_chainlock_progress_destroy(
+    progress: *mut FFIChainLockProgress,
+) {
+    if !progress.is_null() {
+        let _ = Box::from_raw(progress);
+    }
+}
+
+/// Destroy an `FFIInstantSendProgress` object.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_instantsend_progress_destroy(
+    progress: *mut FFIInstantSendProgress,
+) {
+    if !progress.is_null() {
+        let _ = Box::from_raw(progress);
+    }
+}
+
+/// Destroy an `FFISyncProgress` object and all its nested pointers.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_manager_sync_progress_destroy(
+    progress: *mut FFISyncProgress,
+) {
+    if !progress.is_null() {
+        let p = Box::from_raw(progress);
+
+        // Free all nested progress pointers
+        if !p.headers.is_null() {
+            dash_spv_ffi_block_headers_progress_destroy(p.headers);
+        }
+        if !p.filter_headers.is_null() {
+            dash_spv_ffi_block_headers_progress_destroy(p.filter_headers);
+        }
+        if !p.filters.is_null() {
+            dash_spv_ffi_filters_progress_destroy(p.filters);
+        }
+        if !p.blocks.is_null() {
+            dash_spv_ffi_blocks_progress_destroy(p.blocks);
+        }
+        if !p.masternodes.is_null() {
+            dash_spv_ffi_masternode_progress_destroy(p.masternodes);
+        }
+        if !p.chainlocks.is_null() {
+            dash_spv_ffi_chainlock_progress_destroy(p.chainlocks);
+        }
+        if !p.instantsend.is_null() {
+            dash_spv_ffi_instantsend_progress_destroy(p.instantsend);
+        }
+
+        // The Box `p` is dropped here, freeing the FFISyncProgress itself
     }
 }

@@ -105,6 +105,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.wallet_infos.values().map(|info| info.birth_height()).min().unwrap_or(0)
     }
 
+    async fn synced_height(&self) -> CoreBlockHeight {
+        self.current_height
+    }
+
+    async fn set_synced_height(&mut self, height: CoreBlockHeight) {
+        self.update_height(height);
+    }
+
     async fn describe(&self) -> String {
         let wallet_count = self.wallet_infos.len();
         if wallet_count == 0 {
@@ -132,5 +140,47 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             self.network,
             details.join("\n")
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashcore::Network;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+
+    #[tokio::test]
+    async fn test_synced_height_initial() {
+        let manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+        assert_eq!(manager.synced_height().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_synced_height_after_update() {
+        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+
+        manager.update_height(1000);
+        assert_eq!(manager.synced_height().await, 1000);
+
+        manager.update_height(5000);
+        assert_eq!(manager.synced_height().await, 5000);
+    }
+
+    #[tokio::test]
+    async fn test_synced_height_reflects_current_height() {
+        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+
+        // Update height multiple times
+        for height in [100, 200, 300, 500, 1000] {
+            manager.update_height(height);
+            assert_eq!(manager.synced_height().await, height);
+            assert_eq!(manager.current_height(), height);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_earliest_required_height_empty() {
+        let manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+        assert_eq!(manager.earliest_required_height().await, 0);
     }
 }

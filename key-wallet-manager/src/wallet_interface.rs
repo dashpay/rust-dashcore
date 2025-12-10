@@ -69,6 +69,18 @@ pub trait WalletInterface: Send + Sync + 'static {
         0
     }
 
+    /// Return the height of the last block that was fully processed by the wallet.
+    /// Used for resuming sync after restart - we should re-scan from this height + 1.
+    async fn synced_height(&self) -> CoreBlockHeight {
+        0
+    }
+
+    /// Update the wallet's synced height after processing a batch of filters.
+    /// Called by the sync manager when filters have been processed up to this height.
+    async fn set_synced_height(&mut self, height: CoreBlockHeight) {
+        let _ = height; // Default no-op implementation
+    }
+
     /// Provide a human-readable description of the wallet implementation.
     ///
     /// Implementations are encouraged to include high-level state such as the

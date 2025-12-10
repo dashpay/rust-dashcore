@@ -31,7 +31,7 @@ async fn test_filter_sync_at_tip_edge_case() {
     let filter_headers = FilterHeader::dummy_batch(0..TIP_HEIGHT + 1);
 
     storage.store_headers(&headers).await.unwrap();
-    storage.store_filter_headers(&filter_headers).await.unwrap();
+    storage.store_filter_headers(&filter_headers, 1).await.unwrap();
 
     // Verify initial state
     let tip_height = storage.get_tip_height().await.unwrap();
@@ -66,7 +66,7 @@ async fn test_no_invalid_getcfheaders_at_tip() {
     let filter_headers = FilterHeader::dummy_batch(0..TIP_HEIGHT);
 
     storage.store_headers(&headers).await.unwrap();
-    storage.store_filter_headers(&filter_headers).await.unwrap();
+    storage.store_filter_headers(&filter_headers, 1).await.unwrap();
 
     // Start filter sync
     let result = filter_sync.start_sync_headers(&mut network, &mut storage).await;

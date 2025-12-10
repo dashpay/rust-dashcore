@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use crate::types::FFIDetailedSyncProgress;
     use crate::*;
     use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
@@ -15,20 +14,17 @@ mod tests {
     struct TestCallbackData {
         progress_count: Arc<AtomicU32>,
         completion_called: Arc<AtomicBool>,
-        last_progress: Arc<Mutex<f64>>,
+        percentage: Arc<Mutex<f64>>,
         error_message: Arc<Mutex<Option<String>>>,
         data_received: Arc<Mutex<Vec<u8>>>,
     }
 
-    extern "C" fn test_progress_callback(
-        progress: *const FFIDetailedSyncProgress,
-        user_data: *mut c_void,
-    ) {
+    extern "C" fn test_progress_callback(progress: *const FFISyncProgress, user_data: *mut c_void) {
         let data = unsafe { &*(user_data as *const TestCallbackData) };
         data.progress_count.fetch_add(1, Ordering::SeqCst);
         if !progress.is_null() {
             unsafe {
-                *data.last_progress.lock().unwrap() = (*progress).percentage;
+                *data.percentage.lock().unwrap() = (*progress).percentage;
             }
         }
     }
@@ -127,7 +123,7 @@ mod tests {
             let test_data = TestCallbackData {
                 progress_count: Arc::new(AtomicU32::new(0)),
                 completion_called: Arc::new(AtomicBool::new(false)),
-                last_progress: Arc::new(Mutex::new(0.0)),
+                percentage: Arc::new(Mutex::new(0.0)),
                 error_message: Arc::new(Mutex::new(None)),
                 data_received: Arc::new(Mutex::new(Vec::new())),
             };
@@ -143,8 +139,8 @@ mod tests {
             thread::sleep(Duration::from_millis(100));
 
             // Check progress was in valid range
-            let last_progress = *test_data.last_progress.lock().unwrap();
-            assert!((0.0..=100.0).contains(&last_progress));
+            let percentage = *test_data.percentage.lock().unwrap();
+            assert!((0.0..=1.0).contains(&percentage));
 
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);
@@ -162,7 +158,7 @@ mod tests {
             let test_data = TestCallbackData {
                 progress_count: Arc::new(AtomicU32::new(0)),
                 completion_called: Arc::new(AtomicBool::new(false)),
-                last_progress: Arc::new(Mutex::new(0.0)),
+                percentage: Arc::new(Mutex::new(0.0)),
                 error_message: Arc::new(Mutex::new(None)),
                 data_received: Arc::new(Mutex::new(Vec::new())),
             };
@@ -192,7 +188,7 @@ mod tests {
         let test_data = TestCallbackData {
             progress_count: Arc::new(AtomicU32::new(0)),
             completion_called: Arc::new(AtomicBool::new(false)),
-            last_progress: Arc::new(Mutex::new(0.0)),
+            percentage: Arc::new(Mutex::new(0.0)),
             error_message: Arc::new(Mutex::new(None)),
             data_received: Arc::new(Mutex::new(Vec::new())),
         };

@@ -125,6 +125,10 @@ impl Peer {
         })
     }
 
+    pub fn version(&self) -> Option<u32> {
+        self.version
+    }
+
     pub fn best_height(&self) -> Option<u32> {
         self.best_height
     }

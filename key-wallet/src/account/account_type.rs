@@ -421,7 +421,7 @@ impl AccountType {
                     Network::Dash => {
                         DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_MAINNET)
                     }
-                    Network::Testnet => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_TESTNET)
                     }
                     _ => return Err(crate::error::Error::InvalidNetwork),

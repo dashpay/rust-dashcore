@@ -107,11 +107,6 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             }
         }
 
-        // Verify all slots have been filled
-        if quorum_sig_lookup.iter().any(Option::is_none) {
-            return Err(SmlError::IncompleteSignatureSet);
-        }
-
         let quorums = diff.new_quorums.into_iter().enumerate().fold(
             BTreeMap::new(),
             |mut map: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
@@ -127,7 +122,10 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                         ),
                         commitment_hash,
                         entry_hash,
-                        verifying_chain_lock_signature: quorum_sig_lookup[idx]
+                        verifying_chain_lock_signature: quorum_sig_lookup
+                            .get(idx)
+                            .copied()
+                            .flatten()
                             .copied()
                             .map(VerifyingChainLockSignaturesType::NonRotating),
                     }

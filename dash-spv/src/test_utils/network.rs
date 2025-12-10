@@ -1,14 +1,22 @@
+use std::collections::VecDeque;
+
 use crate::error::{NetworkError, NetworkResult};
-use crate::network::{Message, MessageDispatcher, MessageType, NetworkManager};
+use crate::event_bus::{EventBus, EventReceiver};
+use crate::network::{
+    Message, MessageDispatcher, MessageType, NetworkEvent, NetworkManager, NetworkRequest,
+    RequestSender,
+};
 use async_trait::async_trait;
+use dashcore::network::constants::ServiceFlags;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{
-    block::Header as BlockHeader, network::constants::ServiceFlags,
-    network::message::NetworkMessage, network::message_blockdata::GetHeadersMessage, BlockHash,
+    block::Header as BlockHeader, network::message::NetworkMessage,
+    network::message_blockdata::GetHeadersMessage, BlockHash,
 };
 use dashcore_hashes::Hash;
 use std::any::Any;
 use std::net::SocketAddr;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 pub fn test_socket_address(id: u8) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, id], id as u16))
@@ -18,21 +26,84 @@ pub fn test_socket_address(id: u8) -> SocketAddr {
 pub struct MockNetworkManager {
     connected: bool,
     connected_peer: SocketAddr,
+    sent_messages: VecDeque<NetworkMessage>,
     headers_chain: Vec<BlockHeader>,
+    peer_best_height: Option<u32>,
+    supports_compact_filters: bool,
     message_dispatcher: MessageDispatcher,
-    sent_messages: Vec<NetworkMessage>,
+    /// Request sender for outgoing messages.
+    request_tx: UnboundedSender<NetworkRequest>,
+    /// Keep receiver alive so sends don't fail. Use Option to allow taking for tests.
+    #[allow(dead_code)]
+    request_rx: Option<UnboundedReceiver<NetworkRequest>>,
+    /// Event bus for network events.
+    network_event_bus: EventBus<NetworkEvent>,
 }
 
 impl MockNetworkManager {
-    /// Create a new mock network manager
+    /// Create a new mock network manager.
     pub fn new() -> Self {
+        let (request_tx, request_rx) = unbounded_channel();
+        Self {
+            connected: false,
+            connected_peer: test_socket_address(1),
+            sent_messages: VecDeque::new(),
+            headers_chain: Vec::new(),
+            peer_best_height: None,
+            supports_compact_filters: true,
+            message_dispatcher: MessageDispatcher::default(),
+            request_tx,
+            request_rx: Some(request_rx),
+            network_event_bus: EventBus::default(),
+        }
+    }
+
+    /// Create a mock network manager with a specific request sender.
+    ///
+    /// The caller owns the receiver and can inspect messages sent via `request_sender()`.
+    pub fn with_request_sender(request_tx: UnboundedSender<NetworkRequest>) -> Self {
         Self {
             connected: true,
             connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
+            sent_messages: VecDeque::new(),
             headers_chain: Vec::new(),
+            peer_best_height: None,
+            supports_compact_filters: true,
             message_dispatcher: MessageDispatcher::default(),
-            sent_messages: Vec::new(),
+            request_tx,
+            request_rx: None, // Caller owns the receiver
+            network_event_bus: EventBus::default(),
         }
+    }
+
+    /// Get reference to sent messages for test verification
+    pub fn sent_messages(&self) -> &VecDeque<NetworkMessage> {
+        &self.sent_messages
+    }
+
+    /// Get count of sent messages
+    pub fn sent_message_count(&self) -> usize {
+        self.sent_messages.len()
+    }
+
+    /// Get last sent message
+    pub fn last_sent_message(&self) -> Option<&NetworkMessage> {
+        self.sent_messages.back()
+    }
+
+    /// Clear sent messages
+    pub fn clear_sent_messages(&mut self) {
+        self.sent_messages.clear();
+    }
+
+    /// Set peer best height for testing
+    pub fn set_peer_best_height(&mut self, height: u32) {
+        self.peer_best_height = Some(height);
+    }
+
+    /// Set whether peers support compact filters
+    pub fn set_supports_compact_filters(&mut self, supports: bool) {
+        self.supports_compact_filters = supports;
     }
 
     /// Add a chain of headers for testing
@@ -89,10 +160,6 @@ impl MockNetworkManager {
             Vec::new()
         }
     }
-
-    pub fn sent_messages(&self) -> &Vec<NetworkMessage> {
-        &self.sent_messages
-    }
 }
 
 impl Default for MockNetworkManager {
@@ -111,6 +178,10 @@ impl NetworkManager for MockNetworkManager {
         self.message_dispatcher.message_receiver(types)
     }
 
+    fn request_sender(&self) -> RequestSender {
+        RequestSender::new(self.request_tx.clone())
+    }
+
     async fn connect(&mut self) -> NetworkResult<()> {
         self.connected = true;
         Ok(())
@@ -118,6 +189,7 @@ impl NetworkManager for MockNetworkManager {
 
     async fn disconnect(&mut self) -> NetworkResult<()> {
         self.connected = false;
+        self.sent_messages.clear();
         Ok(())
     }
 
@@ -125,6 +197,9 @@ impl NetworkManager for MockNetworkManager {
         if !self.connected {
             return Err(NetworkError::NotConnected);
         }
+
+        // Track sent message for test verification
+        self.sent_messages.push_back(message.clone());
 
         // Process GetHeaders requests
         if let NetworkMessage::GetHeaders(ref getheaders) = message {
@@ -134,8 +209,6 @@ impl NetworkManager for MockNetworkManager {
                 self.message_dispatcher.dispatch(&message);
             }
         }
-
-        self.sent_messages.push(message);
 
         Ok(())
     }
@@ -152,11 +225,16 @@ impl NetworkManager for MockNetworkManager {
         }
     }
 
-    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
-        Ok(Some(self.headers_chain.len() as u32))
+    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight> {
+        let height = self.peer_best_height.unwrap_or(self.headers_chain.len() as u32);
+        Some(height)
     }
 
     async fn has_peer_with_service(&self, _service_flags: ServiceFlags) -> bool {
-        self.connected
+        todo!()
+    }
+
+    fn subscribe_network_events(&self) -> EventReceiver<NetworkEvent> {
+        self.network_event_bus.subscribe()
     }
 }

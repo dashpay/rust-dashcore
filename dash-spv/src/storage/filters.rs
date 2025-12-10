@@ -10,8 +10,12 @@ use crate::{
 };
 
 #[async_trait]
-pub trait FilterHeaderStorage {
-    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()>;
+pub trait FilterHeaderStorage: Send + Sync + 'static {
+    async fn store_filter_headers(
+        &mut self,
+        headers: &[FilterHeader],
+        start_height: u32,
+    ) -> StorageResult<()>;
 
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>>;
 
@@ -41,10 +45,12 @@ pub trait FilterHeaderStorage {
 }
 
 #[async_trait]
-pub trait FilterStorage {
+pub trait FilterStorage: Send + Sync + 'static {
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()>;
 
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>>;
+
+    async fn filter_tip_height(&self) -> StorageResult<u32>;
 }
 
 pub struct PersistentFilterHeaderStorage {
@@ -80,8 +86,12 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
 
 #[async_trait]
 impl FilterHeaderStorage for PersistentFilterHeaderStorage {
-    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
-        self.filter_headers.write().await.store_items(headers).await
+    async fn store_filter_headers(
+        &mut self,
+        headers: &[FilterHeader],
+        start_height: u32,
+    ) -> StorageResult<()> {
+        self.filter_headers.write().await.store_items_at_height(headers, start_height).await
     }
 
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
@@ -137,5 +147,9 @@ impl FilterStorage for PersistentFilterStorage {
 
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
         self.filters.write().await.get_items(range).await
+    }
+
+    async fn filter_tip_height(&self) -> StorageResult<u32> {
+        Ok(self.filters.read().await.tip_height().unwrap_or(0))
     }
 }

@@ -4,7 +4,7 @@
 //! This file has grown to 1,065 lines and should be split into:
 //! - types/chain.rs - ChainState, CachedHeader
 //! - types/sync.rs - SyncProgress, SyncStage
-//! - types/events.rs - SpvEvent, MempoolRemovalReason
+//! - types/event - SpvEvent, MempoolRemovalReason
 //! - types/stats.rs - SpvStats, PeerInfo
 //! - types/balances.rs - AddressBalance, UnconfirmedTransaction
 //!
