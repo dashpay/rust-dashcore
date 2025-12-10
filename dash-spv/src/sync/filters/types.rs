@@ -20,10 +20,7 @@ pub const SYNC_TIMEOUT_SECONDS: u64 = 5;
 pub const DEFAULT_FILTER_SYNC_RANGE: u32 = 100;
 
 /// Batch size for compact filter requests (CFilters).
-pub const FILTER_REQUEST_BATCH_SIZE: u32 = 100;
-
-/// Maximum filters per CFilter request (Dash Core limit).
-pub const MAX_FILTER_REQUEST_SIZE: u32 = 1000;
+pub const FILTER_REQUEST_BATCH_SIZE: u32 = 1000;
 
 /// Maximum concurrent filter batches allowed.
 pub const MAX_CONCURRENT_FILTER_REQUESTS: usize = 50;
