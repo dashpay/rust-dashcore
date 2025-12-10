@@ -377,3 +377,39 @@ async fn test_load_headers_from_storage(sync_base_height: u32, header_count: usi
     assert_eq!(loaded_count as usize, header_count, "Loaded count mismatch");
     assert_eq!(header_count, cs.headers.len(), "Chain state count mismatch");
 }
+
+#[test_case(0, 1 ; "genesis_1_block")]
+#[test_case(0, 70000 ; "genesis_70000_blocks")]
+#[test_case(5000, 1 ; "checkpoint_1_block")]
+#[test_case(1000, 70000 ; "checkpoint_70000_blocks")]
+#[tokio::test]
+async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
+        .await
+        .expect("Failed to create storage");
+
+    let headers = create_test_header_chain(header_count);
+    let expected_tip_hash = headers.last().unwrap().block_hash();
+
+    // Create and store chain state
+    let mut chain_state = ChainState::new_for_network(Network::Dash);
+    chain_state.sync_base_height = sync_base_height;
+    chain_state.headers = headers;
+    storage.store_chain_state(&chain_state).await.expect("Failed to store chain state");
+
+    // Create HeaderSyncManager and load from storage
+    let config = ClientConfig::new(Network::Dash);
+    let chain_state_arc = Arc::new(RwLock::new(ChainState::new_for_network(Network::Dash)));
+    let mut header_sync = HeaderSyncManager::<DiskStorageManager, PeerNetworkManager>::new(
+        &config,
+        ReorgConfig::default(),
+        chain_state_arc.clone(),
+    )
+    .expect("Failed to create HeaderSyncManager");
+
+    // Call prepare_sync and verify it returns the correct hash
+    let result = header_sync.prepare_sync(&mut storage).await;
+    let returned_hash = result.unwrap().unwrap();
+    assert_eq!(returned_hash, expected_tip_hash, "prepare_sync should return the correct tip hash");
+}
