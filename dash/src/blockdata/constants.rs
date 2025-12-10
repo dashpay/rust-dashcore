@@ -53,21 +53,6 @@ pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 140;
 /// Test (testnet, devnet, regtest) script address prefix.
 pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19;
 // 0x13
-
-// DIP-18: Platform Payment Address Prefixes
-/// Platform payment P2PKH address prefix (mainnet) - produces 'D' prefix.
-pub const PLATFORM_P2PKH_PREFIX_MAIN: u8 = 30;
-// 0x1e
-/// Platform payment P2PKH address prefix (testnet/devnet/regtest) - produces 'd' prefix.
-pub const PLATFORM_P2PKH_PREFIX_TEST: u8 = 90;
-// 0x5a
-/// Platform payment P2SH address prefix (mainnet) - produces 'P' prefix.
-pub const PLATFORM_P2SH_PREFIX_MAIN: u8 = 56;
-// 0x38
-/// Platform payment P2SH address prefix (testnet/devnet/regtest) - produces 'p' prefix.
-pub const PLATFORM_P2SH_PREFIX_TEST: u8 = 117;
-// 0x75
-
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 /// How many blocks between halvings.

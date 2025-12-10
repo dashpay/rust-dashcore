@@ -48,9 +48,8 @@ use core::str::FromStr;
 
 use crate::base58;
 use crate::blockdata::constants::{
-    MAX_SCRIPT_ELEMENT_SIZE, PLATFORM_P2PKH_PREFIX_MAIN, PLATFORM_P2PKH_PREFIX_TEST,
-    PLATFORM_P2SH_PREFIX_MAIN, PLATFORM_P2SH_PREFIX_TEST, PUBKEY_ADDRESS_PREFIX_MAIN,
-    PUBKEY_ADDRESS_PREFIX_TEST, SCRIPT_ADDRESS_PREFIX_MAIN, SCRIPT_ADDRESS_PREFIX_TEST,
+    MAX_SCRIPT_ELEMENT_SIZE, PUBKEY_ADDRESS_PREFIX_MAIN, PUBKEY_ADDRESS_PREFIX_TEST,
+    SCRIPT_ADDRESS_PREFIX_MAIN, SCRIPT_ADDRESS_PREFIX_TEST,
 };
 use crate::blockdata::opcodes;
 use crate::blockdata::opcodes::all::*;
@@ -78,8 +77,6 @@ pub enum Error {
     Base58(base58::Error),
     /// Bech32 encoding error.
     Bech32(bech32::Error),
-    /// Invalid hash length when parsing address.
-    InvalidHashLength(hashes::Error),
     /// The bech32 payload was empty.
     EmptyBech32Payload,
     /// The wrong checksum algorithm was used. See BIP-0350.
@@ -123,7 +120,6 @@ impl fmt::Display for Error {
         match *self {
             Error::Base58(ref e) => write_err!(f, "base58 address encoding error"; e),
             Error::Bech32(ref e) => write_err!(f, "bech32 address encoding error"; e),
-            Error::InvalidHashLength(ref e) => write_err!(f, "invalid hash length"; e),
             Error::EmptyBech32Payload => write!(f, "the bech32 payload was empty"),
             Error::InvalidBech32Variant { expected, found } => write!(f, "invalid bech32 checksum variant found {:?} when {:?} was expected", found, expected),
             Error::InvalidWitnessVersion(v) => write!(f, "invalid witness script version: {}", v),
@@ -152,7 +148,6 @@ impl std::error::Error for Error {
         match self {
             Base58(e) => Some(e),
             Bech32(e) => Some(e),
-            InvalidHashLength(e) => Some(e),
             UnparsableWitnessVersion(e) => Some(e),
             EmptyBech32Payload
             | InvalidBech32Variant {
@@ -187,13 +182,6 @@ impl From<bech32::Error> for Error {
     }
 }
 
-#[doc(hidden)]
-impl From<hashes::Error> for Error {
-    fn from(e: hashes::Error) -> Error {
-        Error::InvalidHashLength(e)
-    }
-}
-
 /// The different types of addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -209,12 +197,6 @@ pub enum AddressType {
     P2wsh,
     /// Pay to taproot.
     P2tr,
-    /// Platform payment P2PKH (DIP-18) - "D" prefix on mainnet, "d" on testnet.
-    /// These addresses are for Dash Platform and MUST NOT be used in Core chain transactions.
-    PlatformP2pkh,
-    /// Platform payment P2SH (DIP-18) - "P" prefix on mainnet, "p" on testnet.
-    /// These addresses are for Dash Platform multisig/scripts and MUST NOT be used in Core chain transactions.
-    PlatformP2sh,
 }
 
 impl fmt::Display for AddressType {
@@ -225,8 +207,6 @@ impl fmt::Display for AddressType {
             AddressType::P2wpkh => "p2wpkh",
             AddressType::P2wsh => "p2wsh",
             AddressType::P2tr => "p2tr",
-            AddressType::PlatformP2pkh => "platform_p2pkh",
-            AddressType::PlatformP2sh => "platform_p2sh",
         })
     }
 }
@@ -240,8 +220,6 @@ impl FromStr for AddressType {
             "p2wpkh" => Ok(AddressType::P2wpkh),
             "p2wsh" => Ok(AddressType::P2wsh),
             "p2tr" => Ok(AddressType::P2tr),
-            "platform_p2pkh" => Ok(AddressType::PlatformP2pkh),
-            "platform_p2sh" => Ok(AddressType::PlatformP2sh),
             _ => Err(Error::UnknownAddressType(s.to_owned())),
         }
     }
@@ -459,12 +437,6 @@ pub enum Payload {
     ScriptHash(ScriptHash),
     /// Segwit address.
     WitnessProgram(WitnessProgram),
-    /// Platform P2PKH address (DIP-18).
-    /// These addresses are for Dash Platform payments and MUST NOT be used in Core chain transactions.
-    PlatformPubkeyHash(PubkeyHash),
-    /// Platform P2SH address (DIP-18).
-    /// These addresses are for Dash Platform scripts and MUST NOT be used in Core chain transactions.
-    PlatformScriptHash(ScriptHash),
 }
 
 impl Payload {
@@ -543,17 +515,10 @@ impl Payload {
     }
 
     /// Generates a script pubkey spending to this [Payload].
-    ///
-    /// Note: For Platform addresses, this generates the equivalent Core chain script,
-    /// but Platform addresses should NOT be used in Core chain transactions.
     pub fn script_pubkey(&self) -> ScriptBuf {
         match *self {
-            Payload::PubkeyHash(ref hash) | Payload::PlatformPubkeyHash(ref hash) => {
-                ScriptBuf::new_p2pkh(hash)
-            }
-            Payload::ScriptHash(ref hash) | Payload::PlatformScriptHash(ref hash) => {
-                ScriptBuf::new_p2sh(hash)
-            }
+            Payload::PubkeyHash(ref hash) => ScriptBuf::new_p2pkh(hash),
+            Payload::ScriptHash(ref hash) => ScriptBuf::new_p2sh(hash),
             Payload::WitnessProgram(ref prog) => ScriptBuf::new_witness_program(prog),
         }
     }
@@ -562,24 +527,16 @@ impl Payload {
     /// This function doesn't make any allocations.
     pub fn matches_script_pubkey(&self, script: &Script) -> bool {
         match *self {
-            Payload::PubkeyHash(ref hash) | Payload::PlatformPubkeyHash(ref hash)
-                if script.is_p2pkh() =>
-            {
+            Payload::PubkeyHash(ref hash) if script.is_p2pkh() => {
                 &script.as_bytes()[3..23] == <PubkeyHash as AsRef<[u8; 20]>>::as_ref(hash)
             }
-            Payload::ScriptHash(ref hash) | Payload::PlatformScriptHash(ref hash)
-                if script.is_p2sh() =>
-            {
+            Payload::ScriptHash(ref hash) if script.is_p2sh() => {
                 &script.as_bytes()[2..22] == <ScriptHash as AsRef<[u8; 20]>>::as_ref(hash)
             }
             Payload::WitnessProgram(ref prog) if script.is_witness_program() => {
                 &script.as_bytes()[2..] == prog.program.as_bytes()
             }
-            Payload::PubkeyHash(_)
-            | Payload::ScriptHash(_)
-            | Payload::WitnessProgram(_)
-            | Payload::PlatformPubkeyHash(_)
-            | Payload::PlatformScriptHash(_) => false,
+            Payload::PubkeyHash(_) | Payload::ScriptHash(_) | Payload::WitnessProgram(_) => false,
         }
     }
 
@@ -655,54 +612,10 @@ impl Payload {
     /// is a script hash or pubkey hash, a reference to the hash is returned.
     fn inner_prog_as_bytes(&self) -> &[u8] {
         match self {
-            Payload::ScriptHash(hash) | Payload::PlatformScriptHash(hash) => hash.as_ref(),
-            Payload::PubkeyHash(hash) | Payload::PlatformPubkeyHash(hash) => hash.as_ref(),
+            Payload::ScriptHash(hash) => hash.as_ref(),
+            Payload::PubkeyHash(hash) => hash.as_ref(),
             Payload::WitnessProgram(prog) => prog.program().as_bytes(),
         }
-    }
-
-    /// Creates a Platform P2PKH payload from a public key (DIP-18).
-    ///
-    /// This creates a payload for Dash Platform payment addresses.
-    /// These addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn platform_p2pkh(pk: &PublicKey) -> Payload {
-        Payload::PlatformPubkeyHash(pk.pubkey_hash())
-    }
-
-    /// Creates a Platform P2PKH payload from a pubkey hash (DIP-18).
-    ///
-    /// This creates a payload for Dash Platform payment addresses.
-    /// These addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn platform_p2pkh_from_hash(hash: PubkeyHash) -> Payload {
-        Payload::PlatformPubkeyHash(hash)
-    }
-
-    /// Creates a Platform P2SH payload from a script (DIP-18).
-    ///
-    /// This creates a payload for Dash Platform script addresses.
-    /// These addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn platform_p2sh(script: &Script) -> Result<Payload, Error> {
-        if script.len() > MAX_SCRIPT_ELEMENT_SIZE {
-            return Err(Error::ExcessiveScriptSize);
-        }
-        Ok(Payload::PlatformScriptHash(script.script_hash()))
-    }
-
-    /// Creates a Platform P2SH payload from a script hash (DIP-18).
-    ///
-    /// This creates a payload for Dash Platform script addresses.
-    /// These addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn platform_p2sh_from_hash(hash: ScriptHash) -> Payload {
-        Payload::PlatformScriptHash(hash)
-    }
-
-    /// Returns true if this is a Platform address payload (DIP-18).
-    pub fn is_platform(&self) -> bool {
-        matches!(self, Payload::PlatformPubkeyHash(_) | Payload::PlatformScriptHash(_))
     }
 }
 
@@ -717,10 +630,6 @@ pub struct AddressEncoding<'a> {
     pub p2sh_prefix: u8,
     /// hrp used in bech32 address (e.g. "bc" for "bc1..." addresses).
     pub bech32_hrp: &'a str,
-    /// base58 version byte for Platform P2PKH payloads (DIP-18).
-    pub platform_p2pkh_prefix: u8,
-    /// base58 version byte for Platform P2SH payloads (DIP-18).
-    pub platform_p2sh_prefix: u8,
 }
 
 /// Formats bech32 as upper case if alternate formatting is chosen (`{:#}`).
@@ -752,18 +661,6 @@ impl<'a> fmt::Display for AddressEncoding<'a> {
                     bech32::Bech32Writer::new(self.bech32_hrp, version.bech32_variant(), writer)?;
                 bech32::WriteBase32::write_u5(&mut bech32_writer, version.into())?;
                 bech32::ToBase32::write_base32(&prog.as_bytes(), &mut bech32_writer)
-            }
-            Payload::PlatformPubkeyHash(hash) => {
-                let mut prefixed = [0; 21];
-                prefixed[0] = self.platform_p2pkh_prefix;
-                prefixed[1..].copy_from_slice(&hash[..]);
-                base58::encode_check_to_fmt(fmt, &prefixed[..])
-            }
-            Payload::PlatformScriptHash(hash) => {
-                let mut prefixed = [0; 21];
-                prefixed[0] = self.platform_p2sh_prefix;
-                prefixed[1..].copy_from_slice(&hash[..]);
-                base58::encode_check_to_fmt(fmt, &prefixed[..])
             }
         }
     }
@@ -1013,8 +910,6 @@ impl bincode::Decode for AddressType {
             2 => Ok(AddressType::P2wpkh),
             3 => Ok(AddressType::P2wsh),
             4 => Ok(AddressType::P2tr),
-            5 => Ok(AddressType::PlatformP2pkh),
-            6 => Ok(AddressType::PlatformP2sh),
             _ => Err(bincode::error::DecodeError::OtherString("invalid address type".to_string())),
         }
     }
@@ -1032,8 +927,6 @@ impl<'de> bincode::BorrowDecode<'de> for AddressType {
             2 => Ok(AddressType::P2wpkh),
             3 => Ok(AddressType::P2wsh),
             4 => Ok(AddressType::P2tr),
-            5 => Ok(AddressType::PlatformP2pkh),
-            6 => Ok(AddressType::PlatformP2sh),
             _ => Err(bincode::error::DecodeError::OtherString("invalid address type".to_string())),
         }
     }
@@ -1079,8 +972,6 @@ impl<V: NetworkValidation> Address<V> {
         match self.payload() {
             Payload::PubkeyHash(_) => Some(AddressType::P2pkh),
             Payload::ScriptHash(_) => Some(AddressType::P2sh),
-            Payload::PlatformPubkeyHash(_) => Some(AddressType::PlatformP2pkh),
-            Payload::PlatformScriptHash(_) => Some(AddressType::PlatformP2sh),
             Payload::WitnessProgram(prog) => {
                 // BIP-141 p2wpkh or p2wsh addresses.
                 match prog.version() {
@@ -1116,24 +1007,11 @@ impl<V: NetworkValidation> Address<V> {
             Network::Regtest => "dsrt",
             other => unreachable!("Unknown network {other:?} – add explicit prefix"),
         };
-        // DIP-18: Platform address prefixes
-        let platform_p2pkh_prefix = match self.network() {
-            Network::Dash => PLATFORM_P2PKH_PREFIX_MAIN,
-            Network::Testnet | Network::Devnet | Network::Regtest => PLATFORM_P2PKH_PREFIX_TEST,
-            other => unreachable!("Unknown network {other:?} – add explicit prefix"),
-        };
-        let platform_p2sh_prefix = match self.network() {
-            Network::Dash => PLATFORM_P2SH_PREFIX_MAIN,
-            Network::Testnet | Network::Devnet | Network::Regtest => PLATFORM_P2SH_PREFIX_TEST,
-            other => unreachable!("Unknown network {other:?} – add explicit prefix"),
-        };
         let encoding = AddressEncoding {
             payload: self.payload(),
             p2pkh_prefix,
             p2sh_prefix,
             bech32_hrp,
-            platform_p2pkh_prefix,
-            platform_p2sh_prefix,
         };
 
         use fmt::Display;
@@ -1221,50 +1099,6 @@ impl Address {
     /// This method is not recommended for use, [`Address::p2tr()`] should be used where possible.
     pub fn p2tr_tweaked(output_key: TweakedPublicKey, network: Network) -> Address {
         Address::new(network, Payload::p2tr_tweaked(output_key))
-    }
-
-    /// Creates a Platform P2PKH address from a public key (DIP-18).
-    ///
-    /// This creates a Dash Platform payment address ("D" prefix on mainnet, "d" on testnet).
-    /// **Warning**: These addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn platform_p2pkh(pk: &PublicKey, network: Network) -> Address {
-        Address::new(network, Payload::platform_p2pkh(pk))
-    }
-
-    /// Creates a Platform P2PKH address from a pubkey hash (DIP-18).
-    ///
-    /// This creates a Dash Platform payment address ("D" prefix on mainnet, "d" on testnet).
-    /// **Warning**: These addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn platform_p2pkh_from_hash(hash: PubkeyHash, network: Network) -> Address {
-        Address::new(network, Payload::platform_p2pkh_from_hash(hash))
-    }
-
-    /// Creates a Platform P2SH address from a script (DIP-18).
-    ///
-    /// This creates a Dash Platform script address ("P" prefix on mainnet, "p" on testnet).
-    /// **Warning**: These addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn platform_p2sh(script: &Script, network: Network) -> Result<Address, Error> {
-        Ok(Address::new(network, Payload::platform_p2sh(script)?))
-    }
-
-    /// Creates a Platform P2SH address from a script hash (DIP-18).
-    ///
-    /// This creates a Dash Platform script address ("P" prefix on mainnet, "p" on testnet).
-    /// **Warning**: These addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn platform_p2sh_from_hash(hash: ScriptHash, network: Network) -> Address {
-        Address::new(network, Payload::platform_p2sh_from_hash(hash))
-    }
-
-    /// Returns true if this is a Platform address (DIP-18).
-    ///
-    /// Platform addresses MUST NOT be used in Core chain transactions.
-    #[inline]
-    pub fn is_platform(&self) -> bool {
-        self.payload().is_platform()
     }
 
     /// Gets the address type of the address.
@@ -1548,29 +1382,16 @@ impl FromStr for Address<NetworkUnchecked> {
 
         let (network, payload) = match data[0] {
             PUBKEY_ADDRESS_PREFIX_MAIN => {
-                (Network::Dash, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..])?))
+                (Network::Dash, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
             }
             SCRIPT_ADDRESS_PREFIX_MAIN => {
-                (Network::Dash, Payload::ScriptHash(ScriptHash::from_slice(&data[1..])?))
+                (Network::Dash, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
             }
             PUBKEY_ADDRESS_PREFIX_TEST => {
-                (Network::Testnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..])?))
+                (Network::Testnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
             }
             SCRIPT_ADDRESS_PREFIX_TEST => {
-                (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..])?))
-            }
-            // DIP-18: Platform address prefixes
-            PLATFORM_P2PKH_PREFIX_MAIN => {
-                (Network::Dash, Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..])?))
-            }
-            PLATFORM_P2SH_PREFIX_MAIN => {
-                (Network::Dash, Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..])?))
-            }
-            PLATFORM_P2PKH_PREFIX_TEST => {
-                (Network::Testnet, Payload::PlatformPubkeyHash(PubkeyHash::from_slice(&data[1..])?))
-            }
-            PLATFORM_P2SH_PREFIX_TEST => {
-                (Network::Testnet, Payload::PlatformScriptHash(ScriptHash::from_slice(&data[1..])?))
+                (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
             }
             x => return Err(Error::Base58(base58::Error::InvalidAddressVersion(x))),
         };
@@ -2299,132 +2120,5 @@ mod tests {
                 assert_eq!(addr.matches_script_pubkey(&another.script_pubkey()), addr == another);
             }
         }
-    }
-
-    // DIP-18 Platform Payment Address Tests
-    // Test vectors from DIP-0018: Dash Platform Payment Address Encodings
-
-    #[test]
-    fn test_dip18_platform_p2pkh_mainnet() {
-        // DIP-18 test vector 1 - mainnet P2PKH
-        // HASH160: f7da0a2b5cbd4ff6bb2c4d89b67d2f3ffeec0525
-        // Expected mainnet address: DTjceJiEqrNkCsSizK65fojEANTKoQMtsR
-        let hash160: PubkeyHash = "f7da0a2b5cbd4ff6bb2c4d89b67d2f3ffeec0525".parse().unwrap();
-        let addr = Address::new(Dash, Payload::PlatformPubkeyHash(hash160));
-        assert_eq!(addr.to_string(), "DTjceJiEqrNkCsSizK65fojEANTKoQMtsR");
-        assert_eq!(addr.address_type(), Some(AddressType::PlatformP2pkh));
-        assert!(addr.is_platform());
-
-        // Test round-trip parsing
-        let parsed =
-            Address::from_str("DTjceJiEqrNkCsSizK65fojEANTKoQMtsR").unwrap().assume_checked();
-        assert_eq!(parsed.payload(), addr.payload());
-        assert!(parsed.is_platform());
-    }
-
-    #[test]
-    fn test_dip18_platform_p2pkh_testnet() {
-        // DIP-18 test vector 1 - testnet P2PKH
-        // Using same HASH160 as mainnet to verify proper version byte encoding
-        // HASH160: f7da0a2b5cbd4ff6bb2c4d89b67d2f3ffeec0525
-        // Note: The DIP shows a different testnet address because it uses a different
-        // derivation path (m/9'/1'/17'... vs m/9'/5'/17'...) which produces a different pubkey.
-        // Here we verify the encoding is correct for the same payload with testnet version byte.
-        let hash160: PubkeyHash = "f7da0a2b5cbd4ff6bb2c4d89b67d2f3ffeec0525".parse().unwrap();
-        let addr = Address::new(Testnet, Payload::PlatformPubkeyHash(hash160));
-        // Base58Check of [0x5a || f7da0a2b5cbd4ff6bb2c4d89b67d2f3ffeec0525 || checksum]
-        assert_eq!(addr.to_string(), "dc1oipbXSgBKGsovTV5CmL4RvduvRWRbsr");
-        assert_eq!(addr.address_type(), Some(AddressType::PlatformP2pkh));
-        assert!(addr.is_platform());
-
-        // Test round-trip parsing
-        let parsed =
-            Address::from_str("dc1oipbXSgBKGsovTV5CmL4RvduvRWRbsr").unwrap().assume_checked();
-        assert_eq!(parsed.payload(), addr.payload());
-        assert!(parsed.is_platform());
-    }
-
-    #[test]
-    fn test_dip18_platform_p2pkh_vector2() {
-        // DIP-18 test vector 2
-        // HASH160: a5ff0046217fd1c7d238e3e146cc5bfd90832a7e
-        // Mainnet: DLGoWhHfAyFcJafRgt2fFN7fxgLqNrfCXm
-        let hash160: PubkeyHash = "a5ff0046217fd1c7d238e3e146cc5bfd90832a7e".parse().unwrap();
-
-        let mainnet_addr = Address::new(Dash, Payload::PlatformPubkeyHash(hash160));
-        assert_eq!(mainnet_addr.to_string(), "DLGoWhHfAyFcJafRgt2fFN7fxgLqNrfCXm");
-
-        // Testnet uses same HASH160 with version 0x5a
-        let testnet_addr = Address::new(Testnet, Payload::PlatformPubkeyHash(hash160));
-        assert_eq!(testnet_addr.to_string(), "dUYzbDAwmo4BNb2dA41nLtSsiwoRzmDg3K");
-    }
-
-    #[test]
-    fn test_dip18_platform_p2pkh_vector3() {
-        // DIP-18 test vector 3 (non-default key_class)
-        // HASH160: 6d92674fd64472a3dfcfc3ebcfed7382bf699d7b
-        // Mainnet: DF8TaTy7YrLdGYqq6cwapSUqdM3qJxLQbo
-        let hash160: PubkeyHash = "6d92674fd64472a3dfcfc3ebcfed7382bf699d7b".parse().unwrap();
-
-        let mainnet_addr = Address::new(Dash, Payload::PlatformPubkeyHash(hash160));
-        assert_eq!(mainnet_addr.to_string(), "DF8TaTy7YrLdGYqq6cwapSUqdM3qJxLQbo");
-
-        // Testnet uses same HASH160 with version 0x5a
-        let testnet_addr = Address::new(Testnet, Payload::PlatformPubkeyHash(hash160));
-        assert_eq!(testnet_addr.to_string(), "dPQeeyrQ9g9CLZD2Znvhuxp3PcWS2D5NCy");
-    }
-
-    #[test]
-    fn test_dip18_platform_p2sh() {
-        // DIP-18 P2SH test vector
-        // Script: 76a914000102030405060708090a0b0c0d0e0f101112131488ac
-        // HASH160(script): 43fa183cf3fb6e9e7dc62b692aeb4fc8d8045636
-        // Mainnet P2SH: Pe8D1pMrEnWsmuj5zCEBhHTcsFE51Asp8k
-        // Testnet P2SH: pBk15SYRYnnKfMENUnYdGw4cG1wcRmSdoh
-        let script_hash: ScriptHash = "43fa183cf3fb6e9e7dc62b692aeb4fc8d8045636".parse().unwrap();
-
-        let mainnet_addr = Address::new(Dash, Payload::PlatformScriptHash(script_hash));
-        assert_eq!(mainnet_addr.to_string(), "Pe8D1pMrEnWsmuj5zCEBhHTcsFE51Asp8k");
-        assert_eq!(mainnet_addr.address_type(), Some(AddressType::PlatformP2sh));
-        assert!(mainnet_addr.is_platform());
-
-        let testnet_addr = Address::new(Testnet, Payload::PlatformScriptHash(script_hash));
-        assert_eq!(testnet_addr.to_string(), "pBk15SYRYnnKfMENUnYdGw4cG1wcRmSdoh");
-        assert_eq!(testnet_addr.address_type(), Some(AddressType::PlatformP2sh));
-        assert!(testnet_addr.is_platform());
-    }
-
-    #[test]
-    fn test_platform_address_parsing() {
-        // Test that Platform addresses can be parsed and distinguished from Core addresses
-        let platform_mainnet =
-            Address::from_str("DTjceJiEqrNkCsSizK65fojEANTKoQMtsR").unwrap().assume_checked();
-        assert!(platform_mainnet.is_platform());
-        assert_eq!(platform_mainnet.address_type(), Some(AddressType::PlatformP2pkh));
-
-        let platform_testnet =
-            Address::from_str("dSqV2orinasFpYAMGQTLy6uYpW9Dnge563").unwrap().assume_checked();
-        assert!(platform_testnet.is_platform());
-        assert_eq!(platform_testnet.address_type(), Some(AddressType::PlatformP2pkh));
-
-        // Core addresses should NOT be platform
-        let core_mainnet =
-            Address::from_str("Xci5rLWMqdQDy5uaCDVWEcTi6sfnkmqdUz").unwrap().assume_checked();
-        assert!(!core_mainnet.is_platform());
-        assert_eq!(core_mainnet.address_type(), Some(AddressType::P2pkh));
-    }
-
-    #[test]
-    fn test_platform_p2sh_parsing() {
-        // Test Platform P2SH address parsing
-        let mainnet_p2sh =
-            Address::from_str("Pe8D1pMrEnWsmuj5zCEBhHTcsFE51Asp8k").unwrap().assume_checked();
-        assert!(mainnet_p2sh.is_platform());
-        assert_eq!(mainnet_p2sh.address_type(), Some(AddressType::PlatformP2sh));
-
-        let testnet_p2sh =
-            Address::from_str("pBk15SYRYnnKfMENUnYdGw4cG1wcRmSdoh").unwrap().assume_checked();
-        assert!(testnet_p2sh.is_platform());
-        assert_eq!(testnet_p2sh.address_type(), Some(AddressType::PlatformP2sh));
     }
 }

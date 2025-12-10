@@ -609,7 +609,7 @@ impl ManagedAccountCollection {
                 key_class,
             } => {
                 // DIP-17/DIP-18: Platform Payment addresses
-                let addresses = AddressPool::new_platform(
+                let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,

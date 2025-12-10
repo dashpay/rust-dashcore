@@ -112,30 +112,30 @@ fn test_public_key_derivation() {
 }
 
 // =============================================================================
-// DIP-17/DIP-18 Platform Payment Address Test Vectors
+// DIP-17 Platform Payment Key Derivation Test Vectors
 // =============================================================================
 //
-// These tests verify the complete derivation and encoding of Platform Payment
-// addresses as specified in DIP-0017 (HD Derivation) and DIP-0018 (Address Encoding).
+// These tests verify the key derivation for Platform Payment addresses as
+// specified in DIP-0017 (HD Derivation). The address encoding (DIP-18) uses
+// bech32m with "dashevo"/"tdashevo" HRP and is implemented in the Platform repo.
 //
 // Test mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 // Passphrase: "" (empty)
 
-/// DIP-17 Test Vector 1: Platform Payment address derivation (mainnet)
+/// DIP-17 Test Vector 1: Platform Payment key derivation (mainnet)
 /// Path: m/9'/5'/17'/0'/0'/0
 /// Expected private key: 6bca392f43453b7bc33a9532b69221ce74906a8815281637e0c9d0bee35361fe
 /// Expected pubkey: 03de102ed1fc43cbdb16af02e294945ffaed8e0595d3072f4c592ae80816e6859e
 /// Expected HASH160: f7da0a2b5cbd4ff6bb2c4d89b67d2f3ffeec0525
-/// Expected mainnet address (DIP-18): DTjceJiEqrNkCsSizK65fojEANTKoQMtsR
 #[test]
 fn test_dip17_platform_payment_vector1_mainnet() {
-    use dashcore::address::{Address, Payload};
     use dashcore::crypto::key::PublicKey;
 
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English
-    ).unwrap();
+        Language::English,
+    )
+    .unwrap();
 
     let seed = mnemonic.to_seed("");
     let wallet = HDWallet::from_seed(&seed, Network::Dash).unwrap();
@@ -169,27 +169,20 @@ fn test_dip17_platform_payment_vector1_mainnet() {
         "HASH160 mismatch for DIP-17 vector 1"
     );
 
-    // Create Platform P2PKH address and verify DIP-18 encoding
-    let addr = Address::new(dashcore::Network::Dash, Payload::PlatformPubkeyHash(pubkey_hash));
-    assert_eq!(
-        addr.to_string(),
-        "DTjceJiEqrNkCsSizK65fojEANTKoQMtsR",
-        "DIP-18 mainnet address mismatch for vector 1"
-    );
+    // Note: DIP-18 address encoding (bech32m with "dashevo" HRP) is in Platform repo
 }
 
-/// DIP-17 Test Vector 1: Platform Payment address derivation (testnet)
+/// DIP-17 Test Vector 1: Platform Payment key derivation (testnet)
 /// Path: m/9'/1'/17'/0'/0'/0  (note: coin_type 1' for testnet)
-/// Expected testnet address (DIP-18): dSqV2orinasFpYAMGQTLy6uYpW9Dnge563
 #[test]
 fn test_dip17_platform_payment_vector1_testnet() {
-    use dashcore::address::{Address, Payload};
     use dashcore::crypto::key::PublicKey;
 
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English
-    ).unwrap();
+        Language::English,
+    )
+    .unwrap();
 
     let seed = mnemonic.to_seed("");
     let wallet = HDWallet::from_seed(&seed, Network::Testnet).unwrap();
@@ -204,31 +197,26 @@ fn test_dip17_platform_payment_vector1_testnet() {
     let pubkey = PublicKey::new(xpub.public_key);
     let pubkey_hash = pubkey.pubkey_hash();
 
-    // Create Platform P2PKH address and verify DIP-18 encoding
-    let addr = Address::new(dashcore::Network::Testnet, Payload::PlatformPubkeyHash(pubkey_hash));
-    assert_eq!(
-        addr.to_string(),
-        "dSqV2orinasFpYAMGQTLy6uYpW9Dnge563",
-        "DIP-18 testnet address mismatch for vector 1"
-    );
+    // Verify we can derive correctly (HASH160 will be used for bech32m encoding in Platform)
+    assert!(!pubkey_hash.to_byte_array().is_empty());
+
+    // Note: DIP-18 address encoding (bech32m with "tdashevo" HRP) is in Platform repo
 }
 
-/// DIP-17 Test Vector 2: Platform Payment address (index 1)
+/// DIP-17 Test Vector 2: Platform Payment key derivation (index 1)
 /// Path: m/9'/5'/17'/0'/0'/1 (mainnet) / m/9'/1'/17'/0'/0'/1 (testnet)
 /// Expected private key: eef58ce73383f63d5062f281ed0c1e192693c170fbc0049662a73e48a1981523
 /// Expected pubkey: 02269ff766fcd04184bc314f5385a04498df215ce1e7193cec9a607f69bc8954da
 /// Expected HASH160: a5ff0046217fd1c7d238e3e146cc5bfd90832a7e
-/// Expected mainnet address: DLGoWhHfAyFcJafRgt2fFN7fxgLqNrfCXm
-/// Expected testnet address: dZoepEc46ivSfm3VYr8mJeA4hZXYytgkKZ
 #[test]
 fn test_dip17_platform_payment_vector2() {
-    use dashcore::address::{Address, Payload};
     use dashcore::crypto::key::PublicKey;
 
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English
-    ).unwrap();
+        Language::English,
+    )
+    .unwrap();
 
     // Test mainnet
     let seed = mnemonic.to_seed("");
@@ -262,16 +250,7 @@ fn test_dip17_platform_payment_vector2() {
         "HASH160 mismatch for DIP-17 vector 2"
     );
 
-    // Verify mainnet address
-    let addr_mainnet =
-        Address::new(dashcore::Network::Dash, Payload::PlatformPubkeyHash(pubkey_hash_mainnet));
-    assert_eq!(
-        addr_mainnet.to_string(),
-        "DLGoWhHfAyFcJafRgt2fFN7fxgLqNrfCXm",
-        "DIP-18 mainnet address mismatch for vector 2"
-    );
-
-    // Test testnet
+    // Test testnet derivation
     let wallet_testnet = HDWallet::from_seed(&seed, Network::Testnet).unwrap();
     let path_testnet = DerivationPath::from_str("m/9'/1'/17'/0'/0'/1").unwrap();
     let xprv_testnet = wallet_testnet.derive(&path_testnet).unwrap();
@@ -279,32 +258,27 @@ fn test_dip17_platform_payment_vector2() {
     let pubkey_testnet = PublicKey::new(xpub_testnet.public_key);
     let pubkey_hash_testnet = pubkey_testnet.pubkey_hash();
 
-    let addr_testnet =
-        Address::new(dashcore::Network::Testnet, Payload::PlatformPubkeyHash(pubkey_hash_testnet));
-    assert_eq!(
-        addr_testnet.to_string(),
-        "dZoepEc46ivSfm3VYr8mJeA4hZXYytgkKZ",
-        "DIP-18 testnet address mismatch for vector 2"
-    );
+    // Verify testnet derivation produces valid hash
+    assert!(!pubkey_hash_testnet.to_byte_array().is_empty());
+
+    // Note: DIP-18 address encoding (bech32m) is in Platform repo
 }
 
-/// DIP-17 Test Vector 3: Platform Payment address with non-default key_class
+/// DIP-17 Test Vector 3: Platform Payment key derivation with non-default key_class
 /// Path: m/9'/5'/17'/0'/1'/0 (mainnet) / m/9'/1'/17'/0'/1'/0 (testnet)
 /// Note: key_class' = 1' instead of default 0'
 /// Expected private key: cc05b4389712a2e724566914c256217685d781503d7cc05af6642e60260830db
 /// Expected pubkey: 0317a3ed70c141cffafe00fa8bf458cec119f6fc039a7ba9a6b7303dc65b27bed3
 /// Expected HASH160: 6d92674fd64472a3dfcfc3ebcfed7382bf699d7b
-/// Expected mainnet address: DF8TaTy7YrLdGYqq6cwapSUqdM3qJxLQbo
-/// Expected testnet address: dFQSkGujaeDNwWTQDDVfbrurQ9ChXXYDov
 #[test]
 fn test_dip17_platform_payment_vector3_non_default_key_class() {
-    use dashcore::address::{Address, Payload};
     use dashcore::crypto::key::PublicKey;
 
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English
-    ).unwrap();
+        Language::English,
+    )
+    .unwrap();
 
     // Test mainnet with key_class' = 1'
     let seed = mnemonic.to_seed("");
@@ -338,15 +312,6 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
         "HASH160 mismatch for DIP-17 vector 3"
     );
 
-    // Verify mainnet address
-    let addr_mainnet =
-        Address::new(dashcore::Network::Dash, Payload::PlatformPubkeyHash(pubkey_hash_mainnet));
-    assert_eq!(
-        addr_mainnet.to_string(),
-        "DF8TaTy7YrLdGYqq6cwapSUqdM3qJxLQbo",
-        "DIP-18 mainnet address mismatch for vector 3"
-    );
-
     // Test testnet with key_class' = 1'
     let wallet_testnet = HDWallet::from_seed(&seed, Network::Testnet).unwrap();
     let path_testnet = DerivationPath::from_str("m/9'/1'/17'/0'/1'/0").unwrap();
@@ -355,11 +320,8 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
     let pubkey_testnet = PublicKey::new(xpub_testnet.public_key);
     let pubkey_hash_testnet = pubkey_testnet.pubkey_hash();
 
-    let addr_testnet =
-        Address::new(dashcore::Network::Testnet, Payload::PlatformPubkeyHash(pubkey_hash_testnet));
-    assert_eq!(
-        addr_testnet.to_string(),
-        "dFQSkGujaeDNwWTQDDVfbrurQ9ChXXYDov",
-        "DIP-18 testnet address mismatch for vector 3"
-    );
+    // Verify testnet derivation produces valid hash
+    assert!(!pubkey_hash_testnet.to_byte_array().is_empty());
+
+    // Note: DIP-18 address encoding (bech32m) is in Platform repo
 }

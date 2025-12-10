@@ -685,7 +685,7 @@ impl ManagedAccountType {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new_platform(
+                let pool = AddressPool::new(
                     path,
                     crate::managed_account::address_pool::AddressPoolType::Absent,
                     DIP17_GAP_LIMIT,
