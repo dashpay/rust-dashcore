@@ -2,36 +2,26 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
 
-use dashcore::consensus::{encode, Decodable};
-use dashcore::network::message::{NetworkMessage, RawNetworkMessage};
+use dashcore::network::message::NetworkMessage;
 use dashcore::Network;
 
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::constants::PING_INTERVAL;
+use crate::network::transport::{
+    Transport, TransportPreference, V1Transport, V2HandshakeManager, V2HandshakeResult, V2Transport,
+};
 use crate::types::PeerInfo;
-
-/// Internal state for the TCP connection
-struct ConnectionState {
-    stream: TcpStream,
-    // Stateful message framing buffer to ensure full frames before decoding
-    framing_buffer: Vec<u8>,
-}
 
 /// Dash P2P peer
 pub struct Peer {
     address: SocketAddr,
-    // Use a single mutex to protect both the write stream and read buffer
-    // This ensures no concurrent access to the underlying socket
-    state: Option<Arc<Mutex<ConnectionState>>>,
+    /// The transport layer (V1 or V2)
+    transport: Option<Box<dyn Transport>>,
     timeout: Duration,
     connected_at: Option<SystemTime>,
-    bytes_sent: u64,
     network: Network,
     // Ping/pong state
     last_ping_sent: Option<SystemTime>,
@@ -47,6 +37,8 @@ pub struct Peer {
     sent_sendheaders2: bool,
     // Basic telemetry for resync events
     consecutive_resyncs: u32,
+    // Transport protocol version used (1 or 2)
+    transport_version: u8,
 }
 
 impl Peer {
@@ -54,14 +46,19 @@ impl Peer {
     pub fn address(&self) -> SocketAddr {
         self.address
     }
-    /// Create a new peer.
+
+    /// Get the transport protocol version (1 = unencrypted, 2 = BIP324 encrypted).
+    pub fn transport_version(&self) -> u8 {
+        self.transport_version
+    }
+
+    /// Create a new peer (not connected).
     pub fn new(address: SocketAddr, timeout: Duration, network: Network) -> Self {
         Self {
             address,
-            state: None,
+            transport: None,
             timeout,
             connected_at: None,
-            bytes_sent: 0,
             network,
             last_ping_sent: None,
             last_pong_received: None,
@@ -74,17 +71,86 @@ impl Peer {
             prefers_headers2: false,
             sent_sendheaders2: false,
             consecutive_resyncs: 0,
+            transport_version: 1,
         }
     }
 
-    /// Connect to a peer and return a connected instance.
+    /// Connect to a peer with the specified transport preference.
+    ///
+    /// # Arguments
+    /// * `address` - The peer's socket address
+    /// * `timeout_secs` - Connection timeout in seconds
+    /// * `network` - The Dash network (mainnet, testnet, etc.)
+    /// * `transport_pref` - V1Only, V2Only, or V2Preferred (default)
+    ///
+    /// # Returns
+    /// A connected Peer instance using the appropriate transport.
     pub async fn connect(
         address: SocketAddr,
         timeout_secs: u64,
         network: Network,
+        transport_pref: TransportPreference,
     ) -> NetworkResult<Self> {
         let timeout = Duration::from_secs(timeout_secs);
 
+        let (transport, transport_version): (Box<dyn Transport>, u8) = match transport_pref {
+            TransportPreference::V1Only => {
+                tracing::info!("Connecting to {} using V1 transport (unencrypted)", address);
+                let transport = Self::establish_v1_transport(address, timeout, network).await?;
+                (Box::new(transport), 1)
+            }
+            TransportPreference::V2Only => {
+                tracing::info!(
+                    "Connecting to {} using V2 transport (BIP324 encrypted, no fallback)",
+                    address
+                );
+                let transport = Self::establish_v2_transport(address, timeout, network).await?;
+                (Box::new(transport), 2)
+            }
+            TransportPreference::V2Preferred => {
+                tracing::info!(
+                    "Connecting to {} using V2 transport (BIP324 encrypted, with V1 fallback)",
+                    address
+                );
+                match Self::try_v2_with_fallback(address, timeout, network).await? {
+                    (transport, version) => (transport, version),
+                }
+            }
+        };
+
+        tracing::info!(
+            "Successfully connected to {} using V{} transport",
+            address,
+            transport_version
+        );
+
+        Ok(Self {
+            address,
+            transport: Some(transport),
+            timeout,
+            connected_at: Some(SystemTime::now()),
+            network,
+            last_ping_sent: None,
+            last_pong_received: None,
+            pending_pings: HashMap::new(),
+            version: None,
+            services: None,
+            user_agent: None,
+            best_height: None,
+            relay: None,
+            prefers_headers2: false,
+            sent_sendheaders2: false,
+            consecutive_resyncs: 0,
+            transport_version,
+        })
+    }
+
+    /// Establish a V1 (unencrypted) transport connection.
+    async fn establish_v1_transport(
+        address: SocketAddr,
+        timeout: Duration,
+        network: Network,
+    ) -> NetworkResult<V1Transport> {
         let stream = tokio::time::timeout(timeout, TcpStream::connect(address))
             .await
             .map_err(|_| {
@@ -98,71 +164,119 @@ impl Peer {
             NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
 
-        let state = ConnectionState {
-            stream,
-            framing_buffer: Vec::new(),
-        };
-
-        Ok(Self {
-            address,
-            state: Some(Arc::new(Mutex::new(state))),
-            timeout,
-            connected_at: Some(SystemTime::now()),
-            bytes_sent: 0,
-            network,
-            last_ping_sent: None,
-            last_pong_received: None,
-            pending_pings: HashMap::new(),
-            version: None,
-            services: None,
-            user_agent: None,
-            best_height: None,
-            relay: None,
-            prefers_headers2: false,
-            sent_sendheaders2: false,
-            consecutive_resyncs: 0,
-        })
+        Ok(V1Transport::new(stream, network, address))
     }
 
-    /// Connect to the peer (instance method for compatibility).
-    pub async fn connect_instance(&mut self) -> NetworkResult<()> {
-        let stream = tokio::time::timeout(self.timeout, TcpStream::connect(self.address))
+    /// Establish a V2 (BIP324 encrypted) transport connection.
+    /// Fails if peer doesn't support V2.
+    async fn establish_v2_transport(
+        address: SocketAddr,
+        timeout: Duration,
+        network: Network,
+    ) -> NetworkResult<V2Transport> {
+        let stream = tokio::time::timeout(timeout, TcpStream::connect(address))
             .await
             .map_err(|_| {
-                NetworkError::ConnectionFailed(format!("Connection to {} timed out", self.address))
+                NetworkError::ConnectionFailed(format!("Connection to {} timed out", address))
             })?
             .map_err(|e| {
-                NetworkError::ConnectionFailed(format!(
-                    "Failed to connect to {}: {}",
-                    self.address, e
-                ))
+                NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", address, e))
             })?;
 
-        // Disable Nagle's algorithm for lower latency
         stream.set_nodelay(true).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
 
-        let state = ConnectionState {
-            stream,
-            framing_buffer: Vec::new(),
+        let handshake_manager = V2HandshakeManager::new_initiator(network, address);
+        match handshake_manager.perform_handshake(stream).await? {
+            V2HandshakeResult::Success(session) => {
+                Ok(V2Transport::new(session.stream, session.cipher, session.session_id, address))
+            }
+            V2HandshakeResult::FallbackToV1 => Err(NetworkError::V2NotSupported),
+        }
+    }
+
+    /// Try V2 transport first, fall back to V1 if peer doesn't support V2.
+    async fn try_v2_with_fallback(
+        address: SocketAddr,
+        timeout: Duration,
+        network: Network,
+    ) -> NetworkResult<(Box<dyn Transport>, u8)> {
+        // First, try to establish TCP connection
+        let stream = tokio::time::timeout(timeout, TcpStream::connect(address))
+            .await
+            .map_err(|_| {
+                NetworkError::ConnectionFailed(format!("Connection to {} timed out", address))
+            })?
+            .map_err(|e| {
+                NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", address, e))
+            })?;
+
+        stream.set_nodelay(true).map_err(|e| {
+            NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
+        })?;
+
+        // Try V2 handshake
+        let handshake_manager = V2HandshakeManager::new_initiator(network, address);
+        match handshake_manager.perform_handshake(stream).await {
+            Ok(V2HandshakeResult::Success(session)) => {
+                tracing::info!("V2 handshake succeeded with {}", address);
+                let transport =
+                    V2Transport::new(session.stream, session.cipher, session.session_id, address);
+                Ok((Box::new(transport), 2))
+            }
+            Ok(V2HandshakeResult::FallbackToV1) => {
+                tracing::info!(
+                    "V2 handshake detected V1-only peer {}, reconnecting with V1 transport",
+                    address
+                );
+                // Need to reconnect since the stream was consumed
+                let transport = Self::establish_v1_transport(address, timeout, network).await?;
+                Ok((Box::new(transport), 1))
+            }
+            Err(e) => {
+                tracing::warn!("V2 handshake failed with {}: {}, falling back to V1", address, e);
+                // Try V1 as fallback
+                let transport = Self::establish_v1_transport(address, timeout, network).await?;
+                Ok((Box::new(transport), 1))
+            }
+        }
+    }
+
+    /// Connect to the peer (instance method for compatibility).
+    pub async fn connect_instance(
+        &mut self,
+        transport_pref: TransportPreference,
+    ) -> NetworkResult<()> {
+        let (transport, transport_version): (Box<dyn Transport>, u8) = match transport_pref {
+            TransportPreference::V1Only => {
+                let t =
+                    Self::establish_v1_transport(self.address, self.timeout, self.network).await?;
+                (Box::new(t), 1)
+            }
+            TransportPreference::V2Only => {
+                let t =
+                    Self::establish_v2_transport(self.address, self.timeout, self.network).await?;
+                (Box::new(t), 2)
+            }
+            TransportPreference::V2Preferred => {
+                Self::try_v2_with_fallback(self.address, self.timeout, self.network).await?
+            }
         };
 
-        self.state = Some(Arc::new(Mutex::new(state)));
+        self.transport = Some(transport);
+        self.transport_version = transport_version;
         self.connected_at = Some(SystemTime::now());
 
-        tracing::info!("Connected to peer {}", self.address);
+        tracing::info!("Connected to peer {} using V{} transport", self.address, transport_version);
 
         Ok(())
     }
 
     /// Disconnect from the peer.
     pub async fn disconnect(&mut self) -> NetworkResult<()> {
-        if let Some(state_arc) = self.state.take() {
-            if let Ok(state_mutex) = Arc::try_unwrap(state_arc) {
-                let mut state = state_mutex.into_inner();
-                let _ = state.stream.shutdown().await;
-            }
+        if let Some(mut transport) = self.transport.take() {
+            transport.shutdown().await?;
         }
         self.connected_at = None;
 
@@ -272,372 +386,28 @@ impl Peer {
         );
     }
 
-    /// Helper function to read some bytes into the framing buffer.
-    async fn read_some(state: &mut ConnectionState) -> std::io::Result<usize> {
-        let mut tmp = [0u8; 8192];
-        match state.stream.read(&mut tmp).await {
-            Ok(0) => Ok(0),
-            Ok(n) => {
-                state.framing_buffer.extend_from_slice(&tmp[..n]);
-                Ok(n)
-            }
-            Err(e) => Err(e),
-        }
-    }
-
     /// Send a message to the peer.
     pub async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
-        let state_arc = self
-            .state
-            .as_ref()
+        let transport = self
+            .transport
+            .as_mut()
             .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
 
-        let raw_message = RawNetworkMessage {
-            magic: self.network.magic(),
-            payload: message,
-        };
-
-        let serialized = encode::serialize(&raw_message);
-
-        // Log details for debugging headers2 issues
-        if matches!(
-            raw_message.payload,
-            NetworkMessage::GetHeaders2(_) | NetworkMessage::GetHeaders(_)
-        ) {
-            let msg_type = match raw_message.payload {
-                NetworkMessage::GetHeaders2(_) => "GetHeaders2",
-                NetworkMessage::GetHeaders(_) => "GetHeaders",
-                _ => "Unknown",
-            };
-            tracing::debug!(
-                "Sending {} raw bytes (len={}): {:02x?}",
-                msg_type,
-                serialized.len(),
-                &serialized[..std::cmp::min(100, serialized.len())]
-            );
-        }
-
-        // Lock the state for the entire write operation
-        let mut state = state_arc.lock().await;
-
-        // Write with error handling
-        match state.stream.write_all(&serialized).await {
-            Ok(_) => {
-                // Flush to ensure data is sent immediately
-                if let Err(e) = state.stream.flush().await {
-                    tracing::warn!("Failed to flush socket {}: {}", self.address, e);
-                }
-                self.bytes_sent += serialized.len() as u64;
-                tracing::debug!("Sent message to {}: {:?}", self.address, raw_message.payload);
-                Ok(())
-            }
-            Err(e) => {
-                tracing::warn!("Disconnecting {} due to write error: {}", self.address, e);
-                // Drop the lock before clearing connection state
-                drop(state);
-                // Clear connection state on write error
-                self.state = None;
-                self.connected_at = None;
-                Err(NetworkError::ConnectionFailed(format!("Write failed: {}", e)))
-            }
-        }
+        transport.send_message(message).await
     }
 
     /// Receive a message from the peer.
     pub async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
-        // First check if we have a state
-        let state_arc = self
-            .state
-            .as_ref()
+        let transport = self
+            .transport
+            .as_mut()
             .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
 
-        // Lock the state for the entire read operation
-        // This ensures no concurrent access to the socket
-        let mut state = state_arc.lock().await;
+        let result = transport.receive_message().await;
 
-        // Buffered, stateful framing
-        const HEADER_LEN: usize = 24; // magic[4] + cmd[12] + length[4] + checksum[4]
-        const MAX_RESYNC_STEPS_PER_CALL: usize = 64;
-
-        let result = async {
-            let magic_bytes = self.network.magic().to_le_bytes();
-            let mut resync_steps = 0usize;
-
-            loop {
-                // Ensure header availability
-                if state.framing_buffer.len() < HEADER_LEN {
-                    match Self::read_some(&mut state).await {
-                        Ok(0) => {
-                            tracing::info!("Peer {} closed connection (EOF)", self.address);
-                            return Err(NetworkError::PeerDisconnected);
-                        }
-                        Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
-                        Err(ref e)
-                            if e.kind() == std::io::ErrorKind::ConnectionAborted
-                                || e.kind() == std::io::ErrorKind::ConnectionReset =>
-                        {
-                            tracing::info!("Peer {} connection reset/aborted", self.address);
-                            return Err(NetworkError::PeerDisconnected);
-                        }
-                        Err(e) => {
-                            return Err(NetworkError::ConnectionFailed(format!(
-                                "Read failed: {}",
-                                e
-                            )));
-                        }
-                    }
-                }
-
-                // Align to magic
-                if state.framing_buffer.len() >= 4 && state.framing_buffer[..4] != magic_bytes {
-                    if let Some(pos) =
-                        state.framing_buffer.windows(4).position(|w| w == magic_bytes)
-                    {
-                        if pos > 0 {
-                            tracing::warn!(
-                                "{}: stream desync: skipping {} stray bytes before magic",
-                                self.address,
-                                pos
-                            );
-                            self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
-                            state.framing_buffer.drain(0..pos);
-                            resync_steps += 1;
-                            if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
-                                return Ok(None);
-                            }
-                            continue;
-                        }
-                    } else {
-                        // Keep last 3 bytes of potential magic prefix
-                        if state.framing_buffer.len() > 3 {
-                            let dropped = state.framing_buffer.len() - 3;
-                            tracing::warn!(
-                                "{}: stream desync: dropping {} bytes (no magic found)",
-                                self.address,
-                                dropped
-                            );
-                            self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
-                            state.framing_buffer.drain(0..dropped);
-                            resync_steps += 1;
-                            if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
-                                return Ok(None);
-                            }
-                        }
-                        // Need more data
-                        match Self::read_some(&mut state).await {
-                            Ok(0) => {
-                                tracing::info!("Peer {} closed connection (EOF)", self.address);
-                                return Err(NetworkError::PeerDisconnected);
-                            }
-                            Ok(_) => {}
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                return Ok(None);
-                            }
-                            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                                return Ok(None);
-                            }
-                            Err(e) => {
-                                return Err(NetworkError::ConnectionFailed(format!(
-                                    "Read failed: {}",
-                                    e
-                                )));
-                            }
-                        }
-                        continue;
-                    }
-                }
-
-                // Ensure full header
-                if state.framing_buffer.len() < HEADER_LEN {
-                    match Self::read_some(&mut state).await {
-                        Ok(0) => {
-                            tracing::info!("Peer {} closed connection (EOF)", self.address);
-                            return Err(NetworkError::PeerDisconnected);
-                        }
-                        Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
-                        Err(e) => {
-                            return Err(NetworkError::ConnectionFailed(format!(
-                                "Read failed: {}",
-                                e
-                            )));
-                        }
-                    }
-                    continue;
-                }
-
-                // Parse header fields
-                let length_le = u32::from_le_bytes([
-                    state.framing_buffer[16],
-                    state.framing_buffer[17],
-                    state.framing_buffer[18],
-                    state.framing_buffer[19],
-                ]) as usize;
-                let header_checksum = [
-                    state.framing_buffer[20],
-                    state.framing_buffer[21],
-                    state.framing_buffer[22],
-                    state.framing_buffer[23],
-                ];
-                // Validate announced length to prevent unbounded accumulation or overflow
-                if length_le > dashcore::network::message::MAX_MSG_SIZE {
-                    return Err(NetworkError::ProtocolError(format!(
-                        "Declared payload length {} exceeds MAX_MSG_SIZE {}",
-                        length_le,
-                        dashcore::network::message::MAX_MSG_SIZE
-                    )));
-                }
-                let total_len = match HEADER_LEN.checked_add(length_le) {
-                    Some(v) => v,
-                    None => {
-                        return Err(NetworkError::ProtocolError(
-                            "Message length overflow".to_string(),
-                        ));
-                    }
-                };
-
-                // Ensure full frame available
-                if state.framing_buffer.len() < total_len {
-                    match Self::read_some(&mut state).await {
-                        Ok(0) => {
-                            tracing::info!("Peer {} closed connection (EOF)", self.address);
-                            return Err(NetworkError::PeerDisconnected);
-                        }
-                        Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
-                        Err(e) => {
-                            return Err(NetworkError::ConnectionFailed(format!(
-                                "Read failed: {}",
-                                e
-                            )));
-                        }
-                    }
-                    continue;
-                }
-
-                // Verify checksum
-                let payload_slice = &state.framing_buffer[HEADER_LEN..total_len];
-                let expected = {
-                    let checksum = <dashcore_hashes::sha256d::Hash as dashcore_hashes::Hash>::hash(
-                        payload_slice,
-                    );
-                    [checksum[0], checksum[1], checksum[2], checksum[3]]
-                };
-                if expected != header_checksum {
-                    tracing::warn!(
-                        "Skipping message with invalid checksum from {}: expected {:02x?}, actual {:02x?}",
-                        self.address,
-                        expected,
-                        header_checksum
-                    );
-                    if header_checksum == [0, 0, 0, 0] {
-                        tracing::warn!(
-                            "All-zeros checksum detected from {}, likely corrupted stream - resyncing",
-                            self.address
-                        );
-                    }
-                    // Resync by dropping a byte and retrying
-                    state.framing_buffer.drain(0..1);
-                    self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
-                    resync_steps += 1;
-                    if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
-                        return Ok(None);
-                    }
-                    continue;
-                }
-
-                // Decode full RawNetworkMessage from the frame using existing decoder
-                let mut cursor = std::io::Cursor::new(&state.framing_buffer[..total_len]);
-                match RawNetworkMessage::consensus_decode(&mut cursor) {
-                    Ok(raw_message) => {
-                        // Consume bytes
-                        state.framing_buffer.drain(0..total_len);
-                        self.consecutive_resyncs = 0;
-
-                        // Validate magic matches our network
-                        if raw_message.magic != self.network.magic() {
-                            tracing::warn!(
-                                "Received message with wrong magic bytes: expected {:#x}, got {:#x}",
-                                self.network.magic(),
-                                raw_message.magic
-                            );
-                            return Err(NetworkError::ProtocolError(format!(
-                                "Wrong magic bytes: expected {:#x}, got {:#x}",
-                                self.network.magic(),
-                                raw_message.magic
-                            )));
-                        }
-
-                        tracing::trace!(
-                            "Successfully decoded message from {}: {:?}",
-                            self.address,
-                            raw_message.payload.cmd()
-                        );
-
-                        if raw_message.payload.cmd() == "headers2" {
-                            tracing::info!("🎉 Received Headers2 message from {}!", self.address);
-                        }
-
-                        if let NetworkMessage::Block(ref block) = raw_message.payload {
-                            let block_hash = block.block_hash();
-                            tracing::info!(
-                                "Successfully decoded block {} from {}",
-                                block_hash,
-                                self.address
-                            );
-                        }
-
-                        if let NetworkMessage::Headers2(ref headers2) = raw_message.payload {
-                            tracing::info!(
-                                "Successfully decoded Headers2 message from {} with {} compressed headers",
-                                self.address,
-                                headers2.headers.len()
-                            );
-                        }
-
-                        return Ok(Some(raw_message.payload));
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "{}: decode error after framing ({}), attempting resync",
-                            self.address,
-                            e
-                        );
-                        state.framing_buffer.drain(0..1);
-                        self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
-                        resync_steps += 1;
-                        if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
-                            return Ok(None);
-                        }
-                        continue;
-                    }
-                }
-            }
-        }
-        .await;
-
-        // Drop the lock before disconnecting
-        drop(state);
-
-        // Handle disconnection if needed
+        // Handle disconnection
         if let Err(NetworkError::PeerDisconnected) = &result {
-            self.state = None;
+            self.transport = None;
             self.connected_at = None;
         }
 
@@ -646,7 +416,7 @@ impl Peer {
 
     /// Check if the connection is active.
     pub fn is_connected(&self) -> bool {
-        self.state.is_some()
+        self.transport.as_ref().map(|t| t.is_connected()).unwrap_or(false)
     }
 
     /// Check if connection appears healthy (not just connected).
@@ -701,7 +471,11 @@ impl Peer {
 
     /// Get connection statistics.
     pub fn stats(&self) -> (u64, u64) {
-        (self.bytes_sent, 0) // TODO: Track bytes received
+        if let Some(transport) = &self.transport {
+            (transport.bytes_sent(), transport.bytes_received())
+        } else {
+            (0, 0)
+        }
     }
 
     /// Send a ping message with a random nonce.

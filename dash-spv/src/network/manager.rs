@@ -27,6 +27,7 @@ use crate::network::pool::PeerPool;
 use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
+use crate::network::transport::TransportPreference;
 use crate::network::{HandshakeManager, NetworkManager, Peer};
 use crate::types::PeerInfo;
 
@@ -71,6 +72,8 @@ pub struct PeerNetworkManager {
     exclusive_mode: bool,
     /// Cached count of currently connected peers for fast, non-blocking queries
     connected_peer_count: Arc<AtomicUsize>,
+    /// Transport preference for peer connections (V1, V2, or V2 with fallback)
+    transport_preference: TransportPreference,
 }
 
 impl PeerNetworkManager {
@@ -124,6 +127,7 @@ impl PeerNetworkManager {
             user_agent: config.user_agent.clone(),
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
+            transport_preference: config.transport_preference,
         })
     }
 
@@ -210,13 +214,16 @@ impl PeerNetworkManager {
         let mempool_strategy = self.mempool_strategy;
         let user_agent = self.user_agent.clone();
         let connected_peer_count = self.connected_peer_count.clone();
+        let transport_preference = self.transport_preference;
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
         tasks.spawn(async move {
             log::debug!("Attempting to connect to {}", addr);
 
-            match Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network).await {
+            match Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network, transport_preference)
+                .await
+            {
                 Ok(mut peer) => {
                     // Perform handshake
                     let mut handshake_manager =
@@ -1069,6 +1076,7 @@ impl Clone for PeerNetworkManager {
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
             connected_peer_count: self.connected_peer_count.clone(),
+            transport_preference: self.transport_preference,
         }
     }
 }

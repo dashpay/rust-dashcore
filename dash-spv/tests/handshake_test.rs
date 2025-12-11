@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use dash_spv::client::config::MempoolStrategy;
+use dash_spv::network::transport::TransportPreference;
 use dash_spv::network::{HandshakeManager, NetworkManager, Peer, PeerNetworkManager};
 use dash_spv::{ClientConfig, Network};
 
@@ -13,7 +14,7 @@ async fn test_handshake_with_mainnet_peer() {
     let _ = env_logger::builder().filter_level(log::LevelFilter::Debug).is_test(true).try_init();
 
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
-    let result = Peer::connect(peer_addr, 10, Network::Dash).await;
+    let result = Peer::connect(peer_addr, 10, Network::Dash, TransportPreference::V1Only).await;
 
     match result {
         Ok(mut connection) => {
@@ -54,7 +55,7 @@ async fn test_handshake_timeout() {
     // Using a non-routable IP that will cause the connection to hang
     let peer_addr: SocketAddr = "10.255.255.1:9999".parse().expect("Valid peer address");
     let start = std::time::Instant::now();
-    let result = Peer::connect(peer_addr, 2, Network::Dash).await;
+    let result = Peer::connect(peer_addr, 2, Network::Dash, TransportPreference::V1Only).await;
     let elapsed = start.elapsed();
 
     assert!(result.is_err(), "Connection should fail for non-routable peer");
@@ -92,7 +93,7 @@ async fn test_multiple_connect_disconnect_cycles() {
     for i in 1..=3 {
         println!("Attempt {} to connect to {}", i, peer_addr);
 
-        match connection.connect_instance().await {
+        match connection.connect_instance(TransportPreference::V1Only).await {
             Ok(_) => {
                 assert!(connection.is_connected(), "Should be connected after successful connect");
 

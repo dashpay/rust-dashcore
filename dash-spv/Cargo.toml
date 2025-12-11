@@ -18,6 +18,9 @@ key-wallet-manager = { path = "../key-wallet-manager" }
 # BLS signatures
 blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900" }
 
+# BIP324 v2 P2P encrypted transport
+bip324 = { git = "https://github.com/rust-bitcoin/bip324", rev = "8c469432", features = ["std", "tokio"] }
+
 # CLI
 clap = { version = "4.0", features = ["derive", "env"] }
 
