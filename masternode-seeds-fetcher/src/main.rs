@@ -38,7 +38,7 @@ use clap::Parser;
 use dash_network_seeds::{
     CoreStatus, MasternodeSeed, MasternodeType, PlatformStatus, Reachability,
 };
-use dash_spv::network::Peer;
+use dash_spv::network::{Peer, TransportPreference};
 use dashcore::hashes::Hash;
 use dashcore::network::Address;
 use dashcore::network::constants::ServiceFlags;
@@ -239,7 +239,7 @@ async fn gather_candidate_peers(
 // ---------- per-peer P2P flow ----------
 
 async fn fetch_from_peer(peer_addr: SocketAddr, network: Network) -> Result<MnListDiff> {
-    let mut peer = Peer::connect(peer_addr, 15, network)
+    let mut peer = Peer::connect(peer_addr, 15, network, TransportPreference::V1Only)
         .await
         .with_context(|| format!("connecting to {}", peer_addr))?;
 
