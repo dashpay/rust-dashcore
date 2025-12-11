@@ -46,6 +46,9 @@ rand = "0.8"
 hex = "0.4"
 indexmap = "2.0"
 
+# Parallelization
+rayon = "1.11"
+
 # Terminal UI (optional)
 crossterm = { version = "0.27", optional = true }
 
