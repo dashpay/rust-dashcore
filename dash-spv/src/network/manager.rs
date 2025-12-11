@@ -780,6 +780,7 @@ impl PeerNetworkManager {
         // For filter-related messages, we need a peer that supports compact filters
         let requires_compact_filters =
             matches!(&message, NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_));
+        let requires_headers2 = matches!(&message, NetworkMessage::GetHeaders2(_));
 
         let selected_peer = if requires_compact_filters {
             // Find a peer that supports compact filters
@@ -807,6 +808,37 @@ impl PeerNetworkManager {
                     ));
                 }
             }
+        } else if requires_headers2 {
+            // Prefer a peer that advertises headers2 support
+            let mut current_sync_peer = self.current_sync_peer.lock().await;
+            let mut selected: Option<SocketAddr> = None;
+
+            if let Some(current_addr) = *current_sync_peer {
+                if let Some((_, peer)) = peers.iter().find(|(addr, _)| *addr == current_addr) {
+                    let peer_guard = peer.read().await;
+                    if peer_guard.peer_info().supports_headers2() {
+                        selected = Some(current_addr);
+                    }
+                }
+            }
+
+            if selected.is_none() {
+                for (addr, peer) in &peers {
+                    let peer_guard = peer.read().await;
+                    if peer_guard.peer_info().supports_headers2() {
+                        selected = Some(*addr);
+                        break;
+                    }
+                }
+            }
+
+            let chosen = selected.unwrap_or(peers[0].0);
+            if Some(chosen) != *current_sync_peer {
+                log::info!("Sync peer selected for Headers2: {}", chosen);
+                *current_sync_peer = Some(chosen);
+            }
+            drop(current_sync_peer);
+            chosen
         } else {
             // For non-filter messages, use the sticky sync peer
             let mut current_sync_peer = self.current_sync_peer.lock().await;
@@ -1061,6 +1093,7 @@ impl NetworkManager for PeerNetworkManager {
         // For sync messages that require consistent responses, send to only one peer
         match &message {
             NetworkMessage::GetHeaders(_)
+            | NetworkMessage::GetHeaders2(_)
             | NetworkMessage::GetCFHeaders(_)
             | NetworkMessage::GetCFilters(_)
             | NetworkMessage::GetData(_)
