@@ -1,0 +1,22 @@
+name: Merge Conflict Check
+
+on:
+  push:
+    branches:
+      - master
+      - 'v*-dev'
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  conflict-check:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check for merge conflicts and label
+        uses: eps1lon/actions-label-merge-conflict@v3
+        with:
+          dirtyLabel: "merge-conflict"
+          repoToken: "${{ secrets.GITHUB_TOKEN }}"
+          commentOnDirty: "This PR has merge conflicts with the base branch. Please rebase or merge the base branch into your branch to resolve them."
