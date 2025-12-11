@@ -141,8 +141,8 @@ pub fn ripemd160_sha256(data: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::PublicKey;
     use crate::internal_macros::hex;
-    use crate::{PublicKey, assert_error_contains};
 
     struct Keys {
         private_key: Vec<u8>,
