@@ -786,6 +786,8 @@ mod tests {
         // Wait a bit for background save
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
+        drop(storage);
+
         // Create a new storage instance to load from disk
         let storage2 = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
 
@@ -859,6 +861,8 @@ mod tests {
         // Force save to disk
         super::super::segments::save_dirty_segments(&storage).await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        drop(storage);
 
         // Create a new storage instance to test index rebuilding
         let storage2 = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
