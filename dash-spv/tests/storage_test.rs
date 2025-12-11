@@ -5,6 +5,7 @@ use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager
 use dash_spv::types::ChainState;
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
 use dashcore_hashes::Hash;
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_memory_storage_basic_operations() {
@@ -287,56 +288,7 @@ fn create_test_filter_headers(count: usize) -> Vec<dashcore::hash_types::FilterH
 }
 
 #[tokio::test]
-async fn test_disk_storage_directory_lock() {
-    use tempfile::TempDir;
-
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let path = temp_dir.path().to_path_buf();
-
-    // First storage manager should succeed
-    let storage1 = DiskStorageManager::new(path.clone()).await;
-    assert!(storage1.is_ok(), "First storage manager should succeed");
-    let _storage1 = storage1.unwrap();
-
-    // Second storage manager for same path should fail with DirectoryLocked
-    let storage2 = DiskStorageManager::new(path.clone()).await;
-    assert!(storage2.is_err(), "Second storage manager should fail");
-
-    let err = storage2.err().unwrap();
-    match err {
-        StorageError::DirectoryLocked(msg) => {
-            assert!(msg.contains("already in use"), "Error should mention directory in use");
-        }
-        other => panic!("Expected DirectoryLocked error, got: {:?}", other),
-    }
-
-    // Verify first storage manager is still usable
-    assert!(_storage1.get_tip_height().await.is_ok(), "First storage should remain functional");
-}
-
-#[tokio::test]
-async fn test_disk_storage_lock_file_created_with_pid() {
-    use tempfile::TempDir;
-
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let path = temp_dir.path().to_path_buf();
-
-    let _storage = DiskStorageManager::new(path.clone()).await.unwrap();
-
-    // Verify .lock file exists
-    let lock_path = path.join(".lock");
-    assert!(lock_path.exists(), ".lock file should exist");
-
-    // Verify PID is written to lock file
-    let content = std::fs::read_to_string(&lock_path).expect("Should read lock file");
-    let pid: u32 = content.trim().parse().expect("Lock file should contain valid PID");
-    assert_eq!(pid, std::process::id(), "Lock file should contain current process PID");
-}
-
-#[tokio::test]
 async fn test_disk_storage_reopen_after_clean_shutdown() {
-    use tempfile::TempDir;
-
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let path = temp_dir.path().to_path_buf();
 
@@ -360,19 +312,45 @@ async fn test_disk_storage_reopen_after_clean_shutdown() {
 }
 
 #[tokio::test]
-async fn test_disk_storage_lock_released_on_drop() {
-    use tempfile::TempDir;
-
+async fn test_disk_storage_concurrent_access_blocked() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let path = temp_dir.path().to_path_buf();
 
-    // Create and immediately drop storage manager
-    {
-        let storage = DiskStorageManager::new(path.clone()).await;
-        assert!(storage.is_ok(), "First storage manager should succeed");
-    } // storage dropped here, lock released
+    let storage1 = DiskStorageManager::new(path.clone()).await;
+    assert!(storage1.is_ok(), "First storage manager should succeed");
+    let _storage1 = storage1.unwrap();
 
-    // Now we should be able to create a new storage manager
+    // Second storage manager for same path should fail
     let storage2 = DiskStorageManager::new(path.clone()).await;
-    assert!(storage2.is_ok(), "Should be able to create storage after lock is released");
+    assert!(storage2.is_err(), "Second storage manager should fail");
+
+    match storage2.err().unwrap() {
+        StorageError::DirectoryLocked(msg) => {
+            assert!(msg.contains("already in use"));
+        }
+        other => panic!("Expected DirectoryLocked error, got: {:?}", other),
+    }
+
+    // First storage manager should still be usable
+    assert!(_storage1.get_tip_height().await.is_ok());
+}
+
+#[tokio::test]
+async fn test_disk_storage_lock_file_lifecycle() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let path = temp_dir.path().to_path_buf();
+    let lock_path = path.join(".lock");
+
+    // Lock file created when storage opens
+    {
+        let _storage = DiskStorageManager::new(path.clone()).await.unwrap();
+        assert!(lock_path.exists(), "Lock file should exist while storage is open");
+    }
+
+    // Lock file removed when storage drops
+    assert!(!lock_path.exists(), "Lock file should be removed after storage drops");
+
+    // Can reopen storage after previous one dropped
+    let storage2 = DiskStorageManager::new(path.clone()).await;
+    assert!(storage2.is_ok(), "Should reopen after previous storage dropped");
 }
