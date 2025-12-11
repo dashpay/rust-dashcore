@@ -581,15 +581,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // If we're syncing from a checkpoint, we need to account for sync_base_height
         let effective_tip_height = if self.is_synced_from_checkpoint() {
-            if let Some(stored_headers) = current_tip_height {
-                let actual_height = self.get_sync_base_height() + stored_headers;
+            if let Some(tip_height) = current_tip_height {
                 tracing::info!(
-                    "Syncing from checkpoint: sync_base_height={}, stored_headers={}, effective_height={}",
+                    "Syncing from checkpoint: sync_base_height={}, tip_height={}",
                     self.get_sync_base_height(),
-                    stored_headers,
-                    actual_height
+                    tip_height
                 );
-                Some(actual_height)
+                Some(tip_height)
             } else {
                 None
             }
@@ -684,21 +682,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     }
                 } else {
                     // Get the current tip hash from storage
-                    // When syncing from checkpoint, the storage height is different from effective height
-                    let storage_height = height.saturating_sub(self.get_sync_base_height());
-
-                    let tip_header = storage.get_header(storage_height).await.map_err(|e| {
+                    let tip_header = storage.get_header(height).await.map_err(|e| {
                         SyncError::Storage(format!(
-                            "Failed to get tip header at storage height {}: {}",
-                            storage_height, e
+                            "Failed to get tip header at height {}: {}",
+                            height, e
                         ))
                     })?;
                     let hash = tip_header.map(|h| h.block_hash());
-                    tracing::info!(
-                        "Current tip hash from storage height {}: {:?}",
-                        storage_height,
-                        hash
-                    );
+                    tracing::info!("Current tip hash at height {}: {:?}", height, hash);
                     hash
                 }
             }
