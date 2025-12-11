@@ -75,8 +75,12 @@ impl DiskStorageManager {
 
         let mut storage = Self {
             base_path: base_path.clone(),
-            block_headers: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()).await?)),
-            filter_headers: Arc::new(RwLock::new(SegmentCache::new(base_path.clone()).await?)),
+            block_headers: Arc::new(RwLock::new(
+                SegmentCache::load_or_new(base_path.clone(), 0).await?,
+            )),
+            filter_headers: Arc::new(RwLock::new(
+                SegmentCache::load_or_new(base_path.clone(), 0).await?,
+            )),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,

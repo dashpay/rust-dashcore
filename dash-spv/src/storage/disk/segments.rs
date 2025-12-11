@@ -1,4 +1,4 @@
-//! Segment management for items implementing the Persistable trait.
+//! Segment management and persistence for items implementing the Persistable trait.
 
 use std::{
     collections::HashMap,
@@ -123,14 +123,14 @@ impl SegmentCache<BlockHeader> {
 }
 
 impl<I: Persistable> SegmentCache<I> {
-    /// Maximum number of segments to keep in memory
     const MAX_ACTIVE_SEGMENTS: usize = 10;
 
-    pub async fn new(base_path: impl Into<PathBuf>) -> StorageResult<Self> {
+    pub async fn load_or_new(
+        base_path: impl Into<PathBuf>,
+        sync_base_height: u32,
+    ) -> StorageResult<Self> {
         let base_path = base_path.into();
         let items_dir = base_path.join(I::FOLDER_NAME);
-
-        let sync_base_height = 0; // TODO: This needs to have a value at this point
 
         let mut cache = Self {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
@@ -216,7 +216,6 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(&*segment)
     }
 
-    // TODO: This logic can be improved for sure but for now it works (I guess)
     pub async fn get_segment_mut<'a>(
         &'a mut self,
         segment_id: &u32,
@@ -294,7 +293,6 @@ impl<I: Persistable> SegmentCache<I> {
         start_height: u32,
         manager: &DiskStorageManager,
     ) -> StorageResult<()> {
-        // Early return if no items to store
         if items.is_empty() {
             tracing::trace!("DiskStorage: no items to store");
             return Ok(());
@@ -302,7 +300,6 @@ impl<I: Persistable> SegmentCache<I> {
 
         let mut storage_index = self.height_to_index(start_height);
 
-        // Use trace for single items, debug for small batches, info for large batches
         tracing::debug!(
             "SegmentsCache: storing {} items starting at height {} (storage index {})",
             items.len(),
@@ -529,7 +526,7 @@ mod tests {
 
         const MAX_SEGMENTS: u32 = SegmentCache::<FilterHeader>::MAX_ACTIVE_SEGMENTS as u32;
 
-        let mut cache = SegmentCache::<FilterHeader>::new(tmp_dir.path())
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
             .await
             .expect("Failed to create new segment_cache");
 
@@ -564,7 +561,7 @@ mod tests {
 
         let items: Vec<_> = (0..10).map(FilterHeader::new_test).collect();
 
-        let mut cache = SegmentCache::<FilterHeader>::new(tmp_dir.path())
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
             .await
             .expect("Failed to create new segment_cache");
 
@@ -598,7 +595,7 @@ mod tests {
 
         const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
 
-        let mut cache = SegmentCache::<FilterHeader>::new(tmp_dir.path())
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
             .await
             .expect("Failed to create new segment_cache");
 
