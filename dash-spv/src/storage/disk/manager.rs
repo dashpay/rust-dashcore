@@ -1,6 +1,7 @@
 //! Core DiskStorageManager struct and background worker implementation.
 
 use std::collections::HashMap;
+use std::io::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -73,13 +74,30 @@ impl DiskStorageManager {
             StorageError::WriteFailed(format!("Failed to create state directory: {}", e))
         })?;
 
+        // Temporary fix to load the sync base height if we have data already persisted
+        let sync_base_height =
+            load_sync_base_height_if_persisted(base_path.join("state/chain.json"))
+                .await
+                .unwrap_or(0);
+
+        async fn load_sync_base_height_if_persisted(path: PathBuf) -> Result<u32> {
+            let content = tokio::fs::read_to_string(path).await?;
+            let value: serde_json::Value = serde_json::from_str(&content)?;
+
+            Ok(value
+                .get("sync_base_height")
+                .and_then(|v| v.as_u64())
+                .map(|h| h as u32)
+                .unwrap_or(0))
+        }
+
         let mut storage = Self {
             base_path: base_path.clone(),
             block_headers: Arc::new(RwLock::new(
-                SegmentCache::load_or_new(base_path.clone(), 0).await?,
+                SegmentCache::load_or_new(base_path.clone(), sync_base_height).await?,
             )),
             filter_headers: Arc::new(RwLock::new(
-                SegmentCache::load_or_new(base_path.clone(), 0).await?,
+                SegmentCache::load_or_new(base_path.clone(), sync_base_height).await?,
             )),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
