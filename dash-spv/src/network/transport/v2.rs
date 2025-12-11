@@ -10,8 +10,7 @@ use std::net::SocketAddr;
 
 use async_trait::async_trait;
 use bip324::{CipherSession, PacketType, NUM_LENGTH_BYTES};
-use dashcore::consensus::{encode::serialize, Decodable};
-use dashcore::network::message::{CommandString, NetworkMessage, MAX_MSG_SIZE};
+use dashcore::network::message::{NetworkMessage, MAX_MSG_SIZE};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -80,110 +79,14 @@ impl V2Transport {
         &self.session_id
     }
 
-    /// Serialize the payload of a NetworkMessage.
-    ///
-    /// This mirrors the payload serialization logic from RawNetworkMessage's Encodable impl.
-    fn serialize_payload(message: &NetworkMessage) -> Vec<u8> {
-        match message {
-            NetworkMessage::Version(ref dat) => serialize(dat),
-            NetworkMessage::Addr(ref dat) => serialize(dat),
-            NetworkMessage::Inv(ref dat) => serialize(dat),
-            NetworkMessage::GetData(ref dat) => serialize(dat),
-            NetworkMessage::NotFound(ref dat) => serialize(dat),
-            NetworkMessage::GetBlocks(ref dat) => serialize(dat),
-            NetworkMessage::GetHeaders(ref dat) => serialize(dat),
-            NetworkMessage::Tx(ref dat) => serialize(dat),
-            NetworkMessage::Block(ref dat) => serialize(dat),
-            NetworkMessage::Headers(ref dat) => {
-                // Headers need special serialization with trailing zero byte per header
-                Self::serialize_headers(dat)
-            }
-            NetworkMessage::GetHeaders2(ref dat) => serialize(dat),
-            NetworkMessage::Headers2(ref dat) => serialize(dat),
-            NetworkMessage::Ping(ref dat) => serialize(dat),
-            NetworkMessage::Pong(ref dat) => serialize(dat),
-            NetworkMessage::MerkleBlock(ref dat) => serialize(dat),
-            NetworkMessage::FilterLoad(ref dat) => serialize(dat),
-            NetworkMessage::FilterAdd(ref dat) => serialize(dat),
-            NetworkMessage::GetCFilters(ref dat) => serialize(dat),
-            NetworkMessage::CFilter(ref dat) => serialize(dat),
-            NetworkMessage::GetCFHeaders(ref dat) => serialize(dat),
-            NetworkMessage::CFHeaders(ref dat) => serialize(dat),
-            NetworkMessage::GetCFCheckpt(ref dat) => serialize(dat),
-            NetworkMessage::CFCheckpt(ref dat) => serialize(dat),
-            NetworkMessage::SendCmpct(ref dat) => serialize(dat),
-            NetworkMessage::CmpctBlock(ref dat) => serialize(dat),
-            NetworkMessage::GetBlockTxn(ref dat) => serialize(dat),
-            NetworkMessage::BlockTxn(ref dat) => serialize(dat),
-            NetworkMessage::Alert(ref dat) => serialize(dat),
-            NetworkMessage::Reject(ref dat) => serialize(dat),
-            NetworkMessage::FeeFilter(ref dat) => serialize(dat),
-            NetworkMessage::AddrV2(ref dat) => serialize(dat),
-            NetworkMessage::GetMnListD(ref dat) => serialize(dat),
-            NetworkMessage::MnListDiff(ref dat) => serialize(dat),
-            NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
-            NetworkMessage::QRInfo(ref dat) => serialize(dat),
-            NetworkMessage::CLSig(ref dat) => serialize(dat),
-            NetworkMessage::ISLock(ref dat) => serialize(dat),
-            NetworkMessage::SendDsq(wants_dsq) => serialize(&(*wants_dsq as u8)),
-            NetworkMessage::Unknown {
-                payload: ref data,
-                ..
-            } => serialize(data),
-            NetworkMessage::Verack
-            | NetworkMessage::SendHeaders
-            | NetworkMessage::SendHeaders2
-            | NetworkMessage::MemPool
-            | NetworkMessage::GetAddr
-            | NetworkMessage::WtxidRelay
-            | NetworkMessage::FilterClear
-            | NetworkMessage::SendAddrV2 => vec![],
-        }
-    }
-
-    /// Serialize headers with trailing zero byte per header (matches HeaderSerializationWrapper).
-    fn serialize_headers(headers: &[dashcore::block::Header]) -> Vec<u8> {
-        use dashcore::consensus::Encodable;
-        let mut buf = Vec::new();
-        // VarInt for count
-        let _ = dashcore::VarInt(headers.len() as u64).consensus_encode(&mut buf);
-        // Each header + trailing zero
-        for header in headers {
-            let _ = header.consensus_encode(&mut buf);
-            buf.push(0u8);
-        }
-        buf
-    }
-
-    /// Deserialize headers with trailing zero byte per header (matches HeaderDeserializationWrapper).
-    fn deserialize_headers(payload: &[u8]) -> NetworkResult<Vec<dashcore::block::Header>> {
-        let mut cursor = std::io::Cursor::new(payload);
-        let count = dashcore::VarInt::consensus_decode(&mut cursor).map_err(|e| {
-            NetworkError::ProtocolError(format!("Failed to decode headers count: {}", e))
-        })?;
-
-        let mut headers = Vec::with_capacity(count.0 as usize);
-        for _ in 0..count.0 {
-            let header = dashcore::block::Header::consensus_decode(&mut cursor).map_err(|e| {
-                NetworkError::ProtocolError(format!("Failed to decode header: {}", e))
-            })?;
-            headers.push(header);
-            // Read and discard the trailing zero byte
-            let _trailing = u8::consensus_decode(&mut cursor).map_err(|e| {
-                NetworkError::ProtocolError(format!("Failed to decode header trailing byte: {}", e))
-            })?;
-        }
-        Ok(headers)
-    }
-
     /// Encode a NetworkMessage into V2 plaintext format.
     ///
     /// Format:
     /// - Short format (common messages): payload bytes (header byte added by cipher)
     /// - Extended format (Dash-specific): 12-byte command + payload bytes
     fn encode_message(&self, message: &NetworkMessage) -> NetworkResult<Vec<u8>> {
-        // Serialize the message payload
-        let payload = Self::serialize_payload(message);
+        // Serialize the message payload using dashcore's canonical serialization
+        let payload = message.consensus_encode_payload();
 
         // Check for short message ID
         if let Some(short_id) = network_message_to_short_id(message) {
@@ -237,7 +140,7 @@ impl V2Transport {
             message_id
         );
 
-        if message_id == MSG_ID_EXTENDED {
+        let (cmd, payload) = if message_id == MSG_ID_EXTENDED {
             // Extended format: 12-byte command + payload (starting at byte 2)
             if plaintext.len() < 2 + COMMAND_LEN {
                 return Err(NetworkError::ProtocolError(
@@ -261,8 +164,7 @@ impl V2Transport {
                 self.peer_address
             );
 
-            // Decode the NetworkMessage based on command
-            self.decode_by_command(cmd, payload)
+            (cmd, payload)
         } else {
             // Short format: message_id is the short message ID, payload starts at byte 2
             let payload = &plaintext[2..];
@@ -279,364 +181,12 @@ impl V2Transport {
                 self.peer_address
             );
 
-            self.decode_by_command(cmd, payload)
-        }
-    }
-
-    /// Decode a NetworkMessage from command string and payload bytes.
-    fn decode_by_command(&self, cmd: &str, payload: &[u8]) -> NetworkResult<NetworkMessage> {
-        // Create a cursor for decoding
-        let mut cursor = std::io::Cursor::new(payload);
-
-        // Decode based on command
-        // Note: This mirrors the NetworkMessage variants and their Decodable impls
-        let message = match cmd {
-            "addr" => {
-                let addrs: Vec<(u32, dashcore::network::address::Address)> =
-                    Decodable::consensus_decode(&mut cursor).map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode addr: {}", e))
-                    })?;
-                NetworkMessage::Addr(addrs)
-            }
-            "block" => {
-                let block = dashcore::Block::consensus_decode(&mut cursor).map_err(|e| {
-                    NetworkError::ProtocolError(format!("Failed to decode block: {}", e))
-                })?;
-                NetworkMessage::Block(block)
-            }
-            "blocktxn" => {
-                let blocktxn =
-                    dashcore::network::message_compact_blocks::BlockTxn::consensus_decode(
-                        &mut cursor,
-                    )
-                    .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode blocktxn: {}", e))
-                    })?;
-                NetworkMessage::BlockTxn(blocktxn)
-            }
-            "cmpctblock" => {
-                let cmpctblock =
-                    dashcore::network::message_compact_blocks::CmpctBlock::consensus_decode(
-                        &mut cursor,
-                    )
-                    .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode cmpctblock: {}", e))
-                    })?;
-                NetworkMessage::CmpctBlock(cmpctblock)
-            }
-            "feefilter" => {
-                let fee = i64::consensus_decode(&mut cursor).map_err(|e| {
-                    NetworkError::ProtocolError(format!("Failed to decode feefilter: {}", e))
-                })?;
-                NetworkMessage::FeeFilter(fee)
-            }
-            "filteradd" => {
-                let filteradd =
-                    dashcore::network::message_bloom::FilterAdd::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode filteradd: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::FilterAdd(filteradd)
-            }
-            "filterclear" => NetworkMessage::FilterClear,
-            "filterload" => {
-                let filterload =
-                    dashcore::network::message_bloom::FilterLoad::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode filterload: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::FilterLoad(filterload)
-            }
-            "getblocks" => {
-                let getblocks =
-                    dashcore::network::message_blockdata::GetBlocksMessage::consensus_decode(
-                        &mut cursor,
-                    )
-                    .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode getblocks: {}", e))
-                    })?;
-                NetworkMessage::GetBlocks(getblocks)
-            }
-            "getblocktxn" => {
-                let getblocktxn =
-                    dashcore::network::message_compact_blocks::GetBlockTxn::consensus_decode(
-                        &mut cursor,
-                    )
-                    .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode getblocktxn: {}", e))
-                    })?;
-                NetworkMessage::GetBlockTxn(getblocktxn)
-            }
-            "getdata" => {
-                let inv: Vec<dashcore::network::message_blockdata::Inventory> =
-                    Decodable::consensus_decode(&mut cursor).map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode getdata: {}", e))
-                    })?;
-                NetworkMessage::GetData(inv)
-            }
-            "getheaders" => {
-                let getheaders =
-                    dashcore::network::message_blockdata::GetHeadersMessage::consensus_decode(
-                        &mut cursor,
-                    )
-                    .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode getheaders: {}", e))
-                    })?;
-                NetworkMessage::GetHeaders(getheaders)
-            }
-            "headers" => {
-                // Headers have special deserialization (VarInt count + each header + trailing zero)
-                let headers = Self::deserialize_headers(payload)?;
-                NetworkMessage::Headers(headers)
-            }
-            "inv" => {
-                let inv: Vec<dashcore::network::message_blockdata::Inventory> =
-                    Decodable::consensus_decode(&mut cursor).map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode inv: {}", e))
-                    })?;
-                NetworkMessage::Inv(inv)
-            }
-            "mempool" => NetworkMessage::MemPool,
-            "merkleblock" => {
-                let merkleblock =
-                    dashcore::MerkleBlock::consensus_decode(&mut cursor).map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode merkleblock: {}", e))
-                    })?;
-                NetworkMessage::MerkleBlock(merkleblock)
-            }
-            "notfound" => {
-                let inv: Vec<dashcore::network::message_blockdata::Inventory> =
-                    Decodable::consensus_decode(&mut cursor).map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode notfound: {}", e))
-                    })?;
-                NetworkMessage::NotFound(inv)
-            }
-            "ping" => {
-                let nonce = u64::consensus_decode(&mut cursor).map_err(|e| {
-                    NetworkError::ProtocolError(format!("Failed to decode ping: {}", e))
-                })?;
-                NetworkMessage::Ping(nonce)
-            }
-            "pong" => {
-                let nonce = u64::consensus_decode(&mut cursor).map_err(|e| {
-                    NetworkError::ProtocolError(format!("Failed to decode pong: {}", e))
-                })?;
-                NetworkMessage::Pong(nonce)
-            }
-            "sendcmpct" => {
-                let sendcmpct =
-                    dashcore::network::message_compact_blocks::SendCmpct::consensus_decode(
-                        &mut cursor,
-                    )
-                    .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode sendcmpct: {}", e))
-                    })?;
-                NetworkMessage::SendCmpct(sendcmpct)
-            }
-            "tx" => {
-                let tx = dashcore::Transaction::consensus_decode(&mut cursor).map_err(|e| {
-                    NetworkError::ProtocolError(format!("Failed to decode tx: {}", e))
-                })?;
-                NetworkMessage::Tx(tx)
-            }
-            "getcfilters" => {
-                let getcfilters =
-                    dashcore::network::message_filter::GetCFilters::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode getcfilters: {}", e))
-                    })?;
-                NetworkMessage::GetCFilters(getcfilters)
-            }
-            "cfilter" => {
-                let cfilter =
-                    dashcore::network::message_filter::CFilter::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!("Failed to decode cfilter: {}", e))
-                        })?;
-                NetworkMessage::CFilter(cfilter)
-            }
-            "getcfheaders" => {
-                let getcfheaders =
-                    dashcore::network::message_filter::GetCFHeaders::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode getcfheaders: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::GetCFHeaders(getcfheaders)
-            }
-            "cfheaders" => {
-                let cfheaders =
-                    dashcore::network::message_filter::CFHeaders::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode cfheaders: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::CFHeaders(cfheaders)
-            }
-            "getcfcheckpt" => {
-                let getcfcheckpt =
-                    dashcore::network::message_filter::GetCFCheckpt::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode getcfcheckpt: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::GetCFCheckpt(getcfcheckpt)
-            }
-            "cfcheckpt" => {
-                let cfcheckpt =
-                    dashcore::network::message_filter::CFCheckpt::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode cfcheckpt: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::CFCheckpt(cfcheckpt)
-            }
-            // Dash-specific messages (extended format)
-            "version" => {
-                let version = dashcore::network::message_network::VersionMessage::consensus_decode(
-                    &mut cursor,
-                )
-                .map_err(|e| {
-                    NetworkError::ProtocolError(format!("Failed to decode version: {}", e))
-                })?;
-                NetworkMessage::Version(version)
-            }
-            "verack" => NetworkMessage::Verack,
-            "sendheaders" => NetworkMessage::SendHeaders,
-            "getaddr" => NetworkMessage::GetAddr,
-            "wtxidrelay" => NetworkMessage::WtxidRelay,
-            "sendaddrv2" => NetworkMessage::SendAddrV2,
-            "addrv2" => {
-                let addrs: Vec<dashcore::network::address::AddrV2Message> =
-                    Decodable::consensus_decode(&mut cursor).map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode addrv2: {}", e))
-                    })?;
-                NetworkMessage::AddrV2(addrs)
-            }
-            "reject" => {
-                let reject =
-                    dashcore::network::message_network::Reject::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!("Failed to decode reject: {}", e))
-                        })?;
-                NetworkMessage::Reject(reject)
-            }
-            // Dash-specific extended messages
-            "mnlistdiff" => {
-                let mnlistdiff =
-                    dashcore::network::message_sml::MnListDiff::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode mnlistdiff: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::MnListDiff(mnlistdiff)
-            }
-            "getmnlistd" => {
-                let getmnlistd =
-                    dashcore::network::message_sml::GetMnListDiff::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode getmnlistd: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::GetMnListD(getmnlistd)
-            }
-            "qrinfo" => {
-                let qrinfo =
-                    dashcore::network::message_qrinfo::QRInfo::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!("Failed to decode qrinfo: {}", e))
-                        })?;
-                NetworkMessage::QRInfo(qrinfo)
-            }
-            "getqrinfo" => {
-                let getqrinfo =
-                    dashcore::network::message_qrinfo::GetQRInfo::consensus_decode(&mut cursor)
-                        .map_err(|e| {
-                            NetworkError::ProtocolError(format!(
-                                "Failed to decode getqrinfo: {}",
-                                e
-                            ))
-                        })?;
-                NetworkMessage::GetQRInfo(getqrinfo)
-            }
-            "clsig" => {
-                let clsig = dashcore::ChainLock::consensus_decode(&mut cursor).map_err(|e| {
-                    NetworkError::ProtocolError(format!("Failed to decode clsig: {}", e))
-                })?;
-                NetworkMessage::CLSig(clsig)
-            }
-            "isdlock" => {
-                let islock = dashcore::InstantLock::consensus_decode(&mut cursor).map_err(|e| {
-                    NetworkError::ProtocolError(format!("Failed to decode isdlock: {}", e))
-                })?;
-                NetworkMessage::ISLock(islock)
-            }
-            "headers2" => {
-                let headers2 =
-                    dashcore::network::message_headers2::Headers2Message::consensus_decode(
-                        &mut cursor,
-                    )
-                    .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode headers2: {}", e))
-                    })?;
-                NetworkMessage::Headers2(headers2)
-            }
-            "getheaders2" => {
-                // getheaders2 uses same format as getheaders
-                let getheaders2 =
-                    dashcore::network::message_blockdata::GetHeadersMessage::consensus_decode(
-                        &mut cursor,
-                    )
-                    .map_err(|e| {
-                        NetworkError::ProtocolError(format!("Failed to decode getheaders2: {}", e))
-                    })?;
-                NetworkMessage::GetHeaders2(getheaders2)
-            }
-            "sendheaders2" => NetworkMessage::SendHeaders2,
-            "senddsq" => {
-                // SendDsq is a single bool (serialized as u8)
-                let wants_dsq = if payload.is_empty() {
-                    false
-                } else {
-                    payload[0] != 0
-                };
-                NetworkMessage::SendDsq(wants_dsq)
-            }
-            // Unknown command - use Unknown variant
-            _ => {
-                tracing::warn!(
-                    "V2Transport: Unknown command '{}' from {}, storing as raw bytes",
-                    cmd,
-                    self.peer_address
-                );
-                NetworkMessage::Unknown {
-                    command: CommandString::try_from(cmd.to_string()).unwrap_or_else(|_| {
-                        CommandString::try_from("unknown".to_string()).expect("valid")
-                    }),
-                    payload: payload.to_vec(),
-                }
-            }
+            (cmd, payload)
         };
 
-        Ok(message)
+        // Decode the NetworkMessage using dashcore's canonical decoder
+        NetworkMessage::consensus_decode_payload(cmd, payload)
+            .map_err(|e| NetworkError::ProtocolError(format!("Failed to decode '{}': {}", cmd, e)))
     }
 
     /// Helper function to read some bytes into the receive buffer.
