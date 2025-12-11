@@ -57,6 +57,8 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     syncing_headers: bool,
     last_sync_progress: std::time::Instant,
     headers2_failed: bool,
+    // Tracks the last base hash we prefetch-requested to avoid duplicates when batches overlap
+    last_prefetch_base: Option<BlockHash>,
     // Cached flag for quick access without locking
     cached_sync_base_height: u32,
 }
@@ -94,6 +96,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             syncing_headers: false,
             last_sync_progress: std::time::Instant::now(),
             headers2_failed: false,
+            last_prefetch_base: None,
             cached_sync_base_height: 0,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
@@ -152,6 +155,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 self.chain_state.read().await.tip_height()
             );
             self.syncing_headers = false;
+            self.last_prefetch_base = None;
             return Ok(false);
         }
 
@@ -159,6 +163,31 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // This prevents recomputing hashes during validation, logging, and storage
         let cached_headers: Vec<CachedHeader> =
             headers.iter().map(|h| CachedHeader::new(*h)).collect();
+
+        // Prefetch the next batch immediately to overlap network latency.
+        // Guard duplicate requests when batches arrive quickly.
+        let mut prefetch_sent = false;
+        if self.syncing_headers {
+            if let Some(last_cached) = cached_headers.last() {
+                let next_base = last_cached.block_hash();
+                let prefetch_start = std::time::Instant::now();
+                match self.prefetch_next_headers(network, next_base).await {
+                    Ok(sent) => {
+                        prefetch_sent = sent;
+                        if sent {
+                            tracing::debug!(
+                                "🚀 Prefetched next headers request in {:.2?} using base {}",
+                                prefetch_start.elapsed(),
+                                next_base
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Prefetch headers request failed: {}", e);
+                    }
+                }
+            }
+        }
 
         // Step 2: Validate Batch
         let first_cached = &cached_headers[0];
@@ -301,9 +330,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // In a production implementation, we would need to handle fork detection
         // at the batch level or in a separate phase
 
-        if self.syncing_headers {
-            // During sync mode - request next batch
-            // Use the last cached header's hash to avoid redundant X11 computation
+        if self.syncing_headers && !prefetch_sent {
+            // Prefetch failed or was skipped; fall back to the traditional request.
             if let Some(last_cached) = cached_headers.last() {
                 let hash = last_cached.block_hash();
                 self.request_headers(network, Some(hash)).await?;
@@ -441,6 +469,24 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(())
     }
 
+    /// Prefetch the next headers batch using the last header hash.
+    /// Returns true if a request was sent (skips duplicates when batches overlap).
+    async fn prefetch_next_headers(
+        &mut self,
+        network: &mut N,
+        base_hash: BlockHash,
+    ) -> SyncResult<bool> {
+        if let Some(prev) = self.last_prefetch_base {
+            if prev == base_hash {
+                return Ok(false);
+            }
+        }
+
+        self.request_headers(network, Some(base_hash)).await?;
+        self.last_prefetch_base = Some(base_hash);
+        Ok(true)
+    }
+
     /// Handle a Headers2 message with compressed headers.
     /// Returns true if the message was processed and sync should continue, false if sync is complete.
     pub async fn handle_headers2_message(
@@ -543,6 +589,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         tracing::info!("Preparing header synchronization");
+        // Reset any prefetched base from previous sessions
+        self.last_prefetch_base = None;
         tracing::info!(
             "Chain state before prepare_sync: sync_base_height={}, headers_count={}",
             self.get_sync_base_height(),
@@ -899,6 +947,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Reset sync state
         self.syncing_headers = false;
         self.last_sync_progress = std::time::Instant::now();
+        self.last_prefetch_base = None;
         // Clear any fork tracking state that shouldn't persist across restarts
         self.fork_detector = ForkDetector::new(self.reorg_config.max_forks).map_err(|e| {
             SyncError::InvalidState(format!("Failed to create fork detector: {}", e))
