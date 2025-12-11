@@ -9,6 +9,7 @@ use dashcore::Network;
 // Serialization removed due to complex Address types
 
 use crate::client::devnet::DevnetConfig;
+use crate::network::transport::TransportPreference;
 use crate::sync::BroadcastHoldout;
 use crate::types::ValidationMode;
 
@@ -98,6 +99,10 @@ pub struct ClientConfig {
 
     /// Devnet-only configuration. Must be `Some` iff `network == Network::Devnet`.
     pub devnet: Option<DevnetConfig>,
+
+    /// Transport preference for peer connections (V1, V2, or V2 with fallback).
+    /// Default is V2Preferred: try V2 encrypted transport first, fall back to V1.
+    pub transport_preference: TransportPreference,
 }
 
 impl Default for ClientConfig {
@@ -123,6 +128,8 @@ impl Default for ClientConfig {
             start_from_height: None,
             reservation_sweep_ttl_secs: Some(3600),
             devnet: None,
+            // Transport preference (BIP324 v2 encrypted by default with v1 fallback)
+            transport_preference: TransportPreference::default(),
         }
     }
 }
@@ -258,6 +265,16 @@ impl ClientConfig {
     /// [`validate`](Self::validate) enforces the biconditional.
     pub fn with_devnet(mut self, devnet: DevnetConfig) -> Self {
         self.devnet = Some(devnet);
+        self
+    }
+
+    /// Set transport preference for peer connections.
+    ///
+    /// - `V2Preferred` (default): Try BIP324 v2 encrypted transport first, fall back to v1
+    /// - `V2Only`: Require BIP324 v2 encrypted transport, fail if peer doesn't support it
+    /// - `V1Only`: Use traditional unencrypted v1 transport only
+    pub fn with_transport_preference(mut self, preference: TransportPreference) -> Self {
+        self.transport_preference = preference;
         self
     }
 

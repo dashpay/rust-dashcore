@@ -4,6 +4,7 @@ mod costs;
 mod discovery;
 mod manager;
 mod peer;
+pub mod transport;
 
 use crate::error::NetworkResult;
 use async_trait::async_trait;
