@@ -1084,4 +1084,186 @@ mod test {
         let msg = NetworkMessage::SendDsq(true);
         assert_eq!(msg.cmd(), "senddsq");
     }
+
+    // =========================================================================
+    // V2 Transport Payload Encode/Decode Tests
+    // These tests verify consensus_encode_payload and consensus_decode_payload
+    // for use with BIP324 V2 encrypted transport.
+    // =========================================================================
+
+    /// Helper to test round-trip encoding/decoding for a message
+    fn test_payload_round_trip(msg: &NetworkMessage) {
+        let encoded = msg.consensus_encode_payload();
+        let decoded = NetworkMessage::consensus_decode_payload(msg.cmd(), &encoded)
+            .expect(&format!("Failed to decode {} message", msg.cmd()));
+        assert_eq!(msg, &decoded, "Round-trip failed for {} message", msg.cmd());
+    }
+
+    #[test]
+    #[cfg(feature = "core-block-hash-use-x11")]
+    fn test_encode_decode_standard_bitcoin_messages() {
+        // Use deserialized test data to avoid complex construction
+        let tx: Transaction = deserialize(&hex!("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000")).unwrap();
+        let block: Block = deserialize(&include_bytes!("../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw")[..]).unwrap();
+        let header: block::Header = deserialize(&hex!("010000004ddccd549d28f385ab457e98d1b11ce80bfea2c5ab93015ade4973e400000000bf4473e53794beae34e64fccc471dace6ae544180816f89591894e0f417a914cd74d6e49ffff001d323b3a7b")).unwrap();
+
+        let inv = vec![Inventory::Transaction(hash([3u8; 32]).into())];
+
+        let messages: Vec<NetworkMessage> = vec![
+            NetworkMessage::Ping(0x1234567890abcdef),
+            NetworkMessage::Pong(0xfedcba0987654321),
+            NetworkMessage::Inv(inv.clone()),
+            NetworkMessage::GetData(inv.clone()),
+            NetworkMessage::NotFound(inv),
+            NetworkMessage::GetBlocks(GetBlocksMessage {
+                version: 70015,
+                locator_hashes: vec![hash_x11([4u8; 32]).into()],
+                stop_hash: hash_x11([5u8; 32]).into(),
+            }),
+            NetworkMessage::GetHeaders(GetHeadersMessage {
+                version: 70015,
+                locator_hashes: vec![hash_x11([6u8; 32]).into()],
+                stop_hash: hash_x11([7u8; 32]).into(),
+            }),
+            NetworkMessage::Headers(vec![header]),
+            NetworkMessage::Tx(tx),
+            NetworkMessage::Block(block),
+            NetworkMessage::FilterLoad(FilterLoad {
+                filter: vec![0x01, 0x02, 0x03],
+                hash_funcs: 11,
+                tweak: 0x12345678,
+                flags: BloomFlags::All,
+            }),
+            NetworkMessage::FilterAdd(FilterAdd {
+                data: vec![0xaa, 0xbb, 0xcc],
+            }),
+            NetworkMessage::SendCmpct(SendCmpct {
+                send_compact: true,
+                version: 1,
+            }),
+            NetworkMessage::GetCFilters(GetCFilters {
+                filter_type: 0,
+                start_height: 100,
+                stop_hash: hash_x11([8u8; 32]).into(),
+            }),
+            NetworkMessage::GetCFHeaders(GetCFHeaders {
+                filter_type: 0,
+                start_height: 100,
+                stop_hash: hash_x11([9u8; 32]).into(),
+            }),
+            NetworkMessage::GetCFCheckpt(GetCFCheckpt {
+                filter_type: 0,
+                stop_hash: hash_x11([10u8; 32]).into(),
+            }),
+        ];
+
+        for msg in &messages {
+            test_payload_round_trip(msg);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "core-block-hash-use-x11")]
+    fn test_encode_decode_dash_specific_messages() {
+        use crate::bls_sig_utils::BLSSignature;
+        use crate::hash_types::CycleHash;
+        use crate::network::message_sml::GetMnListDiff;
+        use crate::{ChainLock, InstantLock};
+
+        let messages: Vec<NetworkMessage> = vec![
+            NetworkMessage::SendDsq(true),
+            NetworkMessage::SendDsq(false),
+            NetworkMessage::GetMnListD(GetMnListDiff {
+                base_block_hash: hash_x11([1u8; 32]).into(),
+                block_hash: hash_x11([2u8; 32]).into(),
+            }),
+            NetworkMessage::CLSig(ChainLock {
+                block_height: 123456,
+                block_hash: hash_x11([3u8; 32]).into(),
+                signature: BLSSignature::from([0u8; 96]),
+            }),
+            NetworkMessage::ISLock(InstantLock {
+                version: 1,
+                inputs: vec![],
+                txid: hash([4u8; 32]).into(),
+                cyclehash: CycleHash::from([5u8; 32]),
+                signature: BLSSignature::from([0u8; 96]),
+            }),
+            NetworkMessage::GetHeaders2(GetHeadersMessage {
+                version: 70015,
+                locator_hashes: vec![hash_x11([6u8; 32]).into()],
+                stop_hash: hash_x11([7u8; 32]).into(),
+            }),
+            NetworkMessage::SendHeaders2,
+        ];
+
+        for msg in &messages {
+            test_payload_round_trip(msg);
+        }
+    }
+
+    #[test]
+    fn test_encode_decode_empty_payload_messages() {
+        let empty_payload_messages: Vec<NetworkMessage> = vec![
+            NetworkMessage::Verack,
+            NetworkMessage::SendHeaders,
+            NetworkMessage::SendHeaders2,
+            NetworkMessage::MemPool,
+            NetworkMessage::GetAddr,
+            NetworkMessage::WtxidRelay,
+            NetworkMessage::FilterClear,
+            NetworkMessage::SendAddrV2,
+        ];
+
+        for msg in &empty_payload_messages {
+            // Verify encoding produces empty payload
+            let encoded = msg.consensus_encode_payload();
+            assert!(
+                encoded.is_empty(),
+                "{} should have empty payload, got {} bytes",
+                msg.cmd(),
+                encoded.len()
+            );
+
+            // Verify decoding works with empty payload
+            let decoded = NetworkMessage::consensus_decode_payload(msg.cmd(), &[])
+                .expect(&format!("Failed to decode empty {} message", msg.cmd()));
+            assert_eq!(msg, &decoded, "Empty payload round-trip failed for {}", msg.cmd());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "core-block-hash-use-x11")]
+    fn test_headers_message_special_encoding() {
+        let header = block::Header {
+            version: block::Version::from_consensus(1),
+            prev_blockhash: hash_x11([1u8; 32]).into(),
+            merkle_root: hash([2u8; 32]).into(),
+            time: 1234567890,
+            bits: crate::pow::CompactTarget::from_consensus(0x1d00ffff),
+            nonce: 42,
+        };
+
+        // Test empty headers
+        let empty_headers = NetworkMessage::Headers(vec![]);
+        let encoded = empty_headers.consensus_encode_payload();
+        assert_eq!(encoded, vec![0x00], "Empty headers should encode to single 0x00 varint");
+        test_payload_round_trip(&empty_headers);
+
+        // Test single header
+        let single_header = NetworkMessage::Headers(vec![header.clone()]);
+        let encoded = single_header.consensus_encode_payload();
+        // Should be: varint(1) + header_bytes + 0x00 (tx count)
+        // Header is 80 bytes, so total should be 1 + 80 + 1 = 82 bytes
+        assert_eq!(encoded.len(), 82, "Single header should be 82 bytes");
+        assert_eq!(encoded[81], 0x00, "Header should have trailing zero tx count");
+        test_payload_round_trip(&single_header);
+
+        // Test multiple headers
+        let multi_headers = NetworkMessage::Headers(vec![header.clone(), header.clone(), header]);
+        let encoded = multi_headers.consensus_encode_payload();
+        // Should be: varint(3) + 3 * (header + 0x00) = 1 + 3*81 = 244 bytes
+        assert_eq!(encoded.len(), 244, "Three headers should be 244 bytes");
+        test_payload_round_trip(&multi_headers);
+    }
 }
