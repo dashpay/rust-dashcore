@@ -293,4 +293,42 @@ mod tests {
 
         assert!(network_message_to_short_id(&NetworkMessage::Version(version)).is_none());
     }
+
+    #[test]
+    fn test_short_id_to_command_bidirectional_consistency() {
+        // For messages that have short IDs, verify the command string matches
+        // what dashcore returns via cmd()
+        let test_cases: Vec<(NetworkMessage, u8)> = vec![
+            (NetworkMessage::Ping(0), MSG_ID_PING),
+            (NetworkMessage::Pong(0), MSG_ID_PONG),
+            (NetworkMessage::Inv(vec![]), MSG_ID_INV),
+            (NetworkMessage::GetData(vec![]), MSG_ID_GETDATA),
+            (NetworkMessage::MemPool, MSG_ID_MEMPOOL),
+            (NetworkMessage::FilterClear, MSG_ID_FILTERCLEAR),
+            (NetworkMessage::SendHeaders2, MSG_ID_SENDHEADERS2),
+            (NetworkMessage::SendDsq(false), MSG_ID_SENDDSQUEUE),
+        ];
+
+        for (msg, expected_id) in test_cases {
+            // Verify network_message_to_short_id returns the expected ID
+            let short_id = network_message_to_short_id(&msg);
+            assert_eq!(
+                short_id,
+                Some(expected_id),
+                "Message {} should have short ID {}",
+                msg.cmd(),
+                expected_id
+            );
+
+            // Verify short_id_to_command returns the correct command
+            let cmd = short_id_to_command(expected_id);
+            assert_eq!(
+                cmd,
+                Some(msg.cmd()),
+                "Short ID {} should map to command '{}'",
+                expected_id,
+                msg.cmd()
+            );
+        }
+    }
 }

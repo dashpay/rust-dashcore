@@ -432,4 +432,146 @@ mod tests {
         assert!(network_message_to_short_id(&NetworkMessage::Ping(0)).is_some());
         assert!(network_message_to_short_id(&NetworkMessage::Pong(0)).is_some());
     }
+
+    /// Helper: Encode a message the same way V2Transport::encode_message does
+    fn test_encode_v2_message(message: &NetworkMessage) -> Vec<u8> {
+        let payload = message.consensus_encode_payload();
+
+        if let Some(short_id) = network_message_to_short_id(message) {
+            // Short format: [short_id] + payload
+            let mut plaintext = Vec::with_capacity(1 + payload.len());
+            plaintext.push(short_id);
+            plaintext.extend_from_slice(&payload);
+            plaintext
+        } else {
+            // Extended format: [0x00] + [12-byte command] + payload
+            let cmd = message.cmd();
+            let cmd_bytes = cmd.as_bytes();
+            let mut command = [0u8; COMMAND_LEN];
+            let copy_len = std::cmp::min(cmd_bytes.len(), COMMAND_LEN);
+            command[..copy_len].copy_from_slice(&cmd_bytes[..copy_len]);
+
+            let mut plaintext = Vec::with_capacity(1 + COMMAND_LEN + payload.len());
+            plaintext.push(MSG_ID_EXTENDED);
+            plaintext.extend_from_slice(&command);
+            plaintext.extend_from_slice(&payload);
+            plaintext
+        }
+    }
+
+    /// Helper: Decode a V2 message with simulated cipher header byte
+    fn test_decode_v2_message(plaintext: &[u8]) -> Result<NetworkMessage, NetworkError> {
+        // Simulate: prepend a packet type byte (0 for genuine) like the cipher does
+        let mut with_header = vec![0u8]; // Packet type = genuine
+        with_header.extend_from_slice(plaintext);
+
+        if with_header.len() < 2 {
+            return Err(NetworkError::ProtocolError("V2 message too short".to_string()));
+        }
+
+        let message_id = with_header[1];
+
+        if message_id == MSG_ID_EXTENDED {
+            // Extended format
+            if with_header.len() < 2 + COMMAND_LEN {
+                return Err(NetworkError::ProtocolError(
+                    "Extended format message too short".to_string(),
+                ));
+            }
+
+            let command_bytes = &with_header[2..2 + COMMAND_LEN];
+            let cmd = std::str::from_utf8(command_bytes)
+                .map_err(|_| NetworkError::ProtocolError("Invalid UTF-8 in command".to_string()))?
+                .trim_end_matches('\0');
+
+            let payload = &with_header[2 + COMMAND_LEN..];
+            NetworkMessage::consensus_decode_payload(cmd, payload)
+                .map_err(|e| NetworkError::ProtocolError(format!("Failed to decode: {}", e)))
+        } else {
+            // Short format
+            let cmd = short_id_to_command(message_id).ok_or_else(|| {
+                NetworkError::ProtocolError(format!("Unknown short ID: {}", message_id))
+            })?;
+
+            let payload = &with_header[2..];
+            NetworkMessage::consensus_decode_payload(cmd, payload)
+                .map_err(|e| NetworkError::ProtocolError(format!("Failed to decode: {}", e)))
+        }
+    }
+
+    #[test]
+    fn test_short_id_round_trip_common_messages() {
+        // Messages that should use short format (1 byte ID)
+        let short_format_messages: Vec<NetworkMessage> = vec![
+            NetworkMessage::Ping(0x1234567890abcdef),
+            NetworkMessage::Pong(0xfedcba0987654321),
+            NetworkMessage::Inv(vec![]),
+            NetworkMessage::GetData(vec![]),
+            NetworkMessage::NotFound(vec![]),
+            NetworkMessage::MemPool,
+            NetworkMessage::FilterClear,
+            NetworkMessage::SendHeaders2,
+            NetworkMessage::SendDsq(true),
+        ];
+
+        for original in &short_format_messages {
+            // Verify it uses short format (first byte is the short ID, not 0x00)
+            let encoded = test_encode_v2_message(original);
+            assert_ne!(
+                encoded[0],
+                MSG_ID_EXTENDED,
+                "{} should use short format, not extended",
+                original.cmd()
+            );
+
+            // Verify round-trip
+            let decoded = test_decode_v2_message(&encoded)
+                .expect(&format!("Failed to decode {}", original.cmd()));
+            assert_eq!(original, &decoded, "Round-trip failed for {} message", original.cmd());
+        }
+    }
+
+    #[test]
+    fn test_extended_format_round_trip() {
+        use dashcore::network::address::Address;
+        use dashcore::network::constants::ServiceFlags;
+        use dashcore::network::message_network::VersionMessage;
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        let addr = Address::new(
+            &SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8333),
+            ServiceFlags::NONE,
+        );
+
+        let version = VersionMessage {
+            version: 70015,
+            services: ServiceFlags::NONE,
+            timestamp: 0,
+            receiver: addr.clone(),
+            sender: addr,
+            nonce: 0,
+            user_agent: "/test/".to_string(),
+            start_height: 0,
+            relay: false,
+            mn_auth_challenge: [0u8; 32],
+            masternode_connection: false,
+        };
+
+        // Version message should use extended format (no short ID)
+        let original = NetworkMessage::Version(version);
+
+        let encoded = test_encode_v2_message(&original);
+
+        // Verify extended format: first byte should be 0x00
+        assert_eq!(encoded[0], MSG_ID_EXTENDED, "Version message should use extended format");
+
+        // Verify command is in bytes 1-12
+        let cmd_bytes = &encoded[1..1 + COMMAND_LEN];
+        let cmd = std::str::from_utf8(cmd_bytes).unwrap().trim_end_matches('\0');
+        assert_eq!(cmd, "version", "Command should be 'version'");
+
+        // Verify round-trip
+        let decoded = test_decode_v2_message(&encoded).expect("Failed to decode version message");
+        assert_eq!(original, decoded, "Version round-trip failed");
+    }
 }
