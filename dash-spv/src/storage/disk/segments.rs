@@ -107,7 +107,7 @@ impl SegmentCache<BlockHeader> {
             };
 
             let storage_start_idx = Self::segment_id_to_start_index(segment_id);
-            let mut block_height = self.storage_index_to_height(storage_start_idx);
+            let mut block_height = self.index_to_height(storage_start_idx);
 
             let segment = self.get_segment(&segment_id).await?;
 
@@ -164,7 +164,7 @@ impl<I: Persistable> SegmentCache<I> {
                 let last_storage_index =
                     segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.items.len() as u32 - 1;
 
-                let tip_height = cache.storage_index_to_height(last_storage_index);
+                let tip_height = cache.index_to_height(last_storage_index);
                 cache.tip_height = Some(tip_height);
             }
         }
@@ -172,10 +172,10 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(cache)
     }
 
-    /// Get the segment ID for a given height.
+    /// Get the segment ID for a given storage index.
     #[inline]
-    fn index_to_segment_id(height: u32) -> u32 {
-        height / Segment::<I>::ITEMS_PER_SEGMENT
+    fn index_to_segment_id(index: u32) -> u32 {
+        index / Segment::<I>::ITEMS_PER_SEGMENT
     }
 
     #[inline]
@@ -183,10 +183,10 @@ impl<I: Persistable> SegmentCache<I> {
         segment_id * Segment::<I>::ITEMS_PER_SEGMENT
     }
 
-    /// Get the segment offset for a given height.
+    /// Get the segment offset for a given storage index.
     #[inline]
-    fn index_to_offset(height: u32) -> u32 {
-        height % Segment::<I>::ITEMS_PER_SEGMENT
+    fn index_to_offset(index: u32) -> u32 {
+        index % Segment::<I>::ITEMS_PER_SEGMENT
     }
 
     #[inline]
@@ -247,8 +247,11 @@ impl<I: Persistable> SegmentCache<I> {
     }
 
     pub async fn get_items(&mut self, height_range: Range<u32>) -> StorageResult<Vec<I>> {
-        let storage_start_idx = self.height_to_storage_index(height_range.start);
-        let storage_end_idx = self.height_to_storage_index(height_range.end);
+        if height_range.start > height_range.end {
+            panic!("Invalid height range: start > end, {:?}", height_range);
+        }
+        let storage_start_idx = self.height_to_index(height_range.start);
+        let storage_end_idx = self.height_to_index(height_range.end);
 
         let mut items = Vec::with_capacity((storage_end_idx - storage_start_idx) as usize);
 
@@ -297,7 +300,7 @@ impl<I: Persistable> SegmentCache<I> {
             return Ok(());
         }
 
-        let mut storage_index = self.height_to_storage_index(start_height);
+        let mut storage_index = self.height_to_index(start_height);
 
         // Use trace for single items, debug for small batches, info for large batches
         tracing::debug!(
@@ -319,7 +322,7 @@ impl<I: Persistable> SegmentCache<I> {
         }
 
         // Update cached tip height with blockchain height
-        let last_item_height = self.storage_index_to_height(storage_index).saturating_sub(1);
+        let last_item_height = self.index_to_height(storage_index).saturating_sub(1);
         self.tip_height = match self.tip_height {
             Some(current) => Some(current.max(last_item_height)),
             None => Some(last_item_height),
@@ -363,7 +366,7 @@ impl<I: Persistable> SegmentCache<I> {
     /// Convert blockchain height to storage index
     /// For checkpoint sync, storage index is relative to sync_base_height
     #[inline]
-    fn height_to_storage_index(&self, height: u32) -> u32 {
+    fn height_to_index(&self, height: u32) -> u32 {
         debug_assert!(
             height >= self.sync_base_height,
             "Height must be greater than or equal to sync_base_height"
@@ -373,8 +376,8 @@ impl<I: Persistable> SegmentCache<I> {
     }
 
     #[inline]
-    pub fn storage_index_to_height(&self, storage_index: u32) -> u32 {
-        storage_index + self.sync_base_height
+    pub fn index_to_height(&self, index: u32) -> u32 {
+        index + self.sync_base_height
     }
 }
 
