@@ -92,23 +92,25 @@ async fn test_multiple_connect_disconnect_cycles() {
     for i in 1..=3 {
         println!("Attempt {} to connect to {}", i, peer_addr);
 
-        let connect_result = connection.connect_instance().await;
-        if connect_result.is_ok() {
-            assert!(connection.is_connected(), "Should be connected after successful connect");
+        match connection.connect_instance().await {
+            Ok(_) => {
+                assert!(connection.is_connected(), "Should be connected after successful connect");
 
-            // Brief delay
-            tokio::time::sleep(Duration::from_millis(100)).await;
+                // Brief delay
+                tokio::time::sleep(Duration::from_millis(100)).await;
 
-            // Disconnect
-            let disconnect_result = connection.disconnect().await;
-            assert!(disconnect_result.is_ok(), "Disconnect should succeed");
-            assert!(!connection.is_connected(), "Should be disconnected after disconnect");
+                // Disconnect
+                let disconnect_result = connection.disconnect().await;
+                assert!(disconnect_result.is_ok(), "Disconnect should succeed");
+                assert!(!connection.is_connected(), "Should be disconnected after disconnect");
 
-            // Brief delay before next attempt
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        } else {
-            println!("Connection attempt {} failed: {}", i, connect_result.unwrap_err());
-            break;
+                // Brief delay before next attempt
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(e) => {
+                println!("Connection attempt {} failed: {}", i, e);
+                break;
+            }
         }
     }
 }
