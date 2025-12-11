@@ -161,6 +161,13 @@ impl TestTransactionBuilder {
     }
 }
 
+pub fn create_transaction_to_address(address: &dashcore::Address, value: u64) -> Transaction {
+    TestTransactionBuilder::new()
+        .add_input(random_txid(), 0)
+        .add_output(value, address.script_pubkey())
+        .build()
+}
+
 /// Create a chain of test headers
 pub fn create_header_chain(count: usize, start_height: u32) -> Vec<Header> {
     let mut headers = Vec::with_capacity(count);
