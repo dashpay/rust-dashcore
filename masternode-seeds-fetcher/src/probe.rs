@@ -27,7 +27,7 @@ use tokio::net::TcpStream;
 use x509_parser::prelude::FromDer;
 use x509_parser::x509::X509Version;
 
-use dash_spv::network::Peer;
+use dash_spv::network::{Peer, TransportPreference};
 
 /// How long to give a single TCP connect before giving up.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -54,7 +54,9 @@ pub async fn probe_core(
 }
 
 async fn probe_core_inner(peer_addr: SocketAddr, network: DashNetwork) -> Result<Option<u32>> {
-    let mut peer = Peer::connect(peer_addr, CONNECT_TIMEOUT.as_secs(), network).await?;
+    let mut peer =
+        Peer::connect(peer_addr, CONNECT_TIMEOUT.as_secs(), network, TransportPreference::V1Only)
+            .await?;
 
     let version = VersionMessage::new(
         ServiceFlags::NONE,
