@@ -8,6 +8,7 @@ use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
+use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 
@@ -196,14 +197,13 @@ async fn test_concurrent_tip_header_access() {
         storage.shutdown().await;
     }
 
-    // Test concurrent access from multiple storage instances
+    // Reopen storage and share via Arc for concurrent reads
+    let storage = Arc::new(DiskStorageManager::new(storage_path).await.unwrap());
     let mut handles = vec![];
 
     for i in 0..5 {
-        let path = storage_path.clone();
+        let storage = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
-            let storage = DiskStorageManager::new(path).await.unwrap();
-
             // Repeatedly check consistency
             for iteration in 0..100 {
                 let tip_height = storage.get_tip_height().await.unwrap();
@@ -531,15 +531,14 @@ async fn test_concurrent_tip_height_access_with_eviction() {
         storage.shutdown().await;
     }
 
-    // Test concurrent access with reduced scale
+    // Reopen storage and share via Arc for concurrent reads
+    let storage = Arc::new(DiskStorageManager::new(storage_path).await.unwrap());
     let mut handles = vec![];
 
     // Reduced from 10 to 5 concurrent tasks
     for task_id in 0..5 {
-        let path = storage_path.clone();
+        let storage = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
-            let storage = DiskStorageManager::new(path).await.unwrap();
-
             // Reduced from 50 to 20 iterations
             for iteration in 0..20 {
                 // Get tip height
@@ -598,14 +597,13 @@ async fn test_concurrent_tip_height_access_with_eviction_heavy() {
         storage.shutdown().await;
     }
 
-    // Now test concurrent access that might trigger the race condition
+    // Reopen storage and share via Arc for concurrent reads
+    let storage = Arc::new(DiskStorageManager::new(storage_path).await.unwrap());
     let mut handles = vec![];
 
     for task_id in 0..10 {
-        let path = storage_path.clone();
+        let storage = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
-            let storage = DiskStorageManager::new(path).await.unwrap();
-
             for iteration in 0..50 {
                 // Get tip height
                 let tip_height = storage.get_tip_height().await.unwrap();

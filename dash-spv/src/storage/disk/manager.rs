@@ -13,6 +13,8 @@ use crate::storage::disk::headers::load_block_index;
 use crate::storage::disk::segments::SegmentCache;
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
+use super::lockfile::LockFile;
+
 /// Commands for the background worker
 #[derive(Debug, Clone)]
 pub(super) enum WorkerCommand {
@@ -49,6 +51,9 @@ pub struct DiskStorageManager {
     // Mempool storage
     pub(super) mempool_transactions: Arc<RwLock<HashMap<Txid, UnconfirmedTransaction>>>,
     pub(super) mempool_state: Arc<RwLock<Option<MempoolState>>>,
+
+    // Lock file to prevent concurrent access from multiple processes.
+    _lock_file: LockFile,
 }
 
 impl DiskStorageManager {
@@ -59,6 +64,9 @@ impl DiskStorageManager {
         // Create directories if they don't exist
         fs::create_dir_all(&base_path)
             .map_err(|e| StorageError::WriteFailed(format!("Failed to create directory: {}", e)))?;
+
+        // Acquire exclusive lock on the data directory
+        let lock_file = LockFile::new(base_path.join(".lock"))?;
 
         let headers_dir = base_path.join("headers");
         let filters_dir = base_path.join("filters");
@@ -105,6 +113,7 @@ impl DiskStorageManager {
             last_index_save_count: Arc::new(RwLock::new(0)),
             mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
             mempool_state: Arc::new(RwLock::new(None)),
+            _lock_file: lock_file,
         };
 
         // Load chain state to get sync_base_height

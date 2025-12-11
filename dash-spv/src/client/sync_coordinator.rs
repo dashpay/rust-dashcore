@@ -19,7 +19,6 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::headers::validate_headers;
 use crate::types::{CachedHeader, DetailedSyncProgress, SyncProgress};
-use crate::ValidationMode;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -947,7 +946,7 @@ impl<
                 // come from storage.
                 let cached_headers =
                     headers.iter().map(|h| CachedHeader::new(*h)).collect::<Vec<CachedHeader>>();
-                if let Err(e) = validate_headers(&cached_headers, ValidationMode::Basic) {
+                if let Err(e) = validate_headers(&cached_headers) {
                     tracing::error!(
                         "Header validation failed for range {}..{}: {:?}",
                         current_height,

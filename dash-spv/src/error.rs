@@ -132,6 +132,9 @@ pub enum StorageError {
 
     #[error("Lock poisoned: {0}")]
     LockPoisoned(String),
+
+    #[error("Data directory locked: {0}")]
+    DirectoryLocked(String),
 }
 
 impl Clone for StorageError {
@@ -145,6 +148,7 @@ impl Clone for StorageError {
             StorageError::Serialization(s) => StorageError::Serialization(s.clone()),
             StorageError::InconsistentState(s) => StorageError::InconsistentState(s.clone()),
             StorageError::LockPoisoned(s) => StorageError::LockPoisoned(s.clone()),
+            StorageError::DirectoryLocked(s) => StorageError::DirectoryLocked(s.clone()),
         }
     }
 }

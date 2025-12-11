@@ -6,6 +6,7 @@ use dashcore::hash_types::FilterHeader;
 use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::time::sleep;
@@ -182,13 +183,13 @@ async fn test_concurrent_access() {
         storage.shutdown().await;
     }
 
-    // Test concurrent reads with multiple storage instances
+    // Reopen storage and share via Arc for concurrent reads
+    let storage = Arc::new(DiskStorageManager::new(path).await.unwrap());
     let mut handles = vec![];
 
     for i in 0..5 {
-        let path = path.clone();
+        let storage = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
-            let storage = DiskStorageManager::new(path).await.unwrap();
             let start = i * 20_000;
             let end = start + 10_000;
 
