@@ -52,7 +52,7 @@ const GARBAGE_TERMINATOR_SIZE: usize = 16;
 /// Result of the V2 handshake attempt.
 pub enum V2HandshakeResult {
     /// Successfully completed V2 handshake.
-    Success(V2Session),
+    Success(Box<V2Session>),
     /// Detected V1-only peer (first bytes matched network magic).
     FallbackToV1,
 }
@@ -370,11 +370,11 @@ impl V2HandshakeManager {
                                 );
 
                                 let session_id = *cipher.id();
-                                return Ok(V2HandshakeResult::Success(V2Session {
+                                return Ok(V2HandshakeResult::Success(Box::new(V2Session {
                                     stream,
                                     cipher,
                                     session_id,
-                                }));
+                                })));
                             }
                             Ok(VersionResult::Decoy(next_handshake)) => {
                                 // Received a decoy packet, continue reading for version packet
