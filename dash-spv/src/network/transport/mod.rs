@@ -29,14 +29,6 @@ pub enum TransportPreference {
     V1Only,
 }
 
-/// Result of establishing a transport connection.
-pub enum TransportEstablishResult {
-    /// Successfully established V1 transport.
-    V1(V1Transport),
-    /// Need to fallback to V1 (V2 handshake detected V1-only peer).
-    FallbackToV1,
-}
-
 /// Abstract transport layer for P2P communication.
 ///
 /// This trait is implemented by both V1Transport (unencrypted) and
