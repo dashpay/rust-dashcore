@@ -35,8 +35,6 @@ pub struct Peer {
     relay: Option<bool>,
     prefers_headers2: bool,
     sent_sendheaders2: bool,
-    // Basic telemetry for resync events
-    consecutive_resyncs: u32,
     // Transport protocol version used (1 or 2)
     transport_version: u8,
 }
@@ -70,7 +68,6 @@ impl Peer {
             relay: None,
             prefers_headers2: false,
             sent_sendheaders2: false,
-            consecutive_resyncs: 0,
             transport_version: 1,
         }
     }
@@ -112,9 +109,7 @@ impl Peer {
                     "Connecting to {} using V2 transport (BIP324 encrypted, with V1 fallback)",
                     address
                 );
-                match Self::try_v2_with_fallback(address, timeout, network).await? {
-                    (transport, version) => (transport, version),
-                }
+                Self::try_v2_with_fallback(address, timeout, network).await?
             }
         };
 
@@ -140,7 +135,6 @@ impl Peer {
             relay: None,
             prefers_headers2: false,
             sent_sendheaders2: false,
-            consecutive_resyncs: 0,
             transport_version,
         })
     }
