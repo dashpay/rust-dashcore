@@ -1,4 +1,4 @@
-use crate::wallet_interface::WalletInterface;
+use crate::wallet_interface::{BlockProcessingResult, WalletInterface};
 use crate::WalletManager;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -6,15 +6,19 @@ use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Block, BlockHash, Transaction, Txid};
+use dashcore::{Block, BlockHash, Transaction};
 use key_wallet::transaction_checking::transaction_router::TransactionRouter;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
 #[async_trait]
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletManager<T> {
-    async fn process_block(&mut self, block: &Block, height: CoreBlockHeight) -> Vec<Txid> {
-        let mut relevant_txids = Vec::new();
+    async fn process_block(
+        &mut self,
+        block: &Block,
+        height: CoreBlockHeight,
+    ) -> BlockProcessingResult {
+        let mut result = BlockProcessingResult::default();
         let block_hash = Some(block.block_hash());
         let timestamp = block.header.time;
 
@@ -26,20 +30,18 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 timestamp: Some(timestamp),
             };
 
-            let affected_wallets = self
-                .check_transaction_in_all_wallets(
-                    tx, context, true, // update state
-                )
-                .await;
+            let check_result = self.check_transaction_in_all_wallets(tx, context, true).await;
 
-            if !affected_wallets.is_empty() {
-                relevant_txids.push(tx.txid());
+            if !check_result.affected_wallets.is_empty() {
+                result.relevant_txids.push(tx.txid());
             }
+
+            result.new_addresses.extend(check_result.new_addresses);
         }
 
         self.current_height = height;
 
-        relevant_txids
+        result
     }
 
     async fn process_mempool_transaction(&mut self, tx: &Transaction) {

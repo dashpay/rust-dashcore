@@ -75,7 +75,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         let relevant_types = TransactionRouter::get_relevant_account_types(&tx_type);
 
         // Check only relevant account types
-        let result = self.accounts.check_transaction(tx, &relevant_types);
+        let mut result = self.accounts.check_transaction(tx, &relevant_types);
 
         // Update state if requested and transaction is relevant
         if update_state && result.is_relevant {
@@ -281,11 +281,17 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             internal_addresses,
                             ..
                         } = &mut account.account_type {
-                            let _ = external_addresses.maintain_gap_limit(&key_source);
-                            let _ = internal_addresses.maintain_gap_limit(&key_source);
+                            if let Ok(new_addrs) = external_addresses.maintain_gap_limit(&key_source) {
+                                result.new_addresses.extend(new_addrs);
+                            }
+                            if let Ok(new_addrs) = internal_addresses.maintain_gap_limit(&key_source) {
+                                result.new_addresses.extend(new_addrs);
+                            }
                         } else {
                             for pool in account.account_type.address_pools_mut() {
-                                let _ = pool.maintain_gap_limit(&key_source);
+                                if let Ok(new_addrs) = pool.maintain_gap_limit(&key_source) {
+                                    result.new_addresses.extend(new_addrs);
+                                }
                             }
                         }
                     }
