@@ -6,6 +6,26 @@
 //!
 //! The handshake detects v1-only peers by checking if the first bytes
 //! received match the network magic (indicating v1 protocol).
+//!
+//! ## Why Not Use `bip324::futures::handshake()`?
+//!
+//! The bip324 crate provides a high-level `futures::handshake()` function, but
+//! it doesn't meet dash-spv's requirements:
+//!
+//! 1. **V1 Detection Strategy**: bip324 detects V1-only peers *after* reading the
+//!    64-byte remote key (consuming the bytes). dash-spv uses `stream.peek()` to
+//!    detect V1 magic *without* consuming bytes, allowing the same TCP connection
+//!    to be reused for V1 fallback.
+//!
+//! 2. **Return Type Mismatch**: bip324 returns split ciphers and a wrapped
+//!    `ProtocolSessionReader<R>`. dash-spv needs the original `TcpStream` back
+//!    plus a `CipherSession` for the transport layer.
+//!
+//! 3. **Timeout Handling**: bip324's async handshake has no built-in timeouts.
+//!    dash-spv needs per-operation and cumulative timeout handling.
+//!
+//! Therefore, we use bip324's low-level `Handshake` state machine with custom
+//! async I/O wrappers that provide the control we need.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -259,110 +279,118 @@ impl V2HandshakeManager {
                     // Keep any remaining bytes after the garbage
                     let remaining = garbage_buffer[consumed_bytes..].to_vec();
 
-                    // Step 6: Receive version packet
-                    // The version packet follows the garbage terminator
+                    // Step 6: Receive version packet (may be preceded by decoy packets)
+                    // Loop until we receive the genuine version packet
                     let mut handshake = handshake;
+                    let mut leftover_data = remaining;
 
-                    // Read version packet: 3-byte length + encrypted content
-                    let mut version_data = remaining;
-
-                    // Read at least 3 bytes for the length prefix
-                    while version_data.len() < 3 {
-                        let mut more = [0u8; 64];
-                        let n = tokio::time::timeout(
-                            HANDSHAKE_TIMEOUT.saturating_sub(scan_start.elapsed()),
-                            stream.read(&mut more),
-                        )
-                        .await
-                        .map_err(|_| NetworkError::Timeout)?
-                        .map_err(|e| {
-                            NetworkError::V2HandshakeFailed(format!(
-                                "Failed to read version packet length: {}",
-                                e
-                            ))
-                        })?;
-                        if n == 0 {
-                            return Err(NetworkError::V2HandshakeFailed(
-                                "Connection closed before version packet".to_string(),
-                            ));
+                    loop {
+                        // Read at least 3 bytes for the length prefix
+                        while leftover_data.len() < 3 {
+                            let mut more = [0u8; 64];
+                            let n = tokio::time::timeout(
+                                HANDSHAKE_TIMEOUT.saturating_sub(scan_start.elapsed()),
+                                stream.read(&mut more),
+                            )
+                            .await
+                            .map_err(|_| NetworkError::Timeout)?
+                            .map_err(|e| {
+                                NetworkError::V2HandshakeFailed(format!(
+                                    "Failed to read packet length: {}",
+                                    e
+                                ))
+                            })?;
+                            if n == 0 {
+                                return Err(NetworkError::V2HandshakeFailed(
+                                    "Connection closed before version packet".to_string(),
+                                ));
+                            }
+                            leftover_data.extend_from_slice(&more[..n]);
                         }
-                        version_data.extend_from_slice(&more[..n]);
-                    }
 
-                    // Decrypt the packet length (first 3 bytes)
-                    let length_bytes: [u8; 3] = version_data[..3].try_into().map_err(|_| {
-                        NetworkError::V2HandshakeFailed(
-                            "Failed to extract length bytes".to_string(),
-                        )
-                    })?;
-                    let packet_len = handshake.decrypt_packet_len(length_bytes).map_err(|e| {
-                        NetworkError::V2HandshakeFailed(format!(
-                            "Failed to decrypt packet length: {}",
-                            e
-                        ))
-                    })?;
+                        // Decrypt the packet length (first 3 bytes)
+                        let length_bytes: [u8; 3] =
+                            leftover_data[..3].try_into().map_err(|_| {
+                                NetworkError::V2HandshakeFailed(
+                                    "Failed to extract length bytes".to_string(),
+                                )
+                            })?;
+                        let packet_len =
+                            handshake.decrypt_packet_len(length_bytes).map_err(|e| {
+                                NetworkError::V2HandshakeFailed(format!(
+                                    "Failed to decrypt packet length: {}",
+                                    e
+                                ))
+                            })?;
 
-                    tracing::debug!(
-                        "V2 handshake: Version packet length is {} bytes from {}",
-                        packet_len,
-                        self.peer_address
-                    );
+                        tracing::debug!(
+                            "V2 handshake: Packet length is {} bytes from {}",
+                            packet_len,
+                            self.peer_address
+                        );
 
-                    // Read more data if needed to have the full packet
-                    let total_needed = 3 + packet_len; // length prefix + packet content
-                    while version_data.len() < total_needed {
-                        let mut more = [0u8; 64];
-                        let n = tokio::time::timeout(
-                            HANDSHAKE_TIMEOUT.saturating_sub(scan_start.elapsed()),
-                            stream.read(&mut more),
-                        )
-                        .await
-                        .map_err(|_| NetworkError::Timeout)?
-                        .map_err(|e| {
-                            NetworkError::V2HandshakeFailed(format!(
-                                "Failed to read version packet content: {}",
-                                e
-                            ))
-                        })?;
-                        if n == 0 {
-                            return Err(NetworkError::V2HandshakeFailed(
-                                "Connection closed before version packet complete".to_string(),
-                            ));
+                        // Read more data if needed to have the full packet
+                        let total_needed = 3 + packet_len; // length prefix + packet content
+                        while leftover_data.len() < total_needed {
+                            let mut more = [0u8; 64];
+                            let n = tokio::time::timeout(
+                                HANDSHAKE_TIMEOUT.saturating_sub(scan_start.elapsed()),
+                                stream.read(&mut more),
+                            )
+                            .await
+                            .map_err(|_| NetworkError::Timeout)?
+                            .map_err(|e| {
+                                NetworkError::V2HandshakeFailed(format!(
+                                    "Failed to read packet content: {}",
+                                    e
+                                ))
+                            })?;
+                            if n == 0 {
+                                return Err(NetworkError::V2HandshakeFailed(
+                                    "Connection closed before packet complete".to_string(),
+                                ));
+                            }
+                            leftover_data.extend_from_slice(&more[..n]);
                         }
-                        version_data.extend_from_slice(&more[..n]);
-                    }
 
-                    // Extract just the packet content (excluding the 3-byte length prefix)
-                    let mut packet_content = version_data[3..3 + packet_len].to_vec();
+                        // Extract just the packet content (excluding the 3-byte length prefix)
+                        let mut packet_content = leftover_data[3..3 + packet_len].to_vec();
 
-                    // Process version packet
-                    match handshake.receive_version(&mut packet_content) {
-                        Ok(VersionResult::Complete {
-                            cipher,
-                        }) => {
-                            tracing::info!(
-                                "V2 handshake: Completed successfully with {}",
-                                self.peer_address
-                            );
+                        // Keep any data after this packet for the next iteration
+                        leftover_data = leftover_data[3 + packet_len..].to_vec();
 
-                            return Ok(V2HandshakeResult::Success(V2Session {
-                                stream,
+                        // Process packet
+                        match handshake.receive_version(&mut packet_content) {
+                            Ok(VersionResult::Complete {
                                 cipher,
-                                session_id: [0u8; 32], // TODO: Get actual session ID
-                            }));
-                        }
-                        Ok(VersionResult::Decoy(_handshake)) => {
-                            // Received a decoy packet, need to continue reading
-                            // For now, treat as error (can be enhanced later)
-                            return Err(NetworkError::V2HandshakeFailed(
-                                "Received decoy packet - not yet supported".to_string(),
-                            ));
-                        }
-                        Err(e) => {
-                            return Err(NetworkError::V2HandshakeFailed(format!(
-                                "Failed to process version packet: {}",
-                                e
-                            )));
+                            }) => {
+                                tracing::info!(
+                                    "V2 handshake: Completed successfully with {}",
+                                    self.peer_address
+                                );
+
+                                let session_id = *cipher.id();
+                                return Ok(V2HandshakeResult::Success(V2Session {
+                                    stream,
+                                    cipher,
+                                    session_id,
+                                }));
+                            }
+                            Ok(VersionResult::Decoy(next_handshake)) => {
+                                // Received a decoy packet, continue reading for version packet
+                                tracing::debug!(
+                                    "V2 handshake: Received decoy packet from {}, continuing",
+                                    self.peer_address
+                                );
+                                handshake = next_handshake;
+                                // Continue loop to read next packet
+                            }
+                            Err(e) => {
+                                return Err(NetworkError::V2HandshakeFailed(format!(
+                                    "Failed to process packet: {}",
+                                    e
+                                )));
+                            }
                         }
                     }
                 }
