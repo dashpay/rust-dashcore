@@ -395,13 +395,9 @@ impl V2HandshakeManager {
                     }
                 }
                 Ok(GarbageResult::NeedMoreData(hs)) => {
+                    // Continue reading more data; bip324 enforces the max garbage limit
+                    // internally and will return NoGarbageTerminator if exceeded
                     handshake_state = hs;
-                    // Continue reading more data
-                    if garbage_buffer.len() > MAX_GARBAGE_LEN + GARBAGE_TERMINATOR_SIZE {
-                        return Err(NetworkError::V2HandshakeFailed(
-                            "Garbage terminator not found within limit".to_string(),
-                        ));
-                    }
                 }
                 Err(e) => {
                     return Err(NetworkError::V2HandshakeFailed(format!(
