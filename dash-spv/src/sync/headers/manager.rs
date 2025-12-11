@@ -258,7 +258,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             storage.as_any_mut().downcast_mut::<crate::storage::disk::DiskStorageManager>()
         {
             disk_storage
-                .store_headers_internal(&headers)
+                .store_headers(&headers)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
         } else {

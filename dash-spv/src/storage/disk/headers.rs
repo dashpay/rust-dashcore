@@ -35,12 +35,8 @@ impl DiskStorageManager {
 
         Ok(())
     }
-    /// Store headers with optional precomputed hashes for performance optimization.
-    ///
-    /// This is a performance optimization for hot paths that have already computed header hashes.
-    /// When called from header sync with CachedHeader wrappers, passing precomputed hashes avoids
-    /// recomputing the expensive X11 hash for indexing (saves ~35% of CPU during sync).
-    pub async fn store_headers_internal(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
+
+    pub async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
         let height = self.block_headers.read().await.next_height();
         self.store_headers_at_height(headers, height).await
     }

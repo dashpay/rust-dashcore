@@ -28,7 +28,7 @@ impl DiskStorageManager {
             // Store headers starting at the checkpoint height
             self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
         } else {
-            self.store_headers_internal(&state.headers).await?;
+            self.store_headers(&state.headers).await?;
         }
 
         // Store filter headers
@@ -537,7 +537,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
-        self.store_headers_internal(headers).await
+        self.store_headers(headers).await
     }
 
     async fn load_headers(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<BlockHeader>> {
