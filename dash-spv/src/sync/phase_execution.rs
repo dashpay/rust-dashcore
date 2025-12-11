@@ -185,8 +185,11 @@ impl<
                 self.transition_to_next_phase(storage, network, "No blocks to download").await?;
             }
 
-            _ => {
-                // Idle or FullySynced - nothing to execute
+            SyncPhase::Idle
+            | SyncPhase::FullySynced {
+                ..
+            } => {
+                // Nothing to execute
             }
         }
 
@@ -422,7 +425,15 @@ impl<
                     }
                 }
             }
-            _ => {}
+            SyncPhase::Idle
+            | SyncPhase::FullySynced {
+                ..
+            }
+            | SyncPhase::DownloadingBlocks {
+                ..
+            } => {
+                // Nothing to execute
+            }
         }
 
         Ok(())
@@ -467,7 +478,16 @@ impl<
             } => {
                 self.filter_sync.check_cfheader_request_timeouts(network, storage).await?;
             }
-            _ => {
+            SyncPhase::Idle
+            | SyncPhase::DownloadingFilters {
+                ..
+            }
+            | SyncPhase::DownloadingBlocks {
+                ..
+            }
+            | SyncPhase::FullySynced {
+                ..
+            } => {
                 // For other phases, we'll need phase-specific recovery
             }
         }
