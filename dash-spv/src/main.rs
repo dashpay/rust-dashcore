@@ -152,6 +152,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .default_value("20")
                 .value_parser(clap::value_parser!(usize)),
         )
+        .arg(
+            Arg::new("mnemonic-file")
+                .long("mnemonic-file")
+                .value_name("PATH")
+                .help("Path to file containing BIP39 mnemonic phrase")
+                .required(true),
+        )
         .get_matches();
 
     let log_level: LevelFilter = matches
@@ -168,6 +175,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "regtest" => Network::Regtest,
         n => return Err(format!("Invalid network: {}", n).into()),
     };
+
+    let mnemonic_path =
+        matches.get_one::<String>("mnemonic-file").ok_or("Missing mnemonic-file argument")?;
+    let mnemonic_phrase = std::fs::read_to_string(mnemonic_path)
+        .map_err(|e| format!("Failed to read mnemonic file '{}': {}", mnemonic_path, e))?
+        .trim()
+        .to_string();
 
     // Parse validation mode
     let validation_str =
@@ -290,7 +304,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new();
     let wallet_id = wallet_manager.create_wallet_from_mnemonic(
-        "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside",
+        mnemonic_phrase.as_str(),
         "",
         &[network],
         None,
