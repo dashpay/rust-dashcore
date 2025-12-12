@@ -159,28 +159,48 @@ impl DiskStorageManager {
                         segment_id,
                     } => {
                         let mut cache = block_headers.write().await;
-                        let segment = cache.get_segment_mut(&segment_id).await;
-                        if let Err(e) = segment.and_then(|segment| segment.persist(&base_path)) {
-                            eprintln!("Failed to save segment {}: {}", segment_id, e);
-                        } else {
-                            tracing::trace!(
-                                "Background worker completed saving header segment {}",
-                                segment_id
-                            );
+                        let segment = match cache.get_segment_mut(&segment_id).await {
+                            Ok(segment) => segment,
+                            Err(e) => {
+                                eprintln!("Failed to get segment {}: {}", segment_id, e);
+                                continue;
+                            }
+                        };
+
+                        match segment.persist(&base_path).await {
+                            Ok(()) => {
+                                tracing::trace!(
+                                    "Background worker completed saving header segment {}",
+                                    segment_id
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save segment {}: {}", segment_id, e);
+                            }
                         }
                     }
                     WorkerCommand::SaveFilterHeaderSegmentCache {
                         segment_id,
                     } => {
                         let mut cache = filter_headers.write().await;
-                        let segment = cache.get_segment_mut(&segment_id).await;
-                        if let Err(e) = segment.and_then(|segment| segment.persist(&base_path)) {
-                            eprintln!("Failed to save filter segment {}: {}", segment_id, e);
-                        } else {
-                            tracing::trace!(
-                                "Background worker completed saving filter segment {}",
-                                segment_id
-                            );
+                        let segment = match cache.get_segment_mut(&segment_id).await {
+                            Ok(segment) => segment,
+                            Err(e) => {
+                                eprintln!("Failed to get segment {}: {}", segment_id, e);
+                                continue;
+                            }
+                        };
+
+                        match segment.persist(&base_path).await {
+                            Ok(()) => {
+                                tracing::trace!(
+                                    "Background worker completed saving header segment {}",
+                                    segment_id
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save segment {}: {}", segment_id, e);
+                            }
                         }
                     }
                     WorkerCommand::SaveIndex {

@@ -1,13 +1,13 @@
 //! Header storage operations for DiskStorageManager.
 
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
 use dashcore::block::Header as BlockHeader;
 use dashcore::BlockHash;
 
 use crate::error::StorageResult;
+use crate::storage::disk::io::atomic_write;
 use crate::StorageError;
 
 use super::manager::DiskStorageManager;
@@ -70,17 +70,8 @@ pub(super) async fn save_index_to_disk(
     path: &Path,
     index: &HashMap<BlockHash, u32>,
 ) -> StorageResult<()> {
-    tokio::task::spawn_blocking({
-        let path = path.to_path_buf();
-        let index = index.clone();
-        move || {
-            let data = bincode::serialize(&index).map_err(|e| {
-                StorageError::WriteFailed(format!("Failed to serialize index: {}", e))
-            })?;
-            fs::write(&path, data)?;
-            Ok(())
-        }
-    })
-    .await
-    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
+    let data = bincode::serialize(index)
+        .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize index: {}", e)))?;
+
+    atomic_write(path, &data).await
 }

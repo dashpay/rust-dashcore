@@ -2,8 +2,8 @@
 
 use std::{
     collections::HashMap,
-    fs::{self, File, OpenOptions},
-    io::{BufReader, BufWriter, Write},
+    fs::{self, File},
+    io::BufReader,
     ops::Range,
     path::{Path, PathBuf},
     time::Instant,
@@ -16,7 +16,11 @@ use dashcore::{
     BlockHash,
 };
 
-use crate::{error::StorageResult, storage::disk::manager::WorkerCommand, StorageError};
+use crate::{
+    error::StorageResult,
+    storage::disk::{io::atomic_write, manager::WorkerCommand},
+    StorageError,
+};
 
 use super::manager::DiskStorageManager;
 
@@ -234,7 +238,7 @@ impl<I: Persistable> SegmentCache<I> {
                 segments.iter_mut().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
 
             if let Some((key, segment)) = key_to_evict {
-                segment.persist(&self.base_path)?;
+                segment.persist(&self.base_path).await?;
                 segments.remove(&key);
             }
         }
@@ -435,7 +439,7 @@ impl<I: Persistable> Segment<I> {
         Ok(Self::new(segment_id, items, state))
     }
 
-    pub fn persist(&mut self, base_path: &Path) -> StorageResult<()> {
+    pub async fn persist(&mut self, base_path: &Path) -> StorageResult<()> {
         if self.state == SegmentState::Clean {
             return Ok(());
         }
@@ -448,16 +452,15 @@ impl<I: Persistable> Segment<I> {
 
         self.state = SegmentState::Saving;
 
-        let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
-        let mut writer = BufWriter::new(file);
+        let mut buffer = Vec::new();
 
         for item in self.items.iter() {
-            item.consensus_encode(&mut writer).map_err(|e| {
+            item.consensus_encode(&mut buffer).map_err(|e| {
                 StorageError::WriteFailed(format!("Failed to encode segment item: {}", e))
             })?;
         }
 
-        writer.flush()?;
+        atomic_write(&path, &buffer).await?;
 
         self.state = SegmentState::Clean;
         Ok(())
@@ -569,7 +572,7 @@ mod tests {
         assert_eq!(segment.state, SegmentState::Dirty);
         segment.items = items.clone();
 
-        assert!(segment.persist(tmp_dir.path()).is_ok());
+        assert!(segment.persist(tmp_dir.path()).await.is_ok());
 
         cache.clear_in_memory();
         assert!(cache.segments.is_empty());
@@ -641,7 +644,7 @@ mod tests {
         assert_eq!(segment.get(MAX_ITEMS - 1..MAX_ITEMS), []);
 
         assert_eq!(segment.state, SegmentState::Dirty);
-        assert!(segment.persist(tmp_dir.path()).is_ok());
+        assert!(segment.persist(tmp_dir.path()).await.is_ok());
         assert_eq!(segment.state, SegmentState::Clean);
 
         let mut loaded_segment =
