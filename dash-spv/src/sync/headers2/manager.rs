@@ -128,9 +128,8 @@ impl Headers2StateManager {
 
             // Get state and decompress
             let state = self.get_state(peer_id);
-            let header = state
-                .decompress(&compressed)
-                .map_err(|e| ProcessError::DecompressionError(i, e))?;
+            let header =
+                state.decompress(compressed).map_err(|e| ProcessError::DecompressionError(i, e))?;
 
             decompressed.push(header);
         }
