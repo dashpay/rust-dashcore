@@ -609,7 +609,7 @@ int32_t dash_spv_ffi_config_set_max_peers(struct FFIClientConfig *config,
 /**
  * Adds a peer address to the configuration
  *
- * Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999")
+ * Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`)
  * or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only
  * string is given, the default P2P port for the configured network is used.
  *
@@ -992,6 +992,15 @@ int32_t dash_spv_ffi_init_logging(const char *level,
 
  void dash_spv_ffi_enable_test_mode(void) ;
 
+/**
+ * Broadcasts a transaction to the Dash network via connected peers.
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient
+ * - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string
+ *   containing a hex-encoded serialized transaction
+ */
 
 int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
                                                   const char *tx_hex)

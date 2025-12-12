@@ -109,7 +109,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     ///
     /// # Architectural Design
     ///
-    /// The sync manager is stored as a non-shared field (not wrapped in Arc<Mutex<T>>)
+    /// The sync manager is stored as a non-shared field (not wrapped in `Arc<Mutex<T>>`)
     /// for the following reasons:
     ///
     /// 1. **Single Owner Pattern**: The sync manager is exclusively owned by the client,
@@ -126,7 +126,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     ///
     /// If concurrent access becomes necessary (e.g., for monitoring sync progress from
     /// multiple threads), consider:
-    /// - Using interior mutability patterns (Arc<Mutex<SyncManager>>)
+    /// - Using interior mutability patterns (`Arc<Mutex<SyncManager>>`)
     /// - Extracting read-only state into a separate shared structure
     /// - Implementing a message-passing architecture for sync commands
     ///

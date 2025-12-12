@@ -59,25 +59,25 @@ pub enum ManagedAccountType {
         addresses: AddressPool,
     },
     /// Provider voting keys (DIP-3)
-    /// Path: m/9'/5'/3'/1'/[key_index]
+    /// Path: `m/9'/5'/3'/1'/[key_index]`
     ProviderVotingKeys {
         /// Provider voting keys address pool
         addresses: AddressPool,
     },
     /// Provider owner keys (DIP-3)
-    /// Path: m/9'/5'/3'/2'/[key_index]
+    /// Path: `m/9'/5'/3'/2'/[key_index]`
     ProviderOwnerKeys {
         /// Provider owner keys address pool
         addresses: AddressPool,
     },
     /// Provider operator keys (DIP-3)
-    /// Path: m/9'/5'/3'/3'/[key_index]
+    /// Path: `m/9'/5'/3'/3'/[key_index]`
     ProviderOperatorKeys {
         /// Provider operator keys address pool
         addresses: AddressPool,
     },
     /// Provider platform P2P keys (DIP-3, ED25519)
-    /// Path: m/9'/5'/3'/4'/[key_index]
+    /// Path: `m/9'/5'/3'/4'/[key_index]`
     ProviderPlatformKeys {
         /// Provider platform keys address pool
         addresses: AddressPool,

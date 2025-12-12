@@ -65,19 +65,19 @@ typedef enum {
      */
     IDENTITY_INVITATION = 6,
     /*
-     Provider voting keys (DIP-3) - Path: m/9'/5'/3'/1'/[key_index]
+     Provider voting keys (DIP-3) - Path: m/9'/5'/3'/1'/\[key_index\]
      */
     PROVIDER_VOTING_KEYS = 7,
     /*
-     Provider owner keys (DIP-3) - Path: m/9'/5'/3'/2'/[key_index]
+     Provider owner keys (DIP-3) - Path: m/9'/5'/3'/2'/\[key_index\]
      */
     PROVIDER_OWNER_KEYS = 8,
     /*
-     Provider operator keys (DIP-3) - Path: m/9'/5'/3'/3'/[key_index]
+     Provider operator keys (DIP-3) - Path: m/9'/5'/3'/3'/\[key_index\]
      */
     PROVIDER_OPERATOR_KEYS = 9,
     /*
-     Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/[key_index]
+     Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/\[key_index\]
      */
     PROVIDER_PLATFORM_KEYS = 10,
     DASHPAY_RECEIVING_FUNDS = 11,

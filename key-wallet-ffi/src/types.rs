@@ -256,13 +256,13 @@ pub enum FFIAccountType {
     IdentityTopUpNotBoundToIdentity = 5,
     /// Identity invitation funding
     IdentityInvitation = 6,
-    /// Provider voting keys (DIP-3) - Path: m/9'/5'/3'/1'/[key_index]
+    /// Provider voting keys (DIP-3) - Path: m/9'/5'/3'/1'/\[key_index\]
     ProviderVotingKeys = 7,
-    /// Provider owner keys (DIP-3) - Path: m/9'/5'/3'/2'/[key_index]
+    /// Provider owner keys (DIP-3) - Path: m/9'/5'/3'/2'/\[key_index\]
     ProviderOwnerKeys = 8,
-    /// Provider operator keys (DIP-3) - Path: m/9'/5'/3'/3'/[key_index]
+    /// Provider operator keys (DIP-3) - Path: m/9'/5'/3'/3'/\[key_index\]
     ProviderOperatorKeys = 9,
-    /// Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/[key_index]
+    /// Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/\[key_index\]
     ProviderPlatformKeys = 10,
     DashpayReceivingFunds = 11,
     DashpayExternalAccount = 12,

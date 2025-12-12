@@ -52,7 +52,7 @@ use crate::prelude::*;
 pub use crate::transaction::outpoint::*;
 use crate::{ScriptBuf, Weight, io};
 
-/// Result of [`SighashCache::legacy_encode_signing_data_to`].
+/// Result of `SighashCache::legacy_encode_signing_data_to`.
 ///
 /// This type forces the caller to handle SIGHASH_SINGLE bug case.
 ///
@@ -232,10 +232,10 @@ impl Transaction {
     /// sighash flag can be computed.
     ///
     /// To actually produce a scriptSig, this hash needs to be run through an ECDSA signer, the
-    /// [`EcdsaSighashType`] appended to the resulting sig, and a script written around this, but
+    /// `EcdsaSighashType` appended to the resulting sig, and a script written around this, but
     /// this is the general (and hard) part.
     ///
-    /// The `sighash_type` supports an arbitrary `u32` value, instead of just [`EcdsaSighashType`],
+    /// The `sighash_type` supports an arbitrary `u32` value, instead of just `EcdsaSighashType`,
     /// because internally 4 bytes are being hashed, even though only the lowest byte is appended to
     /// signature in a transaction.
     ///
@@ -245,7 +245,7 @@ impl Transaction {
     ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
     ///   have the information to determine.
     /// - Does NOT handle the sighash single bug, you should either handle that manually or use
-    ///   [`Self::signature_hash()`] instead.
+    ///   `Self::signature_hash()` instead.
     ///
     /// # Panics
     ///
@@ -254,10 +254,10 @@ impl Transaction {
     /// sighash flag can be computed.
     ///
     /// To actually produce a scriptSig, this hash needs to be run through an ECDSA signer, the
-    /// [`EcdsaSighashType`] appended to the resulting sig, and a script written around this, but
+    /// `EcdsaSighashType` appended to the resulting sig, and a script written around this, but
     /// this is the general (and hard) part.
     ///
-    /// The `sighash_type` supports an arbitrary `u32` value, instead of just [`EcdsaSighashType`],
+    /// The `sighash_type` supports an arbitrary `u32` value, instead of just `EcdsaSighashType`,
     /// because internally 4 bytes are being hashed, even though only the lowest byte is appended to
     /// signature in a transaction.
     ///

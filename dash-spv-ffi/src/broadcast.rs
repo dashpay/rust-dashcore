@@ -2,6 +2,13 @@ use crate::{null_check, set_last_error, FFIDashSpvClient, FFIErrorCode};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+/// Broadcasts a transaction to the Dash network via connected peers.
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient
+/// - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string
+///   containing a hex-encoded serialized transaction
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
     client: *mut FFIDashSpvClient,
