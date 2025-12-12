@@ -178,6 +178,9 @@ pub unsafe extern "C" fn managed_wallet_get_account(
                 AccountType::DashpayExternalAccount {
                     ..
                 } => None,
+                AccountType::PlatformPayment {
+                    ..
+                } => None,
             };
 
             match managed_account {
@@ -527,6 +530,9 @@ pub unsafe extern "C" fn managed_account_get_account_type(
         AccountType::DashpayExternalAccount {
             ..
         } => FFIAccountType::DashpayExternalAccount,
+        AccountType::PlatformPayment {
+            ..
+        } => FFIAccountType::PlatformPayment,
     }
 }
 
@@ -1007,6 +1013,10 @@ pub unsafe extern "C" fn managed_account_get_address_pool(
                     ..
                 } => addresses,
                 ManagedAccountType::DashpayExternalAccount {
+                    addresses,
+                    ..
+                } => addresses,
+                ManagedAccountType::PlatformPayment {
                     addresses,
                     ..
                 } => addresses,

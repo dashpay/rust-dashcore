@@ -141,6 +141,13 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                 // DashPay managed accounts are not persisted here yet
                                 None
                             }
+                            AccountTypeMatch::PlatformPayment {
+                                ..
+                            } => {
+                                // Platform Payment addresses are NOT used in Core chain transactions.
+                                // This branch should never be reached by design (per DIP-17).
+                                None
+                            }
                         };
 
                         if let Some(account) = account {

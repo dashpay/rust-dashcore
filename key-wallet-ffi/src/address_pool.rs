@@ -59,6 +59,12 @@ fn get_managed_account_by_type<'a>(
             // DashPay managed accounts are not currently persisted in ManagedAccountCollection
             None
         }
+        AccountType::PlatformPayment {
+            ..
+        } => {
+            // Platform Payment accounts are not currently persisted in ManagedAccountCollection
+            None
+        }
     }
 }
 
@@ -100,6 +106,12 @@ fn get_managed_account_by_type_mut<'a>(
             ..
         } => {
             // DashPay managed accounts are not currently persisted in ManagedAccountCollection
+            None
+        }
+        AccountType::PlatformPayment {
+            ..
+        } => {
+            // Platform Payment accounts are not currently persisted in ManagedAccountCollection
             None
         }
     }

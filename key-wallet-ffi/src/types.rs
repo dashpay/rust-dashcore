@@ -266,6 +266,8 @@ pub enum FFIAccountType {
     ProviderPlatformKeys = 10,
     DashpayReceivingFunds = 11,
     DashpayExternalAccount = 12,
+    /// Platform Payment address (DIP-17) - Path: m/9'/5'/17'/account'/key_class'/index
+    PlatformPayment = 13,
 }
 
 impl FFIAccountType {
@@ -325,6 +327,14 @@ impl FFIAccountType {
                      without user_identity_id and friend_identity_id. The FFI API does not yet \
                      support passing these 32-byte identity IDs. This is a programming error - \
                      DashPay account creation must use a different API path."
+                );
+            }
+            FFIAccountType::PlatformPayment => {
+                panic!(
+                    "FFIAccountType::PlatformPayment cannot be converted to AccountType \
+                     without account and key_class indices. The FFI API does not yet \
+                     support passing these values. This is a programming error - \
+                     Platform Payment account creation must use a different API path."
                 );
             }
         }
@@ -411,6 +421,10 @@ impl FFIAccountType {
                     &friend_identity_id[..8]
                 );
             }
+            key_wallet::AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => (FFIAccountType::PlatformPayment, *account, Some(*key_class)),
         }
     }
 }
@@ -431,6 +445,13 @@ mod tests {
     fn test_dashpay_external_account_to_account_type_panics() {
         // This should panic because we cannot construct a DashPay account without identity IDs
         let _ = FFIAccountType::DashpayExternalAccount.to_account_type(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "PlatformPayment cannot be converted to AccountType")]
+    fn test_platform_payment_to_account_type_panics() {
+        // This should panic because we cannot construct a Platform Payment account without indices
+        let _ = FFIAccountType::PlatformPayment.to_account_type(0);
     }
 
     #[test]

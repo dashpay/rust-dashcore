@@ -475,18 +475,9 @@ impl AddressPool {
                 // Standard ECDSA address generation
                 let dash_pubkey = dashcore::PublicKey::new(xpub.public_key);
                 let network = self.network;
-                let address = match self.address_type {
-                    AddressType::P2pkh => Address::p2pkh(&dash_pubkey, network),
-                    AddressType::P2sh => {
-                        // For P2SH, we'd need script information
-                        // For now, default to P2PKH
-                        Address::p2pkh(&dash_pubkey, network)
-                    }
-                    _ => {
-                        // For other address types, default to P2PKH
-                        Address::p2pkh(&dash_pubkey, network)
-                    }
-                };
+                // Generate P2PKH address (Platform addresses use the same underlying
+                // hash but with different encoding handled by the Platform repo)
+                let address = Address::p2pkh(&dash_pubkey, network);
                 let public_key_bytes = dash_pubkey.to_bytes();
                 (address, PublicKeyType::ECDSA(public_key_bytes.to_vec()))
             }
