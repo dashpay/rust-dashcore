@@ -473,18 +473,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     self.chain_state.read().await.tip_height()
                 );
 
-                // If we failed due to missing previous header, and we're at genesis,
-                // this might be a protocol issue where peer expects us to have genesis in compression state
-                if matches!(e, crate::sync::headers2::ProcessError::DecompressionError(0, _))
-                    && self.chain_state.read().await.tip_height() == 0
-                {
-                    tracing::warn!(
-                        "Headers2 decompression failed at genesis. Peer may be sending compressed headers that reference genesis. Consider falling back to regular headers."
-                    );
-                }
-
-                // Return a specific error that can trigger fallback
-                // Mark that headers2 failed for this sync session
+                // Mark that headers2 failed for this sync session to trigger fallback to regular headers
                 self.headers2_failed = true;
                 return Err(SyncError::Headers2DecompressionFailed(format!(
                     "Failed to decompress headers: {}",
