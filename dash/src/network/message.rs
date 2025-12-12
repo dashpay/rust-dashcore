@@ -408,7 +408,7 @@ impl NetworkMessage {
             NetworkMessage::Unknown {
                 payload: ref data,
                 ..
-            } => serialize(data),
+            } => data.clone(),
             NetworkMessage::Verack
             | NetworkMessage::SendHeaders
             | NetworkMessage::SendHeaders2
