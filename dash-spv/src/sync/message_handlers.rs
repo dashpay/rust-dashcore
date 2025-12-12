@@ -291,12 +291,12 @@ impl<
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        let continue_sync = match self
+        let (continue_sync, headers_count) = match self
             .header_sync
             .handle_headers2_message(headers2, peer_id, storage, network)
             .await
         {
-            Ok(continue_sync) => continue_sync,
+            Ok(result) => result,
             Err(SyncError::Headers2DecompressionFailed(e)) => {
                 // Headers2 decompression failed - we should fall back to regular headers
                 tracing::warn!("Headers2 decompression failed: {} - peer may not properly support headers2 or connection issue", e);
@@ -306,46 +306,14 @@ impl<
             Err(e) => return Err(e),
         };
 
-        // Calculate blockchain height before borrowing self.current_phase
-        let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
-
-        // Update phase state and check if we need to transition
-        let should_transition = if let SyncPhase::DownloadingHeaders {
-            current_height,
-            received_empty_response,
-            last_progress,
-            ..
-        } = &mut self.current_phase
-        {
-            // Update current height - use blockchain height for checkpoint awareness
-            *current_height = blockchain_height;
-
-            // Note: We can't easily track headers_downloaded for compressed headers
-            // without decompressing first, so we rely on the header sync manager's internal stats
-
-            // Mark sync complete if continue_sync is false (no more headers)
-            if !continue_sync {
-                *received_empty_response = true;
-            }
-
-            // Update progress time
-            *last_progress = Instant::now();
-
-            // Check if phase is complete
-            !continue_sync || *received_empty_response
-        } else {
-            false
-        };
-
-        if should_transition {
-            self.transition_to_next_phase(storage, network, "Headers sync complete via Headers2")
-                .await?;
-
-            // Execute the next phase
-            self.execute_current_phase(network, storage).await?;
-        }
-
-        Ok(())
+        self.finalize_headers_sync(
+            continue_sync,
+            headers_count as u32,
+            network,
+            storage,
+            "Headers sync complete via Headers2",
+        )
+        .await
     }
 
     pub(super) async fn handle_headers_message(
@@ -357,10 +325,28 @@ impl<
         let continue_sync =
             self.header_sync.handle_headers_message(headers, storage, network).await?;
 
-        // Calculate blockchain height before borrowing self.current_phase
+        self.finalize_headers_sync(
+            continue_sync,
+            headers.len() as u32,
+            network,
+            storage,
+            "Headers sync complete",
+        )
+        .await
+    }
+
+    /// Common logic for finalizing header sync after processing headers (regular or compressed).
+    /// Updates phase state, marks completion, and triggers phase transition if needed.
+    async fn finalize_headers_sync(
+        &mut self,
+        continue_sync: bool,
+        headers_count: u32,
+        network: &mut N,
+        storage: &mut S,
+        transition_reason: &str,
+    ) -> SyncResult<()> {
         let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
 
-        // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
             headers_downloaded,
@@ -371,32 +357,28 @@ impl<
             ..
         } = &mut self.current_phase
         {
-            // Update current height - use blockchain height for checkpoint awareness
             *current_height = blockchain_height;
 
-            // Update progress
-            *headers_downloaded += headers.len() as u32;
+            *headers_downloaded += headers_count;
             let elapsed = start_time.elapsed().as_secs_f64();
             if elapsed > 0.0 {
                 *headers_per_second = *headers_downloaded as f64 / elapsed;
             }
 
-            // Check if we received empty response (sync complete)
-            if headers.is_empty() {
+            // Mark sync complete - this flag is checked by are_headers_complete() during transition
+            if !continue_sync {
                 *received_empty_response = true;
             }
 
-            // Update progress time
             *last_progress = Instant::now();
 
-            // Check if phase is complete
-            !continue_sync || *received_empty_response
+            !continue_sync
         } else {
             false
         };
 
         if should_transition {
-            self.transition_to_next_phase(storage, network, "Headers sync complete").await?;
+            self.transition_to_next_phase(storage, network, transition_reason).await?;
             self.execute_current_phase(network, storage).await?;
         }
 

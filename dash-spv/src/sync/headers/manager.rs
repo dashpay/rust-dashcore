@@ -430,7 +430,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         peer_id: crate::types::PeerId,
         storage: &mut S,
         network: &mut N,
-    ) -> SyncResult<bool> {
+    ) -> SyncResult<(bool, usize)> {
         tracing::info!(
             "📦 Received {} compressed headers from peer {}",
             headers2.headers.len(),
@@ -501,8 +501,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             stats.compression_ratio * 100.0
         );
 
+        let headers_count = headers.len();
+
         // Process decompressed headers through the normal flow
-        self.handle_headers_message(&headers, storage, network).await
+        let continue_sync = self.handle_headers_message(&headers, storage, network).await?;
+
+        Ok((continue_sync, headers_count))
     }
 
     /// Prepare sync state without sending network requests.
