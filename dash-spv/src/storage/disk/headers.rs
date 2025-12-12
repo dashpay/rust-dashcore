@@ -57,7 +57,7 @@ pub(super) async fn load_block_index(
 ) -> StorageResult<HashMap<BlockHash, u32>> {
     let index_path = manager.base_path.join("headers/index.dat");
 
-    if let Ok(content) = fs::read(&index_path) {
+    if let Ok(content) = tokio::fs::read(&index_path).await {
         bincode::deserialize(&content)
             .map_err(|e| StorageError::ReadFailed(format!("Failed to deserialize index: {}", e)))
     } else {
