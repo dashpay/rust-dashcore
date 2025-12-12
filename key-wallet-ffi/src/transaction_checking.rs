@@ -461,7 +461,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ..
                 } => {
                     // Note: Platform Payment addresses are NOT used in Core chain transactions
-                    // per DIP17/DIP18. This branch should never be reached in practice.
+                    // per DIP-17. This branch should never be reached in practice.
                     let ffi_match = FFIAccountMatch {
                         account_type: 13, // PlatformPayment
                         account_index: *account_index,

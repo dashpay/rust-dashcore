@@ -103,7 +103,7 @@ pub enum AccountTypeMatch {
         account_index: u32,
         involved_addresses: Vec<AddressInfo>,
     },
-    /// Platform Payment account (DIP17/DIP18)
+    /// Platform Payment account (DIP-17)
     /// Note: Platform addresses are NOT used in Core chain transactions
     PlatformPayment {
         account_index: u32,
@@ -385,7 +385,7 @@ impl ManagedAccountCollection {
                 matches
             }
             AccountTypeToCheck::PlatformPayment => {
-                // Platform Payment addresses (DIP17/DIP18) are NOT used in Core chain transactions.
+                // Platform Payment addresses (DIP-17) are NOT used in Core chain transactions.
                 // They are only for Platform-side payments. This account type should never match
                 // any Core chain transaction by design.
                 Vec::new()

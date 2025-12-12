@@ -266,7 +266,7 @@ pub enum FFIAccountType {
     ProviderPlatformKeys = 10,
     DashpayReceivingFunds = 11,
     DashpayExternalAccount = 12,
-    /// Platform Payment address (DIP17/DIP18) - Path: m/9'/5'/17'/account'/key_class'/index
+    /// Platform Payment address (DIP-17) - Path: m/9'/5'/17'/account'/key_class'/index
     PlatformPayment = 13,
 }
 

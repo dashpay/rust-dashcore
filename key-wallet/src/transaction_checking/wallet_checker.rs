@@ -145,7 +145,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                 ..
                             } => {
                                 // Platform Payment addresses are NOT used in Core chain transactions.
-                                // This branch should never be reached by design (per DIP17/DIP18).
+                                // This branch should never be reached by design (per DIP-17).
                                 None
                             }
                         };
