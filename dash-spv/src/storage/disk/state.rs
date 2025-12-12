@@ -8,6 +8,7 @@ use dashcore::{block::Header as BlockHeader, BlockHash, Txid};
 use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
+use crate::storage::disk::manager::WorkerCommand;
 use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
@@ -18,18 +19,20 @@ impl DiskStorageManager {
     /// Store chain state to disk.
     pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
         // Update our sync_base_height
-        *self.sync_base_height.write().await = state.sync_base_height;
+        self.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
+        self.block_headers.write().await.set_sync_base_height(state.sync_base_height);
 
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
         if state.synced_from_checkpoint() && !state.headers.is_empty() {
-            // Store headers starting from the checkpoint height
-            self.store_headers_from_height(&state.headers, state.sync_base_height).await?;
+            // Store headers starting at the checkpoint height
+            self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
         } else {
-            self.store_headers_impl(&state.headers, None).await?;
+            self.store_headers(&state.headers).await?;
         }
 
         // Store filter headers
+        // TODO: Shouldn't we use the sync base height here???
         self.store_filter_headers(&state.filter_headers).await?;
 
         // Store other state as JSON
@@ -350,11 +353,9 @@ impl DiskStorageManager {
         self.stop_worker().await;
 
         // Clear in-memory state
-        self.active_segments.write().await.clear();
-        self.active_filter_segments.write().await.clear();
+        self.block_headers.write().await.clear_in_memory();
+        self.filter_headers.write().await.clear_in_memory();
         self.header_hash_index.write().await.clear();
-        *self.cached_tip_height.write().await = None;
-        *self.cached_filter_tip_height.write().await = None;
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
 
@@ -405,9 +406,9 @@ impl DiskStorageManager {
             }
         }
 
-        let header_count = self.cached_tip_height.read().await.map_or(0, |h| h as u64 + 1);
+        let header_count = self.block_headers.read().await.tip_height().map_or(0, |h| h as u64 + 1);
         let filter_header_count =
-            self.cached_filter_tip_height.read().await.map_or(0, |h| h as u64 + 1);
+            self.filter_headers.read().await.tip_height().map_or(0, |h| h as u64 + 1);
 
         component_sizes.insert("headers".to_string(), header_count * 80);
         component_sizes.insert("filter_headers".to_string(), filter_header_count * 32);
@@ -424,9 +425,9 @@ impl DiskStorageManager {
     }
 
     /// Shutdown the storage manager.
-    pub async fn shutdown(&mut self) -> StorageResult<()> {
-        // Save all dirty segments
-        super::segments::save_dirty_segments(self).await?;
+    pub async fn shutdown(&mut self) {
+        // Persist all dirty data
+        self.save_dirty().await;
 
         // Shutdown background worker
         if let Some(tx) = self.worker_tx.take() {
@@ -443,8 +444,37 @@ impl DiskStorageManager {
         if let Some(handle) = self.worker_handle.take() {
             let _ = handle.await;
         }
+    }
 
-        Ok(())
+    /// Save all dirty segments to disk via background worker.
+    pub(super) async fn save_dirty(&self) {
+        self.filter_headers.write().await.persist_dirty(self).await;
+
+        self.block_headers.write().await.persist_dirty(self).await;
+
+        if let Some(tx) = &self.worker_tx {
+            // Save the index only if it has grown significantly (every 10k new entries)
+            let current_index_size = self.header_hash_index.read().await.len();
+            let last_save_count = *self.last_index_save_count.read().await;
+
+            // Save if index has grown by 10k entries, or if we've never saved before
+            if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
+                let index = self.header_hash_index.read().await.clone();
+                let _ = tx
+                    .send(WorkerCommand::SaveIndex {
+                        index,
+                    })
+                    .await;
+
+                // Update the last save count
+                *self.last_index_save_count.write().await = current_index_size;
+                tracing::debug!(
+                    "Scheduled index save (size: {}, last_save: {})",
+                    current_index_size,
+                    last_save_count
+                );
+            }
+        }
     }
 }
 
@@ -507,44 +537,44 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
-        self.store_headers_impl(headers, None).await
+        self.store_headers(headers).await
     }
 
     async fn load_headers(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        Self::load_headers(self, range).await
+        self.block_headers.write().await.get_items(range).await
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        Self::get_header(self, height).await
+        Ok(self.block_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
-        Self::get_tip_height(self).await
+        Ok(self.block_headers.read().await.tip_height())
     }
 
     async fn store_filter_headers(
         &mut self,
         headers: &[dashcore::hash_types::FilterHeader],
     ) -> StorageResult<()> {
-        Self::store_filter_headers(self, headers).await
+        self.filter_headers.write().await.store_items(headers, self).await
     }
 
     async fn load_filter_headers(
         &self,
         range: std::ops::Range<u32>,
     ) -> StorageResult<Vec<dashcore::hash_types::FilterHeader>> {
-        Self::load_filter_headers(self, range).await
+        self.filter_headers.write().await.get_items(range).await
     }
 
     async fn get_filter_header(
         &self,
         height: u32,
     ) -> StorageResult<Option<dashcore::hash_types::FilterHeader>> {
-        Self::get_filter_header(self, height).await
+        Ok(self.filter_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
-        Self::get_filter_tip_height(self).await
+        Ok(self.filter_headers.read().await.tip_height())
     }
 
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
@@ -593,14 +623,6 @@ impl StorageManager for DiskStorageManager {
 
     async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
         Self::get_header_height_by_hash(self, hash).await
-    }
-
-    async fn get_headers_batch(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<(u32, BlockHeader)>> {
-        Self::get_headers_batch(self, start_height, end_height).await
     }
 
     async fn store_sync_state(
@@ -692,7 +714,8 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn shutdown(&mut self) -> StorageResult<()> {
-        Self::shutdown(self).await
+        Self::shutdown(self).await;
+        Ok(())
     }
 }
 
@@ -726,10 +749,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sentinel_headers_not_returned() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_load_headers() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
         let temp_dir = TempDir::new()?;
-        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
+        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("Unable to create storage");
 
         // Create a test header
         let test_header = BlockHeader {
@@ -747,53 +772,13 @@ mod tests {
         // Load headers for a range that would include padding
         let loaded_headers = storage.load_headers(0..10).await?;
 
-        // Should only get back the one header we stored, not the sentinel padding
+        // Should only get back the one header we stored
         assert_eq!(loaded_headers.len(), 1);
         assert_eq!(loaded_headers[0], test_header);
 
-        // Try to get a header at index 5 (which would be a sentinel)
+        // Try to get a header at index 5 (which doesn't exist)
         let header_at_5 = storage.get_header(5).await?;
-        assert!(header_at_5.is_none(), "Should not return sentinel headers");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_sentinel_headers_not_saved_to_disk() -> Result<(), Box<dyn std::error::Error>> {
-        // Create a temporary directory for the test
-        let temp_dir = TempDir::new()?;
-        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
-
-        // Create test headers
-        let headers: Vec<BlockHeader> = (0..3)
-            .map(|i| BlockHeader {
-                version: Version::from_consensus(1),
-                prev_blockhash: BlockHash::from_byte_array([i as u8; 32]),
-                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([(i + 1) as u8; 32])
-                    .into(),
-                time: 12345 + i,
-                bits: CompactTarget::from_consensus(0x1d00ffff),
-                nonce: 67890 + i,
-            })
-            .collect();
-
-        // Store headers
-        storage.store_headers(&headers).await?;
-
-        // Force save to disk
-        super::super::segments::save_dirty_segments(&storage).await?;
-
-        // Wait a bit for background save
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        drop(storage);
-
-        // Create a new storage instance to load from disk
-        let storage2 = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
-
-        // Load headers - should only get the 3 we stored
-        let loaded_headers = storage2.load_headers(0..super::super::HEADERS_PER_SEGMENT).await?;
-        assert_eq!(loaded_headers.len(), 3);
+        assert!(header_at_5.is_none(), "Should not return any header");
 
         Ok(())
     }
@@ -819,22 +804,25 @@ mod tests {
             })
             .collect();
 
-        // Store headers using checkpoint sync method
-        storage.store_headers_from_height(&headers, checkpoint_height).await?;
-
         // Set sync base height so storage interprets heights as blockchain heights
         let mut base_state = ChainState::new();
         base_state.sync_base_height = checkpoint_height;
         storage.store_chain_state(&base_state).await?;
 
+        storage.store_headers(&headers).await?;
+
         // Verify headers are stored at correct blockchain heights
         let header_at_base = storage.get_header(checkpoint_height).await?;
-        assert!(header_at_base.is_some(), "Header at base blockchain height should exist");
-        assert_eq!(header_at_base.unwrap(), headers[0]);
+        assert_eq!(
+            header_at_base.expect("Header at base blockchain height should exist"),
+            headers[0]
+        );
 
         let header_at_ending = storage.get_header(checkpoint_height + 99).await?;
-        assert!(header_at_ending.is_some(), "Header at ending blockchain height should exist");
-        assert_eq!(header_at_ending.unwrap(), headers[99]);
+        assert_eq!(
+            header_at_ending.expect("Header at ending blockchain height should exist"),
+            headers[99]
+        );
 
         // Test the reverse index (hash -> blockchain height)
         let hash_0 = headers[0].block_hash();
@@ -859,7 +847,7 @@ mod tests {
         storage.store_chain_state(&chain_state).await?;
 
         // Force save to disk
-        super::super::segments::save_dirty_segments(&storage).await?;
+        storage.save_dirty().await;
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         drop(storage);
@@ -897,10 +885,10 @@ mod tests {
             let mut storage = DiskStorageManager::new(base_path.clone()).await?;
 
             storage.store_headers(&headers[..10_000]).await?;
-            super::super::segments::save_dirty_segments(&storage).await?;
+            storage.save_dirty().await;
 
             storage.store_headers(&headers[10_000..]).await?;
-            storage.shutdown().await?;
+            storage.shutdown().await;
         }
 
         let storage = DiskStorageManager::new(base_path).await?;

@@ -1,322 +1,697 @@
-//! Segment management for cached header and filter segments.
+//! Segment management and persistence for items implementing the Persistable trait.
 
-use std::collections::HashMap;
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::BufReader,
+    ops::Range,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use dashcore::{
-    block::{Header as BlockHeader, Version},
+    block::Header as BlockHeader,
+    consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
-    pow::CompactTarget,
     BlockHash,
 };
-use dashcore_hashes::Hash;
 
-use crate::error::StorageResult;
+use crate::{
+    error::StorageResult,
+    storage::disk::{io::atomic_write, manager::WorkerCommand},
+    StorageError,
+};
 
 use super::manager::DiskStorageManager;
-use super::{HEADERS_PER_SEGMENT, MAX_ACTIVE_SEGMENTS};
 
 /// State of a segment in memory
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum SegmentState {
+enum SegmentState {
     Clean,  // No changes, up to date on disk
     Dirty,  // Has changes, needs saving
     Saving, // Currently being saved in background
 }
 
-/// In-memory cache for a segment of headers
-#[derive(Clone)]
-pub(super) struct SegmentCache {
-    pub(super) segment_id: u32,
-    pub(super) headers: Vec<BlockHeader>,
-    pub(super) valid_count: usize, // Number of actual valid headers (excluding padding)
-    pub(super) state: SegmentState,
-    pub(super) last_saved: Instant,
-    pub(super) last_accessed: Instant,
-}
+pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
+    const FOLDER_NAME: &'static str;
+    const SEGMENT_PREFIX: &'static str = "segment";
+    const DATA_FILE_EXTENSION: &'static str = "dat";
 
-/// In-memory cache for a segment of filter headers
-#[derive(Clone)]
-pub(super) struct FilterSegmentCache {
-    pub(super) segment_id: u32,
-    pub(super) filter_headers: Vec<FilterHeader>,
-    pub(super) state: SegmentState,
-    pub(super) last_saved: Instant,
-    pub(super) last_accessed: Instant,
-}
-
-/// Creates a sentinel header used for padding segments.
-/// This header has invalid values that cannot be mistaken for valid blocks.
-pub(super) fn create_sentinel_header() -> BlockHeader {
-    BlockHeader {
-        version: Version::from_consensus(i32::MAX), // Invalid version
-        prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
-        merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
-        time: u32::MAX,                                  // Far future timestamp
-        bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
-        nonce: u32::MAX,                                 // Max nonce value
-    }
-}
-
-/// Ensure a segment is loaded in memory.
-pub(super) async fn ensure_segment_loaded(
-    manager: &DiskStorageManager,
-    segment_id: u32,
-) -> StorageResult<()> {
-    // Process background worker notifications to clear save_pending flags
-    manager.process_worker_notifications().await;
-
-    let mut segments = manager.active_segments.write().await;
-
-    if segments.contains_key(&segment_id) {
-        // Update last accessed time
-        if let Some(segment) = segments.get_mut(&segment_id) {
-            segment.last_accessed = Instant::now();
-        }
-        return Ok(());
-    }
-
-    // Load segment from disk
-    let segment_path = manager.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
-    let mut headers = if segment_path.exists() {
-        super::io::load_headers_from_file(&segment_path).await?
-    } else {
-        Vec::new()
-    };
-
-    // Store the actual number of valid headers before padding
-    let valid_count = headers.len();
-
-    // Ensure the segment has space for all possible headers in this segment
-    // This is crucial for proper indexing
-    let expected_size = HEADERS_PER_SEGMENT as usize;
-    if headers.len() < expected_size {
-        // Pad with sentinel headers that cannot be mistaken for valid blocks
-        let sentinel_header = create_sentinel_header();
-        headers.resize(expected_size, sentinel_header);
-    }
-
-    // Evict old segments if needed
-    if segments.len() >= MAX_ACTIVE_SEGMENTS {
-        evict_oldest_segment(manager, &mut segments).await?;
-    }
-
-    segments.insert(
-        segment_id,
-        SegmentCache {
+    fn relative_disk_path(segment_id: u32) -> PathBuf {
+        format!(
+            "{}/{}_{:04}.{}",
+            Self::FOLDER_NAME,
+            Self::SEGMENT_PREFIX,
             segment_id,
-            headers,
-            valid_count,
-            state: SegmentState::Clean,
-            last_saved: Instant::now(),
-            last_accessed: Instant::now(),
-        },
-    );
+            Self::DATA_FILE_EXTENSION
+        )
+        .into()
+    }
 
-    Ok(())
+    fn make_save_command(segment: &Segment<Self>) -> WorkerCommand;
 }
 
-/// Evict the oldest (least recently accessed) segment.
-pub(super) async fn evict_oldest_segment(
-    manager: &DiskStorageManager,
-    segments: &mut HashMap<u32, SegmentCache>,
-) -> StorageResult<()> {
-    if let Some(oldest_id) = segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, _)| *id)
-    {
-        // Get the segment to check if it needs saving
-        if let Some(oldest_segment) = segments.get(&oldest_id) {
-            // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
-            if oldest_segment.state != SegmentState::Clean {
-                tracing::debug!(
-                    "Synchronously saving segment {} before eviction (state: {:?})",
-                    oldest_segment.segment_id,
-                    oldest_segment.state
-                );
-                let segment_path = manager
-                    .base_path
-                    .join(format!("headers/segment_{:04}.dat", oldest_segment.segment_id));
-                super::io::save_segment_to_disk(&segment_path, &oldest_segment.headers).await?;
-                tracing::debug!("Successfully saved segment {} to disk", oldest_segment.segment_id);
+impl Persistable for BlockHeader {
+    const FOLDER_NAME: &'static str = "block_headers";
+
+    fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
+        WorkerCommand::SaveBlockHeaderSegmentCache {
+            segment_id: segment.segment_id,
+        }
+    }
+}
+
+impl Persistable for FilterHeader {
+    const FOLDER_NAME: &'static str = "filter_headers";
+
+    fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
+        WorkerCommand::SaveFilterHeaderSegmentCache {
+            segment_id: segment.segment_id,
+        }
+    }
+}
+
+/// In-memory cache for all segments of items
+#[derive(Debug)]
+pub struct SegmentCache<I: Persistable> {
+    segments: HashMap<u32, Segment<I>>,
+    tip_height: Option<u32>,
+    sync_base_height: u32,
+    base_path: PathBuf,
+}
+
+impl SegmentCache<BlockHeader> {
+    pub async fn build_block_index_from_segments(
+        &mut self,
+    ) -> StorageResult<HashMap<BlockHash, u32>> {
+        let segments_dir = self.base_path.join(BlockHeader::FOLDER_NAME);
+
+        let blocks_count = self.next_height() - self.sync_base_height;
+        let mut block_index = HashMap::with_capacity(blocks_count as usize);
+
+        let entries = fs::read_dir(&segments_dir)?;
+
+        for entry in entries.flatten() {
+            let name = match entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if !name.starts_with(BlockHeader::SEGMENT_PREFIX) {
+                continue;
+            }
+
+            if !name.ends_with(&format!(".{}", BlockHeader::DATA_FILE_EXTENSION)) {
+                continue;
+            }
+
+            let segment_id = match name[8..12].parse::<u32>() {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let storage_start_idx = Self::segment_id_to_start_index(segment_id);
+            let mut block_height = self.index_to_height(storage_start_idx);
+
+            let segment = self.get_segment(&segment_id).await?;
+
+            for item in segment.items.iter() {
+                block_index.insert(item.block_hash(), block_height);
+
+                block_height += 1;
             }
         }
 
-        segments.remove(&oldest_id);
+        Ok(block_index)
     }
-
-    Ok(())
 }
 
-/// Ensure a filter segment is loaded in memory.
-pub(super) async fn ensure_filter_segment_loaded(
-    manager: &DiskStorageManager,
-    segment_id: u32,
-) -> StorageResult<()> {
-    // Process background worker notifications to clear save_pending flags
-    manager.process_worker_notifications().await;
+impl<I: Persistable> SegmentCache<I> {
+    const MAX_ACTIVE_SEGMENTS: usize = 10;
 
-    let mut segments = manager.active_filter_segments.write().await;
+    pub async fn load_or_new(
+        base_path: impl Into<PathBuf>,
+        sync_base_height: u32,
+    ) -> StorageResult<Self> {
+        let base_path = base_path.into();
+        let items_dir = base_path.join(I::FOLDER_NAME);
 
-    if segments.contains_key(&segment_id) {
-        // Update last accessed time
-        if let Some(segment) = segments.get_mut(&segment_id) {
-            segment.last_accessed = Instant::now();
-        }
-        return Ok(());
-    }
-
-    // Load segment from disk
-    let segment_path =
-        manager.base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
-    let filter_headers = if segment_path.exists() {
-        super::io::load_filter_headers_from_file(&segment_path).await?
-    } else {
-        Vec::new()
-    };
-
-    // Evict old segments if needed
-    if segments.len() >= MAX_ACTIVE_SEGMENTS {
-        evict_oldest_filter_segment(manager, &mut segments).await?;
-    }
-
-    segments.insert(
-        segment_id,
-        FilterSegmentCache {
-            segment_id,
-            filter_headers,
-            state: SegmentState::Clean,
-            last_saved: Instant::now(),
-            last_accessed: Instant::now(),
-        },
-    );
-
-    Ok(())
-}
-
-/// Evict the oldest (least recently accessed) filter segment.
-pub(super) async fn evict_oldest_filter_segment(
-    manager: &DiskStorageManager,
-    segments: &mut HashMap<u32, FilterSegmentCache>,
-) -> StorageResult<()> {
-    if let Some((oldest_id, oldest_segment)) =
-        segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
-    {
-        // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
-        if oldest_segment.state != SegmentState::Clean {
-            tracing::trace!(
-                "Synchronously saving filter segment {} before eviction (state: {:?})",
-                oldest_segment.segment_id,
-                oldest_segment.state
-            );
-            let segment_path = manager
-                .base_path
-                .join(format!("filters/filter_segment_{:04}.dat", oldest_segment.segment_id));
-            super::io::save_filter_segment_to_disk(&segment_path, &oldest_segment.filter_headers)
-                .await?;
-            tracing::debug!(
-                "Successfully saved filter segment {} to disk",
-                oldest_segment.segment_id
-            );
-        }
-
-        segments.remove(&oldest_id);
-    }
-
-    Ok(())
-}
-
-/// Save all dirty segments to disk via background worker.
-pub(super) async fn save_dirty_segments(manager: &DiskStorageManager) -> StorageResult<()> {
-    use super::manager::WorkerCommand;
-
-    if let Some(tx) = &manager.worker_tx {
-        // Collect segments to save (only dirty ones)
-        let (segments_to_save, segment_ids_to_mark) = {
-            let segments = manager.active_segments.read().await;
-            let to_save: Vec<_> = segments
-                .values()
-                .filter(|s| s.state == SegmentState::Dirty)
-                .map(|s| (s.segment_id, s.headers.clone()))
-                .collect();
-            let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
-            (to_save, ids_to_mark)
+        let mut cache = Self {
+            segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
+            tip_height: None,
+            sync_base_height,
+            base_path,
         };
 
-        // Send header segments to worker
-        for (segment_id, headers) in segments_to_save {
-            let _ = tx
-                .send(WorkerCommand::SaveHeaderSegment {
-                    segment_id,
-                    headers,
-                })
-                .await;
-        }
+        // Building the metadata
+        if let Ok(entries) = fs::read_dir(&items_dir) {
+            let mut max_segment_id = None;
 
-        // Mark ONLY the header segments we're actually saving as Saving
-        {
-            let mut segments = manager.active_segments.write().await;
-            for segment_id in &segment_ids_to_mark {
-                if let Some(segment) = segments.get_mut(segment_id) {
-                    segment.state = SegmentState::Saving;
-                    segment.last_saved = Instant::now();
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.starts_with(I::SEGMENT_PREFIX)
+                        && name.ends_with(&format!(".{}", I::DATA_FILE_EXTENSION))
+                    {
+                        let segment_id_start = I::SEGMENT_PREFIX.len() + 1;
+                        let segment_id_end = segment_id_start + 4;
+
+                        if let Ok(id) = name[segment_id_start..segment_id_end].parse::<u32>() {
+                            max_segment_id =
+                                Some(max_segment_id.map_or(id, |max: u32| max.max(id)));
+                        }
+                    }
                 }
+            }
+
+            if let Some(segment_id) = max_segment_id {
+                let segment = cache.get_segment(&segment_id).await?;
+                let last_storage_index =
+                    segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.items.len() as u32 - 1;
+
+                let tip_height = cache.index_to_height(last_storage_index);
+                cache.tip_height = Some(tip_height);
             }
         }
 
-        // Collect filter segments to save (only dirty ones)
-        let (filter_segments_to_save, filter_segment_ids_to_mark) = {
-            let segments = manager.active_filter_segments.read().await;
-            let to_save: Vec<_> = segments
-                .values()
-                .filter(|s| s.state == SegmentState::Dirty)
-                .map(|s| (s.segment_id, s.filter_headers.clone()))
-                .collect();
-            let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
-            (to_save, ids_to_mark)
+        Ok(cache)
+    }
+
+    /// Get the segment ID for a given storage index.
+    #[inline]
+    fn index_to_segment_id(index: u32) -> u32 {
+        index / Segment::<I>::ITEMS_PER_SEGMENT
+    }
+
+    #[inline]
+    fn segment_id_to_start_index(segment_id: u32) -> u32 {
+        segment_id * Segment::<I>::ITEMS_PER_SEGMENT
+    }
+
+    /// Get the segment offset for a given storage index.
+    #[inline]
+    fn index_to_offset(index: u32) -> u32 {
+        index % Segment::<I>::ITEMS_PER_SEGMENT
+    }
+
+    #[inline]
+    pub fn set_sync_base_height(&mut self, height: u32) {
+        self.sync_base_height = height;
+    }
+
+    pub fn clear_in_memory(&mut self) {
+        self.segments.clear();
+        self.tip_height = None;
+    }
+
+    pub async fn clear_all(&mut self) -> StorageResult<()> {
+        self.clear_in_memory();
+
+        let persistence_dir = self.base_path.join(I::FOLDER_NAME);
+        if persistence_dir.exists() {
+            tokio::fs::remove_dir_all(&persistence_dir).await?;
+        }
+        tokio::fs::create_dir_all(&persistence_dir).await?;
+
+        Ok(())
+    }
+
+    pub async fn get_segment(&mut self, segment_id: &u32) -> StorageResult<&Segment<I>> {
+        let segment = self.get_segment_mut(segment_id).await?;
+        Ok(&*segment)
+    }
+
+    pub async fn get_segment_mut<'a>(
+        &'a mut self,
+        segment_id: &u32,
+    ) -> StorageResult<&'a mut Segment<I>> {
+        let segments_len = self.segments.len();
+        let segments = &mut self.segments;
+
+        if segments.contains_key(segment_id) {
+            let segment = segments.get_mut(segment_id).expect("We already checked that it exists");
+            segment.last_accessed = Instant::now();
+            return Ok(segment);
+        }
+
+        if segments_len >= Self::MAX_ACTIVE_SEGMENTS {
+            let key_to_evict =
+                segments.iter_mut().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
+
+            if let Some((key, segment)) = key_to_evict {
+                segment.persist(&self.base_path).await?;
+                segments.remove(&key);
+            }
+        }
+
+        // Load and insert
+        let segment = Segment::load(&self.base_path, *segment_id).await?;
+        let segment = segments.entry(*segment_id).or_insert(segment);
+        Ok(segment)
+    }
+
+    pub async fn get_items(&mut self, height_range: Range<u32>) -> StorageResult<Vec<I>> {
+        debug_assert!(height_range.start <= height_range.end);
+
+        let storage_start_idx = self.height_to_index(height_range.start);
+        let storage_end_idx = self.height_to_index(height_range.end);
+
+        let mut items = Vec::with_capacity((storage_end_idx - storage_start_idx) as usize);
+
+        let start_segment = Self::index_to_segment_id(storage_start_idx);
+        let end_segment = Self::index_to_segment_id(storage_end_idx);
+
+        for segment_id in start_segment..=end_segment {
+            let segment = self.get_segment_mut(&segment_id).await?;
+            let item_count = segment.items.len() as u32;
+
+            let seg_start_idx = if segment_id == start_segment {
+                Self::index_to_offset(storage_start_idx)
+            } else {
+                0
+            };
+
+            let seg_end_idx = if segment_id == end_segment {
+                Self::index_to_offset(storage_end_idx).min(item_count)
+            } else {
+                item_count
+            };
+
+            items.extend_from_slice(segment.get(seg_start_idx..seg_end_idx));
+        }
+
+        Ok(items)
+    }
+
+    pub async fn store_items(
+        &mut self,
+        items: &[I],
+        manager: &DiskStorageManager,
+    ) -> StorageResult<()> {
+        self.store_items_at_height(items, self.next_height(), manager).await
+    }
+
+    pub async fn store_items_at_height(
+        &mut self,
+        items: &[I],
+        start_height: u32,
+        manager: &DiskStorageManager,
+    ) -> StorageResult<()> {
+        if items.is_empty() {
+            tracing::trace!("DiskStorage: no items to store");
+            return Ok(());
+        }
+
+        let mut storage_index = self.height_to_index(start_height);
+
+        tracing::debug!(
+            "SegmentsCache: storing {} items starting at height {} (storage index {})",
+            items.len(),
+            start_height,
+            storage_index
+        );
+
+        for item in items {
+            let segment_id = Self::index_to_segment_id(storage_index);
+            let offset = Self::index_to_offset(storage_index);
+
+            // Update segment
+            let segments = self.get_segment_mut(&segment_id).await?;
+            segments.insert(item.clone(), offset);
+
+            storage_index += 1;
+        }
+
+        // Update cached tip height with blockchain height
+        let last_item_height = self.index_to_height(storage_index).saturating_sub(1);
+        self.tip_height = match self.tip_height {
+            Some(current) => Some(current.max(last_item_height)),
+            None => Some(last_item_height),
         };
 
-        // Send filter segments to worker
-        for (segment_id, filter_headers) in filter_segments_to_save {
-            let _ = tx
-                .send(WorkerCommand::SaveFilterSegment {
-                    segment_id,
-                    filter_headers,
-                })
-                .await;
+        // Persist dirty segments periodically (every 1000 filter items)
+        if items.len() >= 1000 || start_height.is_multiple_of(1000) {
+            self.persist_dirty(manager).await;
         }
 
-        // Mark ONLY the filter segments we're actually saving as Saving
-        {
-            let mut segments = manager.active_filter_segments.write().await;
-            for segment_id in &filter_segment_ids_to_mark {
-                if let Some(segment) = segments.get_mut(segment_id) {
-                    segment.state = SegmentState::Saving;
-                    segment.last_saved = Instant::now();
-                }
+        Ok(())
+    }
+
+    pub async fn persist_dirty(&mut self, manager: &DiskStorageManager) {
+        // Collect segments to persist (only dirty ones)
+        let segments: Vec<_> =
+            self.segments.values().filter(|s| s.state == SegmentState::Dirty).collect();
+
+        // Send header segments to worker if exists
+        if let Some(tx) = &manager.worker_tx {
+            for segment in segments {
+                let _ = tx.send(I::make_save_command(segment)).await;
             }
-        }
-
-        // Save the index only if it has grown significantly (every 10k new entries)
-        let current_index_size = manager.header_hash_index.read().await.len();
-        let last_save_count = *manager.last_index_save_count.read().await;
-
-        // Save if index has grown by 10k entries, or if we've never saved before
-        if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
-            let index = manager.header_hash_index.read().await.clone();
-            let _ = tx
-                .send(WorkerCommand::SaveIndex {
-                    index,
-                })
-                .await;
-
-            // Update the last save count
-            *manager.last_index_save_count.write().await = current_index_size;
-            tracing::debug!(
-                "Scheduled index save (size: {}, last_save: {})",
-                current_index_size,
-                last_save_count
-            );
         }
     }
 
-    Ok(())
+    #[inline]
+    pub fn tip_height(&self) -> Option<u32> {
+        self.tip_height
+    }
+
+    #[inline]
+    pub fn next_height(&self) -> u32 {
+        let current_tip = self.tip_height();
+        match current_tip {
+            Some(tip) => tip + 1,
+            None => self.sync_base_height,
+        }
+    }
+
+    /// Convert blockchain height to storage index
+    /// For checkpoint sync, storage index is relative to sync_base_height
+    #[inline]
+    fn height_to_index(&self, height: u32) -> u32 {
+        debug_assert!(
+            height >= self.sync_base_height,
+            "Height must be greater than or equal to sync_base_height"
+        );
+
+        height - self.sync_base_height
+    }
+
+    #[inline]
+    pub fn index_to_height(&self, index: u32) -> u32 {
+        index + self.sync_base_height
+    }
+}
+
+/// In-memory cache for a segment of items
+#[derive(Debug, Clone)]
+pub struct Segment<I: Persistable> {
+    segment_id: u32,
+    items: Vec<I>,
+    state: SegmentState,
+    last_accessed: Instant,
+}
+
+impl<I: Persistable> Segment<I> {
+    const ITEMS_PER_SEGMENT: u32 = 50_000;
+
+    fn new(segment_id: u32, mut items: Vec<I>, state: SegmentState) -> Self {
+        debug_assert!(items.len() <= Self::ITEMS_PER_SEGMENT as usize);
+        items.truncate(Self::ITEMS_PER_SEGMENT as usize);
+
+        Self {
+            segment_id,
+            items,
+            state,
+            last_accessed: Instant::now(),
+        }
+    }
+
+    pub async fn load(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
+        // Load segment from disk
+        let segment_path = base_path.join(I::relative_disk_path(segment_id));
+
+        let (items, state) = if segment_path.exists() {
+            let file = File::open(&segment_path)?;
+            let mut reader = BufReader::new(file);
+            let mut items = Vec::with_capacity(Segment::<I>::ITEMS_PER_SEGMENT as usize);
+
+            loop {
+                match I::consensus_decode(&mut reader) {
+                    Ok(item) => items.push(item),
+                    Err(encode::Error::Io(ref e))
+                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        break
+                    }
+                    Err(e) => {
+                        return Err(StorageError::ReadFailed(format!(
+                            "Failed to decode item: {}",
+                            e
+                        )))
+                    }
+                }
+            }
+
+            (items, SegmentState::Clean)
+        } else {
+            (Vec::with_capacity(Self::ITEMS_PER_SEGMENT as usize), SegmentState::Dirty)
+        };
+
+        Ok(Self::new(segment_id, items, state))
+    }
+
+    pub async fn persist(&mut self, base_path: &Path) -> StorageResult<()> {
+        if self.state == SegmentState::Clean {
+            return Ok(());
+        }
+
+        let path = base_path.join(I::relative_disk_path(self.segment_id));
+
+        if let Err(e) = fs::create_dir_all(path.parent().unwrap()) {
+            return Err(StorageError::WriteFailed(format!("Failed to persist segment: {}", e)));
+        }
+
+        self.state = SegmentState::Saving;
+
+        let mut buffer = Vec::new();
+
+        for item in self.items.iter() {
+            item.consensus_encode(&mut buffer).map_err(|e| {
+                StorageError::WriteFailed(format!("Failed to encode segment item: {}", e))
+            })?;
+        }
+
+        atomic_write(&path, &buffer).await?;
+
+        self.state = SegmentState::Clean;
+        Ok(())
+    }
+
+    pub fn insert(&mut self, item: I, offset: u32) {
+        debug_assert!(offset < Self::ITEMS_PER_SEGMENT);
+
+        let offset = offset as usize;
+
+        debug_assert!(offset <= self.items.len());
+
+        if offset < self.items.len() {
+            self.items[offset] = item;
+        } else if offset == self.items.len() {
+            self.items.push(item);
+        } else {
+            tracing::error!(
+                "Tried to store an item out of the allowed bounds (offset {}) in segment with id {}",
+                offset,
+                self.segment_id
+            );
+        }
+
+        // Transition to Dirty state (from Clean, Dirty, or Saving)
+        self.state = SegmentState::Dirty;
+        self.last_accessed = std::time::Instant::now();
+    }
+
+    pub fn get(&mut self, range: Range<u32>) -> &[I] {
+        self.last_accessed = std::time::Instant::now();
+
+        if range.start as usize >= self.items.len() {
+            return &[];
+        };
+
+        let end = range.end.min(self.items.len() as u32);
+
+        &self.items[range.start as usize..end as usize]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dashcore_hashes::Hash;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    trait TestStruct {
+        fn new_test(id: u32) -> Self;
+    }
+
+    impl TestStruct for FilterHeader {
+        fn new_test(id: u32) -> Self {
+            let mut bytes = [0u8; 32];
+            bytes[0..4].copy_from_slice(&id.to_le_bytes());
+            FilterHeader::from_raw_hash(dashcore_hashes::sha256d::Hash::from_byte_array(bytes))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_segment_cache_eviction() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        const MAX_SEGMENTS: u32 = SegmentCache::<FilterHeader>::MAX_ACTIVE_SEGMENTS as u32;
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
+            .await
+            .expect("Failed to create new segment_cache");
+
+        // This logic is a little tricky. Each cache can contain up to MAX_SEGMENTS segments in memory.
+        // By storing MAX_SEGMENTS + 1 items, we ensure that the cache will evict the first introduced.
+        // Then, by asking again in order starting in 0, we force the cache to load the evicted segment
+        // from disk, evicting at the same time the next, 1 in this case. Then we ask for the 1 that we
+        // know is evicted and so on.
+
+        for i in 0..=MAX_SEGMENTS {
+            let segment = cache.get_segment_mut(&i).await.expect("Failed to create a new segment");
+            assert!(segment.items.is_empty());
+            assert!(segment.state == SegmentState::Dirty);
+
+            segment.items = vec![FilterHeader::new_test(i)];
+        }
+
+        for i in 0..=MAX_SEGMENTS {
+            assert_eq!(cache.segments.len(), MAX_SEGMENTS as usize);
+
+            let segment = cache.get_segment_mut(&i).await.expect("Failed to load segment");
+
+            assert_eq!(segment.items.len(), 1);
+            assert_eq!(segment.get(0..1), [FilterHeader::new_test(i)]);
+            assert!(segment.state == SegmentState::Clean);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_segment_cache_persist_load() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let items: Vec<_> = (0..10).map(FilterHeader::new_test).collect();
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
+            .await
+            .expect("Failed to create new segment_cache");
+
+        let segment = cache.get_segment_mut(&0).await.expect("Failed to create a new segment");
+
+        assert_eq!(segment.state, SegmentState::Dirty);
+        segment.items = items.clone();
+
+        assert!(segment.persist(tmp_dir.path()).await.is_ok());
+
+        cache.clear_in_memory();
+        assert!(cache.segments.is_empty());
+
+        let segment = cache.get_segment(&0).await.expect("Failed to load segment");
+
+        assert_eq!(segment.items, items);
+        assert_eq!(segment.state, SegmentState::Clean);
+
+        cache.clear_all().await.expect("Failed to clean on-memory and on-disk data");
+        assert!(cache.segments.is_empty());
+
+        let segment = cache.get_segment(&0).await.expect("Failed to create a new segment");
+
+        assert!(segment.items.is_empty());
+        assert_eq!(segment.state, SegmentState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn test_segment_cache_get_insert() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
+            .await
+            .expect("Failed to create new segment_cache");
+
+        let items = cache
+            .get_items(0..ITEMS_PER_SEGMENT)
+            .await
+            .expect("segment cache couldn't return items");
+
+        assert!(items.is_empty());
+
+        let items = cache
+            .get_items(0..ITEMS_PER_SEGMENT + 1)
+            .await
+            .expect("segment cache couldn't return items");
+
+        assert!(items.is_empty());
+
+        // Cannot test the store logic bcs it depends on the DiskStorageManager, test that struct properly or
+        // remove the necessity of it
+    }
+
+    #[tokio::test]
+    async fn test_segment_persist_load() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let segment_id = 10;
+
+        const MAX_ITEMS: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+
+        // Testing with half full segment
+        let items = (0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect();
+        let mut segment = Segment::new(segment_id, items, SegmentState::Dirty);
+
+        assert_eq!(segment.get(MAX_ITEMS..MAX_ITEMS + 1), []);
+        assert_eq!(
+            segment.get(0..MAX_ITEMS / 2),
+            &(0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
+            [FilterHeader::new_test(MAX_ITEMS / 2 - 1)]
+        );
+        assert_eq!(segment.get(MAX_ITEMS / 2..MAX_ITEMS / 2 + 1), []);
+        assert_eq!(segment.get(MAX_ITEMS - 1..MAX_ITEMS), []);
+
+        assert_eq!(segment.state, SegmentState::Dirty);
+        assert!(segment.persist(tmp_dir.path()).await.is_ok());
+        assert_eq!(segment.state, SegmentState::Clean);
+
+        let mut loaded_segment =
+            Segment::<FilterHeader>::load(tmp_dir.path(), segment_id).await.unwrap();
+
+        assert_eq!(
+            loaded_segment.get(MAX_ITEMS..MAX_ITEMS + 1),
+            segment.get(MAX_ITEMS..MAX_ITEMS + 1)
+        );
+        assert_eq!(loaded_segment.get(0..1), segment.get(0..1));
+        assert_eq!(
+            loaded_segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
+            segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2)
+        );
+        assert_eq!(
+            loaded_segment.get(MAX_ITEMS / 2..MAX_ITEMS / 2 + 1),
+            segment.get(MAX_ITEMS / 2..MAX_ITEMS / 2 + 1)
+        );
+        assert_eq!(
+            loaded_segment.get(MAX_ITEMS - 1..MAX_ITEMS),
+            segment.get(MAX_ITEMS - 1..MAX_ITEMS)
+        );
+    }
+
+    #[test]
+    fn test_segment_insert_get() {
+        let segment_id = 10;
+
+        const MAX_ITEMS: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+
+        let items = (0..10).map(FilterHeader::new_test).collect();
+
+        let mut segment = Segment::new(segment_id, items, SegmentState::Dirty);
+
+        assert_eq!(segment.items.len(), 10);
+        assert_eq!(
+            segment.get(0..MAX_ITEMS + 1),
+            &(0..10).map(FilterHeader::new_test).collect::<Vec<_>>()
+        );
+
+        segment.insert(FilterHeader::new_test(4), 4);
+        segment.insert(FilterHeader::new_test(10), 10);
+
+        assert_eq!(segment.items.len(), 11);
+        assert_eq!(
+            segment.get(0..MAX_ITEMS + 1),
+            &(0..11).map(FilterHeader::new_test).collect::<Vec<_>>()
+        );
+    }
 }

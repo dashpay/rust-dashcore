@@ -307,31 +307,6 @@ impl StorageManager for MemoryStorageManager {
         Ok(Some(self.sync_base_height() + storage_index))
     }
 
-    async fn get_headers_batch(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<(u32, BlockHeader)>> {
-        if start_height > end_height {
-            return Ok(Vec::new());
-        }
-
-        // Map absolute heights to storage indices
-        let sync_base_height = self.sync_base_height();
-
-        let mut results = Vec::with_capacity((end_height - start_height + 1) as usize);
-        for abs_h in start_height..=end_height {
-            let Some(idx) = abs_h.checked_sub(sync_base_height) else {
-                continue;
-            };
-            if let Some(header) = self.headers.get(idx as usize) {
-                results.push((abs_h, *header));
-            }
-        }
-
-        Ok(results)
-    }
-
     // UTXO methods removed - handled by external wallet
 
     async fn store_sync_state(

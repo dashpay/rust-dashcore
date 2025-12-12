@@ -299,7 +299,7 @@ async fn test_disk_storage_reopen_after_clean_shutdown() {
         let headers = create_test_headers(5);
         storage.store_headers(&headers).await.unwrap();
         // Shutdown ensures all data is persisted
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Reopen - should succeed and have the data
