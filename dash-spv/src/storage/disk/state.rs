@@ -605,7 +605,7 @@ impl StorageManager for DiskStorageManager {
             .await
             .get_items(height..height + 1)
             .await
-            .and_then(|items| Ok(items.first().cloned()))
+            .map(|items| items.first().cloned())
     }
 
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
