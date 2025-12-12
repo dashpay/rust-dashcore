@@ -246,9 +246,8 @@ impl<I: Persistable> SegmentCache<I> {
     }
 
     pub async fn get_items(&mut self, height_range: Range<u32>) -> StorageResult<Vec<I>> {
-        if height_range.start > height_range.end {
-            panic!("Invalid height range: start > end, {:?}", height_range);
-        }
+        debug_assert!(height_range.start <= height_range.end);
+
         let storage_start_idx = self.height_to_index(height_range.start);
         let storage_end_idx = self.height_to_index(height_range.end);
 
