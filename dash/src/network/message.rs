@@ -1266,4 +1266,29 @@ mod test {
         assert_eq!(encoded.len(), 244, "Three headers should be 244 bytes");
         test_payload_round_trip(&multi_headers);
     }
+
+    #[test]
+    fn test_encode_decode_unknown_message() {
+        // Create an Unknown message with a custom command and payload
+        let unknown_msg = NetworkMessage::Unknown {
+            command: CommandString::try_from_static("custom").unwrap(),
+            payload: vec![0xaa, 0xbb, 0xcc, 0xdd],
+        };
+
+        // Test encoding - should return raw payload bytes without length prefix
+        let encoded = unknown_msg.consensus_encode_payload();
+        assert_eq!(
+            encoded,
+            vec![0xaa, 0xbb, 0xcc, 0xdd],
+            "Unknown message should encode to raw payload bytes without length prefix"
+        );
+
+        // Test decoding with the actual command (not "unknown")
+        // Note: We must use command() not cmd() because cmd() returns "unknown" for Unknown variants
+        let cmd = unknown_msg.command();
+        let decoded = NetworkMessage::consensus_decode_payload(cmd.as_ref(), &encoded)
+            .expect("Failed to decode unknown message");
+
+        assert_eq!(unknown_msg, decoded, "Round-trip failed for unknown message");
+    }
 }
