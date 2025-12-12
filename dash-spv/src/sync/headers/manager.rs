@@ -318,24 +318,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         base_hash: Option<BlockHash>,
     ) -> SyncResult<()> {
         let block_locator = match base_hash {
-            Some(hash) => {
-                // When syncing from a checkpoint, we need to create a proper locator
-                // that helps the peer understand we want headers AFTER this point
-                if self.is_synced_from_checkpoint() {
-                    // For checkpoint sync, only include the checkpoint hash
-                    // Including genesis would allow peers to fall back to sending headers from genesis
-                    // if they don't recognize the checkpoint, which is exactly what we want to avoid
-                    tracing::debug!(
-                        "📍 Using checkpoint-only locator for height {}: [{}]",
-                        self.get_sync_base_height(),
-                        hash
-                    );
-                    vec![hash]
-                } else {
-                    // Always include the hash in the locator - peer needs to know our position
-                    vec![hash]
-                }
-            }
+            Some(hash) => vec![hash],
             None => {
                 // Check if we're syncing from a checkpoint
                 if self.is_synced_from_checkpoint()
@@ -459,33 +442,22 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             // Check if we need to initialize the compression state
             let state = self.headers2_state.get_state(peer_id);
             if state.prev_header.is_none() {
-                // If we're syncing from genesis (height 0), initialize with genesis header
-                if self.chain_state.read().await.tip_height() == 0 {
-                    // We have genesis header at index 0
-                    if let Some(genesis_header) = self.chain_state.read().await.header_at_height(0)
-                    {
-                        tracing::info!(
-                            "Initializing headers2 compression state for peer {} with genesis header",
-                            peer_id
-                        );
-                        self.headers2_state.init_peer_state(peer_id, *genesis_header);
-                    }
-                } else if self.chain_state.read().await.tip_height() > 0 {
-                    // Get our current tip to use as the base for compression
-                    if let Some(tip_header) = self.chain_state.read().await.get_tip_header() {
-                        tracing::info!(
-                            "Initializing headers2 compression state for peer {} with tip header at height {}",
-                            peer_id,
-                            self.chain_state.read().await.tip_height()
-                        );
-                        self.headers2_state.init_peer_state(peer_id, tip_header);
-                    }
+                // Initialize with header at current tip height (works for both genesis and later)
+                let chain_state = self.chain_state.read().await;
+                let tip_height = chain_state.tip_height();
+                if let Some(tip_header) = chain_state.header_at_height(tip_height) {
+                    tracing::info!(
+                        "Initializing headers2 compression state for peer {} with header at height {}",
+                        peer_id,
+                        tip_height
+                    );
+                    self.headers2_state.init_peer_state(peer_id, *tip_header);
                 }
             }
         }
 
         // Decompress headers using the peer's compression state
-        let headers = match self.headers2_state.process_headers(peer_id, headers2.headers.clone()) {
+        let headers = match self.headers2_state.process_headers(peer_id, &headers2.headers) {
             Ok(headers) => headers,
             Err(e) => {
                 tracing::error!(
