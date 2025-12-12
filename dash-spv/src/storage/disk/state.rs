@@ -355,6 +355,8 @@ impl DiskStorageManager {
         // Clear in-memory state
         self.block_headers.write().await.clear_in_memory();
         self.filter_headers.write().await.clear_in_memory();
+        self.filters.write().await.clear_in_memory();
+
         self.header_hash_index.write().await.clear();
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
@@ -449,69 +451,10 @@ impl DiskStorageManager {
     /// Save all dirty segments to disk via background worker.
     pub(super) async fn save_dirty(&self) {
         self.filter_headers.write().await.persist_dirty(self).await;
-
         self.block_headers.write().await.persist_dirty(self).await;
+        self.filters.write().await.persist_dirty(self).await;
 
         if let Some(tx) = &self.worker_tx {
-            // Save the index only if it has grown significantly (every 10k new entries)
-            let current_index_size = self.header_hash_index.read().await.len();
-            let last_save_count = *self.last_index_save_count.read().await;
-
-            // Save if index has grown by 10k entries, or if we've never saved before
-            if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
-                let index = self.header_hash_index.read().await.clone();
-                let _ = tx
-                    .send(WorkerCommand::SaveIndex {
-                        index,
-                    })
-                    .await;
-
-                // Update the last save count
-                *self.last_index_save_count.write().await = current_index_size;
-                tracing::debug!(
-                    "Scheduled index save (size: {}, last_save: {})",
-                    current_index_size,
-                    last_save_count
-                );
-            }
-
-            // Collect filter data segments to save (only dirty ones)
-            let (filter_data_segments_to_save, filter_data_segment_ids_to_mark) = {
-                let segments = self.active_filter_data_segments.read().await;
-                let to_save: Vec<_> = segments
-                    .values()
-                    .filter(|s| s.state == SegmentState::Dirty)
-                    .map(|s| {
-                        let data = reconstruct_filter_data(s);
-                        (s.segment_id, s.index.clone(), data)
-                    })
-                    .collect();
-                let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _, _)| *id).collect();
-                (to_save, ids_to_mark)
-            };
-
-            // Send filter data segments to worker
-            for (segment_id, index, data) in filter_data_segments_to_save {
-                let _ = tx
-                    .send(WorkerCommand::SaveFilterDataSegment {
-                        segment_id,
-                        index,
-                        data,
-                    })
-                    .await;
-            }
-
-            // Mark ONLY the filter data segments we're actually saving as Saving
-            {
-                let mut segments = self.active_filter_data_segments.write().await;
-                for segment_id in &filter_data_segment_ids_to_mark {
-                    if let Some(segment) = segments.get_mut(segment_id) {
-                        segment.state = SegmentState::Saving;
-                        segment.last_saved = Instant::now();
-                    }
-                }
-            }
-
             // Save the index only if it has grown significantly (every 10k new entries)
             let current_index_size = self.header_hash_index.read().await.len();
             let last_save_count = *self.last_index_save_count.read().await;
@@ -653,11 +596,16 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
-        Self::store_filter(self, height, filter).await
+        self.filters.write().await.store_items_at_height(&[filter.to_vec()], height, self).await
     }
 
     async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>> {
-        Self::load_filter(self, height).await
+        self.filters
+            .write()
+            .await
+            .get_items(height..height + 1)
+            .await
+            .and_then(|items| Ok(items.first().cloned()))
     }
 
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
@@ -673,7 +621,17 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn clear_filters(&mut self) -> StorageResult<()> {
-        Self::clear_filters(self).await
+        // Stop worker to prevent concurrent writes to filter directories
+        self.stop_worker().await;
+
+        // Clear in-memory and on-disk filter headers segments
+        self.filter_headers.write().await.clear_all().await?;
+        self.filters.write().await.clear_all().await?;
+
+        // Restart background worker for future operations
+        self.start_worker().await;
+
+        Ok(())
     }
 
     async fn stats(&self) -> StorageResult<StorageStats> {
