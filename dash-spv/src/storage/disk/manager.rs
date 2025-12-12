@@ -127,6 +127,7 @@ impl DiskStorageManager {
         if let Ok(Some(state)) = storage.load_chain_state().await {
             storage.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
             storage.block_headers.write().await.set_sync_base_height(state.sync_base_height);
+            storage.filters.write().await.set_sync_base_height(state.sync_base_height);
             tracing::debug!("Loaded sync_base_height: {}", state.sync_base_height);
         }
 

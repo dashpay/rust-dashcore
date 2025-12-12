@@ -21,6 +21,7 @@ impl DiskStorageManager {
         // Update our sync_base_height
         self.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
         self.block_headers.write().await.set_sync_base_height(state.sync_base_height);
+        self.filters.write().await.set_sync_base_height(state.sync_base_height);
 
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
