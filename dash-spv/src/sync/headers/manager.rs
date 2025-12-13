@@ -139,7 +139,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Handle a Headers message
     pub async fn handle_headers_message(
         &mut self,
-        headers: Vec<BlockHeader>,
+        headers: &[BlockHeader],
         storage: &mut S,
         network: &mut N,
     ) -> SyncResult<bool> {
@@ -251,7 +251,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Update Chain State: Add all headers to in-memory chain_state
         {
             let mut cs = self.chain_state.write().await;
-            for header in &headers {
+            for header in headers {
                 cs.add_header(*header);
             }
         }
@@ -261,13 +261,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             storage.as_any_mut().downcast_mut::<crate::storage::disk::DiskStorageManager>()
         {
             disk_storage
-                .store_headers(&headers)
+                .store_headers(headers)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
         } else {
             // Fallback to standard store_headers for other storage backends
             storage
-                .store_headers(&headers)
+                .store_headers(headers)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
         }
@@ -452,7 +452,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Returns true if the message was processed and sync should continue, false if sync is complete.
     pub async fn handle_headers2_message(
         &mut self,
-        headers2: dashcore::network::message_headers2::Headers2Message,
+        headers2: &dashcore::network::message_headers2::Headers2Message,
         peer_id: crate::types::PeerId,
         _storage: &mut S,
         _network: &mut N,
@@ -553,7 +553,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             );
 
             // Process decompressed headers through the normal flow
-            self.handle_headers_message(headers, _storage, _network).await
+            self.handle_headers_message(&headers, _storage, _network).await
         }
     }
 

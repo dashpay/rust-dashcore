@@ -25,7 +25,7 @@ impl<
     /// Handle incoming network messages with phase filtering
     pub async fn handle_message(
         &mut self,
-        message: NetworkMessage,
+        message: &NetworkMessage,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -55,10 +55,10 @@ impl<
         }
 
         // Check if this message is expected in the current phase
-        if !self.is_message_expected_in_phase(&message) {
+        if !self.is_message_expected_in_phase(message) {
             tracing::debug!(
                 "Ignoring unexpected {:?} message in phase {}",
-                std::mem::discriminant(&message),
+                std::mem::discriminant(message),
                 self.current_phase.name()
             );
             return Ok(());
@@ -286,7 +286,7 @@ impl<
 
     pub(super) async fn handle_headers2_message(
         &mut self,
-        headers2: dashcore::network::message_headers2::Headers2Message,
+        headers2: &dashcore::network::message_headers2::Headers2Message,
         peer_id: PeerId,
         network: &mut N,
         storage: &mut S,
@@ -345,12 +345,12 @@ impl<
 
     pub(super) async fn handle_headers_message(
         &mut self,
-        headers: Vec<dashcore::block::Header>,
+        headers: &[dashcore::block::Header],
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
         let continue_sync =
-            self.header_sync.handle_headers_message(headers.clone(), storage, network).await?;
+            self.header_sync.handle_headers_message(headers, storage, network).await?;
 
         // Calculate blockchain height before borrowing self.current_phase
         let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
@@ -400,7 +400,7 @@ impl<
 
     pub(super) async fn handle_mnlistdiff_message(
         &mut self,
-        diff: dashcore::network::message_sml::MnListDiff,
+        diff: &dashcore::network::message_sml::MnListDiff,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -451,7 +451,7 @@ impl<
 
     pub(super) async fn handle_qrinfo_message(
         &mut self,
-        qr_info: dashcore::network::message_qrinfo::QRInfo,
+        qr_info: &dashcore::network::message_qrinfo::QRInfo,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -509,7 +509,7 @@ impl<
 
     pub(super) async fn handle_cfheaders_message(
         &mut self,
-        cfheaders: dashcore::network::message_filter::CFHeaders,
+        cfheaders: &dashcore::network::message_filter::CFHeaders,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -563,7 +563,7 @@ impl<
 
     pub(super) async fn handle_cfilter_message(
         &mut self,
-        cfilter: dashcore::network::message_filter::CFilter,
+        cfilter: &dashcore::network::message_filter::CFilter,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -746,7 +746,7 @@ impl<
 
     pub(super) async fn handle_block_message(
         &mut self,
-        block: Block,
+        block: &Block,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -762,7 +762,7 @@ impl<
             .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
             .unwrap_or(0);
 
-        let relevant_txids = wallet.process_block(&block, block_height, self.config.network).await;
+        let relevant_txids = wallet.process_block(block, block_height, self.config.network).await;
 
         drop(wallet);
 

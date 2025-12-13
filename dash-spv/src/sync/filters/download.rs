@@ -246,7 +246,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     pub async fn store_filter_headers(
         &mut self,
-        cfheaders: dashcore::network::message_filter::CFHeaders,
+        cfheaders: &dashcore::network::message_filter::CFHeaders,
         storage: &mut S,
     ) -> SyncResult<()> {
         if cfheaders.filter_hashes.is_empty() {
@@ -256,7 +256,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Get the height range for this batch
         let (start_height, stop_height, _header_tip_height) =
-            self.get_batch_height_range(&cfheaders, storage).await?;
+            self.get_batch_height_range(cfheaders, storage).await?;
 
         tracing::info!(
             "Received {} filter headers from height {} to {}",
@@ -308,7 +308,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             // Use the handle_overlapping_headers method which properly handles the chain continuity
             let expected_start = current_filter_tip + 1;
 
-            match self.handle_overlapping_headers(&cfheaders, expected_start, storage).await {
+            match self.handle_overlapping_headers(cfheaders, expected_start, storage).await {
                 Ok((stored_count, _)) => {
                     if stored_count > 0 {
                         tracing::info!("✅ Successfully handled overlapping filter headers");
@@ -328,7 +328,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         } else {
             // Process the filter headers to convert them to the proper format
-            match self.process_filter_headers(&cfheaders, start_height, storage).await {
+            match self.process_filter_headers(cfheaders, start_height, storage).await {
                 Ok(new_filter_headers) => {
                     if !new_filter_headers.is_empty() {
                         // If this is the first batch (starting at height 1), store the genesis filter header first

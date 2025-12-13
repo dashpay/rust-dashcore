@@ -60,11 +60,11 @@ impl<
     /// Handle incoming network messages during monitoring.
     pub async fn handle_network_message(
         &mut self,
-        message: dashcore::network::message::NetworkMessage,
+        message: &dashcore::network::message::NetworkMessage,
     ) -> Result<()> {
         use dashcore::network::message::NetworkMessage;
 
-        tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(&message));
+        tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(message));
 
         // First check if this is a message that ONLY the sync manager handles
         // These messages can be moved to the sync manager without cloning
@@ -147,17 +147,11 @@ impl<
                         SpvError::Sync(e)
                     });
             }
-            _ => {}
-        }
-
-        // Handle messages that may need sync manager processing
-        // We optimize to avoid cloning expensive messages like blocks
-        match &message {
             NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
                 // Headers and CFilters are relatively small, cloning is acceptable
                 if let Err(e) = self
                     .sync_manager
-                    .handle_message(message.clone(), &mut *self.network, &mut *self.storage)
+                    .handle_message(message, &mut *self.network, &mut *self.storage)
                     .await
                 {
                     tracing::error!("Sequential sync manager error handling message: {}", e);
@@ -183,13 +177,10 @@ impl<
                 }
             }
             NetworkMessage::Block(_) => {
-                // Blocks can be large - avoid cloning unless necessary
-                // Check if sync manager actually needs to process this block
                 if self.sync_manager.is_in_downloading_blocks_phase() {
-                    // Only clone if we're in the downloading blocks phase
                     if let Err(e) = self
                         .sync_manager
-                        .handle_message(message.clone(), &mut *self.network, &mut *self.storage)
+                        .handle_message(message, &mut *self.network, &mut *self.storage)
                         .await
                     {
                         tracing::error!(
@@ -241,7 +232,7 @@ impl<
                 let headers_msg = NetworkMessage::Headers(vec![block.header]);
                 if let Err(e) = self
                     .sync_manager
-                    .handle_message(headers_msg, &mut *self.network, &mut *self.storage)
+                    .handle_message(&headers_msg, &mut *self.network, &mut *self.storage)
                     .await
                 {
                     tracing::error!(
@@ -261,7 +252,7 @@ impl<
             NetworkMessage::Inv(inv) => {
                 tracing::debug!("Received inventory message with {} items", inv.len());
                 // Handle inventory messages (new blocks, transactions, etc.)
-                self.handle_inventory(inv).await?;
+                self.handle_inventory(inv.clone()).await?;
             }
             NetworkMessage::Tx(tx) => {
                 tracing::info!("📨 Received transaction: {}", tx.txid());
@@ -293,7 +284,7 @@ impl<
                         // Emit event
                         let event = SpvEvent::MempoolTransactionAdded {
                             txid,
-                            transaction: Box::new(tx),
+                            transaction: Box::new(tx.clone()),
                             amount,
                             addresses,
                             is_instant_send,
@@ -339,7 +330,7 @@ impl<
             NetworkMessage::SendDsq(wants_dsq) => {
                 tracing::info!("Received SendDsq message - peer wants DSQ messages: {}", wants_dsq);
                 // Store peer's DSQ preference
-                if let Err(e) = self.network.update_peer_dsq_preference(wants_dsq).await {
+                if let Err(e) = self.network.update_peer_dsq_preference(*wants_dsq).await {
                     tracing::error!("Failed to update peer DSQ preference: {}", e);
                 }
 
@@ -351,7 +342,7 @@ impl<
             }
             _ => {
                 // Ignore other message types for now
-                tracing::debug!("Received network message: {:?}", std::mem::discriminant(&message));
+                tracing::debug!("Received network message: {:?}", std::mem::discriminant(message));
             }
         }
 
@@ -468,7 +459,7 @@ impl<
         // We just need to send them through the unified message interface
         let headers_msg = dashcore::network::message::NetworkMessage::Headers(headers);
         self.sync_manager
-            .handle_message(headers_msg, &mut *self.network, &mut *self.storage)
+            .handle_message(&headers_msg, &mut *self.network, &mut *self.storage)
             .await
             .map_err(SpvError::Sync)?;
 
@@ -506,7 +497,7 @@ impl<
         // For sequential sync, route through the message handler
         let cfheaders_msg = dashcore::network::message::NetworkMessage::CFHeaders(cfheaders);
         self.sync_manager
-            .handle_message(cfheaders_msg, &mut *self.network, &mut *self.storage)
+            .handle_message(&cfheaders_msg, &mut *self.network, &mut *self.storage)
             .await
             .map_err(SpvError::Sync)?;
 
@@ -520,7 +511,7 @@ impl<
     }
 
     /// Process a new block.
-    pub async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
+    pub async fn process_new_block(&mut self, block: &dashcore::Block) -> Result<()> {
         let block_hash = block.block_hash();
 
         tracing::info!("📦 Routing block {} to async block processor", block_hash);
@@ -528,7 +519,7 @@ impl<
         // Send block to the background processor without waiting for completion
         let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
         let task = crate::client::BlockProcessingTask::ProcessBlock {
-            block: Box::new(block),
+            block: Box::new(block.clone()),
             response_tx,
         };
 
@@ -564,7 +555,7 @@ impl<
         // The sequential sync manager's handle_new_headers method will automatically
         // request filter headers and filters as needed
         self.sync_manager
-            .handle_new_headers(headers.to_vec(), &mut *self.network, &mut *self.storage)
+            .handle_new_headers(headers, &mut *self.network, &mut *self.storage)
             .await
             .map_err(SpvError::Sync)?;
 
