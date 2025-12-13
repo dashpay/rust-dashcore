@@ -19,7 +19,6 @@
 //! - Better concurrency
 //! - Simpler code
 
-mod filters;
 mod headers;
 pub(crate) mod io;
 mod lockfile;

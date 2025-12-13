@@ -51,6 +51,16 @@ pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     fn make_save_command(segment: &Segment<Self>) -> WorkerCommand;
 }
 
+impl Persistable for Vec<u8> {
+    const FOLDER_NAME: &'static str = "filters";
+
+    fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
+        WorkerCommand::SaveFilterSegmentCache {
+            segment_id: segment.segment_id,
+        }
+    }
+}
+
 impl Persistable for BlockHeader {
     const FOLDER_NAME: &'static str = "block_headers";
 

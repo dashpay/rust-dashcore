@@ -302,7 +302,7 @@ async fn test_mixed_operations() {
     storage.store_filter_headers(&filter_headers).await.unwrap();
 
     // Store some filters
-    for height in [1000, 5000, 50_000, 70_000] {
+    for height in 0..75_000 {
         let filter_data = vec![height as u8; 100];
         storage.store_filter(height, &filter_data).await.unwrap();
     }

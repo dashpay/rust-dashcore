@@ -24,6 +24,9 @@ pub(super) enum WorkerCommand {
     SaveFilterHeaderSegmentCache {
         segment_id: u32,
     },
+    SaveFilterSegmentCache {
+        segment_id: u32,
+    },
     SaveIndex {
         index: HashMap<BlockHash, u32>,
     },
@@ -37,6 +40,7 @@ pub struct DiskStorageManager {
     // Segmented header storage
     pub(super) block_headers: Arc<RwLock<SegmentCache<BlockHeader>>>,
     pub(super) filter_headers: Arc<RwLock<SegmentCache<FilterHeader>>>,
+    pub(super) filters: Arc<RwLock<SegmentCache<Vec<u8>>>>,
 
     // Reverse index for O(1) lookups
     pub(super) header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
@@ -107,6 +111,9 @@ impl DiskStorageManager {
             filter_headers: Arc::new(RwLock::new(
                 SegmentCache::load_or_new(base_path.clone(), sync_base_height).await?,
             )),
+            filters: Arc::new(RwLock::new(
+                SegmentCache::load_or_new(base_path.clone(), sync_base_height).await?,
+            )),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: None,
             worker_handle: None,
@@ -120,6 +127,7 @@ impl DiskStorageManager {
         if let Ok(Some(state)) = storage.load_chain_state().await {
             storage.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
             storage.block_headers.write().await.set_sync_base_height(state.sync_base_height);
+            storage.filters.write().await.set_sync_base_height(state.sync_base_height);
             tracing::debug!("Loaded sync_base_height: {}", state.sync_base_height);
         }
 
@@ -151,6 +159,7 @@ impl DiskStorageManager {
 
         let block_headers = Arc::clone(&self.block_headers);
         let filter_headers = Arc::clone(&self.filter_headers);
+        let cfilters = Arc::clone(&self.filters);
 
         let worker_handle = tokio::spawn(async move {
             while let Some(cmd) = worker_rx.recv().await {
@@ -195,6 +204,30 @@ impl DiskStorageManager {
                             Ok(()) => {
                                 tracing::trace!(
                                     "Background worker completed saving header segment {}",
+                                    segment_id
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save segment {}: {}", segment_id, e);
+                            }
+                        }
+                    }
+                    WorkerCommand::SaveFilterSegmentCache {
+                        segment_id,
+                    } => {
+                        let mut cache = cfilters.write().await;
+                        let segment = match cache.get_segment_mut(&segment_id).await {
+                            Ok(segment) => segment,
+                            Err(e) => {
+                                eprintln!("Failed to get segment {}: {}", segment_id, e);
+                                continue;
+                            }
+                        };
+
+                        match segment.persist(&base_path).await {
+                            Ok(()) => {
+                                tracing::trace!(
+                                    "Background worker completed saving filter segment {}",
                                     segment_id
                                 );
                             }

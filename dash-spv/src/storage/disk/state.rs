@@ -21,6 +21,7 @@ impl DiskStorageManager {
         // Update our sync_base_height
         self.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
         self.block_headers.write().await.set_sync_base_height(state.sync_base_height);
+        self.filters.write().await.set_sync_base_height(state.sync_base_height);
 
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
@@ -355,6 +356,8 @@ impl DiskStorageManager {
         // Clear in-memory state
         self.block_headers.write().await.clear_in_memory();
         self.filter_headers.write().await.clear_in_memory();
+        self.filters.write().await.clear_in_memory();
+
         self.header_hash_index.write().await.clear();
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
@@ -449,8 +452,8 @@ impl DiskStorageManager {
     /// Save all dirty segments to disk via background worker.
     pub(super) async fn save_dirty(&self) {
         self.filter_headers.write().await.persist_dirty(self).await;
-
         self.block_headers.write().await.persist_dirty(self).await;
+        self.filters.write().await.persist_dirty(self).await;
 
         if let Some(tx) = &self.worker_tx {
             // Save the index only if it has grown significantly (every 10k new entries)
@@ -594,11 +597,16 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
-        Self::store_filter(self, height, filter).await
+        self.filters.write().await.store_items_at_height(&[filter.to_vec()], height, self).await
     }
 
     async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>> {
-        Self::load_filter(self, height).await
+        self.filters
+            .write()
+            .await
+            .get_items(height..height + 1)
+            .await
+            .map(|items| items.first().cloned())
     }
 
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
@@ -614,7 +622,17 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn clear_filters(&mut self) -> StorageResult<()> {
-        Self::clear_filters(self).await
+        // Stop worker to prevent concurrent writes to filter directories
+        self.stop_worker().await;
+
+        // Clear in-memory and on-disk filter headers segments
+        self.filter_headers.write().await.clear_all().await?;
+        self.filters.write().await.clear_all().await?;
+
+        // Restart background worker for future operations
+        self.start_worker().await;
+
+        Ok(())
     }
 
     async fn stats(&self) -> StorageResult<StorageStats> {
