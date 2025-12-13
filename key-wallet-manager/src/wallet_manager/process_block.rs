@@ -1,4 +1,7 @@
 use crate::wallet_interface::WalletInterface;
+use crate::wallet_manager::matching::{
+    check_compact_filters_for_addresses, FilterMatchInput, FilterMatchOutput,
+};
 use crate::WalletManager;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -76,6 +79,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         };
 
         hit
+    }
+
+    async fn check_compact_filters(&self, input: FilterMatchInput) -> FilterMatchOutput {
+        check_compact_filters_for_addresses(input, self.monitored_addresses())
     }
 
     async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
