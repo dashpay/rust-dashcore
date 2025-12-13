@@ -671,7 +671,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 );
 
                 // Store the verified filter headers
-                self.store_filter_headers(cf_headers.clone(), storage).await?;
+                self.store_filter_headers(&cf_headers, storage).await?;
 
                 // Update next expected height
                 self.next_cfheader_height_to_process = stop_height + 1;

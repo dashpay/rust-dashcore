@@ -443,11 +443,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Handle incoming MnListDiff message
     pub async fn handle_mnlistdiff_message(
         &mut self,
-        diff: MnListDiff,
+        diff: &MnListDiff,
         storage: &mut S,
         _network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        self.insert_mn_list_diff(&diff, storage).await;
+        self.insert_mn_list_diff(diff, storage).await;
 
         // Decrement pending request counter if we were expecting this response
         if self.pending_mnlistdiff_requests > 0 {

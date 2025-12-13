@@ -633,7 +633,7 @@ impl<
             );
 
             // Delegate message handling to the MessageHandler
-            handler.handle_network_message(message.clone()).await
+            handler.handle_network_message(&message).await
         };
 
         // Handle result and process special messages after releasing storage lock
