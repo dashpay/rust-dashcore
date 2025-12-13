@@ -124,17 +124,29 @@ async fn test_memory_storage_filter_headers() {
 async fn test_memory_storage_filters() {
     let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
-    // Store some test filters
-    let filter_data = vec![1, 2, 3, 4, 5];
-    storage.store_filter(100, &filter_data).await.expect("Failed to store filter");
+    // Store some test filters at consecutive heights
+    let filter_data_0 = vec![1, 2, 3, 4, 5];
+    let filter_data_1 = vec![6, 7, 8, 9, 10];
+    let filter_data_2 = vec![11, 12, 13, 14, 15];
+    storage.store_filter(100, &filter_data_0).await.expect("Failed to store filter");
+    storage.store_filter(101, &filter_data_1).await.expect("Failed to store filter");
+    storage.store_filter(102, &filter_data_2).await.expect("Failed to store filter");
 
-    // Retrieve filter
-    let retrieved_filter = storage.load_filter(100).await.unwrap();
-    assert!(retrieved_filter.is_some());
-    assert_eq!(retrieved_filter.unwrap(), filter_data);
+    // Retrieve single filter via range
+    let retrieved_filters = storage.load_filters(100..101).await.unwrap();
+    assert_eq!(retrieved_filters.len(), 1);
+    assert_eq!(retrieved_filters[0], filter_data_0);
 
-    // Test non-existent filter
-    assert!(storage.load_filter(999).await.unwrap().is_none());
+    // Retrieve multiple filters
+    let retrieved_filters = storage.load_filters(100..103).await.unwrap();
+    assert_eq!(retrieved_filters.len(), 3);
+    assert_eq!(retrieved_filters[0], filter_data_0);
+    assert_eq!(retrieved_filters[1], filter_data_1);
+    assert_eq!(retrieved_filters[2], filter_data_2);
+
+    // Test non-existent range returns empty vector
+    let empty_filters = storage.load_filters(999..1000).await.unwrap();
+    assert!(empty_filters.is_empty());
 }
 
 #[tokio::test]
@@ -200,7 +212,7 @@ async fn test_memory_storage_clear() {
     // Verify data exists
     assert_eq!(storage.get_tip_height().await.unwrap(), Some(4));
     assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(2));
-    assert!(storage.load_filter(1).await.unwrap().is_some());
+    assert!(!storage.load_filters(1..2).await.unwrap().is_empty());
     assert!(storage.load_metadata("test").await.unwrap().is_some());
 
     // Clear storage
@@ -209,7 +221,7 @@ async fn test_memory_storage_clear() {
     // Verify everything is cleared
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
     assert_eq!(storage.get_filter_tip_height().await.unwrap(), None);
-    assert!(storage.load_filter(1).await.unwrap().is_none());
+    assert!(storage.load_filters(1..2).await.unwrap().is_empty());
     assert!(storage.load_metadata("test").await.unwrap().is_none());
     assert!(storage.load_headers(0..5).await.unwrap().is_empty());
 }

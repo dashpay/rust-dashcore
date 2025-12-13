@@ -600,13 +600,8 @@ impl StorageManager for DiskStorageManager {
         self.filters.write().await.store_items_at_height(&[filter.to_vec()], height, self).await
     }
 
-    async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>> {
-        self.filters
-            .write()
-            .await
-            .get_items(height..height + 1)
-            .await
-            .map(|items| items.first().cloned())
+    async fn load_filters(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
+        self.filters.write().await.get_items(range).await
     }
 
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {

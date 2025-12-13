@@ -142,8 +142,8 @@ pub trait StorageManager: Send + Sync {
     /// Store a compact filter at a blockchain height.
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()>;
 
-    /// Load a compact filter by blockchain height.
-    async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>>;
+    /// Load compact filters in the given blockchain height range.
+    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>>;
 
     /// Store metadata.
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()>;
