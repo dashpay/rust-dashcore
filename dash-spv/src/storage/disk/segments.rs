@@ -189,10 +189,9 @@ impl<I: Persistable> SegmentCache<I> {
 
             if let Some(segment_id) = max_segment_id {
                 let segment = cache.get_segment(&segment_id).await?;
-                let last_storage_index =
-                    segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.items.len() as u32 - 1; // TODO: Now the segment contains sentinels
+                let tip_height =
+                    segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.last_valid_offset();
 
-                let tip_height = cache.index_to_height(last_storage_index);
                 cache.tip_height = Some(tip_height);
             }
         }
@@ -388,6 +387,18 @@ impl<I: Persistable> Segment<I> {
         }
     }
 
+    pub fn last_valid_offset(&self) -> u32 {
+        let sentinel = I::sentinel();
+
+        for (index, item) in self.items.iter().enumerate().rev() {
+            if item != &sentinel {
+                return index as u32;
+            }
+        }
+
+        return 0;
+    }
+
     pub async fn load(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
         // Load segment from disk
         let segment_path = base_path.join(I::relative_disk_path(segment_id));
@@ -470,15 +481,23 @@ impl<I: Persistable> Segment<I> {
     }
 
     pub fn get(&mut self, range: Range<u32>) -> &[I] {
+        debug_assert!(range.start < self.items.len() as u32);
+        debug_assert!(range.end <= self.items.len() as u32);
+
         self.last_accessed = std::time::Instant::now();
 
-        if range.start as usize >= self.items.len() {
-            return &[];
-        };
+        let res = &self.items[range.start as usize..range.end as usize];
 
-        let end = range.end.min(self.items.len() as u32);
+        // Checking for gaps in the requested range in development
+        #[cfg(debug_assertions)]
+        {
+            let sentinel = I::sentinel();
+            for item in res {
+                debug_assert!(*item != sentinel);
+            }
+        }
 
-        &self.items[range.start as usize..end as usize]
+        res
     }
 }
 
