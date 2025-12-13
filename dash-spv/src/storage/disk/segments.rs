@@ -10,11 +10,12 @@ use std::{
 };
 
 use dashcore::{
-    block::Header as BlockHeader,
+    block::{Header as BlockHeader, Version},
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
-    BlockHash,
+    BlockHash, CompactTarget,
 };
+use dashcore_hashes::Hash;
 
 use crate::{
     error::StorageResult,
@@ -48,6 +49,7 @@ pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
         .into()
     }
 
+    fn sentinel() -> Self;
     fn make_save_command(segment: &Segment<Self>) -> WorkerCommand;
 }
 
@@ -59,6 +61,10 @@ impl Persistable for Vec<u8> {
             segment_id: segment.segment_id,
         }
     }
+
+    fn sentinel() -> Self {
+        vec![]
+    }
 }
 
 impl Persistable for BlockHeader {
@@ -67,6 +73,17 @@ impl Persistable for BlockHeader {
     fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
         WorkerCommand::SaveBlockHeaderSegmentCache {
             segment_id: segment.segment_id,
+        }
+    }
+
+    fn sentinel() -> Self {
+        Self {
+            version: Version::from_consensus(i32::MAX), // Invalid version
+            prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
+            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
+            time: u32::MAX,                                  // Far future timestamp
+            bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
+            nonce: u32::MAX,
         }
     }
 }
@@ -79,6 +96,10 @@ impl Persistable for FilterHeader {
             segment_id: segment.segment_id,
         }
     }
+
+    fn sentinel() -> Self {
+        FilterHeader::from_byte_array([0u8; 32])
+    }
 }
 
 /// In-memory cache for all segments of items
@@ -86,7 +107,6 @@ impl Persistable for FilterHeader {
 pub struct SegmentCache<I: Persistable> {
     segments: HashMap<u32, Segment<I>>,
     tip_height: Option<u32>,
-    sync_base_height: u32,
     base_path: PathBuf,
 }
 
@@ -96,8 +116,7 @@ impl SegmentCache<BlockHeader> {
     ) -> StorageResult<HashMap<BlockHash, u32>> {
         let segments_dir = self.base_path.join(BlockHeader::FOLDER_NAME);
 
-        let blocks_count = self.next_height() - self.sync_base_height;
-        let mut block_index = HashMap::with_capacity(blocks_count as usize);
+        let mut block_index = HashMap::new();
 
         let entries = fs::read_dir(&segments_dir)?;
 
@@ -120,8 +139,7 @@ impl SegmentCache<BlockHeader> {
                 Err(_) => continue,
             };
 
-            let storage_start_idx = Self::segment_id_to_start_index(segment_id);
-            let mut block_height = self.index_to_height(storage_start_idx);
+            let mut block_height = Self::segment_id_to_start_height(segment_id);
 
             let segment = self.get_segment(&segment_id).await?;
 
@@ -139,17 +157,13 @@ impl SegmentCache<BlockHeader> {
 impl<I: Persistable> SegmentCache<I> {
     const MAX_ACTIVE_SEGMENTS: usize = 10;
 
-    pub async fn load_or_new(
-        base_path: impl Into<PathBuf>,
-        sync_base_height: u32,
-    ) -> StorageResult<Self> {
+    pub async fn load_or_new(base_path: impl Into<PathBuf>) -> StorageResult<Self> {
         let base_path = base_path.into();
         let items_dir = base_path.join(I::FOLDER_NAME);
 
         let mut cache = Self {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
             tip_height: None,
-            sync_base_height,
             base_path,
         };
 
@@ -176,7 +190,7 @@ impl<I: Persistable> SegmentCache<I> {
             if let Some(segment_id) = max_segment_id {
                 let segment = cache.get_segment(&segment_id).await?;
                 let last_storage_index =
-                    segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.items.len() as u32 - 1;
+                    segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.items.len() as u32 - 1; // TODO: Now the segment contains sentinels
 
                 let tip_height = cache.index_to_height(last_storage_index);
                 cache.tip_height = Some(tip_height);
@@ -188,24 +202,19 @@ impl<I: Persistable> SegmentCache<I> {
 
     /// Get the segment ID for a given storage index.
     #[inline]
-    fn index_to_segment_id(index: u32) -> u32 {
-        index / Segment::<I>::ITEMS_PER_SEGMENT
+    fn height_to_segment_id(height: u32) -> u32 {
+        height / Segment::<I>::ITEMS_PER_SEGMENT
     }
 
     #[inline]
-    fn segment_id_to_start_index(segment_id: u32) -> u32 {
+    fn segment_id_to_start_height(segment_id: u32) -> u32 {
         segment_id * Segment::<I>::ITEMS_PER_SEGMENT
     }
 
     /// Get the segment offset for a given storage index.
     #[inline]
-    fn index_to_offset(index: u32) -> u32 {
-        index % Segment::<I>::ITEMS_PER_SEGMENT
-    }
-
-    #[inline]
-    pub fn set_sync_base_height(&mut self, height: u32) {
-        self.sync_base_height = height;
+    fn height_to_offset(height: u32) -> u32 {
+        height % Segment::<I>::ITEMS_PER_SEGMENT
     }
 
     pub fn clear_in_memory(&mut self) {
@@ -262,26 +271,26 @@ impl<I: Persistable> SegmentCache<I> {
     pub async fn get_items(&mut self, height_range: Range<u32>) -> StorageResult<Vec<I>> {
         debug_assert!(height_range.start <= height_range.end);
 
-        let storage_start_idx = self.height_to_index(height_range.start);
-        let storage_end_idx = self.height_to_index(height_range.end);
+        let start = height_range.start;
+        let end = height_range.end;
 
-        let mut items = Vec::with_capacity((storage_end_idx - storage_start_idx) as usize);
+        let mut items = Vec::with_capacity((end - start) as usize);
 
-        let start_segment = Self::index_to_segment_id(storage_start_idx);
-        let end_segment = Self::index_to_segment_id(storage_end_idx);
+        let start_segment = Self::height_to_segment_id(start);
+        let end_segment = Self::height_to_segment_id(end);
 
         for segment_id in start_segment..=end_segment {
             let segment = self.get_segment_mut(&segment_id).await?;
             let item_count = segment.items.len() as u32;
 
             let seg_start_idx = if segment_id == start_segment {
-                Self::index_to_offset(storage_start_idx)
+                Self::height_to_offset(start)
             } else {
                 0
             };
 
             let seg_end_idx = if segment_id == end_segment {
-                Self::index_to_offset(storage_end_idx).min(item_count)
+                Self::height_to_offset(end).min(item_count)
             } else {
                 item_count
             };
@@ -295,14 +304,6 @@ impl<I: Persistable> SegmentCache<I> {
     pub async fn store_items(
         &mut self,
         items: &[I],
-        manager: &DiskStorageManager,
-    ) -> StorageResult<()> {
-        self.store_items_at_height(items, self.next_height(), manager).await
-    }
-
-    pub async fn store_items_at_height(
-        &mut self,
-        items: &[I],
         start_height: u32,
         manager: &DiskStorageManager,
     ) -> StorageResult<()> {
@@ -311,31 +312,29 @@ impl<I: Persistable> SegmentCache<I> {
             return Ok(());
         }
 
-        let mut storage_index = self.height_to_index(start_height);
+        let mut height = start_height;
 
         tracing::debug!(
-            "SegmentsCache: storing {} items starting at height {} (storage index {})",
+            "SegmentsCache: storing {} items starting at height {}",
             items.len(),
-            start_height,
-            storage_index
+            height,
         );
 
         for item in items {
-            let segment_id = Self::index_to_segment_id(storage_index);
-            let offset = Self::index_to_offset(storage_index);
+            let segment_id = Self::height_to_segment_id(height);
+            let offset = Self::height_to_offset(height);
 
             // Update segment
             let segments = self.get_segment_mut(&segment_id).await?;
             segments.insert(item.clone(), offset);
 
-            storage_index += 1;
+            height += 1;
         }
 
         // Update cached tip height with blockchain height
-        let last_item_height = self.index_to_height(storage_index).saturating_sub(1);
         self.tip_height = match self.tip_height {
-            Some(current) => Some(current.max(last_item_height)),
-            None => Some(last_item_height),
+            Some(current) => Some(current.max(height - 1)),
+            None => Some(height - 1),
         };
 
         // Persist dirty segments periodically (every 1000 filter items)
@@ -362,32 +361,6 @@ impl<I: Persistable> SegmentCache<I> {
     #[inline]
     pub fn tip_height(&self) -> Option<u32> {
         self.tip_height
-    }
-
-    #[inline]
-    pub fn next_height(&self) -> u32 {
-        let current_tip = self.tip_height();
-        match current_tip {
-            Some(tip) => tip + 1,
-            None => self.sync_base_height,
-        }
-    }
-
-    /// Convert blockchain height to storage index
-    /// For checkpoint sync, storage index is relative to sync_base_height
-    #[inline]
-    fn height_to_index(&self, height: u32) -> u32 {
-        debug_assert!(
-            height >= self.sync_base_height,
-            "Height must be greater than or equal to sync_base_height"
-        );
-
-        height - self.sync_base_height
-    }
-
-    #[inline]
-    pub fn index_to_height(&self, index: u32) -> u32 {
-        index + self.sync_base_height
     }
 }
 
@@ -443,7 +416,9 @@ impl<I: Persistable> Segment<I> {
 
             (items, SegmentState::Clean)
         } else {
-            (Vec::with_capacity(Self::ITEMS_PER_SEGMENT as usize), SegmentState::Dirty)
+            let mut vec = Vec::new();
+            vec.resize(Self::ITEMS_PER_SEGMENT as usize, I::sentinel());
+            (vec, SegmentState::Dirty)
         };
 
         Ok(Self::new(segment_id, items, state))
@@ -481,19 +456,13 @@ impl<I: Persistable> Segment<I> {
 
         let offset = offset as usize;
 
-        debug_assert!(offset <= self.items.len());
+        // If, at any moment, we allow the Segment to replace non
+        // sentinel items, feel free to remove this debug assert.
+        // This a bug prevention mechanism based on the assumption that
+        // we are not storing an already valid and stored item.
+        debug_assert!(self.items[offset] == I::sentinel());
 
-        if offset < self.items.len() {
-            self.items[offset] = item;
-        } else if offset == self.items.len() {
-            self.items.push(item);
-        } else {
-            tracing::error!(
-                "Tried to store an item out of the allowed bounds (offset {}) in segment with id {}",
-                offset,
-                self.segment_id
-            );
-        }
+        self.items[offset] = item;
 
         // Transition to Dirty state (from Clean, Dirty, or Saving)
         self.state = SegmentState::Dirty;
@@ -538,7 +507,7 @@ mod tests {
 
         const MAX_SEGMENTS: u32 = SegmentCache::<FilterHeader>::MAX_ACTIVE_SEGMENTS as u32;
 
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
             .await
             .expect("Failed to create new segment_cache");
 
@@ -573,7 +542,7 @@ mod tests {
 
         let items: Vec<_> = (0..10).map(FilterHeader::new_test).collect();
 
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
             .await
             .expect("Failed to create new segment_cache");
 
@@ -607,7 +576,7 @@ mod tests {
 
         const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
 
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path(), 0)
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
             .await
             .expect("Failed to create new segment_cache");
 

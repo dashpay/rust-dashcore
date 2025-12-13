@@ -18,23 +18,16 @@ use super::manager::DiskStorageManager;
 impl DiskStorageManager {
     /// Store chain state to disk.
     pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        // Update our sync_base_height
-        self.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
-        self.block_headers.write().await.set_sync_base_height(state.sync_base_height);
-        self.filters.write().await.set_sync_base_height(state.sync_base_height);
-
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
-        if state.synced_from_checkpoint() && !state.headers.is_empty() {
-            // Store headers starting at the checkpoint height
-            self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
-        } else {
-            self.store_headers(&state.headers).await?;
-        }
+        self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
 
         // Store filter headers
-        // TODO: Shouldn't we use the sync base height here???
-        self.store_filter_headers(&state.filter_headers).await?;
+        self.filter_headers
+            .write()
+            .await
+            .store_items(&state.filter_headers, state.sync_base_height, self)
+            .await?;
 
         // Store other state as JSON
         let state_data = serde_json::json!({
@@ -597,7 +590,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
-        self.filters.write().await.store_items_at_height(&[filter.to_vec()], height, self).await
+        self.filters.write().await.store_items(&[filter.to_vec()], height, self).await
     }
 
     async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>> {
