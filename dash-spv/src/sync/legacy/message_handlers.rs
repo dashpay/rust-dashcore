@@ -1,19 +1,19 @@
 //! Message handlers for synchronization phases.
 
-use std::ops::DerefMut;
-use std::time::Instant;
-
+use dashcore::bip158::BlockFilter;
 use dashcore::block::Block;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
+use std::collections::HashMap;
+use std::time::Instant;
 
+use super::manager::SyncManager;
+use super::phases::SyncPhase;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
-
-use super::manager::SyncManager;
-use super::phases::SyncPhase;
+use key_wallet_manager::wallet_manager::{check_compact_filters_for_addresses, FilterMatchKey};
 
 impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N, W> {
     /// Handle incoming network messages with phase filtering
@@ -496,8 +496,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             }
         }
 
-        let mut wallet = self.wallet.write().await;
-
         // Check filter against wallet if available
         // First, verify filter data matches expected filter header chain
         let height = storage
@@ -531,12 +529,10 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store filter: {}", e)))?;
 
-        let matches = self
-            .filter_sync
-            .check_filter_for_matches(&cfilter.filter, &cfilter.block_hash, wallet.deref_mut())
-            .await?;
-
-        drop(wallet);
+        let key = FilterMatchKey::new(height, cfilter.block_hash);
+        let input = HashMap::from([(key, BlockFilter::new(&cfilter.filter))]);
+        let addresses = self.wallet.read().await.monitored_addresses();
+        let matches = check_compact_filters_for_addresses(&input, addresses);
 
         {
             let mut stats_lock = self.stats.write().await;
@@ -544,7 +540,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             stats_lock.last_filter_received_time = Some(std::time::Instant::now());
         }
 
-        if matches {
+        if !matches.is_empty() {
             // Update filter match statistics
             {
                 let mut stats = self.stats.write().await;

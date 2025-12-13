@@ -4,9 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::fmt::Write as _;
-use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Block, BlockHash, Transaction};
+use dashcore::{Address, Block, Transaction};
 use key_wallet::transaction_checking::transaction_router::TransactionRouter;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -58,30 +57,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         .await;
     }
 
-    async fn check_compact_filter(&mut self, filter: &BlockFilter, block_hash: &BlockHash) -> bool {
-        // Collect all scripts we're watching
-        let mut script_bytes = Vec::new();
-
-        // Get all wallet addresses for this network
-        for info in self.wallet_infos.values() {
-            let monitored = info.monitored_addresses();
-            for address in monitored {
-                script_bytes.push(address.script_pubkey().as_bytes().to_vec());
-            }
-        }
-
-        // If we don't watch any scripts for this network, there can be no match.
-        // Note: BlockFilterReader::match_any returns true for an empty query set,
-        // so we must guard this case explicitly to avoid false positives.
-        let hit = if script_bytes.is_empty() {
-            false
-        } else {
-            filter
-                .match_any(block_hash, &mut script_bytes.iter().map(|s| s.as_slice()))
-                .unwrap_or(false)
-        };
-
-        hit
+    fn monitored_addresses(&self) -> Vec<Address> {
+        self.monitored_addresses()
     }
 
     async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {

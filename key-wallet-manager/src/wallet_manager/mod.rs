@@ -4,9 +4,11 @@
 //! each of which can have multiple accounts. This follows the architecture
 //! pattern where a manager oversees multiple distinct wallets.
 
+mod matching;
 mod process_block;
 mod transaction_building;
 
+pub use crate::wallet_manager::matching::{check_compact_filters_for_addresses, FilterMatchKey};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;

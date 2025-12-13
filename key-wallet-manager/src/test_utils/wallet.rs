@@ -1,9 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
-
-use dashcore::{Block, Transaction, Txid};
-use tokio::sync::Mutex;
-
 use crate::{wallet_interface::WalletInterface, BlockProcessingResult};
+use dashcore::{Address, Block, Transaction, Txid};
+use std::{collections::BTreeMap, sync::Arc};
+use tokio::sync::Mutex;
 
 // Type alias for transaction effects map
 type TransactionEffectsMap = Arc<Mutex<BTreeMap<Txid, (i64, Vec<String>)>>>;
@@ -57,15 +55,6 @@ impl WalletInterface for MockWallet {
         processed.push(tx.txid());
     }
 
-    async fn check_compact_filter(
-        &mut self,
-        _filter: &dashcore::bip158::BlockFilter,
-        _block_hash: &dashcore::BlockHash,
-    ) -> bool {
-        // Return true for all filters in test
-        true
-    }
-
     async fn describe(&self) -> String {
         "MockWallet (test implementation)".to_string()
     }
@@ -73,6 +62,10 @@ impl WalletInterface for MockWallet {
     async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
         let map = self.effects.lock().await;
         map.get(&tx.txid()).cloned()
+    }
+
+    fn monitored_addresses(&self) -> Vec<Address> {
+        Vec::new()
     }
 }
 
@@ -94,13 +87,8 @@ impl WalletInterface for NonMatchingMockWallet {
 
     async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}
 
-    async fn check_compact_filter(
-        &mut self,
-        _filter: &dashcore::bip158::BlockFilter,
-        _block_hash: &dashcore::BlockHash,
-    ) -> bool {
-        // Always return false - filter doesn't match
-        false
+    fn monitored_addresses(&self) -> Vec<Address> {
+        Vec::new()
     }
 
     async fn describe(&self) -> String {

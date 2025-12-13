@@ -5,7 +5,6 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
-use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction, Txid};
 
@@ -47,13 +46,8 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Called when a transaction is seen in the mempool
     async fn process_mempool_transaction(&mut self, tx: &Transaction);
 
-    /// Check if a compact filter matches any watched items
-    /// Returns true if the block should be downloaded
-    async fn check_compact_filter(
-        &mut self,
-        filter: &BlockFilter,
-        block_hash: &dashcore::BlockHash,
-    ) -> bool;
+    /// Get all addresses the wallet is monitoring for incoming transactions
+    fn monitored_addresses(&self) -> Vec<Address>;
 
     /// Return the wallet's per-transaction net change and involved addresses if known.
     /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.
