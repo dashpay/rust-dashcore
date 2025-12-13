@@ -201,8 +201,14 @@ impl StorageManager for MemoryStorageManager {
         Ok(())
     }
 
-    async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>> {
-        Ok(self.filters.get(&height).cloned())
+    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
+        let mut result = Vec::new();
+        for height in range {
+            if let Some(filter) = self.filters.get(&height) {
+                result.push(filter.clone());
+            }
+        }
+        Ok(result)
     }
 
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
