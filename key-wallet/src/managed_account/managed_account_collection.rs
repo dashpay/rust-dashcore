@@ -433,8 +433,10 @@ impl ManagedAccountCollection {
             AccountType::CoinJoin {
                 index,
             } => {
+                let mut external_path = base_path.clone();
+                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0).unwrap()); // 0 for external coinjoin
                 let addresses = AddressPool::new(
-                    base_path,
+                    external_path,
                     AddressPoolType::Absent,
                     DEFAULT_COINJOIN_GAP_LIMIT,
                     network,

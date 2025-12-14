@@ -3,7 +3,7 @@
 //! This module contains the various account type enumerations.
 
 use crate::bip32::{ChildNumber, DerivationPath};
-use crate::dip9::DerivationPathReference;
+use crate::dip9::{DerivationPathReference, FEATURE_PURPOSE, FEATURE_PURPOSE_COINJOIN};
 use crate::transaction_checking::transaction_router::AccountTypeToCheck;
 use crate::Network;
 #[cfg(feature = "bincode")]
@@ -246,12 +246,14 @@ impl AccountType {
             Self::CoinJoin {
                 index,
             } => {
-                // m/9'/coin_type'/account'
+                // m/9'/coin_type'/4'/account'
                 Ok(DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(9).map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(FEATURE_PURPOSE).map_err(crate::error::Error::Bip32)?,
                     ChildNumber::from_hardened_idx(coin_type)
                         .map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(FEATURE_PURPOSE_COINJOIN).map_err(crate::error::Error::Bip32)?,
                     ChildNumber::from_hardened_idx(*index).map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_normal_idx(0).map_err(crate::error::Error::Bip32)?
                 ]))
             }
             Self::IdentityRegistration => {
