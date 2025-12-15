@@ -277,7 +277,8 @@ impl<I: Persistable> SegmentCache<I> {
         let mut items = Vec::with_capacity((end - start) as usize);
 
         let start_segment = Self::height_to_segment_id(start);
-        let end_segment = Self::height_to_segment_id(end);
+        // Because the end is not included, we dont want to visit the segment where it exists
+        let end_segment = Self::height_to_segment_id(end - 1);
 
         for segment_id in start_segment..=end_segment {
             let segment = self.get_segment_mut(&segment_id).await?;
@@ -300,9 +301,20 @@ impl<I: Persistable> SegmentCache<I> {
                     Some(offset) if offset <= seg_start => {}
                     _ => panic!("Trying to access invalid offset ({seg_start}) in segment with first_valid_offset = {:?}", segment.first_valid_offset()),
                 }
+            }
+
+            // This edge case occurs when the end height is equal to ITEMS_PER_SEGMENT.
+            // In this case, we just extend from seg_start until the end
+            if seg_end == 0 {
+                items.extend_from_slice(segment.get(seg_start..Segment::<I>::ITEMS_PER_SEGMENT));
+                continue;
+            }
+
+            #[cfg(debug_assertions)]
+            {
                 match segment.last_valid_offset() {
-                    Some(offset) if offset > seg_end => {}
-                    _ => panic!("Trying to access invalid offset ({seg_end}) in segment with last_valid_offset = {:?}", segment.last_valid_offset()),
+                    Some(offset) if offset >= seg_end - 1 => {} // seg_end is not included, interval of the form [seg_start, seg_end)
+                    _ => panic!("Trying to access invalid offset ({}) in segment with last_valid_offset = {:?}", seg_end - 1, segment.last_valid_offset()),
                 }
             }
 
