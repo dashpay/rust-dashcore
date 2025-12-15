@@ -552,7 +552,8 @@ impl StorageManager for DiskStorageManager {
         &mut self,
         headers: &[dashcore::hash_types::FilterHeader],
     ) -> StorageResult<()> {
-        self.filter_headers.write().await.store_items(headers, self).await
+        let next_height = self.filter_headers.read().await.next_height();
+        self.filter_headers.write().await.store_items(headers, next_height, self).await
     }
 
     async fn load_filter_headers(

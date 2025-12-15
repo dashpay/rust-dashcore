@@ -280,18 +280,17 @@ impl<I: Persistable> SegmentCache<I> {
 
         for segment_id in start_segment..=end_segment {
             let segment = self.get_segment_mut(&segment_id).await?;
-            let item_count = segment.items.len() as u32;
 
             let seg_start_idx = if segment_id == start_segment {
                 Self::height_to_offset(start)
             } else {
-                0
+                segment.first_valid_offset()
             };
 
             let seg_end_idx = if segment_id == end_segment {
-                Self::height_to_offset(end).min(item_count)
+                Self::height_to_offset(end).min(segment.last_valid_offset())
             } else {
-                item_count
+                segment.last_valid_offset()
             };
 
             items.extend_from_slice(segment.get(seg_start_idx..seg_end_idx));
@@ -361,6 +360,14 @@ impl<I: Persistable> SegmentCache<I> {
     pub fn tip_height(&self) -> Option<u32> {
         self.tip_height
     }
+
+    #[inline]
+    pub fn next_height(&self) -> u32 {
+        match self.tip_height() {
+            Some(height) => height + 1,
+            None => 0,
+        }
+    }
 }
 
 /// In-memory cache for a segment of items
@@ -385,6 +392,18 @@ impl<I: Persistable> Segment<I> {
             state,
             last_accessed: Instant::now(),
         }
+    }
+
+    pub fn first_valid_offset(&self) -> u32 {
+        let sentinel = I::sentinel();
+
+        for (index, item) in self.items.iter().enumerate() {
+            if item != &sentinel {
+                return index as u32;
+            }
+        }
+
+        return Self::ITEMS_PER_SEGMENT;
     }
 
     pub fn last_valid_offset(&self) -> u32 {
