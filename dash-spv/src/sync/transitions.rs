@@ -23,11 +23,11 @@ impl TransitionManager {
     }
 
     /// Check if we can transition from current phase to target phase
-    pub async fn can_transition_to(
+    pub async fn can_transition_to<S: StorageManager>(
         &self,
         current_phase: &SyncPhase,
         target_phase: &SyncPhase,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<bool> {
         // Can't transition to the same phase
         if std::mem::discriminant(current_phase) == std::mem::discriminant(target_phase) {
@@ -168,11 +168,11 @@ impl TransitionManager {
     }
 
     /// Get the next phase based on current phase and configuration
-    pub async fn get_next_phase(
+    pub async fn get_next_phase<S: StorageManager, N: NetworkManager>(
         &self,
         current_phase: &SyncPhase,
-        storage: &dyn StorageManager,
-        network: &dyn NetworkManager,
+        storage: &S,
+        network: &N,
     ) -> SyncResult<Option<SyncPhase>> {
         match current_phase {
             SyncPhase::Idle => {
@@ -320,10 +320,10 @@ impl TransitionManager {
 
     // Helper methods for checking phase completion
 
-    async fn are_headers_complete(
+    async fn are_headers_complete<S: StorageManager>(
         &self,
         phase: &SyncPhase,
-        _storage: &dyn StorageManager,
+        _storage: &S,
     ) -> SyncResult<bool> {
         if let SyncPhase::DownloadingHeaders {
             received_empty_response,
@@ -337,10 +337,10 @@ impl TransitionManager {
         }
     }
 
-    async fn are_masternodes_complete(
+    async fn are_masternodes_complete<S: StorageManager>(
         &self,
         phase: &SyncPhase,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<bool> {
         if let SyncPhase::DownloadingMnList {
             current_height,
@@ -364,10 +364,10 @@ impl TransitionManager {
         }
     }
 
-    async fn are_cfheaders_complete(
+    async fn are_cfheaders_complete<S: StorageManager>(
         &self,
         phase: &SyncPhase,
-        _storage: &dyn StorageManager,
+        _storage: &S,
     ) -> SyncResult<bool> {
         if let SyncPhase::DownloadingCFHeaders {
             current_height,
@@ -413,9 +413,9 @@ impl TransitionManager {
         false
     }
 
-    async fn create_cfheaders_phase(
+    async fn create_cfheaders_phase<S: StorageManager>(
         &self,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<Option<SyncPhase>> {
         let header_tip = storage
             .get_tip_height()
@@ -440,9 +440,9 @@ impl TransitionManager {
         }))
     }
 
-    async fn create_fully_synced_phase(
+    async fn create_fully_synced_phase<S: StorageManager>(
         &self,
-        _storage: &dyn StorageManager,
+        _storage: &S,
     ) -> SyncResult<Option<SyncPhase>> {
         Ok(Some(SyncPhase::FullySynced {
             sync_completed_at: Instant::now(),

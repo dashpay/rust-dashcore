@@ -57,10 +57,7 @@ async fn test_reverse_index_disk_storage() {
         // Add a small delay to ensure background worker processes save commands
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        // Explicitly shutdown to ensure all data is saved
-        if let Some(disk_storage) = storage.as_any_mut().downcast_mut::<DiskStorageManager>() {
-            disk_storage.shutdown().await;
-        }
+        storage.shutdown().await;
     }
 
     // Test persistence - reload storage and verify index still works
