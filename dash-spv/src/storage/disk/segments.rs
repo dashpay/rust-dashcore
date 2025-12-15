@@ -190,10 +190,9 @@ impl<I: Persistable> SegmentCache<I> {
             if let Some(segment_id) = max_segment_id {
                 let segment = cache.get_segment(&segment_id).await?;
 
-                cache.tip_height = match segment.last_valid_offset() {
-                    Some(offset) => Some(segment_id * Segment::<I>::ITEMS_PER_SEGMENT + offset),
-                    None => None,
-                };
+                cache.tip_height = segment
+                    .last_valid_offset()
+                    .map(|offset| segment_id * Segment::<I>::ITEMS_PER_SEGMENT + offset);
             }
         }
 
@@ -428,7 +427,7 @@ impl<I: Persistable> Segment<I> {
             }
         }
 
-        return None;
+        None
     }
 
     pub fn last_valid_offset(&self) -> Option<u32> {
@@ -440,7 +439,7 @@ impl<I: Persistable> Segment<I> {
             }
         }
 
-        return None;
+        None
     }
 
     pub async fn load(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
@@ -621,7 +620,7 @@ mod tests {
         assert_eq!(segment.state, SegmentState::Dirty);
 
         for (index, item) in items.iter().enumerate() {
-            segment.insert(item.clone(), index as u32 + 10);
+            segment.insert(*item, index as u32 + 10);
         }
 
         assert_eq!(segment.first_valid_offset(), Some(10));
