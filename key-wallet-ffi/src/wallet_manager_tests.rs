@@ -4,7 +4,6 @@
 #[allow(clippy::module_inception)]
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::FFINetworks;
     use crate::{wallet, wallet_manager, FFINetwork};
     use std::ffi::{CStr, CString};
     use std::ptr;
@@ -53,7 +52,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag, // Create 3 accounts
+                FFINetwork::Testnet, // Create 3 accounts
                 error,
             )
         };
@@ -91,7 +90,7 @@ mod tests {
                     manager,
                     mnemonic.as_ptr(),
                     ptr::null(), // No passphrase
-                    FFINetworks::TestnetFlag,
+                    FFINetwork::Testnet,
                     error,
                 );
                 if !success {
@@ -164,7 +163,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 ptr::null(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 error,
             )
         };
@@ -268,7 +267,7 @@ mod tests {
                 manager,
                 invalid_mnemonic.as_ptr(),
                 ptr::null(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 error,
             )
         };
@@ -300,7 +299,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag, // account_count
+                FFINetwork::Testnet, // account_count
                 error,
             )
         };
@@ -332,7 +331,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 error,
             )
         };
@@ -387,7 +386,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 error,
             )
         };
@@ -468,7 +467,7 @@ mod tests {
                 ptr::null_mut(),
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag, // account_count
+                FFINetwork::Testnet, // account_count
                 error,
             )
         };
@@ -536,7 +535,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 error,
             )
         };
@@ -656,7 +655,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 error,
             )
         };
@@ -823,7 +822,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 error,
             )
         };
@@ -938,7 +937,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,           // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet
@@ -980,7 +979,7 @@ mod tests {
                 manager2,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 true,  // downgrade to pubkey wallet
@@ -1051,7 +1050,7 @@ mod tests {
                 manager4,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 true, // downgrade to pubkey wallet
@@ -1091,7 +1090,7 @@ mod tests {
                 manager5,
                 invalid_mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -1139,7 +1138,7 @@ mod tests {
                 manager1,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 100,         // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet

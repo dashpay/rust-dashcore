@@ -13,7 +13,7 @@ use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::FFIManagedWalletInfo;
-use crate::types::{FFINetwork, FFINetworks, FFITransactionContext, FFIWallet};
+use crate::types::{FFINetwork, FFITransactionContext, FFIWallet};
 
 // MARK: - Transaction Types
 
@@ -71,7 +71,6 @@ pub struct FFITxOutput {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_build_transaction(
     wallet: *mut FFIWallet,
-    _network: FFINetworks,
     account_index: c_uint,
     outputs: *const FFITxOutput,
     outputs_count: usize,
@@ -116,7 +115,6 @@ pub unsafe extern "C" fn wallet_build_transaction(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_sign_transaction(
     wallet: *const FFIWallet,
-    _network: FFINetworks,
     tx_bytes: *const u8,
     tx_len: usize,
     signed_tx_out: *mut *mut u8,

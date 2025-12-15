@@ -2,10 +2,9 @@
 
 use key_wallet_ffi::account::account_free;
 use key_wallet_ffi::account_collection::*;
-use key_wallet_ffi::types::{
-    FFIAccountCreationOptionType, FFINetworks, FFIWalletAccountCreationOptions,
-};
+use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
 use key_wallet_ffi::wallet::{wallet_create_from_mnemonic_with_options, wallet_free};
+use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
 
@@ -35,7 +34,7 @@ fn test_account_collection_comprehensive() {
         let wallet = wallet_create_from_mnemonic_with_options(
             mnemonic.as_ptr(),
             ptr::null(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             &account_options,
             ptr::null_mut(),
         );
@@ -152,7 +151,7 @@ fn test_account_collection_minimal() {
         let wallet = wallet_create_from_mnemonic_with_options(
             mnemonic.as_ptr(),
             ptr::null(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             ptr::null(), // Use default options
             ptr::null_mut(),
         );

@@ -622,8 +622,8 @@ pub unsafe extern "C" fn managed_wallet_info_free(wallet_info: *mut FFIManagedWa
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::managed_wallet::*;
-    use crate::types::FFINetworks;
     use crate::wallet;
+    use crate::FFINetwork;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::{CStr, CString};
     use std::ptr;
@@ -741,7 +741,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -815,7 +815,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -998,7 +998,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };

@@ -15,7 +15,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetworks;
 use crate::FFINetwork;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
@@ -140,7 +139,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> bool {
@@ -181,20 +180,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
         }
     };
 
-    let networks_rust = network.parse_networks();
-
-    // Use first network from the list for now. Follow up PR will clean it up more.
-    let network_rust = match networks_rust.first() {
-        Some(n) => *n,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "No network specified".to_string(),
-            );
-            return false;
-        }
-    };
+    let network_rust: Network = network.into();
 
     unsafe {
         let manager_ref = &*manager;
@@ -251,7 +237,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> bool {
     wallet_manager_add_wallet_from_mnemonic_with_options(
@@ -290,7 +276,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     birth_height: c_uint,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     downgrade_to_pubkey_wallet: bool,
@@ -345,19 +331,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         }
     };
 
-    // Use first network from the list for now. Follow up PR will clean it up more.
-    let networks = network.parse_networks();
-    let network_rust = match networks.first() {
-        Some(n) => *n,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "No network specified".to_string(),
-            );
-            return false;
-        }
-    };
+    let network_rust: Network = network.into();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {

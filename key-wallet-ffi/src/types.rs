@@ -4,64 +4,6 @@ use key_wallet::{Network, Wallet};
 use std::os::raw::{c_char, c_uint};
 use std::sync::Arc;
 
-/// FFI Network type (bit flags for multiple networks)
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FFINetworks {
-    NoNetworks = 0,
-    DashFlag = 1,
-    TestnetFlag = 2,
-    RegtestFlag = 4,
-    DevnetFlag = 8,
-    AllNetworks = 15, // DashFlag | TestnetFlag | RegtestFlag | DevnetFlag
-}
-
-impl FFINetworks {
-    /// Parse bit flags into a vector of networks
-    pub fn parse_networks(&self) -> Vec<Network> {
-        // Handle special cases
-        if self == &FFINetworks::NoNetworks {
-            return vec![];
-        }
-
-        let flags = *self as c_uint;
-
-        let mut networks = Vec::new();
-
-        if flags & (FFINetworks::DashFlag as c_uint) != 0 {
-            networks.push(Network::Dash);
-        }
-        if flags & (FFINetworks::TestnetFlag as c_uint) != 0 {
-            networks.push(Network::Testnet);
-        }
-        if flags & (FFINetworks::RegtestFlag as c_uint) != 0 {
-            networks.push(Network::Regtest);
-        }
-        if flags & (FFINetworks::DevnetFlag as c_uint) != 0 {
-            networks.push(Network::Devnet);
-        }
-
-        networks
-    }
-}
-
-impl FFINetworks {
-    /// Try to convert to a single Network
-    /// Returns None if multiple networks are set or if NoNetworks is set
-    pub fn try_into_single_network(&self) -> Option<Network> {
-        let flags = *self as c_uint;
-
-        // Check if it's a single network
-        match flags {
-            x if x == FFINetworks::DashFlag as c_uint => Some(Network::Dash),
-            x if x == FFINetworks::TestnetFlag as c_uint => Some(Network::Testnet),
-            x if x == FFINetworks::RegtestFlag as c_uint => Some(Network::Regtest),
-            x if x == FFINetworks::DevnetFlag as c_uint => Some(Network::Devnet),
-            _ => None, // Multiple networks or NoNetworks
-        }
-    }
-}
-
 /// FFI Network type (single network)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,31 +43,6 @@ impl From<Network> for FFINetwork {
             Network::Regtest => FFINetwork::Regtest,
             Network::Devnet => FFINetwork::Devnet,
             _ => FFINetwork::Dash,
-        }
-    }
-}
-
-use std::convert::TryFrom;
-
-impl TryFrom<FFINetworks> for Network {
-    type Error = &'static str;
-
-    fn try_from(value: FFINetworks) -> Result<Self, Self::Error> {
-        match value.try_into_single_network() {
-            Some(network) => Ok(network),
-            None => Err("FFINetwork must represent exactly one network"),
-        }
-    }
-}
-
-impl From<Network> for FFINetworks {
-    fn from(n: Network) -> Self {
-        match n {
-            Network::Dash => FFINetworks::DashFlag,
-            Network::Testnet => FFINetworks::TestnetFlag,
-            Network::Regtest => FFINetworks::RegtestFlag,
-            Network::Devnet => FFINetworks::DevnetFlag,
-            _ => FFINetworks::DashFlag, // Default to Dash for unknown networks
         }
     }
 }
