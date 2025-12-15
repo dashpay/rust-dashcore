@@ -1,7 +1,7 @@
 //! Integration tests for storage layer functionality.
 
 use dash_spv::error::StorageError;
-use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager};
+use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dash_spv::types::ChainState;
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
 use dashcore_hashes::Hash;
@@ -9,7 +9,10 @@ use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_memory_storage_basic_operations() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Test initial state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
@@ -45,7 +48,10 @@ async fn test_memory_storage_basic_operations() {
 
 #[tokio::test]
 async fn test_memory_storage_header_ranges() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     let test_headers = create_test_headers(10);
     storage.store_headers(&test_headers).await.expect("Failed to store headers");
@@ -71,7 +77,10 @@ async fn test_memory_storage_header_ranges() {
 
 #[tokio::test]
 async fn test_memory_storage_incremental_headers() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Add headers incrementally to simulate real sync
     for i in 0..3 {
@@ -95,7 +104,10 @@ async fn test_memory_storage_incremental_headers() {
 
 #[tokio::test]
 async fn test_memory_storage_filter_headers() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create test filter headers
     let test_filter_headers = create_test_filter_headers(5);
@@ -122,7 +134,10 @@ async fn test_memory_storage_filter_headers() {
 
 #[tokio::test]
 async fn test_memory_storage_filters() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Store some test filters at consecutive heights
     let filter_data_0 = vec![1, 2, 3, 4, 5];
@@ -151,7 +166,10 @@ async fn test_memory_storage_filters() {
 
 #[tokio::test]
 async fn test_memory_storage_chain_state() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create test chain state
     let chain_state = ChainState::new_for_network(Network::Dash);
@@ -166,13 +184,19 @@ async fn test_memory_storage_chain_state() {
     assert!(retrieved_state.is_some());
 
     // Test initial state
-    let fresh_storage = MemoryStorageManager::new().await.expect("Failed to create fresh storage");
+    let fresh_storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
     assert!(fresh_storage.load_chain_state().await.unwrap().is_none());
 }
 
 #[tokio::test]
 async fn test_memory_storage_metadata() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Store metadata
     let key = "test_key";
@@ -197,7 +221,10 @@ async fn test_memory_storage_metadata() {
 
 #[tokio::test]
 async fn test_memory_storage_clear() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Add some data
     let test_headers = create_test_headers(5);
@@ -228,7 +255,10 @@ async fn test_memory_storage_clear() {
 
 #[tokio::test]
 async fn test_memory_storage_stats() {
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Initially empty
     let stats = storage.stats().await.expect("Failed to get stats");

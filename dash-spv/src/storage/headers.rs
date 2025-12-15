@@ -7,7 +7,7 @@ use dashcore::block::Header as BlockHeader;
 use dashcore::BlockHash;
 
 use crate::error::StorageResult;
-use crate::storage::disk::io::atomic_write;
+use crate::storage::io::atomic_write;
 use crate::StorageError;
 
 use super::manager::DiskStorageManager;

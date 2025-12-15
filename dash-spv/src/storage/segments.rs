@@ -18,7 +18,7 @@ use dashcore::{
 
 use crate::{
     error::StorageResult,
-    storage::disk::{io::atomic_write, manager::WorkerCommand},
+    storage::{io::atomic_write, manager::WorkerCommand},
     StorageError,
 };
 

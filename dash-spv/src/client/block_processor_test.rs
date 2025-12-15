@@ -4,8 +4,7 @@
 mod tests {
     use crate::client::block_processor::{BlockProcessingTask, BlockProcessor};
 
-    use crate::storage::memory::MemoryStorageManager;
-    use crate::storage::StorageManager;
+    use crate::storage::DiskStorageManager;
     use crate::types::{SpvEvent, SpvStats};
     use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
 
@@ -92,17 +91,19 @@ mod tests {
     }
 
     async fn setup_processor() -> (
-        BlockProcessor<MockWallet, MemoryStorageManager>,
+        BlockProcessor<MockWallet, DiskStorageManager>,
         mpsc::UnboundedSender<BlockProcessingTask>,
         mpsc::UnboundedReceiver<SpvEvent>,
         Arc<RwLock<MockWallet>>,
-        Arc<Mutex<MemoryStorageManager>>,
+        Arc<Mutex<DiskStorageManager>>,
     ) {
         let (task_tx, task_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
+        let storage = Arc::new(Mutex::new(
+            DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage"),
+        ));
         let processor = BlockProcessor::new(
             task_rx,
             wallet.clone(),
@@ -305,7 +306,9 @@ mod tests {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let wallet = Arc::new(RwLock::new(NonMatchingWallet {}));
-        let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
+        let storage = Arc::new(Mutex::new(
+            DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage"),
+        ));
 
         let processor =
             BlockProcessor::new(task_rx, wallet, storage, stats, event_tx, Network::Dash);

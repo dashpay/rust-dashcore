@@ -34,9 +34,9 @@ async fn test_smart_fetch_state_initialization() {
     // Note: We can't access private fields, but we can verify the structure exists
     // Need to specify generic types for MasternodeSyncManager
     use dash_spv::network::PeerNetworkManager;
-    use dash_spv::storage::MemoryStorageManager;
+    use dash_spv::storage::DiskStorageManager;
     let _sync_manager = dash_spv::sync::masternodes::MasternodeSyncManager::<
-        MemoryStorageManager,
+        DiskStorageManager,
         PeerNetworkManager,
     >::new(&config);
 

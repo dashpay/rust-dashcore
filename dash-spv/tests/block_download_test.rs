@@ -22,7 +22,7 @@ use dashcore::{
 use dashcore_hashes::Hash;
 
 use dash_spv::{
-    client::ClientConfig, network::NetworkManager, storage::MemoryStorageManager,
+    client::ClientConfig, network::NetworkManager, storage::DiskStorageManager,
     sync::FilterSyncManager, types::FilterMatch,
 };
 // use key_wallet::wallet::ManagedWalletInfo;
@@ -164,7 +164,7 @@ fn create_test_filter_match(block_hash: BlockHash, height: u32) -> FilterMatch {
 async fn test_filter_sync_manager_creation() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
     assert!(!filter_sync.has_pending_downloads());
@@ -176,7 +176,7 @@ async fn test_filter_sync_manager_creation() {
 async fn test_request_block_download() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
@@ -214,7 +214,7 @@ async fn test_request_block_download() {
 async fn test_duplicate_block_request_prevention() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
@@ -238,7 +238,7 @@ async fn test_duplicate_block_request_prevention() {
 async fn test_handle_downloaded_block() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
@@ -269,7 +269,7 @@ async fn test_handle_downloaded_block() {
 async fn test_handle_unexpected_block() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
     let block = create_test_block();
@@ -286,7 +286,7 @@ async fn test_handle_unexpected_block() {
 async fn test_process_multiple_filter_matches() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
@@ -340,9 +340,9 @@ async fn test_sync_manager_integration() {}
 #[tokio::test]
 async fn test_filter_match_and_download_workflow() {
     let config = create_test_config();
-    let _storage = MemoryStorageManager::new().await.unwrap();
+    let _storage = DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
@@ -372,7 +372,7 @@ async fn test_filter_match_and_download_workflow() {
 async fn test_reset_clears_download_state() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 

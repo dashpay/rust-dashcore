@@ -329,7 +329,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
         } else {
-            let storage_manager = match dash_spv::storage::MemoryStorageManager::new().await {
+            let storage_manager = match dash_spv::storage::DiskStorageManager::new_tmp().awai {
                 Ok(sm) => sm,
                 Err(e) => {
                     eprintln!("Failed to create memory storage manager: {}", e);
@@ -348,7 +348,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
         }
     } else {
-        let storage_manager = match dash_spv::storage::MemoryStorageManager::new().await {
+        let storage_manager = match dash_spv::storage::DiskStorageManager::new_tmp().awai {
             Ok(sm) => sm,
             Err(e) => {
                 eprintln!("Failed to create memory storage manager: {}", e);

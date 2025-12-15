@@ -52,7 +52,7 @@ use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
 /// - Essential for a reusable library
 ///
 /// ### 4. **Testing Without Mocks** 🧪
-/// - Test implementations (`MockNetworkManager`, `MemoryStorageManager`) are
+/// - Test implementations (`MockNetworkManager`) are
 ///   first-class types, not runtime injections
 /// - No conditional compilation or feature flags needed for tests
 /// - Type system ensures test and production code are compatible
@@ -84,7 +84,7 @@ use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
 /// type TestSpvClient = DashSpvClient<
 ///     WalletManager,
 ///     MockNetworkManager,
-///     MemoryStorageManager,
+///     DiskStorageManager,
 /// >;
 /// ```
 ///

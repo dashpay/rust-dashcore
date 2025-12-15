@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::storage::MemoryStorageManager;
-    use crate::types::ChainState;
+    use crate::{storage::DiskStorageManager, types::ChainState};
     use dashcore::{BlockHash, ChainLock, Network};
     use dashcore_hashes::Hash;
 
@@ -10,7 +9,7 @@ mod tests {
     async fn test_chainlock_processing() {
         // Create storage and ChainLock manager
         let mut storage =
-            MemoryStorageManager::new().await.expect("Failed to create memory storage");
+            DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
 
@@ -43,7 +42,7 @@ mod tests {
     #[tokio::test]
     async fn test_chainlock_superseding() {
         let mut storage =
-            MemoryStorageManager::new().await.expect("Failed to create memory storage");
+            DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
 
@@ -83,7 +82,7 @@ mod tests {
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
         let mut storage =
-            MemoryStorageManager::new().await.expect("Failed to create memory storage");
+            DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
 
         // Add ChainLocks at heights 1000, 2000, 3000
         for height in [1000, 2000, 3000] {

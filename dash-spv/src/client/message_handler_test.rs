@@ -9,7 +9,6 @@ mod tests {
     use crate::mempool_filter::MempoolFilter;
     use crate::network::mock::MockNetworkManager;
     use crate::network::NetworkManager;
-    use crate::storage::memory::MemoryStorageManager;
     use crate::storage::StorageManager;
     use crate::sync::filters::FilterNotificationSender;
     use crate::sync::SyncManager;
@@ -41,11 +40,11 @@ mod tests {
     ) {
         let network = Box::new(MockNetworkManager::new()) as Box<dyn NetworkManager>;
         let storage =
-            Box::new(MemoryStorageManager::new().await.unwrap()) as Box<dyn StorageManager>;
+            Box::new(DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage")) as Box<dyn StorageManager>;
         let config = ClientConfig::default();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let (block_tx, _block_rx) = mpsc::unbounded_channel();
-        let wallet_storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let wallet_storage = Arc::new(RwLock::new(DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage")));
         let wallet = Arc::new(RwLock::new(Wallet::new(wallet_storage)));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (event_tx, _event_rx) = mpsc::unbounded_channel();

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::{NetworkManager, PeerNetworkManager},
-    storage::{MemoryStorageManager, StorageManager},
+    storage::{DiskStorageManager, StorageManager},
     types::ValidationMode,
 };
 use dashcore::Network;
@@ -17,6 +17,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::{debug, info, warn};
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 const DASH_NODE_ADDR: &str = "127.0.0.1:9999";
@@ -27,14 +28,16 @@ const HEADER_SYNC_TIMEOUT: Duration = Duration::from_secs(120); // 2 minutes for
 async fn create_test_client(
     config: ClientConfig,
 ) -> Result<
-    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, MemoryStorageManager>,
+    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>,
     Box<dyn std::error::Error>,
 > {
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
-    let storage_manager = MemoryStorageManager::new().await?;
+    let storage_manager =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await?;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
@@ -197,7 +200,10 @@ async fn test_real_header_sync_up_to_10k() {
     config.peers.push(peer_addr);
 
     // Create fresh storage and client
-    let storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Verify starting from empty state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
@@ -408,7 +414,10 @@ async fn test_real_header_chain_continuity() {
 
     config.peers.push(peer_addr);
 
-    let storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     let mut client = create_test_client(config).await.expect("Failed to create SPV client");
 

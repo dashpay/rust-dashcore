@@ -70,9 +70,8 @@ mod message_handler_test;
 #[cfg(test)]
 mod tests {
     use super::{ClientConfig, DashSpvClient};
-    use crate::network::mock::MockNetworkManager;
-    use crate::storage::MemoryStorageManager;
     use crate::types::UnconfirmedTransaction;
+    use crate::{network::mock::MockNetworkManager, storage::DiskStorageManager};
     use dashcore::{Amount, Network, Transaction, TxOut};
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::wallet_manager::WalletManager;
@@ -96,7 +95,7 @@ mod tests {
         };
 
         let network_manager = MockNetworkManager::new();
-        let storage = MemoryStorageManager::new().await.expect("memory storage should initialize");
+        let storage = DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
         let client = DashSpvClient::new(config, network_manager, storage, wallet)
@@ -123,7 +122,7 @@ mod tests {
         };
 
         let network_manager = MockNetworkManager::new();
-        let storage = MemoryStorageManager::new().await.expect("memory storage should initialize");
+        let storage = DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
         let mut client = DashSpvClient::new(config, network_manager, storage, wallet)

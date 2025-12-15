@@ -258,7 +258,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Use the internal storage method if available (DiskStorageManager optimization)
         if let Some(disk_storage) =
-            storage.as_any_mut().downcast_mut::<crate::storage::disk::DiskStorageManager>()
+            storage.as_any_mut().downcast_mut::<crate::storage::DiskStorageManager>()
         {
             disk_storage
                 .store_headers(headers)

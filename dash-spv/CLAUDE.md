@@ -107,9 +107,8 @@ The `SyncManager` coordinates all synchronization through a phase-based approach
 Each phase must complete before the next begins, ensuring consistency and simplifying error recovery.
 
 ### Storage Backends
-Two storage implementations via the `StorageManager` trait:
-- `MemoryStorageManager`: In-memory storage for testing
-- `DiskStorageManager`: Persistent disk storage for production
+One storage implementation via the `StorageManager` trait:
+- `DiskStorageManager`: Persistent disk storage
 
 ### Network Layer
 TCP-based networking with proper Dash protocol implementation:

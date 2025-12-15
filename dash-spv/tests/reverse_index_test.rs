@@ -1,11 +1,15 @@
-use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager};
+use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dashcore::block::Header as BlockHeader;
 use dashcore_hashes::Hash;
 use std::path::PathBuf;
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_reverse_index_memory_storage() {
-    let mut storage = MemoryStorageManager::new().await.unwrap();
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create some test headers
     let mut headers = Vec::new();
@@ -80,7 +84,10 @@ async fn test_reverse_index_disk_storage() {
 
 #[tokio::test]
 async fn test_clear_clears_index() {
-    let mut storage = MemoryStorageManager::new().await.unwrap();
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Store some headers
     let header = create_test_header(0);
