@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 use dash_spv::{
@@ -121,7 +122,9 @@ async fn test_filter_sync_at_tip_edge_case() {
     let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
-    let mut storage = DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     // Set up storage with headers and filter headers at the same height (tip)
@@ -164,7 +167,9 @@ async fn test_no_invalid_getcfheaders_at_tip() {
     let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
-    let mut storage = DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     // Create a scenario where we're one block behind

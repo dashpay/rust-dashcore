@@ -307,65 +307,29 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Create and start the client based on storage type
-    if config.enable_persistence {
-        if let Some(path) = &config.storage_path {
-            let storage_manager =
-                match dash_spv::storage::DiskStorageManager::new(path.clone()).await {
-                    Ok(sm) => sm,
-                    Err(e) => {
-                        eprintln!("Failed to create disk storage manager: {}", e);
-                        process::exit(1);
-                    }
-                };
-            run_client(
-                config,
-                network_manager,
-                storage_manager,
-                wallet,
-                enable_terminal_ui,
-                &matches,
-                wallet_id,
-            )
-            .await?;
-        } else {
-            let storage_manager = match dash_spv::storage::DiskStorageManager::new_tmp().awai {
-                Ok(sm) => sm,
-                Err(e) => {
-                    eprintln!("Failed to create memory storage manager: {}", e);
-                    process::exit(1);
-                }
-            };
-            run_client(
-                config,
-                network_manager,
-                storage_manager,
-                wallet,
-                enable_terminal_ui,
-                &matches,
-                wallet_id,
-            )
-            .await?;
-        }
+    let path = if let Some(path) = &config.storage_path {
+        path.clone()
     } else {
-        let storage_manager = match dash_spv::storage::DiskStorageManager::new_tmp().awai {
-            Ok(sm) => sm,
-            Err(e) => {
-                eprintln!("Failed to create memory storage manager: {}", e);
-                process::exit(1);
-            }
-        };
-        run_client(
-            config,
-            network_manager,
-            storage_manager,
-            wallet,
-            enable_terminal_ui,
-            &matches,
-            wallet_id,
-        )
-        .await?;
-    }
+        "./.tmp/main-exec-storage".into()
+    };
+
+    let storage_manager = match dash_spv::storage::DiskStorageManager::new(path.clone()).await {
+        Ok(sm) => sm,
+        Err(e) => {
+            eprintln!("Failed to create disk storage manager: {}", e);
+            process::exit(1);
+        }
+    };
+    run_client(
+        config,
+        network_manager,
+        storage_manager,
+        wallet,
+        enable_terminal_ui,
+        &matches,
+        wallet_id,
+    )
+    .await?;
 
     Ok(())
 }
