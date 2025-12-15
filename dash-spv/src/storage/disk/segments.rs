@@ -189,10 +189,11 @@ impl<I: Persistable> SegmentCache<I> {
 
             if let Some(segment_id) = max_segment_id {
                 let segment = cache.get_segment(&segment_id).await?;
-                let tip_height =
-                    segment_id * Segment::<I>::ITEMS_PER_SEGMENT + segment.last_valid_offset();
 
-                cache.tip_height = Some(tip_height);
+                cache.tip_height = match segment.last_valid_offset() {
+                    Some(offset) => Some(segment_id * Segment::<I>::ITEMS_PER_SEGMENT + offset),
+                    None => None,
+                };
             }
         }
 
@@ -281,19 +282,31 @@ impl<I: Persistable> SegmentCache<I> {
         for segment_id in start_segment..=end_segment {
             let segment = self.get_segment_mut(&segment_id).await?;
 
-            let seg_start_idx = if segment_id == start_segment {
+            let seg_start = if segment_id == start_segment {
                 Self::height_to_offset(start)
             } else {
-                segment.first_valid_offset()
+                0
             };
 
-            let seg_end_idx = if segment_id == end_segment {
-                Self::height_to_offset(end).min(segment.last_valid_offset())
+            let seg_end = if segment_id == end_segment {
+                Self::height_to_offset(end)
             } else {
-                segment.last_valid_offset()
+                Segment::<I>::ITEMS_PER_SEGMENT
             };
 
-            items.extend_from_slice(segment.get(seg_start_idx..seg_end_idx));
+            #[cfg(debug_assertions)]
+            {
+                match segment.first_valid_offset() {
+                    Some(offset) if offset <= seg_start => {}
+                    _ => panic!("Trying to access invalid offset ({seg_start}) in segment with first_valid_offset = {:?}", segment.first_valid_offset()),
+                }
+                match segment.last_valid_offset() {
+                    Some(offset) if offset > seg_end => {}
+                    _ => panic!("Trying to access invalid offset ({seg_end}) in segment with last_valid_offset = {:?}", segment.last_valid_offset()),
+                }
+            }
+
+            items.extend_from_slice(segment.get(seg_start..seg_end));
         }
 
         Ok(items)
@@ -384,7 +397,7 @@ impl<I: Persistable> Segment<I> {
 
     fn new(segment_id: u32, mut items: Vec<I>, state: SegmentState) -> Self {
         debug_assert!(items.len() <= Self::ITEMS_PER_SEGMENT as usize);
-        items.truncate(Self::ITEMS_PER_SEGMENT as usize);
+        items.resize(Self::ITEMS_PER_SEGMENT as usize, I::sentinel());
 
         Self {
             segment_id,
@@ -394,28 +407,28 @@ impl<I: Persistable> Segment<I> {
         }
     }
 
-    pub fn first_valid_offset(&self) -> u32 {
+    pub fn first_valid_offset(&self) -> Option<u32> {
         let sentinel = I::sentinel();
 
         for (index, item) in self.items.iter().enumerate() {
             if item != &sentinel {
-                return index as u32;
+                return Some(index as u32);
             }
         }
 
-        return Self::ITEMS_PER_SEGMENT;
+        return None;
     }
 
-    pub fn last_valid_offset(&self) -> u32 {
+    pub fn last_valid_offset(&self) -> Option<u32> {
         let sentinel = I::sentinel();
 
         for (index, item) in self.items.iter().enumerate().rev() {
             if item != &sentinel {
-                return index as u32;
+                return Some(index as u32);
             }
         }
 
-        return 0;
+        return None;
     }
 
     pub async fn load(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
@@ -512,7 +525,13 @@ impl<I: Persistable> Segment<I> {
         {
             let sentinel = I::sentinel();
             for item in res {
-                debug_assert!(*item != sentinel);
+                debug_assert!(
+                    *item != sentinel,
+                    "Found a gap in segment {} in interval [{},{})",
+                    self.segment_id,
+                    range.start,
+                    range.end
+                );
             }
         }
 
@@ -534,7 +553,8 @@ mod tests {
     impl TestStruct for FilterHeader {
         fn new_test(id: u32) -> Self {
             let mut bytes = [0u8; 32];
-            bytes[0..4].copy_from_slice(&id.to_le_bytes());
+            bytes[0] = 1;
+            bytes[1..5].copy_from_slice(&id.to_le_bytes());
             FilterHeader::from_raw_hash(dashcore_hashes::sha256d::Hash::from_byte_array(bytes))
         }
     }
@@ -557,10 +577,9 @@ mod tests {
 
         for i in 0..=MAX_SEGMENTS {
             let segment = cache.get_segment_mut(&i).await.expect("Failed to create a new segment");
-            assert!(segment.items.is_empty());
             assert!(segment.state == SegmentState::Dirty);
 
-            segment.items = vec![FilterHeader::new_test(i)];
+            segment.insert(FilterHeader::new_test(i), 0);
         }
 
         for i in 0..=MAX_SEGMENTS {
@@ -568,7 +587,6 @@ mod tests {
 
             let segment = cache.get_segment_mut(&i).await.expect("Failed to load segment");
 
-            assert_eq!(segment.items.len(), 1);
             assert_eq!(segment.get(0..1), [FilterHeader::new_test(i)]);
             assert!(segment.state == SegmentState::Clean);
         }
@@ -586,53 +604,44 @@ mod tests {
 
         let segment = cache.get_segment_mut(&0).await.expect("Failed to create a new segment");
 
+        assert!(segment.first_valid_offset().is_none());
+        assert!(segment.last_valid_offset().is_none());
         assert_eq!(segment.state, SegmentState::Dirty);
-        segment.items = items.clone();
+
+        for (index, item) in items.iter().enumerate() {
+            segment.insert(item.clone(), index as u32 + 10);
+        }
+
+        assert_eq!(segment.first_valid_offset(), Some(10));
+        assert_eq!(segment.last_valid_offset(), Some(19));
 
         assert!(segment.persist(tmp_dir.path()).await.is_ok());
 
         cache.clear_in_memory();
         assert!(cache.segments.is_empty());
 
-        let segment = cache.get_segment(&0).await.expect("Failed to load segment");
+        let segment = cache.get_segment_mut(&0).await.expect("Failed to load segment");
 
-        assert_eq!(segment.items, items);
         assert_eq!(segment.state, SegmentState::Clean);
+
+        assert_eq!(segment.get(10..20), items);
+
+        assert_eq!(segment.first_valid_offset(), Some(10));
+        assert_eq!(segment.last_valid_offset(), Some(19));
 
         cache.clear_all().await.expect("Failed to clean on-memory and on-disk data");
         assert!(cache.segments.is_empty());
 
         let segment = cache.get_segment(&0).await.expect("Failed to create a new segment");
 
-        assert!(segment.items.is_empty());
+        assert!(segment.first_valid_offset().is_none());
+        assert!(segment.last_valid_offset().is_none());
         assert_eq!(segment.state, SegmentState::Dirty);
     }
 
     #[tokio::test]
     async fn test_segment_cache_get_insert() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
-
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
-            .await
-            .expect("Failed to create new segment_cache");
-
-        let items = cache
-            .get_items(0..ITEMS_PER_SEGMENT)
-            .await
-            .expect("segment cache couldn't return items");
-
-        assert!(items.is_empty());
-
-        let items = cache
-            .get_items(0..ITEMS_PER_SEGMENT + 1)
-            .await
-            .expect("segment cache couldn't return items");
-
-        assert!(items.is_empty());
-
-        // Cannot test the store logic bcs it depends on the DiskStorageManager, test that struct properly or
+        // Cannot test the get/insert logic bcs it depends on the DiskStorageManager, test that struct properly or
         // remove the necessity of it
     }
 
@@ -648,7 +657,8 @@ mod tests {
         let items = (0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect();
         let mut segment = Segment::new(segment_id, items, SegmentState::Dirty);
 
-        assert_eq!(segment.get(MAX_ITEMS..MAX_ITEMS + 1), []);
+        assert_eq!(segment.first_valid_offset(), Some(0));
+        assert_eq!(segment.last_valid_offset(), Some(MAX_ITEMS / 2 - 1));
         assert_eq!(
             segment.get(0..MAX_ITEMS / 2),
             &(0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect::<Vec<_>>()
@@ -657,8 +667,6 @@ mod tests {
             segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
             [FilterHeader::new_test(MAX_ITEMS / 2 - 1)]
         );
-        assert_eq!(segment.get(MAX_ITEMS / 2..MAX_ITEMS / 2 + 1), []);
-        assert_eq!(segment.get(MAX_ITEMS - 1..MAX_ITEMS), []);
 
         assert_eq!(segment.state, SegmentState::Dirty);
         assert!(segment.persist(tmp_dir.path()).await.is_ok());
@@ -667,22 +675,15 @@ mod tests {
         let mut loaded_segment =
             Segment::<FilterHeader>::load(tmp_dir.path(), segment_id).await.unwrap();
 
+        assert_eq!(loaded_segment.first_valid_offset(), Some(0));
+        assert_eq!(loaded_segment.last_valid_offset(), Some(MAX_ITEMS / 2 - 1));
         assert_eq!(
-            loaded_segment.get(MAX_ITEMS..MAX_ITEMS + 1),
-            segment.get(MAX_ITEMS..MAX_ITEMS + 1)
+            loaded_segment.get(0..MAX_ITEMS / 2),
+            &(0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect::<Vec<_>>()
         );
-        assert_eq!(loaded_segment.get(0..1), segment.get(0..1));
         assert_eq!(
             loaded_segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
-            segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2)
-        );
-        assert_eq!(
-            loaded_segment.get(MAX_ITEMS / 2..MAX_ITEMS / 2 + 1),
-            segment.get(MAX_ITEMS / 2..MAX_ITEMS / 2 + 1)
-        );
-        assert_eq!(
-            loaded_segment.get(MAX_ITEMS - 1..MAX_ITEMS),
-            segment.get(MAX_ITEMS - 1..MAX_ITEMS)
+            [FilterHeader::new_test(MAX_ITEMS / 2 - 1)]
         );
     }
 
@@ -690,25 +691,17 @@ mod tests {
     fn test_segment_insert_get() {
         let segment_id = 10;
 
-        const MAX_ITEMS: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
-
         let items = (0..10).map(FilterHeader::new_test).collect();
 
         let mut segment = Segment::new(segment_id, items, SegmentState::Dirty);
 
-        assert_eq!(segment.items.len(), 10);
-        assert_eq!(
-            segment.get(0..MAX_ITEMS + 1),
-            &(0..10).map(FilterHeader::new_test).collect::<Vec<_>>()
-        );
+        assert_eq!(segment.first_valid_offset(), Some(0));
+        assert_eq!(segment.last_valid_offset(), Some(9));
+        assert_eq!(segment.get(0..10), &(0..10).map(FilterHeader::new_test).collect::<Vec<_>>());
 
-        segment.insert(FilterHeader::new_test(4), 4);
         segment.insert(FilterHeader::new_test(10), 10);
 
-        assert_eq!(segment.items.len(), 11);
-        assert_eq!(
-            segment.get(0..MAX_ITEMS + 1),
-            &(0..11).map(FilterHeader::new_test).collect::<Vec<_>>()
-        );
+        assert_eq!(segment.last_valid_offset(), Some(10));
+        assert_eq!(segment.get(0..11), &(0..11).map(FilterHeader::new_test).collect::<Vec<_>>());
     }
 }
