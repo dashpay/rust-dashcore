@@ -18,7 +18,7 @@ impl Wallet {
     /// use key_wallet::wallet::Wallet;
     ///
     /// let wallet = Wallet::new_random(
-    ///     &[key_wallet::Network::Testnet],
+    ///     key_wallet::Network::Testnet,
     ///     key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     /// ).unwrap();
     ///
@@ -71,7 +71,7 @@ mod tests {
 
         let original = Wallet::from_mnemonic(
             mnemonic,
-            &[Network::Testnet],
+            Network::Testnet,
             WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -85,7 +85,7 @@ mod tests {
 
         // Verify the restored wallet matches the original
         assert_eq!(original.wallet_id, restored.wallet_id);
-        assert_eq!(original.accounts.len(), restored.accounts.len());
+        assert_eq!(original.accounts.count(), restored.accounts.count());
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::{managed_wallet_info_free, FFIManagedWalletInfo};
-use crate::types::{FFINetwork, FFITransactionContext, FFIWallet};
+use crate::types::{FFITransactionContext, FFIWallet};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
@@ -109,7 +109,6 @@ pub unsafe extern "C" fn wallet_create_managed_wallet(
 pub unsafe extern "C" fn managed_wallet_check_transaction(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *mut FFIWallet,
-    network: FFINetwork,
     tx_bytes: *const u8,
     tx_len: usize,
     context_type: FFITransactionContext,
@@ -126,7 +125,6 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     }
 
     let managed_wallet: &mut ManagedWalletInfo = (*managed_wallet).inner_mut();
-    let network_rust: key_wallet::Network = network.into();
     let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
     // Parse the transaction
@@ -210,9 +208,8 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     };
 
     // Block on the async check_transaction call
-    let check_result = tokio::runtime::Handle::current().block_on(
-        managed_wallet.check_transaction(&tx, network_rust, context, wallet_mut, update_state),
-    );
+    let check_result = tokio::runtime::Handle::current()
+        .block_on(managed_wallet.check_transaction(&tx, context, wallet_mut, update_state));
 
     // Convert the result to FFI format
     let affected_accounts = if check_result.affected_accounts.is_empty() {

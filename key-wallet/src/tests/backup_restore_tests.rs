@@ -12,11 +12,12 @@ fn test_wallet_mnemonic_export() {
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
-    ).unwrap();
+    )
+    .unwrap();
 
     let wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -36,7 +37,7 @@ fn test_wallet_mnemonic_export() {
 #[test]
 fn test_wallet_full_backup_restore() {
     let mut original_wallet = Wallet::new_random(
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -49,7 +50,6 @@ fn test_wallet_full_backup_restore() {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
@@ -60,7 +60,6 @@ fn test_wallet_full_backup_restore() {
             AccountType::CoinJoin {
                 index: 0,
             },
-            Network::Testnet,
             None,
         )
         .unwrap();
@@ -81,7 +80,7 @@ fn test_wallet_full_backup_restore() {
     // Restore wallet
     let mut restored_wallet = Wallet::from_mnemonic(
         mnemonic,
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -97,7 +96,6 @@ fn test_wallet_full_backup_restore() {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
@@ -108,15 +106,13 @@ fn test_wallet_full_backup_restore() {
             AccountType::CoinJoin {
                 index: 0,
             },
-            Network::Testnet,
             None,
         )
         .unwrap();
 
     // Verify account structure restored
-    let collection = restored_wallet.accounts.get(&Network::Testnet).unwrap();
-    assert_eq!(collection.standard_bip44_accounts.len(), 3); // 0, 1, 2
-    assert_eq!(collection.coinjoin_accounts.len(), 1);
+    assert_eq!(restored_wallet.accounts.standard_bip44_accounts.len(), 3); // 0, 1, 2
+    assert_eq!(restored_wallet.accounts.coinjoin_accounts.len(), 1);
 }
 
 #[test]
@@ -124,7 +120,7 @@ fn test_wallet_partial_backup() {
     // Test backing up only essential data (mnemonic + account indices)
 
     let mut wallet = Wallet::new_random(
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -145,13 +141,12 @@ fn test_wallet_partial_backup() {
     ];
 
     for account_type in &account_metadata {
-        wallet.add_account(*account_type, Network::Testnet, None).unwrap();
+        wallet.add_account(*account_type, None).unwrap();
     }
 
     // Verify accounts were added
-    let collection = wallet.accounts.get(&Network::Testnet).unwrap();
-    assert_eq!(collection.standard_bip44_accounts.len(), 2); // indices 0, 1
-    assert_eq!(collection.coinjoin_accounts.len(), 1);
+    assert_eq!(wallet.accounts.standard_bip44_accounts.len(), 2); // indices 0, 1
+    assert_eq!(wallet.accounts.coinjoin_accounts.len(), 1);
 }
 
 #[test]
@@ -159,7 +154,7 @@ fn test_wallet_metadata_backup() {
     // Test backing up wallet metadata (labels, settings, etc.)
 
     let mut wallet = Wallet::new_random(
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -190,7 +185,7 @@ fn test_wallet_metadata_backup() {
     ];
 
     for item in &metadata {
-        wallet.add_account(item.account_type, Network::Testnet, None).unwrap();
+        wallet.add_account(item.account_type, None).unwrap();
     }
 
     // Verify metadata can be associated with accounts
@@ -204,32 +199,35 @@ fn test_multi_network_backup_restore() {
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
-    ).unwrap();
-
-    let mut wallet = Wallet::from_mnemonic(
-        mnemonic.clone(),
-        &[Network::Testnet],
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
 
-    // Add accounts on multiple networks
+    // Create separate wallets for each network
     let networks = vec![Network::Testnet, Network::Dash, Network::Devnet];
+    let mut wallets = Vec::new();
 
     for network in &networks {
+        let mut wallet = Wallet::from_mnemonic(
+            mnemonic.clone(),
+            *network,
+            crate::wallet::initialization::WalletAccountCreationOptions::None,
+        )
+        .unwrap();
+
+        // Add accounts
         for i in 0..2 {
-            // Try to add account, OK if it already exists (account 0 is created by default)
             wallet
                 .add_account(
                     AccountType::Standard {
                         index: i,
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
-                    *network,
                     None,
                 )
                 .ok();
         }
+
+        wallets.push(wallet);
     }
 
     // Create network-aware backup
@@ -238,25 +236,23 @@ fn test_multi_network_backup_restore() {
         account_count: usize,
     }
 
-    let mut network_backups = Vec::new();
-    for network in &networks {
-        if let Some(collection) = wallet.accounts.get(network) {
-            network_backups.push(NetworkBackup {
-                network: *network,
-                account_count: collection.standard_bip44_accounts.len(),
-            });
-        }
-    }
+    let network_backups: Vec<NetworkBackup> = wallets
+        .iter()
+        .map(|w| NetworkBackup {
+            network: w.network,
+            account_count: w.accounts.standard_bip44_accounts.len(),
+        })
+        .collect();
 
-    // Restore and verify
-    let mut restored = Wallet::from_mnemonic(
-        mnemonic,
-        &[Network::Testnet],
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
+    // Restore each wallet
     for backup in network_backups {
+        let mut restored = Wallet::from_mnemonic(
+            mnemonic.clone(),
+            backup.network,
+            crate::wallet::initialization::WalletAccountCreationOptions::None,
+        )
+        .unwrap();
+
         for i in 0..backup.account_count {
             restored
                 .add_account(
@@ -264,16 +260,13 @@ fn test_multi_network_backup_restore() {
                         index: i as u32,
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
-                    backup.network,
                     None,
                 )
-                .ok(); // OK to fail if account already exists
+                .ok();
         }
-    }
 
-    // Verify all networks restored
-    for network in networks {
-        assert!(restored.accounts.contains_key(&network));
+        assert_eq!(restored.network, backup.network);
+        assert_eq!(restored.accounts.standard_bip44_accounts.len(), backup.account_count);
     }
 }
 
@@ -282,7 +275,7 @@ fn test_incremental_backup() {
     // Test incremental backup of changes since last backup
 
     let mut wallet = Wallet::new_random(
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -290,11 +283,7 @@ fn test_incremental_backup() {
     // Initial state - account 0 is created by default, no need to add it
 
     // Simulate initial backup
-    let initial_account_count = wallet
-        .accounts
-        .get(&Network::Testnet)
-        .map(|c| c.standard_bip44_accounts.len())
-        .unwrap_or(0);
+    let initial_account_count = wallet.accounts.standard_bip44_accounts.len();
 
     // Make changes
     wallet
@@ -303,7 +292,6 @@ fn test_incremental_backup() {
                 index: 1,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            Network::Testnet,
             None,
         )
         .unwrap();
@@ -313,23 +301,16 @@ fn test_incremental_backup() {
             AccountType::CoinJoin {
                 index: 0,
             },
-            Network::Testnet,
             None,
         )
         .unwrap();
 
     // Calculate incremental changes
-    let new_account_count = wallet
-        .accounts
-        .get(&Network::Testnet)
-        .map(|c| c.standard_bip44_accounts.len())
-        .unwrap_or(0);
+    let new_account_count = wallet.accounts.standard_bip44_accounts.len();
 
     let accounts_added = new_account_count - initial_account_count;
     assert_eq!(accounts_added, 1); // One new standard account
 
     // Also check CoinJoin account was added
-    let coinjoin_count =
-        wallet.accounts.get(&Network::Testnet).map(|c| c.coinjoin_accounts.len()).unwrap_or(0);
-    assert_eq!(coinjoin_count, 1);
+    assert_eq!(wallet.accounts.coinjoin_accounts.len(), 1);
 }

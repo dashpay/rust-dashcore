@@ -183,6 +183,19 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
 
     let networks_rust = network.parse_networks();
 
+    // Use first network from the list for now. Follow up PR will clean it up more.
+    let network_rust = match networks_rust.first() {
+        Some(n) => *n,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "No network specified".to_string(),
+            );
+            return false;
+        }
+    };
+
     unsafe {
         let manager_ref = &*manager;
 
@@ -201,7 +214,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
             manager_guard.create_wallet_from_mnemonic(
                 mnemonic_str,
                 passphrase_str,
-                networks_rust.as_slice(),
+                network_rust,
                 None, // birth_height
                 creation_options,
             )
@@ -332,8 +345,19 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         }
     };
 
-    // Convert networks
+    // Use first network from the list for now. Follow up PR will clean it up more.
     let networks = network.parse_networks();
+    let network_rust = match networks.first() {
+        Some(n) => *n,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "No network specified".to_string(),
+            );
+            return false;
+        }
+    };
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -358,7 +382,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         manager_guard.create_wallet_from_mnemonic_return_serialized_bytes(
             mnemonic_str,
             passphrase_str,
-            &networks,
+            network_rust,
             birth_height,
             creation_options,
             downgrade_to_pubkey_wallet,

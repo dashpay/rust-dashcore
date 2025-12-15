@@ -50,11 +50,12 @@ fn test_corrupted_wallet_data_recovery() {
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
-    ).unwrap();
+    )
+    .unwrap();
 
     let wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -65,7 +66,7 @@ fn test_corrupted_wallet_data_recovery() {
     // Recovery: recreate from mnemonic
     let recovered_wallet = Wallet::from_mnemonic(
         mnemonic,
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -77,12 +78,13 @@ fn test_network_mismatch_handling() {
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Create wallet for testnet
     let testnet_wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -90,7 +92,7 @@ fn test_network_mismatch_handling() {
     // Create wallet for mainnet with same mnemonic
     let mainnet_wallet = Wallet::from_mnemonic(
         mnemonic,
-        &[Network::Dash],
+        Network::Dash,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -98,9 +100,9 @@ fn test_network_mismatch_handling() {
     // Wallet IDs should be the same (derived from same root key)
     assert_eq!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
 
-    // But accounts should be network-specific
-    assert!(testnet_wallet.accounts.contains_key(&Network::Testnet));
-    assert!(mainnet_wallet.accounts.contains_key(&Network::Dash));
+    // But networks should be different
+    assert_eq!(testnet_wallet.network, Network::Testnet);
+    assert_eq!(mainnet_wallet.network, Network::Dash);
 }
 
 #[test]
@@ -134,7 +136,7 @@ fn test_zero_value_transaction_handling() {
 #[test]
 fn test_duplicate_account_handling() {
     let mut wallet = Wallet::new_random(
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -146,10 +148,10 @@ fn test_duplicate_account_handling() {
     };
 
     // First addition should succeed (wallet was created with None, so no accounts exist)
-    let result1 = wallet.add_account(account_type, Network::Testnet, None);
+    let result1 = wallet.add_account(account_type, None);
 
     // Duplicate addition should be handled gracefully
-    let result2 = wallet.add_account(account_type, Network::Testnet, None);
+    let result2 = wallet.add_account(account_type, None);
 
     // First should succeed, second should fail due to duplicate
     assert!(result1.is_ok(), "First attempt to add account 0 should succeed");
@@ -239,7 +241,7 @@ fn test_concurrent_access_simulation() {
 
     let wallet = Arc::new(Mutex::new(
         Wallet::new_random(
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap(),
@@ -274,12 +276,13 @@ fn test_passphrase_edge_cases() {
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Test with empty passphrase - use regular from_mnemonic for empty passphrase
     let wallet1 = Wallet::from_mnemonic(
         mnemonic.clone(),
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -289,7 +292,7 @@ fn test_passphrase_edge_cases() {
     let wallet2 = Wallet::from_mnemonic_with_passphrase(
         mnemonic.clone(),
         long_passphrase,
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -299,7 +302,7 @@ fn test_passphrase_edge_cases() {
     let wallet3 = Wallet::from_mnemonic_with_passphrase(
         mnemonic,
         special_passphrase.to_string(),
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -333,23 +336,23 @@ fn test_wallet_recovery_with_missing_accounts() {
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
 
-    // Add accounts with gaps (0, 2, 5)
+    // Add accounts with gaps (2, 5)
     wallet
         .add_account(
             AccountType::Standard {
                 index: 2,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            Network::Testnet,
             None,
         )
         .unwrap();
@@ -360,7 +363,6 @@ fn test_wallet_recovery_with_missing_accounts() {
                 index: 5,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            Network::Testnet,
             None,
         )
         .unwrap();
@@ -368,7 +370,7 @@ fn test_wallet_recovery_with_missing_accounts() {
     // Recovery should handle gaps in account indices
     let recovered_wallet = Wallet::from_mnemonic(
         mnemonic,
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();

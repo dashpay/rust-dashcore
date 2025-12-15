@@ -46,25 +46,23 @@ fn test_standard_transaction_routing() {
 
 #[tokio::test]
 async fn test_transaction_routing_to_bip44_account() {
-    let network = Network::Testnet;
-
     // Create a wallet with a BIP44 account
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
     // Get the account's xpub for address derivation from the wallet's first BIP44 account
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-    let account = account_collection
+    let account = wallet
+        .accounts
         .standard_bip44_accounts
         .get(&0)
         .expect("Expected BIP44 account at index 0 to exist");
     let xpub = account.account_xpub;
 
     let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut(network)
+        .first_bip44_managed_account_mut()
         .expect("Failed to get first BIP44 managed account");
 
     // Get an address from the BIP44 account
@@ -94,7 +92,6 @@ async fn test_transaction_routing_to_bip44_account() {
     let result = managed_wallet_info
         .check_transaction(
             &tx,
-            network,
             context,
             &mut wallet,
             true, // update state
@@ -109,10 +106,8 @@ async fn test_transaction_routing_to_bip44_account() {
 
 #[tokio::test]
 async fn test_transaction_routing_to_bip32_account() {
-    let network = Network::Testnet;
-
     // Create a wallet with BIP32 accounts
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     // Add a BIP32 account
@@ -120,14 +115,14 @@ async fn test_transaction_routing_to_bip32_account() {
         index: 0,
         standard_account_type: StandardAccountType::BIP32Account,
     };
-    wallet.add_account(account_type, network, None).expect("Failed to add account to wallet");
+    wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
     // Get the account's xpub for address derivation
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-    let account = account_collection
+    let account = wallet
+        .accounts
         .standard_bip32_accounts
         .get(&0)
         .expect("Expected BIP32 account at index 0 to exist");
@@ -136,7 +131,7 @@ async fn test_transaction_routing_to_bip32_account() {
     // Get an address from the BIP32 account
     let address = {
         let managed_account = managed_wallet_info
-            .first_bip32_managed_account_mut(network)
+            .first_bip32_managed_account_mut()
             .expect("Failed to get first BIP32 managed account");
         managed_account
             .next_receive_address(Some(&xpub), true)
@@ -162,8 +157,7 @@ async fn test_transaction_routing_to_bip32_account() {
     };
 
     // Check with update_state = false
-    let result =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false).await;
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, false).await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Transaction should be relevant to the BIP32 account");
@@ -172,7 +166,7 @@ async fn test_transaction_routing_to_bip32_account() {
     // Verify state was not updated
     {
         let managed_account = managed_wallet_info
-            .first_bip32_managed_account_mut(network)
+            .first_bip32_managed_account_mut()
             .expect("Failed to get first BIP32 managed account");
         assert_eq!(
             managed_account.balance.confirmed, 0,
@@ -184,7 +178,6 @@ async fn test_transaction_routing_to_bip32_account() {
     let result = managed_wallet_info
         .check_transaction(
             &tx,
-            network,
             context,
             &mut wallet,
             true, // update state
@@ -198,30 +191,28 @@ async fn test_transaction_routing_to_bip32_account() {
 
 #[tokio::test]
 async fn test_transaction_routing_to_coinjoin_account() {
-    let network = Network::Testnet;
-
     // Create a wallet and add a CoinJoin account
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     let account_type = AccountType::CoinJoin {
         index: 0,
     };
-    wallet.add_account(account_type, network, None).expect("Failed to add account to wallet");
+    wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
     // Get the account's xpub
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-    let account = account_collection
+    let account = wallet
+        .accounts
         .coinjoin_accounts
         .get(&0)
         .expect("Expected CoinJoin account at index 0 to exist");
     let xpub = account.account_xpub;
 
     let managed_account = managed_wallet_info
-        .first_coinjoin_managed_account_mut(network)
+        .first_coinjoin_managed_account_mut()
         .expect("Failed to get first CoinJoin managed account");
 
     // Get an address from the CoinJoin account
@@ -241,7 +232,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
                     dashcore::Address::p2pkh(
                         &dashcore::PublicKey::from_slice(&[0x02; 33])
                             .expect("Failed to create public key from bytes"),
-                        network,
+                        Network::Testnet,
                     )
                 })
             } else {
@@ -253,7 +244,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
             dashcore::Address::p2pkh(
                 &dashcore::PublicKey::from_slice(&[0x02; 33])
                     .expect("Failed to create public key from bytes"),
-                network,
+                Network::Testnet,
             )
         }
     };
@@ -283,8 +274,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
         timestamp: Some(1234567890),
     };
 
-    let result =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     // This test may fail if CoinJoin detection is not properly implemented
     println!(
@@ -295,10 +285,8 @@ async fn test_transaction_routing_to_coinjoin_account() {
 
 #[tokio::test]
 async fn test_transaction_affects_multiple_accounts() {
-    let network = Network::Testnet;
-
     // Create a wallet with multiple accounts
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     // Add another BIP44 account
@@ -306,55 +294,57 @@ async fn test_transaction_affects_multiple_accounts() {
         index: 1,
         standard_account_type: StandardAccountType::BIP44Account,
     };
-    wallet.add_account(account_type, network, None).expect("Failed to add account to wallet");
+    wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     // Add another BIP32 account
     let account_type = AccountType::Standard {
         index: 1,
         standard_account_type: StandardAccountType::BIP32Account,
     };
-    wallet.add_account(account_type, network, None).expect("Failed to add account to wallet");
+    wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
     // Get addresses from different accounts
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
 
     // BIP44 account 0
-    let account0 = account_collection
+    let account0 = wallet
+        .accounts
         .standard_bip44_accounts
         .get(&0)
         .expect("Expected BIP44 account at index 0 to exist");
     let xpub0 = account0.account_xpub;
     let managed_account0 = managed_wallet_info
-        .bip44_managed_account_at_index_mut(network, 0)
+        .bip44_managed_account_at_index_mut(0)
         .expect("Failed to get BIP44 managed account at index 0");
     let address0 = managed_account0
         .next_receive_address(Some(&xpub0), true)
         .expect("Failed to generate receive address for account 0");
 
     // BIP44 account 1
-    let account1 = account_collection
+    let account1 = wallet
+        .accounts
         .standard_bip44_accounts
         .get(&1)
         .expect("Expected BIP44 account at index 1 to exist");
     let xpub1 = account1.account_xpub;
     let managed_account1 = managed_wallet_info
-        .bip44_managed_account_at_index_mut(network, 1)
+        .bip44_managed_account_at_index_mut(1)
         .expect("Failed to get BIP44 managed account at index 1");
     let address1 = managed_account1
         .next_receive_address(Some(&xpub1), true)
         .expect("Failed to generate receive address for account 1");
 
     // BIP32 account
-    let account2 = account_collection
+    let account2 = wallet
+        .accounts
         .standard_bip32_accounts
         .get(&0)
         .expect("Expected BIP32 account at index 0 to exist");
     let xpub2 = account2.account_xpub;
     let managed_account2 = managed_wallet_info
-        .first_bip32_managed_account_mut(network)
+        .first_bip32_managed_account_mut()
         .expect("Failed to get first BIP32 managed account");
     let address2 = managed_account2
         .next_receive_address(Some(&xpub2), true)
@@ -389,7 +379,6 @@ async fn test_transaction_affects_multiple_accounts() {
     let result = managed_wallet_info
         .check_transaction(
             &tx,
-            network,
             context,
             &mut wallet,
             true, // update state
@@ -409,8 +398,7 @@ async fn test_transaction_affects_multiple_accounts() {
     println!("Multi-account transaction result: accounts_affected={:?}", result.affected_accounts);
 
     // Test with update_state = false to ensure state isn't modified
-    let result2 =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, false).await;
+    let result2 = managed_wallet_info.check_transaction(&tx, context, &mut wallet, false).await;
 
     assert_eq!(
         result2.total_received, result.total_received,
@@ -420,24 +408,21 @@ async fn test_transaction_affects_multiple_accounts() {
 
 #[test]
 fn test_next_address_method_restrictions() {
-    let network = Network::Testnet;
-
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-
     // Test that standard BIP44 accounts reject next_address
     {
-        let bip44_account = account_collection
+        let bip44_account = wallet
+            .accounts
             .standard_bip44_accounts
             .get(&0)
             .expect("Expected BIP44 account at index 0 to exist");
         let xpub = bip44_account.account_xpub;
         let managed_account = managed_wallet_info
-            .first_bip44_managed_account_mut(network)
+            .first_bip44_managed_account_mut()
             .expect("Failed to get first BIP44 managed account");
 
         let result = managed_account.next_address(Some(&xpub), true);
@@ -453,10 +438,9 @@ fn test_next_address_method_restrictions() {
     }
 
     // Test that standard BIP32 accounts reject next_address (if present)
-    if let Some(bip32_account) = account_collection.standard_bip32_accounts.get(&0) {
+    if let Some(bip32_account) = wallet.accounts.standard_bip32_accounts.get(&0) {
         let xpub = bip32_account.account_xpub;
-        if let Some(managed_account) = managed_wallet_info.first_bip32_managed_account_mut(network)
-        {
+        if let Some(managed_account) = managed_wallet_info.first_bip32_managed_account_mut() {
             let result = managed_account.next_address(Some(&xpub), true);
             assert!(result.is_err(), "Standard BIP32 accounts should reject next_address");
             assert_eq!(
@@ -467,10 +451,10 @@ fn test_next_address_method_restrictions() {
     }
 
     // Test that special accounts accept next_address
-    if let Some(identity_account) = account_collection.identity_registration.as_ref() {
+    if let Some(identity_account) = wallet.accounts.identity_registration.as_ref() {
         let xpub = identity_account.account_xpub;
         let managed_account = managed_wallet_info
-            .identity_registration_managed_account_mut(network)
+            .identity_registration_managed_account_mut()
             .expect("Failed to get identity registration managed account");
 
         let result = managed_account.next_address(Some(&xpub), true);
@@ -484,7 +468,7 @@ fn test_next_address_method_restrictions() {
         }
     }
 
-    println!("✓ next_address method restrictions are properly enforced");
+    println!("next_address method restrictions are properly enforced");
 }
 
 #[test]

@@ -819,7 +819,7 @@ Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't stor
 #### `managed_wallet_check_transaction`
 
 ```c
-managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *mut FFIWallet, network: FFINetwork, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
+managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -851,7 +851,7 @@ Free managed wallet info  # Safety  - `managed_wallet` must be a valid pointer t
 #### `managed_wallet_generate_addresses_to_index`
 
 ```c
-managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, target_index: c_uint, error: *mut FFIError,) -> bool
+managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, target_index: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -867,14 +867,14 @@ Generate addresses up to a specific index in a pool  This ensures that addresses
 #### `managed_wallet_get_account`
 
 ```c
-managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedAccountResult
+managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedAccountResult
 ```
 
 **Description:**
-Get a managed account from a managed wallet  This function gets a ManagedAccount from the wallet manager's managed wallet info, returning a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+Get a managed account from a managed wallet  This function gets a ManagedAccount from the wallet manager's managed wallet info, returning a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
 
 **Module:** `managed_account`
 
@@ -883,7 +883,7 @@ Get a managed account from a managed wallet  This function gets a ManagedAccount
 #### `managed_wallet_get_account_collection`
 
 ```c
-managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, error: *mut FFIError,) -> *mut FFIManagedAccountCollection
+managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_id: *const u8, error: *mut FFIError,) -> *mut FFIManagedAccountCollection
 ```
 
 **Description:**
@@ -899,14 +899,14 @@ Get managed account collection for a specific network from wallet manager  # Saf
 #### `managed_wallet_get_account_count`
 
 ```c
-managed_wallet_get_account_count(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, error: *mut FFIError,) -> c_uint
+managed_wallet_get_account_count(manager: *const FFIWalletManager, wallet_id: *const u8, error: *mut FFIError,) -> c_uint
 ```
 
 **Description:**
-Get number of accounts in a managed wallet  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get number of accounts in a managed wallet  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `managed_account`
 
@@ -915,7 +915,7 @@ Get number of accounts in a managed wallet  # Safety  - `manager` must be a vali
 #### `managed_wallet_get_address_pool_info`
 
 ```c
-managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWalletInfo, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, info_out: *mut FFIAddressPoolInfo, error: *mut FFIError,) -> bool
+managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWalletInfo, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, info_out: *mut FFIAddressPoolInfo, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -947,7 +947,7 @@ Get wallet balance from managed wallet info  Returns the balance breakdown inclu
 #### `managed_wallet_get_bip_44_external_address_range`
 
 ```c
-managed_wallet_get_bip_44_external_address_range(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: std::os::raw::c_uint, start_index: std::os::raw::c_uint, end_index: std::os::raw::c_uint, addresses_out: *mut *mut *mut c_char, count_out: *mut usize, error: *mut FFIError,) -> bool
+managed_wallet_get_bip_44_external_address_range(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: std::os::raw::c_uint, start_index: std::os::raw::c_uint, end_index: std::os::raw::c_uint, addresses_out: *mut *mut *mut c_char, count_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -963,7 +963,7 @@ Get BIP44 external (receive) addresses in the specified range  Returns external 
 #### `managed_wallet_get_bip_44_internal_address_range`
 
 ```c
-managed_wallet_get_bip_44_internal_address_range(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: std::os::raw::c_uint, start_index: std::os::raw::c_uint, end_index: std::os::raw::c_uint, addresses_out: *mut *mut *mut c_char, count_out: *mut usize, error: *mut FFIError,) -> bool
+managed_wallet_get_bip_44_internal_address_range(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: std::os::raw::c_uint, start_index: std::os::raw::c_uint, end_index: std::os::raw::c_uint, addresses_out: *mut *mut *mut c_char, count_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -979,7 +979,7 @@ Get BIP44 internal (change) addresses in the specified range  Returns internal a
 #### `managed_wallet_get_dashpay_external_account`
 
 ```c
-managed_wallet_get_dashpay_external_account(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
+managed_wallet_get_dashpay_external_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
 ```
 
 **Description:**
@@ -995,7 +995,7 @@ Get a managed DashPay external account by composite key  # Safety - Pointers mus
 #### `managed_wallet_get_dashpay_receiving_account`
 
 ```c
-managed_wallet_get_dashpay_receiving_account(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
+managed_wallet_get_dashpay_receiving_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
 ```
 
 **Description:**
@@ -1011,7 +1011,7 @@ Get a managed DashPay receiving funds account by composite key  # Safety - `mana
 #### `managed_wallet_get_next_bip44_change_address`
 
 ```c
-managed_wallet_get_next_bip44_change_address(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: std::os::raw::c_uint, error: *mut FFIError,) -> *mut c_char
+managed_wallet_get_next_bip44_change_address(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: std::os::raw::c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1027,7 +1027,7 @@ Get the next unused change address  Generates the next unused change address for
 #### `managed_wallet_get_next_bip44_receive_address`
 
 ```c
-managed_wallet_get_next_bip44_receive_address(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: std::os::raw::c_uint, error: *mut FFIError,) -> *mut c_char
+managed_wallet_get_next_bip44_receive_address(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: std::os::raw::c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1043,14 +1043,14 @@ Get the next unused receive address  Generates the next unused receive address f
 #### `managed_wallet_get_top_up_account_with_registration_index`
 
 ```c
-managed_wallet_get_top_up_account_with_registration_index(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, registration_index: c_uint,) -> FFIManagedAccountResult
+managed_wallet_get_top_up_account_with_registration_index(manager: *const FFIWalletManager, wallet_id: *const u8, registration_index: c_uint,) -> FFIManagedAccountResult
 ```
 
 **Description:**
-Get a managed IdentityTopUp account with a specific registration index  This is used for top-up accounts that are bound to a specific identity. Returns a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+Get a managed IdentityTopUp account with a specific registration index  This is used for top-up accounts that are bound to a specific identity. Returns a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
 
 **Module:** `managed_account`
 
@@ -1059,7 +1059,7 @@ Get a managed IdentityTopUp account with a specific registration index  This is 
 #### `managed_wallet_get_utxos`
 
 ```c
-managed_wallet_get_utxos(managed_info: *const FFIManagedWalletInfo, network: FFINetwork, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
+managed_wallet_get_utxos(managed_info: *const FFIManagedWalletInfo, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1091,7 +1091,7 @@ Free managed wallet info returned by wallet_manager_get_managed_wallet_info  # S
 #### `managed_wallet_mark_address_used`
 
 ```c
-managed_wallet_mark_address_used(managed_wallet: *mut FFIManagedWalletInfo, network: FFINetwork, address: *const c_char, error: *mut FFIError,) -> bool
+managed_wallet_mark_address_used(managed_wallet: *mut FFIManagedWalletInfo, address: *const c_char, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1107,7 +1107,7 @@ Mark an address as used in the pool  This updates the pool's tracking of which a
 #### `managed_wallet_set_gap_limit`
 
 ```c
-managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWalletInfo, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, gap_limit: c_uint, error: *mut FFIError,) -> bool
+managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWalletInfo, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, gap_limit: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1123,7 +1123,7 @@ Set the gap limit for an address pool  The gap limit determines how many unused 
 #### `wallet_add_account`
 
 ```c
-wallet_add_account(wallet: *mut FFIWallet, network: FFINetwork, account_type: crate::types::FFIAccountType, account_index: c_uint,) -> crate::types::FFIAccountResult
+wallet_add_account(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1139,7 +1139,7 @@ This function dereferences a raw pointer to FFIWallet. The caller must ensure th
 #### `wallet_add_account_with_string_xpub`
 
 ```c
-wallet_add_account_with_string_xpub(wallet: *mut FFIWallet, network: FFINetwork, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_string: *const c_char,) -> crate::types::FFIAccountResult
+wallet_add_account_with_string_xpub(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_string: *const c_char,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1155,7 +1155,7 @@ This function dereferences raw pointers. The caller must ensure that: - The wall
 #### `wallet_add_account_with_xpub_bytes`
 
 ```c
-wallet_add_account_with_xpub_bytes(wallet: *mut FFIWallet, network: FFINetwork, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_bytes: *const u8, xpub_len: usize,) -> crate::types::FFIAccountResult
+wallet_add_account_with_xpub_bytes(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_bytes: *const u8, xpub_len: usize,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1171,7 +1171,7 @@ This function dereferences raw pointers. The caller must ensure that: - The wall
 #### `wallet_add_dashpay_external_account_with_xpub_bytes`
 
 ```c
-wallet_add_dashpay_external_account_with_xpub_bytes(wallet: *mut FFIWallet, network: FFINetwork, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8, xpub_bytes: *const u8, xpub_len: usize,) -> FFIAccountResult
+wallet_add_dashpay_external_account_with_xpub_bytes(wallet: *mut FFIWallet, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8, xpub_bytes: *const u8, xpub_len: usize,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -1187,7 +1187,7 @@ Add a DashPay external (watch-only) account with xpub bytes  # Safety - `wallet`
 #### `wallet_add_dashpay_receiving_account`
 
 ```c
-wallet_add_dashpay_receiving_account(wallet: *mut FFIWallet, network: FFINetwork, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIAccountResult
+wallet_add_dashpay_receiving_account(wallet: *mut FFIWallet, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -1203,14 +1203,14 @@ Add a DashPay receiving funds account  # Safety - `wallet` must be a valid point
 #### `wallet_build_and_sign_transaction`
 
 ```c
-wallet_build_and_sign_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, outputs: *const FFITxOutput, outputs_count: usize, fee_per_kb: u64, current_height: u32, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, error: *mut FFIError,) -> bool
+wallet_build_and_sign_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: c_uint, outputs: *const FFITxOutput, outputs_count: usize, fee_per_kb: u64, current_height: u32, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Build and sign a transaction using the wallet's managed info  This is the recommended way to build transactions. It handles: - UTXO selection using coin selection algorithms - Fee calculation - Change address generation - Transaction signing  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `network` must be a valid FFINetwork - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+Build and sign a transaction using the wallet's managed info  This is the recommended way to build transactions. It handles: - UTXO selection using coin selection algorithms - Fee calculation - Change address generation - Transaction signing  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `network` must be a valid FFINetwork - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
 
 **Module:** `transaction`
 
@@ -1235,7 +1235,7 @@ Build a transaction (unsigned)  This creates an unsigned transaction. Use wallet
 #### `wallet_check_transaction`
 
 ```c
-wallet_check_transaction(wallet: *mut FFIWallet, network: FFINetwork, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: u32, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
+wallet_check_transaction(wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: u32, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1363,7 +1363,7 @@ Create a new random wallet with options  # Safety  - `account_options` must be a
 #### `wallet_derive_extended_private_key`
 
 ```c
-wallet_derive_extended_private_key(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+wallet_derive_extended_private_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
 ```
 
 **Description:**
@@ -1379,7 +1379,7 @@ Derive extended private key at a specific path Returns an opaque FFIExtendedPriv
 #### `wallet_derive_extended_public_key`
 
 ```c
-wallet_derive_extended_public_key(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPublicKey
+wallet_derive_extended_public_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPublicKey
 ```
 
 **Description:**
@@ -1395,7 +1395,7 @@ Derive extended public key at a specific path Returns an opaque FFIExtendedPubli
 #### `wallet_derive_private_key`
 
 ```c
-wallet_derive_private_key(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIPrivateKey
+wallet_derive_private_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIPrivateKey
 ```
 
 **Description:**
@@ -1411,7 +1411,7 @@ Derive private key at a specific path Returns an opaque FFIPrivateKey pointer th
 #### `wallet_derive_private_key_as_wif`
 
 ```c
-wallet_derive_private_key_as_wif(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut c_char
+wallet_derive_private_key_as_wif(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1427,7 +1427,7 @@ Derive private key at a specific path and return as WIF string  # Safety  - `wal
 #### `wallet_derive_public_key`
 
 ```c
-wallet_derive_public_key(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIPublicKey
+wallet_derive_public_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIPublicKey
 ```
 
 **Description:**
@@ -1443,7 +1443,7 @@ Derive public key at a specific path Returns an opaque FFIPublicKey pointer that
 #### `wallet_derive_public_key_as_hex`
 
 ```c
-wallet_derive_public_key_as_hex(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut c_char
+wallet_derive_public_key_as_hex(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1491,7 +1491,7 @@ Free a const wallet handle  This is a const-safe wrapper for wallet_free() that 
 #### `wallet_get_account`
 
 ```c
-wallet_get_account(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, account_type: FFIAccountType,) -> FFIAccountResult
+wallet_get_account(wallet: *const FFIWallet, account_index: c_uint, account_type: FFIAccountType,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -1507,7 +1507,7 @@ Get an account handle for a specific account type Returns a result containing ei
 #### `wallet_get_account_collection`
 
 ```c
-wallet_get_account_collection(wallet: *const FFIWallet, network: FFINetwork, error: *mut FFIError,) -> *mut FFIAccountCollection
+wallet_get_account_collection(wallet: *const FFIWallet, error: *mut FFIError,) -> *mut FFIAccountCollection
 ```
 
 **Description:**
@@ -1523,7 +1523,7 @@ Get account collection for a specific network from wallet  # Safety  - `wallet` 
 #### `wallet_get_account_count`
 
 ```c
-wallet_get_account_count(wallet: *const FFIWallet, network: FFINetwork, error: *mut FFIError,) -> c_uint
+wallet_get_account_count(wallet: *const FFIWallet, error: *mut FFIError,) -> c_uint
 ```
 
 **Description:**
@@ -1539,7 +1539,7 @@ Get number of accounts  # Safety  - `wallet` must be a valid pointer to an FFIWa
 #### `wallet_get_account_xpriv`
 
 ```c
-wallet_get_account_xpriv(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
+wallet_get_account_xpriv(wallet: *const FFIWallet, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1555,7 +1555,7 @@ Get extended private key for account  # Safety  - `wallet` must be a valid point
 #### `wallet_get_account_xpub`
 
 ```c
-wallet_get_account_xpub(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
+wallet_get_account_xpub(wallet: *const FFIWallet, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1587,7 +1587,7 @@ Get wallet ID (32-byte hash)  # Safety  - `wallet` must be a valid pointer to an
 #### `wallet_get_top_up_account_with_registration_index`
 
 ```c
-wallet_get_top_up_account_with_registration_index(wallet: *const FFIWallet, network: FFINetwork, registration_index: c_uint,) -> FFIAccountResult
+wallet_get_top_up_account_with_registration_index(wallet: *const FFIWallet, registration_index: c_uint,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -1619,7 +1619,7 @@ This function is deprecated and returns an empty list. Use `managed_wallet_get_u
 #### `wallet_get_xpub`
 
 ```c
-wallet_get_xpub(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
+wallet_get_xpub(wallet: *const FFIWallet, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
