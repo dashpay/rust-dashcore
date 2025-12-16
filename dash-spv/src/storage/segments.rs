@@ -16,21 +16,7 @@ use dashcore::{
     BlockHash,
 };
 
-use crate::{
-    error::StorageResult,
-    storage::{io::atomic_write, manager::WorkerCommand},
-    StorageError,
-};
-
-use super::manager::DiskStorageManager;
-
-/// State of a segment in memory
-#[derive(Debug, Clone, PartialEq)]
-enum SegmentState {
-    Clean,  // No changes, up to date on disk
-    Dirty,  // Has changes, needs saving
-    Saving, // Currently being saved in background
-}
+use crate::{error::StorageResult, storage::io::atomic_write, StorageError};
 
 pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const FOLDER_NAME: &'static str;
@@ -47,44 +33,25 @@ pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
         )
         .into()
     }
-
-    fn make_save_command(segment: &Segment<Self>) -> WorkerCommand;
 }
 
 impl Persistable for Vec<u8> {
     const FOLDER_NAME: &'static str = "filters";
-
-    fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
-        WorkerCommand::SaveFilterSegmentCache {
-            segment_id: segment.segment_id,
-        }
-    }
 }
 
 impl Persistable for BlockHeader {
     const FOLDER_NAME: &'static str = "block_headers";
-
-    fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
-        WorkerCommand::SaveBlockHeaderSegmentCache {
-            segment_id: segment.segment_id,
-        }
-    }
 }
 
 impl Persistable for FilterHeader {
     const FOLDER_NAME: &'static str = "filter_headers";
-
-    fn make_save_command(segment: &Segment<Self>) -> WorkerCommand {
-        WorkerCommand::SaveFilterHeaderSegmentCache {
-            segment_id: segment.segment_id,
-        }
-    }
 }
 
 /// In-memory cache for all segments of items
 #[derive(Debug)]
 pub struct SegmentCache<I: Persistable> {
     segments: HashMap<u32, Segment<I>>,
+    evicted: HashMap<u32, Segment<I>>,
     tip_height: Option<u32>,
     sync_base_height: u32,
     base_path: PathBuf,
@@ -148,6 +115,7 @@ impl<I: Persistable> SegmentCache<I> {
 
         let mut cache = Self {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
+            evicted: HashMap::new(),
             tip_height: None,
             sync_base_height,
             base_path,
@@ -225,37 +193,45 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(())
     }
 
-    pub async fn get_segment(&mut self, segment_id: &u32) -> StorageResult<&Segment<I>> {
+    async fn get_segment(&mut self, segment_id: &u32) -> StorageResult<&Segment<I>> {
         let segment = self.get_segment_mut(segment_id).await?;
         Ok(&*segment)
     }
 
-    pub async fn get_segment_mut<'a>(
+    async fn get_segment_mut<'a>(
         &'a mut self,
         segment_id: &u32,
     ) -> StorageResult<&'a mut Segment<I>> {
         let segments_len = self.segments.len();
-        let segments = &mut self.segments;
 
-        if segments.contains_key(segment_id) {
-            let segment = segments.get_mut(segment_id).expect("We already checked that it exists");
-            segment.last_accessed = Instant::now();
+        if self.segments.contains_key(segment_id) {
+            let segment =
+                self.segments.get_mut(segment_id).expect("We already checked that it exists");
             return Ok(segment);
         }
 
         if segments_len >= Self::MAX_ACTIVE_SEGMENTS {
             let key_to_evict =
-                segments.iter_mut().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
+                self.segments.iter_mut().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
 
-            if let Some((key, segment)) = key_to_evict {
-                segment.persist(&self.base_path).await?;
-                segments.remove(&key);
+            if let Some((key, _)) = key_to_evict {
+                if let Some(segment) = self.segments.remove(&key) {
+                    if segment.state == SegmentState::Dirty {
+                        self.evicted.insert(key, segment);
+                    }
+                }
             }
         }
 
-        // Load and insert
-        let segment = Segment::load(&self.base_path, *segment_id).await?;
-        let segment = segments.entry(*segment_id).or_insert(segment);
+        // If the segment is already in the to_persist map, load it from there.
+        // If the segment is not in the to_persist map, load it from disk.
+        let segment = if let Some(segment) = self.evicted.remove(segment_id) {
+            segment
+        } else {
+            Segment::load(&self.base_path, *segment_id).await?
+        };
+
+        let segment = self.segments.entry(*segment_id).or_insert(segment);
         Ok(segment)
     }
 
@@ -292,19 +268,14 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(items)
     }
 
-    pub async fn store_items(
-        &mut self,
-        items: &[I],
-        manager: &DiskStorageManager,
-    ) -> StorageResult<()> {
-        self.store_items_at_height(items, self.next_height(), manager).await
+    pub async fn store_items(&mut self, items: &[I]) -> StorageResult<()> {
+        self.store_items_at_height(items, self.next_height()).await
     }
 
     pub async fn store_items_at_height(
         &mut self,
         items: &[I],
         start_height: u32,
-        manager: &DiskStorageManager,
     ) -> StorageResult<()> {
         if items.is_empty() {
             tracing::trace!("DiskStorage: no items to store");
@@ -325,36 +296,43 @@ impl<I: Persistable> SegmentCache<I> {
             let offset = Self::index_to_offset(storage_index);
 
             // Update segment
-            let segments = self.get_segment_mut(&segment_id).await?;
-            segments.insert(item.clone(), offset);
+            let segment = self.get_segment_mut(&segment_id).await?;
+            segment.insert(item.clone(), offset);
 
             storage_index += 1;
         }
 
-        // Update cached tip height with blockchain height
         let last_item_height = self.index_to_height(storage_index).saturating_sub(1);
         self.tip_height = match self.tip_height {
             Some(current) => Some(current.max(last_item_height)),
             None => Some(last_item_height),
         };
 
-        // Persist dirty segments periodically (every 1000 filter items)
-        if items.len() >= 1000 || start_height.is_multiple_of(1000) {
-            self.persist_dirty(manager).await;
-        }
-
         Ok(())
     }
 
-    pub async fn persist_dirty(&mut self, manager: &DiskStorageManager) {
-        // Collect segments to persist (only dirty ones)
-        let segments: Vec<_> =
-            self.segments.values().filter(|s| s.state == SegmentState::Dirty).collect();
+    pub async fn persist_evicted(&mut self) {
+        for (_, segments) in self.evicted.iter_mut() {
+            if let Err(e) = segments.persist(&self.base_path).await {
+                tracing::error!("Failed to persist segment: {}", e);
+            }
+        }
 
-        // Send header segments to worker if exists
-        if let Some(tx) = &manager.worker_tx {
-            for segment in segments {
-                let _ = tx.send(I::make_save_command(segment)).await;
+        self.evicted.clear();
+
+        for (_, segments) in self.segments.iter_mut() {
+            if let Err(e) = segments.persist(&self.base_path).await {
+                tracing::error!("Failed to persist segment: {}", e);
+            }
+        }
+    }
+
+    pub async fn persist(&mut self) {
+        self.persist_evicted().await;
+
+        for (_, segments) in self.segments.iter_mut() {
+            if let Err(e) = segments.persist(&self.base_path).await {
+                tracing::error!("Failed to persist segment: {}", e);
             }
         }
     }
@@ -391,6 +369,13 @@ impl<I: Persistable> SegmentCache<I> {
     }
 }
 
+/// State of a segment in memory
+#[derive(Debug, Clone, PartialEq)]
+enum SegmentState {
+    Clean, // No changes, up to date on disk
+    Dirty, // Has changes, needs saving
+}
+
 /// In-memory cache for a segment of items
 #[derive(Debug, Clone)]
 pub struct Segment<I: Persistable> {
@@ -415,7 +400,7 @@ impl<I: Persistable> Segment<I> {
         }
     }
 
-    pub async fn load(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
+    async fn load(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
         // Load segment from disk
         let segment_path = base_path.join(I::relative_disk_path(segment_id));
 
@@ -460,8 +445,6 @@ impl<I: Persistable> Segment<I> {
             return Err(StorageError::WriteFailed(format!("Failed to persist segment: {}", e)));
         }
 
-        self.state = SegmentState::Saving;
-
         let mut buffer = Vec::new();
 
         for item in self.items.iter() {
@@ -495,7 +478,6 @@ impl<I: Persistable> Segment<I> {
             );
         }
 
-        // Transition to Dirty state (from Clean, Dirty, or Saving)
         self.state = SegmentState::Dirty;
         self.last_accessed = std::time::Instant::now();
     }
@@ -545,13 +527,12 @@ mod tests {
         // This logic is a little tricky. Each cache can contain up to MAX_SEGMENTS segments in memory.
         // By storing MAX_SEGMENTS + 1 items, we ensure that the cache will evict the first introduced.
         // Then, by asking again in order starting in 0, we force the cache to load the evicted segment
-        // from disk, evicting at the same time the next, 1 in this case. Then we ask for the 1 that we
-        // know is evicted and so on.
+        // evicting at the same time the next, 1 in this case. Then we ask for the 1 that we know is
+        // evicted and so on.
 
         for i in 0..=MAX_SEGMENTS {
             let segment = cache.get_segment_mut(&i).await.expect("Failed to create a new segment");
             assert!(segment.items.is_empty());
-            assert!(segment.state == SegmentState::Dirty);
 
             segment.items = vec![FilterHeader::new_test(i)];
         }
@@ -563,7 +544,6 @@ mod tests {
 
             assert_eq!(segment.items.len(), 1);
             assert_eq!(segment.get(0..1), [FilterHeader::new_test(i)]);
-            assert!(segment.state == SegmentState::Clean);
         }
     }
 
