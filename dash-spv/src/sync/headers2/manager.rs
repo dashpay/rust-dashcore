@@ -96,7 +96,7 @@ impl Headers2StateManager {
     pub fn process_headers(
         &mut self,
         peer_id: PeerId,
-        headers: Vec<CompressedHeader>,
+        headers: &[CompressedHeader],
     ) -> Result<Vec<Header>, ProcessError> {
         if headers.is_empty() {
             return Ok(Vec::new());
@@ -116,7 +116,7 @@ impl Headers2StateManager {
         let mut decompressed = Vec::with_capacity(headers.len());
 
         // Process headers and collect statistics
-        for (i, compressed) in headers.into_iter().enumerate() {
+        for (i, compressed) in headers.iter().enumerate() {
             // Update statistics
             self.total_headers_received += 1;
             self.total_bytes_received += compressed.encoded_size() as u64;
@@ -128,9 +128,8 @@ impl Headers2StateManager {
 
             // Get state and decompress
             let state = self.get_state(peer_id);
-            let header = state
-                .decompress(&compressed)
-                .map_err(|e| ProcessError::DecompressionError(i, e))?;
+            let header =
+                state.decompress(compressed).map_err(|e| ProcessError::DecompressionError(i, e))?;
 
             decompressed.push(header);
         }
@@ -230,7 +229,7 @@ mod tests {
         let compressed2 = compress_state.compress(&header2);
 
         // Process headers
-        let result = manager.process_headers(peer_id, vec![compressed1, compressed2]);
+        let result = manager.process_headers(peer_id, &[compressed1, compressed2]);
         assert!(result.is_ok());
 
         let decompressed = result.expect("decompression should succeed in test");
@@ -261,7 +260,7 @@ mod tests {
 
         // Try to process it as first header - should fail with DecompressionError
         // because the peer doesn't have the previous header state
-        let result = manager.process_headers(peer_id, vec![compressed]);
+        let result = manager.process_headers(peer_id, &[compressed]);
         assert!(matches!(result, Err(ProcessError::DecompressionError(0, _))));
     }
 

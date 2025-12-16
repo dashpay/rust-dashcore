@@ -29,11 +29,11 @@ impl ForkDetector {
     }
 
     /// Check if a header creates or extends a fork
-    pub fn check_header(
+    pub fn check_header<CS: ChainStorage>(
         &mut self,
         header: &BlockHeader,
         chain_state: &ChainState,
-        storage: &dyn ChainStorage,
+        storage: &CS,
     ) -> ForkDetectionResult {
         let header_hash = header.block_hash();
         let prev_hash = header.prev_blockhash;

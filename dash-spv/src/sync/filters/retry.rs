@@ -264,7 +264,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     async fn handle_request_timeout(
         &mut self,
         range: (u32, u32),
-        _network: &mut dyn NetworkManager,
+        _network: &mut N,
         storage: &S,
     ) -> SyncResult<()> {
         let (start, end) = range;

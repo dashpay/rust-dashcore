@@ -13,8 +13,6 @@ mod segments;
 mod state;
 
 use async_trait::async_trait;
-pub use manager::DiskStorageManager;
-use std::any::Any;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -23,6 +21,7 @@ use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Txid};
 use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
+pub use manager::DiskStorageManager;
 pub use sync_state::{PersistentSyncState, RecoverySuggestion, SyncStateValidation};
 pub use sync_storage::MemoryStorage;
 pub use types::*;
@@ -106,8 +105,6 @@ pub trait ChainStorage: Send + Sync {
 /// at a time when using external synchronization, which naturally provides consistency.
 #[async_trait]
 pub trait StorageManager: Send + Sync {
-    /// Convert to Any for downcasting
-    fn as_any_mut(&mut self) -> &mut dyn Any;
     /// Store block headers.
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()>;
 
@@ -246,15 +243,4 @@ pub trait StorageManager: Send + Sync {
 
     /// Shutdown the storage manager
     async fn shutdown(&mut self) -> StorageResult<()>;
-}
-
-/// Helper trait to provide as_any_mut for all StorageManager implementations
-pub trait AsAnyMut {
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-}
-
-impl<T: 'static> AsAnyMut for T {
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }

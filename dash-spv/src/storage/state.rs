@@ -535,10 +535,6 @@ impl DiskStorageManager {
 
 #[async_trait]
 impl StorageManager for DiskStorageManager {
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
         self.store_headers(headers).await
     }

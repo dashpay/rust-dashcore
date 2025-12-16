@@ -256,21 +256,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         }
 
-        // Use the internal storage method if available (DiskStorageManager optimization)
-        if let Some(disk_storage) =
-            storage.as_any_mut().downcast_mut::<crate::storage::DiskStorageManager>()
-        {
-            disk_storage
-                .store_headers(headers)
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
-        } else {
-            // Fallback to standard store_headers for other storage backends
-            storage
-                .store_headers(headers)
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
-        }
+        storage
+            .store_headers(headers)
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
 
         // Update Sync Progress
         let batch_size = headers.len() as u32;
@@ -318,32 +307,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         base_hash: Option<BlockHash>,
     ) -> SyncResult<()> {
         let block_locator = match base_hash {
-            Some(hash) => {
-                // When syncing from a checkpoint, we need to create a proper locator
-                // that helps the peer understand we want headers AFTER this point
-                if self.is_synced_from_checkpoint() {
-                    // For checkpoint sync, only include the checkpoint hash
-                    // Including genesis would allow peers to fall back to sending headers from genesis
-                    // if they don't recognize the checkpoint, which is exactly what we want to avoid
-                    tracing::debug!(
-                        "📍 Using checkpoint-only locator for height {}: [{}]",
-                        self.get_sync_base_height(),
-                        hash
-                    );
-                    vec![hash]
-                } else if network.has_headers2_peer().await && !self.headers2_failed {
-                    // Check if this is genesis and we're using headers2
-                    let genesis_hash = self.config.network.known_genesis_block_hash();
-                    if genesis_hash == Some(hash) {
-                        tracing::info!("📍 Using empty locator for headers2 genesis sync");
-                        vec![]
-                    } else {
-                        vec![hash]
-                    }
-                } else {
-                    vec![hash]
-                }
-            }
+            Some(hash) => vec![hash],
             None => {
                 // Check if we're syncing from a checkpoint
                 if self.is_synced_from_checkpoint()
@@ -381,9 +345,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             getheaders_msg.stop_hash
         );
 
-        // Headers2 is currently disabled due to protocol compatibility issues
-        // TODO: Fix headers2 decompression before re-enabling
-        let use_headers2 = false; // Disabled until headers2 implementation is fixed
+        // Use headers2 if peer supports it and we haven't had failures
+        let use_headers2 = network.has_headers2_peer().await && !self.headers2_failed;
 
         // Log details about the request
         tracing::info!(
@@ -454,64 +417,39 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         headers2: &dashcore::network::message_headers2::Headers2Message,
         peer_id: crate::types::PeerId,
-        _storage: &mut S,
-        _network: &mut N,
-    ) -> SyncResult<bool> {
-        tracing::warn!(
-            "⚠️ Headers2 support is currently NON-FUNCTIONAL. Received {} compressed headers from peer {} but cannot process them.",
+        storage: &mut S,
+        network: &mut N,
+    ) -> SyncResult<(bool, usize)> {
+        tracing::info!(
+            "📦 Received {} compressed headers from peer {}",
             headers2.headers.len(),
             peer_id
         );
 
-        // Mark headers2 as failed for this session to avoid retrying
-        self.headers2_failed = true;
-
-        // Return an error to trigger fallback to regular headers
-        return Err(SyncError::Headers2DecompressionFailed(
-            "Headers2 is currently disabled due to protocol compatibility issues".to_string(),
-        ));
-
-        #[allow(unreachable_code)]
-        {
-            // If this is the first headers2 message, and we need to initialize compression state
-            if !headers2.headers.is_empty() {
-                // Check if we need to initialize the compression state
-                let state = self.headers2_state.get_state(peer_id);
-                if state.prev_header.is_none() {
-                    // If we're syncing from genesis (height 0), initialize with genesis header
-                    if self.chain_state.read().await.tip_height() == 0 {
-                        // We have genesis header at index 0
-                        if let Some(genesis_header) =
-                            self.chain_state.read().await.header_at_height(0)
-                        {
-                            tracing::info!(
-                            "Initializing headers2 compression state for peer {} with genesis header",
-                            peer_id
-                        );
-                            self.headers2_state.init_peer_state(peer_id, *genesis_header);
-                        }
-                    } else if self.chain_state.read().await.tip_height() > 0 {
-                        // Get our current tip to use as the base for compression
-                        if let Some(tip_header) = self.chain_state.read().await.get_tip_header() {
-                            tracing::info!(
-                            "Initializing headers2 compression state for peer {} with tip header at height {}",
-                            peer_id,
-                            self.chain_state.read().await.tip_height()
-                        );
-                            self.headers2_state.init_peer_state(peer_id, tip_header);
-                        }
-                    }
+        // If this is the first headers2 message, and we need to initialize compression state
+        if !headers2.headers.is_empty() {
+            // Check if we need to initialize the compression state
+            let state = self.headers2_state.get_state(peer_id);
+            if state.prev_header.is_none() {
+                // Initialize with header at current tip height (works for both genesis and later)
+                let chain_state = self.chain_state.read().await;
+                let tip_height = chain_state.tip_height();
+                if let Some(tip_header) = chain_state.header_at_height(tip_height) {
+                    tracing::info!(
+                        "Initializing headers2 compression state for peer {} with header at height {}",
+                        peer_id,
+                        tip_height
+                    );
+                    self.headers2_state.init_peer_state(peer_id, *tip_header);
                 }
             }
+        }
 
-            // Decompress headers using the peer's compression state
-            let headers = match self
-                .headers2_state
-                .process_headers(peer_id, headers2.headers.clone())
-            {
-                Ok(headers) => headers,
-                Err(e) => {
-                    tracing::error!(
+        // Decompress headers using the peer's compression state
+        let headers = match self.headers2_state.process_headers(peer_id, &headers2.headers) {
+            Ok(headers) => headers,
+            Err(e) => {
+                tracing::error!(
                     "Failed to decompress headers2 from peer {}: {}. Headers count: {}, first header compressed: {}, chain height: {}",
                     peer_id,
                     e,
@@ -524,37 +462,29 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     self.chain_state.read().await.tip_height()
                 );
 
-                    // If we failed due to missing previous header, and we're at genesis,
-                    // this might be a protocol issue where peer expects us to have genesis in compression state
-                    if matches!(e, crate::sync::headers2::ProcessError::DecompressionError(0, _))
-                        && self.chain_state.read().await.tip_height() == 0
-                    {
-                        tracing::warn!(
-                        "Headers2 decompression failed at genesis. Peer may be sending compressed headers that reference genesis. Consider falling back to regular headers."
-                    );
-                    }
+                // Mark that headers2 failed for this sync session to trigger fallback to regular headers
+                self.headers2_failed = true;
+                return Err(SyncError::Headers2DecompressionFailed(format!(
+                    "Failed to decompress headers: {}",
+                    e
+                )));
+            }
+        };
 
-                    // Return a specific error that can trigger fallback
-                    // Mark that headers2 failed for this sync session
-                    self.headers2_failed = true;
-                    return Err(SyncError::Headers2DecompressionFailed(format!(
-                        "Failed to decompress headers: {}",
-                        e
-                    )));
-                }
-            };
+        // Log compression statistics
+        let stats = self.headers2_state.get_stats();
+        tracing::info!(
+            "📊 Headers2 compression stats: {:.1}% bandwidth saved, {:.1}% compression ratio",
+            stats.bandwidth_savings,
+            stats.compression_ratio * 100.0
+        );
 
-            // Log compression statistics
-            let stats = self.headers2_state.get_stats();
-            tracing::info!(
-                "📊 Headers2 compression stats: {:.1}% bandwidth saved, {:.1}% compression ratio",
-                stats.bandwidth_savings,
-                stats.compression_ratio * 100.0
-            );
+        let headers_count = headers.len();
 
-            // Process decompressed headers through the normal flow
-            self.handle_headers_message(&headers, _storage, _network).await
-        }
+        // Process decompressed headers through the normal flow
+        let continue_sync = self.handle_headers_message(&headers, storage, network).await?;
+
+        Ok((continue_sync, headers_count))
     }
 
     /// Prepare sync state without sending network requests.
