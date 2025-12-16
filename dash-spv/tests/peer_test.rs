@@ -9,7 +9,7 @@ use tokio::time;
 
 use dash_spv::client::{ClientConfig, DashSpvClient};
 use dash_spv::network::PeerNetworkManager;
-use dash_spv::storage::{DiskStorageManager, MemoryStorageManager};
+use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -189,7 +189,10 @@ async fn test_max_peer_limit() {
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
-    let storage_manager = MemoryStorageManager::new().await.unwrap();
+    let storage_manager =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));

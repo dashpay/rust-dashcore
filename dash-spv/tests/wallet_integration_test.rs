@@ -3,24 +3,28 @@
 //! These tests validate end-to-end wallet operations through the SPVWalletManager.
 
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 use dash_spv::network::PeerNetworkManager;
-use dash_spv::storage::MemoryStorageManager;
+use dash_spv::storage::DiskStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient};
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
-) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, MemoryStorageManager> {
+) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager> {
     let config = ClientConfig::testnet().without_filters().without_masternodes();
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
-    let storage_manager = MemoryStorageManager::new().await.unwrap();
+    let storage_manager =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));

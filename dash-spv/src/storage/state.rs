@@ -8,7 +8,7 @@ use dashcore::{block::Header as BlockHeader, BlockHash, Txid};
 use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
-use crate::storage::disk::manager::WorkerCommand;
+use crate::storage::manager::WorkerCommand;
 use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 

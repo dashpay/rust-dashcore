@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-use crate::storage::disk::io::atomic_write;
+use crate::storage::io::atomic_write;
 
 /// Maximum misbehavior score before a peer is banned
 const MAX_MISBEHAVIOR_SCORE: i32 = 100;

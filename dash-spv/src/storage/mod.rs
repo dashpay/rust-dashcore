@@ -1,10 +1,16 @@
 //! Storage abstraction for the Dash SPV client.
 
-pub mod disk;
-pub mod memory;
+pub(crate) mod io;
+
 pub mod sync_state;
 pub mod sync_storage;
 pub mod types;
+
+mod headers;
+mod lockfile;
+mod manager;
+mod segments;
+mod state;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -15,8 +21,7 @@ use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Txid};
 use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
-pub use disk::DiskStorageManager;
-pub use memory::MemoryStorageManager;
+pub use manager::DiskStorageManager;
 pub use sync_state::{PersistentSyncState, RecoverySuggestion, SyncStateValidation};
 pub use sync_storage::MemoryStorage;
 pub use types::*;
@@ -74,11 +79,11 @@ pub trait ChainStorage: Send + Sync {
 /// ```rust,no_run
 /// # use std::sync::Arc;
 /// # use tokio::sync::Mutex;
-/// # use dash_spv::storage::{StorageManager, MemoryStorageManager};
+/// # use dash_spv::storage::DiskStorageManager;
 /// # use dashcore::blockdata::block::Header as BlockHeader;
 /// #
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let storage: Arc<Mutex<dyn StorageManager>> = Arc::new(Mutex::new(MemoryStorageManager::new().await?));
+/// let storage: Arc<Mutex<DiskStorageManager>> = Arc::new(Mutex::new(DiskStorageManager::new("./.tmp/example-storage".into()).await?));
 /// let headers: Vec<BlockHeader> = vec![]; // Your headers here
 ///
 /// // In async context:

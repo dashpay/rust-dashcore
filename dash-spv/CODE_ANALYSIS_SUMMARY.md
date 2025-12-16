@@ -215,7 +215,7 @@
 **Test Types:**
 - **Unit Tests**: Individual functions/modules (in-file with `#[cfg(test)]`)
 - **Integration Tests**: Cross-module interactions (`tests/` directory)
-- **Mock Tests**: Use MockNetworkManager, MemoryStorageManager
+- **Mock Tests**: Use MockNetworkManager, DiskStorageManager::new_tmp
 - **Property Tests**: Invariant testing (could add more with proptest)
 
 ---

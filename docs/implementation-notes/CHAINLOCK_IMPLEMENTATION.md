@@ -34,7 +34,7 @@ ChainLocks use Long Living Masternode Quorums (LLMQs) to sign and lock blocks, p
 
 ### 5. Storage Layer
 - Added chain lock storage methods to StorageManager trait
-- Implemented in both MemoryStorageManager and DiskStorageManager
+- Implemented in DiskStorageManager
 - Persistent storage of chain locks by height
 
 ### 6. ChainState Updates (`src/types.rs`)

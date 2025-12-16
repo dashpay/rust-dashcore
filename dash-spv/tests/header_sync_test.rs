@@ -5,7 +5,7 @@ use std::time::Duration;
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::{DiskStorageManager, MemoryStorageManager, StorageManager},
+    storage::{DiskStorageManager, StorageManager},
     sync::{HeaderSyncManager, ReorgConfig},
     types::{ChainState, ValidationMode},
 };
@@ -24,7 +24,10 @@ async fn test_basic_header_sync_from_genesis() {
     let _ = env_logger::try_init();
 
     // Create fresh storage starting from empty state
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Verify empty initial state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
@@ -45,7 +48,10 @@ async fn test_basic_header_sync_from_genesis() {
 async fn test_header_sync_continuation() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Simulate existing headers (like resuming from a previous sync)
     let existing_headers = create_test_header_chain(100);
@@ -77,7 +83,10 @@ async fn test_header_sync_continuation() {
 async fn test_header_batch_processing() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Test processing headers in batches
     let batch_size = 50;
@@ -124,7 +133,10 @@ async fn test_header_batch_processing() {
 async fn test_header_sync_edge_cases() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Test 1: Empty header batch
     let empty_headers: Vec<BlockHeader> = vec![];
@@ -159,7 +171,10 @@ async fn test_header_sync_edge_cases() {
 async fn test_header_chain_validation() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create a valid chain of headers
     let chain = create_test_header_chain(10);
@@ -194,7 +209,10 @@ async fn test_header_chain_validation() {
 async fn test_header_sync_performance() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     let start_time = std::time::Instant::now();
 
@@ -256,7 +274,9 @@ async fn test_header_sync_with_client_integration() {
 
     // Create storage manager
     let storage_manager =
-        MemoryStorageManager::new().await.expect("Failed to create storage manager");
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
@@ -309,7 +329,10 @@ fn create_test_header_chain_from(start: usize, count: usize) -> Vec<BlockHeader>
 async fn test_header_storage_consistency() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Store headers and verify consistency
     let headers = create_test_header_chain(100);

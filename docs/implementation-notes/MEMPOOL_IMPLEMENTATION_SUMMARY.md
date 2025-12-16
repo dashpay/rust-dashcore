@@ -20,7 +20,7 @@ This document summarizes the implementation of unconfirmed transaction (mempool)
 
 ✅ **Storage**
 - Added mempool methods to `StorageManager` trait
-- Implemented in both `MemoryStorageManager` and `DiskStorageManager`
+- Implemented in `DiskStorageManager`
 - Support for optional persistence
 
 ### Phase 2: Transaction Processing (Rust)

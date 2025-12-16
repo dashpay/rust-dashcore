@@ -9,8 +9,8 @@ use tokio::sync::{mpsc, RwLock};
 use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::disk::headers::load_block_index;
-use crate::storage::disk::segments::SegmentCache;
+use crate::storage::headers::load_block_index;
+use crate::storage::segments::SegmentCache;
 use crate::types::{MempoolState, UnconfirmedTransaction};
 
 use super::lockfile::LockFile;
@@ -61,7 +61,6 @@ pub struct DiskStorageManager {
 }
 
 impl DiskStorageManager {
-    /// Create a new disk storage manager with segmented storage.
     pub async fn new(base_path: PathBuf) -> StorageResult<Self> {
         use std::fs;
 
@@ -148,6 +147,14 @@ impl DiskStorageManager {
         storage.header_hash_index = Arc::new(RwLock::new(block_index));
 
         Ok(storage)
+    }
+
+    #[cfg(test)]
+    pub async fn with_temp_dir() -> StorageResult<Self> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new()?;
+        Self::new(temp_dir.path().into()).await
     }
 
     /// Start the background worker
