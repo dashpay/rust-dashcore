@@ -423,19 +423,20 @@ impl PeerNetworkManager {
                                     headers.len()
                                 );
                                 // Check if peer supports headers2
-                                // TODO: Re-enable this warning once headers2 is fixed
-                                // Currently suppressed since headers2 is disabled
-                                /*
                                 let peer_guard = peer.read().await;
-                                if peer_guard.peer_info().services.map(|s| {
-                                    dashcore::network::constants::ServiceFlags::from(s).has(
-                                        dashcore::network::constants::ServiceFlags::from(2048u64)
-                                    )
-                                }).unwrap_or(false) {
+                                if peer_guard
+                                    .peer_info()
+                                    .services
+                                    .map(|s| {
+                                        dashcore::network::constants::ServiceFlags::from(s).has(
+                                            dashcore::network::constants::NODE_HEADERS_COMPRESSED,
+                                        )
+                                    })
+                                    .unwrap_or(false)
+                                {
                                     log::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
                                 }
                                 drop(peer_guard);
-                                */
                                 // Forward to client
                             }
                             NetworkMessage::Headers2(headers2) => {
@@ -779,6 +780,7 @@ impl PeerNetworkManager {
         // For filter-related messages, we need a peer that supports compact filters
         let requires_compact_filters =
             matches!(&message, NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_));
+        let requires_headers2 = matches!(&message, NetworkMessage::GetHeaders2(_));
 
         let selected_peer = if requires_compact_filters {
             // Find a peer that supports compact filters
@@ -806,6 +808,37 @@ impl PeerNetworkManager {
                     ));
                 }
             }
+        } else if requires_headers2 {
+            // Prefer a peer that advertises headers2 support
+            let mut current_sync_peer = self.current_sync_peer.lock().await;
+            let mut selected: Option<SocketAddr> = None;
+
+            if let Some(current_addr) = *current_sync_peer {
+                if let Some((_, peer)) = peers.iter().find(|(addr, _)| *addr == current_addr) {
+                    let peer_guard = peer.read().await;
+                    if peer_guard.peer_info().supports_headers2() {
+                        selected = Some(current_addr);
+                    }
+                }
+            }
+
+            if selected.is_none() {
+                for (addr, peer) in &peers {
+                    let peer_guard = peer.read().await;
+                    if peer_guard.peer_info().supports_headers2() {
+                        selected = Some(*addr);
+                        break;
+                    }
+                }
+            }
+
+            let chosen = selected.unwrap_or(peers[0].0);
+            if Some(chosen) != *current_sync_peer {
+                log::info!("Sync peer selected for Headers2: {}", chosen);
+                *current_sync_peer = Some(chosen);
+            }
+            drop(current_sync_peer);
+            chosen
         } else {
             // For non-filter messages, use the sticky sync peer
             let mut current_sync_peer = self.current_sync_peer.lock().await;
@@ -1060,6 +1093,7 @@ impl NetworkManager for PeerNetworkManager {
         // For sync messages that require consistent responses, send to only one peer
         match &message {
             NetworkMessage::GetHeaders(_)
+            | NetworkMessage::GetHeaders2(_)
             | NetworkMessage::GetCFHeaders(_)
             | NetworkMessage::GetCFilters(_)
             | NetworkMessage::GetData(_)
@@ -1296,9 +1330,7 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn has_headers2_peer(&self) -> bool {
-        // Headers2 is currently disabled due to protocol compatibility issues
-        // TODO: Fix headers2 decompression before re-enabling
-        false
+        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
     }
 
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
