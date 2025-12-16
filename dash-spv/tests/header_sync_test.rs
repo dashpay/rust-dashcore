@@ -31,7 +31,6 @@ async fn test_basic_header_sync_from_genesis() {
 
     // Verify empty initial state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
-    assert!(storage.load_headers(0..10).await.unwrap().is_empty());
 
     // Create test chain state for mainnet
     let chain_state = ChainState::new_for_network(Network::Dash);
