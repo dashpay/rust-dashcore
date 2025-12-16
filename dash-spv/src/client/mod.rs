@@ -95,7 +95,8 @@ mod tests {
         };
 
         let network_manager = MockNetworkManager::new();
-        let storage = DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
+        let storage =
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
         let client = DashSpvClient::new(config, network_manager, storage, wallet)
@@ -122,7 +123,8 @@ mod tests {
         };
 
         let network_manager = MockNetworkManager::new();
-        let storage = DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage");
+        let storage =
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
         let mut client = DashSpvClient::new(config, network_manager, storage, wallet)

@@ -150,7 +150,7 @@ impl DiskStorageManager {
     }
 
     #[cfg(test)]
-    pub async fn new_tmp() -> StorageResult<Self> {
+    pub async fn with_temp_dir() -> StorageResult<Self> {
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new()?;

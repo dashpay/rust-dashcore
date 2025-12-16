@@ -102,7 +102,7 @@ mod tests {
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
         let storage = Arc::new(Mutex::new(
-            DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage"),
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage"),
         ));
         let processor = BlockProcessor::new(
             task_rx,
@@ -307,7 +307,7 @@ mod tests {
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let wallet = Arc::new(RwLock::new(NonMatchingWallet {}));
         let storage = Arc::new(Mutex::new(
-            DiskStorageManager::new_tmp().await.expect("Failed to create tmp storage"),
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage"),
         ));
 
         let processor =
