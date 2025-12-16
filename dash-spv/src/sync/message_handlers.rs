@@ -72,7 +72,7 @@ impl<
                 },
                 NetworkMessage::Headers(headers),
             ) => {
-                self.handle_headers_message(&headers, network, storage).await?;
+                self.handle_headers_message(headers, network, storage).await?;
             }
 
             (
