@@ -52,10 +52,6 @@ impl MemoryStorageManager {
 
 #[async_trait]
 impl StorageManager for MemoryStorageManager {
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
         let initial_count = self.headers.len();
         tracing::debug!(

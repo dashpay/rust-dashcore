@@ -126,7 +126,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Request QRInfo - simplified non-blocking implementation
     pub async fn request_qrinfo(
         &mut self,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
         base_block_hash: BlockHash,
         block_hash: BlockHash,
     ) -> Result<(), String> {
@@ -215,7 +215,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Make QRInfo P2P request (simplified non-blocking)
     async fn request_qr_info(
         &mut self,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
         known_block_hashes: Vec<BlockHash>,
         block_request_hash: BlockHash,
     ) -> Result<(), String> {
@@ -381,11 +381,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Start masternode synchronization
-    pub async fn start_sync(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut S,
-    ) -> SyncResult<bool> {
+    pub async fn start_sync(&mut self, network: &mut N, storage: &mut S) -> SyncResult<bool> {
         if self.sync_in_progress {
             return Err(SyncError::SyncInProgress);
         }
@@ -445,7 +441,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         diff: &MnListDiff,
         storage: &mut S,
-        _network: &mut dyn NetworkManager,
+        _network: &mut N,
     ) -> SyncResult<bool> {
         self.insert_mn_list_diff(diff, storage).await;
 
@@ -500,11 +496,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Check for sync timeout
-    pub async fn check_sync_timeout(
-        &mut self,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
-    ) -> SyncResult<()> {
+    pub async fn check_sync_timeout(&mut self, storage: &mut S, network: &mut N) -> SyncResult<()> {
         // Check if we're waiting for MnListDiff responses and have timed out
         if self.pending_mnlistdiff_requests > 0 {
             if let Some(wait_start) = self.mnlistdiff_wait_start {
@@ -625,7 +617,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         qr_info: QRInfo,
         storage: &mut S,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
     ) {
         self.log_qrinfo_details(&qr_info, "📋 Masternode sync processing QRInfo (unified path)");
 
@@ -726,7 +718,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         qr_info: &QRInfo,
         storage: &mut S,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
     ) -> Result<(), String> {
         tracing::info!(
             "🔗 Feeding QRInfo to engine and getting additional diffs for quorum validation"
@@ -807,7 +799,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         quorum_hashes: &std::collections::BTreeSet<QuorumHash>,
         storage: &mut S,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
     ) -> Result<(), String> {
         use dashcore::network::message::NetworkMessage;
         use dashcore::network::message_sml::GetMnListDiff;

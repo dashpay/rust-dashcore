@@ -78,22 +78,22 @@ impl ReorgManager {
     }
 
     /// Check if a fork has more work than the current chain and should trigger a reorg
-    pub fn should_reorganize(
+    pub fn should_reorganize<CS: ChainStorage>(
         &self,
         current_tip: &ChainTip,
         fork: &Fork,
-        storage: &dyn ChainStorage,
+        storage: &CS,
     ) -> Result<bool, String> {
         self.should_reorganize_with_chain_state(current_tip, fork, storage, None)
     }
 
     /// Check if a fork has more work than the current chain and should trigger a reorg
     /// This version is checkpoint-aware when chain_state is provided
-    pub fn should_reorganize_with_chain_state(
+    pub fn should_reorganize_with_chain_state<CS: ChainStorage>(
         &self,
         current_tip: &ChainTip,
         fork: &Fork,
-        storage: &dyn ChainStorage,
+        storage: &CS,
         chain_state: Option<&ChainState>,
     ) -> Result<bool, String> {
         // Check if fork has more work
@@ -178,10 +178,10 @@ impl ReorgManager {
     }
 
     /// Check if a block is chain-locked
-    pub fn is_chain_locked(
+    pub fn is_chain_locked<CS: ChainStorage>(
         &self,
         header: &BlockHeader,
-        storage: &dyn ChainStorage,
+        storage: &CS,
     ) -> Result<bool, String> {
         if let Some(ref chain_lock_mgr) = self.chain_lock_manager {
             // Get the height of this header
