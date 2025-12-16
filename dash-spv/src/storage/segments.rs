@@ -628,7 +628,7 @@ mod tests {
             .await
             .expect("Failed to create new segment_cache");
 
-        cache.store_items_at_height(&items, 10).await.expect("Failed to store items");
+        cache.store_items(&items).await.expect("Failed to store items");
 
         cache.persist().await;
 
@@ -636,10 +636,10 @@ mod tests {
         assert!(cache.segments.is_empty());
         assert!(cache.evicted.is_empty());
 
-        assert_eq!(
-            cache.get_items(10..20).await.expect("Failed to retrieve get irems from segment cache"),
-            items
-        );
+        let recovered_items = cache.get_items(0..10).await.expect("Failed to load items");
+
+        assert_eq!(recovered_items, items);
+        assert_eq!(cache.segments.len(), 1);
 
         cache.clear_all().await.expect("Failed to clean on-memory and on-disk data");
         assert!(cache.segments.is_empty());
@@ -677,18 +677,25 @@ mod tests {
             cache.get_items(0..ITEMS_PER_SEGMENT - 1).await.expect("Failed to get items")
         );
 
+        let items: Vec<_> = (0..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2)
+            .map(FilterHeader::new_test)
+            .collect();
+
+        cache.store_items(&items).await.expect("Failed to store items");
+
         assert_eq!(
-            items[0..(ITEMS_PER_SEGMENT + 1) as usize],
-            cache.get_items(0..ITEMS_PER_SEGMENT + 1).await.expect("Failed to get items")
+            items[0..ITEMS_PER_SEGMENT as usize],
+            cache.get_items(0..ITEMS_PER_SEGMENT).await.expect("Failed to get items")
         );
 
         assert_eq!(
-            items[(ITEMS_PER_SEGMENT - 1) as usize
-                ..(ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2) as usize],
-            cache
-                .get_items(ITEMS_PER_SEGMENT - 1..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2)
-                .await
-                .expect("Failed to get items")
+            items[0..(ITEMS_PER_SEGMENT - 1) as usize],
+            cache.get_items(0..ITEMS_PER_SEGMENT - 1).await.expect("Failed to get items")
+        );
+
+        assert_eq!(
+            items[0..(ITEMS_PER_SEGMENT + 1) as usize],
+            cache.get_items(0..ITEMS_PER_SEGMENT + 1).await.expect("Failed to get items")
         );
     }
 
