@@ -59,11 +59,16 @@ hickory-resolver = "0.25"
 log = "0.4"
 
 [dev-dependencies]
+criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
 tokio-test = "0.4"
 env_logger = "0.10"
 hex = "0.4"
 test-case = "3.3"
+
+[[bench]]
+name = "storage"
+harness = false
 
 [[bin]]
 name = "dash-spv"
