@@ -178,6 +178,7 @@ impl<I: Persistable> SegmentCache<I> {
 
     pub fn clear_in_memory(&mut self) {
         self.segments.clear();
+        self.evicted.clear();
         self.tip_height = None;
     }
 
@@ -557,20 +558,18 @@ mod tests {
             .await
             .expect("Failed to create new segment_cache");
 
-        let segment = cache.get_segment_mut(&0).await.expect("Failed to create a new segment");
+        cache.store_items(&items).await.expect("Failed to store items");
 
-        assert_eq!(segment.state, SegmentState::Dirty);
-        segment.items = items.clone();
-
-        assert!(segment.persist(tmp_dir.path()).await.is_ok());
+        cache.persist().await;
 
         cache.clear_in_memory();
         assert!(cache.segments.is_empty());
+        assert!(cache.evicted.is_empty());
 
-        let segment = cache.get_segment(&0).await.expect("Failed to load segment");
+        let recovered_items = cache.get_items(0..10).await.expect("Failed to load items");
 
-        assert_eq!(segment.items, items);
-        assert_eq!(segment.state, SegmentState::Clean);
+        assert_eq!(recovered_items, items);
+        assert_eq!(cache.segments.len(), 1);
 
         cache.clear_all().await.expect("Failed to clean on-memory and on-disk data");
         assert!(cache.segments.is_empty());
@@ -605,8 +604,26 @@ mod tests {
 
         assert!(items.is_empty());
 
-        // Cannot test the store logic bcs it depends on the DiskStorageManager, test that struct properly or
-        // remove the necessity of it
+        let items: Vec<_> = (0..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2)
+            .map(FilterHeader::new_test)
+            .collect();
+
+        cache.store_items(&items).await.expect("Failed to store items");
+
+        assert_eq!(
+            items[0..ITEMS_PER_SEGMENT as usize],
+            cache.get_items(0..ITEMS_PER_SEGMENT).await.expect("Failed to get items")
+        );
+
+        assert_eq!(
+            items[0..(ITEMS_PER_SEGMENT - 1) as usize],
+            cache.get_items(0..ITEMS_PER_SEGMENT - 1).await.expect("Failed to get items")
+        );
+
+        assert_eq!(
+            items[0..(ITEMS_PER_SEGMENT + 1) as usize],
+            cache.get_items(0..ITEMS_PER_SEGMENT + 1).await.expect("Failed to get items")
+        );
     }
 
     #[tokio::test]
