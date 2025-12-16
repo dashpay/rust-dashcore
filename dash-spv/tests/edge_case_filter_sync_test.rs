@@ -9,13 +9,14 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 use dash_spv::{
     client::ClientConfig,
     error::NetworkResult,
     network::NetworkManager,
-    storage::{MemoryStorageManager, StorageManager},
+    storage::{DiskStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
 };
 use dashcore::{
@@ -118,10 +119,12 @@ impl NetworkManager for MockNetworkManager {
 async fn test_filter_sync_at_tip_edge_case() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
-    let mut storage = MemoryStorageManager::new().await.unwrap();
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     // Set up storage with headers and filter headers at the same height (tip)
@@ -161,10 +164,12 @@ async fn test_filter_sync_at_tip_edge_case() {
 async fn test_no_invalid_getcfheaders_at_tip() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
-    let mut storage = MemoryStorageManager::new().await.unwrap();
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     // Create a scenario where we're one block behind

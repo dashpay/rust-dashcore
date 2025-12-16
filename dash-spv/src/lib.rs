@@ -14,7 +14,7 @@
 //! ```no_run
 //! use dash_spv::{DashSpvClient, ClientConfig};
 //! use dash_spv::network::PeerNetworkManager;
-//! use dash_spv::storage::MemoryStorageManager;
+//! use dash_spv::storage::DiskStorageManager;
 //! use dashcore::Network;
 //! use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 //! use key_wallet_manager::wallet_manager::WalletManager;
@@ -30,7 +30,7 @@
 //!
 //!     // Create the required components
 //!     let network = PeerNetworkManager::new(&config).await?;
-//!     let storage = MemoryStorageManager::new().await?;
+//!     let storage = DiskStorageManager::new("./.tmp/example-storage".into()).await?;
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 //!
 //!     // Create and start the client

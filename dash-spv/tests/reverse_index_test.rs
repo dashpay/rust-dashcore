@@ -1,34 +1,8 @@
-use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager};
+use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dashcore::block::Header as BlockHeader;
 use dashcore_hashes::Hash;
 use std::path::PathBuf;
-
-#[tokio::test]
-async fn test_reverse_index_memory_storage() {
-    let mut storage = MemoryStorageManager::new().await.unwrap();
-
-    // Create some test headers
-    let mut headers = Vec::new();
-    for i in 0..10 {
-        let header = create_test_header(i);
-        headers.push(header);
-    }
-
-    // Store headers
-    storage.store_headers(&headers).await.unwrap();
-
-    // Test reverse lookups
-    for (i, header) in headers.iter().enumerate() {
-        let hash = header.block_hash();
-        let height = storage.get_header_height_by_hash(&hash).await.unwrap();
-        assert_eq!(height, Some(i as u32), "Height mismatch for header {}", i);
-    }
-
-    // Test non-existent hash
-    let fake_hash = dashcore::BlockHash::from_byte_array([0xFF; 32]);
-    let height = storage.get_header_height_by_hash(&fake_hash).await.unwrap();
-    assert_eq!(height, None, "Should return None for non-existent hash");
-}
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_reverse_index_disk_storage() {
@@ -57,10 +31,7 @@ async fn test_reverse_index_disk_storage() {
         // Add a small delay to ensure background worker processes save commands
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        // Explicitly shutdown to ensure all data is saved
-        if let Some(disk_storage) = storage.as_any_mut().downcast_mut::<DiskStorageManager>() {
-            disk_storage.shutdown().await;
-        }
+        storage.shutdown().await;
     }
 
     // Test persistence - reload storage and verify index still works
@@ -80,7 +51,10 @@ async fn test_reverse_index_disk_storage() {
 
 #[tokio::test]
 async fn test_clear_clears_index() {
-    let mut storage = MemoryStorageManager::new().await.unwrap();
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Store some headers
     let header = create_test_header(0);

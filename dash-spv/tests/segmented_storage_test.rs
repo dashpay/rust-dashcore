@@ -314,11 +314,13 @@ async fn test_mixed_operations() {
     assert_eq!(storage.get_tip_height().await.unwrap(), Some(74_999));
     assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(74_999));
 
-    assert_eq!(storage.load_filter(1000).await.unwrap().unwrap(), vec![(1000 % 256) as u8; 100]);
-    assert_eq!(
-        storage.load_filter(50_000).await.unwrap().unwrap(),
-        vec![(50_000 % 256) as u8; 100]
-    );
+    let filters = storage.load_filters(1000..1001).await.unwrap();
+    assert_eq!(filters.len(), 1);
+    assert_eq!(filters[0], vec![(1000 % 256) as u8; 100]);
+
+    let filters = storage.load_filters(50_000..50_001).await.unwrap();
+    assert_eq!(filters.len(), 1);
+    assert_eq!(filters[0], vec![(50_000 % 256) as u8; 100]);
 
     assert_eq!(storage.load_metadata("test_key").await.unwrap().unwrap(), b"test_value");
 

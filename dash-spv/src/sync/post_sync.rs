@@ -119,7 +119,7 @@ impl<
     /// Handle new headers that arrive after initial sync (from inventory)
     pub async fn handle_new_headers(
         &mut self,
-        headers: Vec<BlockHeader>,
+        headers: &[BlockHeader],
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -148,7 +148,7 @@ impl<
 
         // Store the new headers
         storage
-            .store_headers(&headers)
+            .store_headers(headers)
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store headers: {}", e)))?;
 
@@ -235,7 +235,7 @@ impl<
             }
         }
 
-        for header in &headers {
+        for header in headers {
             let height = storage
                 .get_header_height_by_hash(&header.block_hash())
                 .await
@@ -387,7 +387,7 @@ impl<
     /// Handle filter headers that arrive after initial sync
     pub(super) async fn handle_post_sync_cfheaders(
         &mut self,
-        cfheaders: dashcore::network::message_filter::CFHeaders,
+        cfheaders: &dashcore::network::message_filter::CFHeaders,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -423,7 +423,7 @@ impl<
     /// Handle filters that arrive after initial sync
     pub(super) async fn handle_post_sync_cfilter(
         &mut self,
-        cfilter: dashcore::network::message_filter::CFilter,
+        cfilter: &dashcore::network::message_filter::CFilter,
         _network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -466,7 +466,7 @@ impl<
     /// Handle masternode list diffs that arrive after initial sync (for ChainLock validation)
     pub(super) async fn handle_post_sync_mnlistdiff(
         &mut self,
-        diff: dashcore::network::message_sml::MnListDiff,
+        diff: &dashcore::network::message_sml::MnListDiff,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {

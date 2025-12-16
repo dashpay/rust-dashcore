@@ -25,7 +25,7 @@ impl<
     /// Handle incoming network messages with phase filtering
     pub async fn handle_message(
         &mut self,
-        message: NetworkMessage,
+        message: &NetworkMessage,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -55,10 +55,10 @@ impl<
         }
 
         // Check if this message is expected in the current phase
-        if !self.is_message_expected_in_phase(&message) {
+        if !self.is_message_expected_in_phase(message) {
             tracing::debug!(
                 "Ignoring unexpected {:?} message in phase {}",
-                std::mem::discriminant(&message),
+                std::mem::discriminant(message),
                 self.current_phase.name()
             );
             return Ok(());
@@ -286,17 +286,17 @@ impl<
 
     pub(super) async fn handle_headers2_message(
         &mut self,
-        headers2: dashcore::network::message_headers2::Headers2Message,
+        headers2: &dashcore::network::message_headers2::Headers2Message,
         peer_id: PeerId,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        let continue_sync = match self
+        let (continue_sync, headers_count) = match self
             .header_sync
             .handle_headers2_message(headers2, peer_id, storage, network)
             .await
         {
-            Ok(continue_sync) => continue_sync,
+            Ok(result) => result,
             Err(SyncError::Headers2DecompressionFailed(e)) => {
                 // Headers2 decompression failed - we should fall back to regular headers
                 tracing::warn!("Headers2 decompression failed: {} - peer may not properly support headers2 or connection issue", e);
@@ -306,56 +306,47 @@ impl<
             Err(e) => return Err(e),
         };
 
-        // Calculate blockchain height before borrowing self.current_phase
-        let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
-
-        // Update phase state and check if we need to transition
-        let should_transition = if let SyncPhase::DownloadingHeaders {
-            current_height,
-
-            last_progress,
-            ..
-        } = &mut self.current_phase
-        {
-            // Update current height - use blockchain height for checkpoint awareness
-            *current_height = blockchain_height;
-
-            // Note: We can't easily track headers_downloaded for compressed headers
-            // without decompressing first, so we rely on the header sync manager's internal stats
-
-            // Update progress time
-            *last_progress = Instant::now();
-
-            // Check if phase is complete
-            !continue_sync
-        } else {
-            false
-        };
-
-        if should_transition {
-            self.transition_to_next_phase(storage, network, "Headers sync complete via Headers2")
-                .await?;
-
-            // Execute the next phase
-            self.execute_current_phase(network, storage).await?;
-        }
-
-        Ok(())
+        self.finalize_headers_sync(
+            continue_sync,
+            headers_count as u32,
+            network,
+            storage,
+            "Headers sync complete via Headers2",
+        )
+        .await
     }
 
     pub(super) async fn handle_headers_message(
         &mut self,
-        headers: Vec<dashcore::block::Header>,
+        headers: &[dashcore::block::Header],
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
         let continue_sync =
-            self.header_sync.handle_headers_message(headers.clone(), storage, network).await?;
+            self.header_sync.handle_headers_message(headers, storage, network).await?;
 
-        // Calculate blockchain height before borrowing self.current_phase
+        self.finalize_headers_sync(
+            continue_sync,
+            headers.len() as u32,
+            network,
+            storage,
+            "Headers sync complete",
+        )
+        .await
+    }
+
+    /// Common logic for finalizing header sync after processing headers (regular or compressed).
+    /// Updates phase state, marks completion, and triggers phase transition if needed.
+    async fn finalize_headers_sync(
+        &mut self,
+        continue_sync: bool,
+        headers_count: u32,
+        network: &mut N,
+        storage: &mut S,
+        transition_reason: &str,
+    ) -> SyncResult<()> {
         let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
 
-        // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
             headers_downloaded,
@@ -366,32 +357,28 @@ impl<
             ..
         } = &mut self.current_phase
         {
-            // Update current height - use blockchain height for checkpoint awareness
             *current_height = blockchain_height;
 
-            // Update progress
-            *headers_downloaded += headers.len() as u32;
+            *headers_downloaded += headers_count;
             let elapsed = start_time.elapsed().as_secs_f64();
             if elapsed > 0.0 {
                 *headers_per_second = *headers_downloaded as f64 / elapsed;
             }
 
-            // Check if we received empty response (sync complete)
-            if headers.is_empty() {
+            // Mark sync complete - this flag is checked by are_headers_complete() during transition
+            if !continue_sync {
                 *received_empty_response = true;
             }
 
-            // Update progress time
             *last_progress = Instant::now();
 
-            // Check if phase is complete
-            !continue_sync || *received_empty_response
+            !continue_sync
         } else {
             false
         };
 
         if should_transition {
-            self.transition_to_next_phase(storage, network, "Headers sync complete").await?;
+            self.transition_to_next_phase(storage, network, transition_reason).await?;
             self.execute_current_phase(network, storage).await?;
         }
 
@@ -400,7 +387,7 @@ impl<
 
     pub(super) async fn handle_mnlistdiff_message(
         &mut self,
-        diff: dashcore::network::message_sml::MnListDiff,
+        diff: &dashcore::network::message_sml::MnListDiff,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -451,7 +438,7 @@ impl<
 
     pub(super) async fn handle_qrinfo_message(
         &mut self,
-        qr_info: dashcore::network::message_qrinfo::QRInfo,
+        qr_info: &dashcore::network::message_qrinfo::QRInfo,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -509,7 +496,7 @@ impl<
 
     pub(super) async fn handle_cfheaders_message(
         &mut self,
-        cfheaders: dashcore::network::message_filter::CFHeaders,
+        cfheaders: &dashcore::network::message_filter::CFHeaders,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -563,7 +550,7 @@ impl<
 
     pub(super) async fn handle_cfilter_message(
         &mut self,
-        cfilter: dashcore::network::message_filter::CFilter,
+        cfilter: &dashcore::network::message_filter::CFilter,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -752,7 +739,7 @@ impl<
 
     pub(super) async fn handle_block_message(
         &mut self,
-        block: Block,
+        block: &Block,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
@@ -768,7 +755,7 @@ impl<
             .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
             .unwrap_or(0);
 
-        let relevant_txids = wallet.process_block(&block, block_height, self.config.network).await;
+        let relevant_txids = wallet.process_block(block, block_height, self.config.network).await;
 
         drop(wallet);
 
