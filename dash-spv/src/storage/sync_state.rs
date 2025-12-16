@@ -6,16 +6,9 @@ use std::time::SystemTime;
 
 use crate::types::{ChainState, SyncProgress};
 
-/// Version for sync state serialization format.
-/// Increment this when making breaking changes to the format.
-const SYNC_STATE_VERSION: u32 = 2;
-
 /// Complete persistent sync state that can be saved and restored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistentSyncState {
-    /// Version of the sync state format.
-    pub version: u32,
-
     /// Network this state is for.
     pub network: Network,
 
@@ -158,7 +151,6 @@ impl PersistentSyncState {
         let tip_header = chain_state.get_tip_header()?;
 
         Some(Self {
-            version: SYNC_STATE_VERSION,
             network,
             chain_tip: ChainTip {
                 height: tip_height,
@@ -242,15 +234,6 @@ impl PersistentSyncState {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
         let mut recovery_suggestion = None;
-
-        // Check version compatibility
-        if self.version > SYNC_STATE_VERSION {
-            errors.push(format!(
-                "Sync state version {} is newer than supported version {}",
-                self.version, SYNC_STATE_VERSION
-            ));
-            recovery_suggestion = Some(RecoverySuggestion::StartFresh);
-        }
 
         // Check network match
         if self.network != network {
@@ -352,7 +335,6 @@ mod tests {
     #[test]
     fn test_sync_state_validation() {
         let mut state = PersistentSyncState {
-            version: SYNC_STATE_VERSION,
             network: Network::Testnet,
             chain_tip: ChainTip {
                 height: 1000,
