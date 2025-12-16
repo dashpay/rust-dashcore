@@ -354,7 +354,6 @@ impl<I: Persistable> SegmentCache<I> {
             height += 1;
         }
 
-        // Update cached tip height with blockchain height
         self.tip_height = match self.tip_height {
             Some(current) => Some(current.max(height - 1)),
             None => Some(height - 1),
