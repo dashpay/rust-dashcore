@@ -320,12 +320,6 @@ impl<I: Persistable> SegmentCache<I> {
         }
 
         self.evicted.clear();
-
-        for (_, segments) in self.segments.iter_mut() {
-            if let Err(e) = segments.persist(&self.base_path).await {
-                tracing::error!("Failed to persist segment: {}", e);
-            }
-        }
     }
 
     pub async fn persist(&mut self) {
