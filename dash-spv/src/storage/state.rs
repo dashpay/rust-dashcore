@@ -773,7 +773,6 @@ mod tests {
         // Store just one header
         storage.store_headers(&[test_header]).await?;
 
-        // Load headers for a range that would include padding
         let loaded_headers = storage.load_headers(0..1).await?;
 
         // Should only get back the one header we stored
@@ -804,7 +803,6 @@ mod tests {
             })
             .collect();
 
-        // Set sync base height so storage interprets heights as blockchain heights
         let mut base_state = ChainState::new();
         base_state.sync_base_height = checkpoint_height;
         storage.store_chain_state(&base_state).await?;

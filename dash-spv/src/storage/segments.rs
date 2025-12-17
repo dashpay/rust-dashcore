@@ -268,7 +268,7 @@ impl<I: Persistable> SegmentCache<I> {
     }
 
     pub async fn get_items(&mut self, height_range: Range<u32>) -> StorageResult<Vec<I>> {
-        debug_assert!(height_range.start <= height_range.end);
+        debug_assert!(height_range.start < height_range.end);
 
         let start = height_range.start;
         let end = height_range.end;
@@ -276,7 +276,14 @@ impl<I: Persistable> SegmentCache<I> {
         let mut items = Vec::with_capacity((end - start) as usize);
 
         let start_segment = Self::height_to_segment_id(start);
-        // Because the end is not included, we dont want to visit the segment where it exists
+
+        // Because the end is not included, we dont want to visit the segment
+        // where that height is present.
+        //
+        // Example: For start = 0 and end = ITEM_PER_SEGMENT,
+        // Self::height_to_segment_id(end) = 1 but all the elements in
+        // [start, end) are in segment 0. If we don't do the
+        // subtraction we would do 2 iterations.
         let end_segment = Self::height_to_segment_id(end - 1);
 
         for segment_id in start_segment..=end_segment {
@@ -302,8 +309,10 @@ impl<I: Persistable> SegmentCache<I> {
                 }
             }
 
-            // This edge case occurs when the end height is equal to ITEMS_PER_SEGMENT.
-            // In this case, we just extend from seg_start until the end
+            // This edge case occurs when the end height is multiple of ITEMS_PER_SEGMENT.
+            // In this case, we just extend from seg_start until the end.
+            //
+            // Note that 0 == ITEMS_PER_SEGMENT (mod ITEMS_PER_SEGMENT)
             if seg_end == 0 {
                 items.extend_from_slice(segment.get(seg_start..Segment::<I>::ITEMS_PER_SEGMENT));
                 continue;
@@ -665,15 +674,12 @@ mod tests {
         const MAX_ITEMS: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
 
         // Testing with half full segment
-        let items = (0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect();
-        let mut segment = Segment::new(segment_id, items, SegmentState::Dirty);
+        let items: Vec<_> = (0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect();
+        let mut segment = Segment::new(segment_id, items.clone(), SegmentState::Dirty);
 
         assert_eq!(segment.first_valid_offset(), Some(0));
         assert_eq!(segment.last_valid_offset(), Some(MAX_ITEMS / 2 - 1));
-        assert_eq!(
-            segment.get(0..MAX_ITEMS / 2),
-            &(0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect::<Vec<_>>()
-        );
+        assert_eq!(segment.get(0..MAX_ITEMS / 2), &items[0..MAX_ITEMS as usize / 2]);
         assert_eq!(
             segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
             [FilterHeader::new_test(MAX_ITEMS / 2 - 1)]
@@ -688,10 +694,7 @@ mod tests {
 
         assert_eq!(loaded_segment.first_valid_offset(), Some(0));
         assert_eq!(loaded_segment.last_valid_offset(), Some(MAX_ITEMS / 2 - 1));
-        assert_eq!(
-            loaded_segment.get(0..MAX_ITEMS / 2),
-            &(0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect::<Vec<_>>()
-        );
+        assert_eq!(loaded_segment.get(0..MAX_ITEMS / 2), &items[0..MAX_ITEMS as usize / 2]);
         assert_eq!(
             loaded_segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
             [FilterHeader::new_test(MAX_ITEMS / 2 - 1)]
