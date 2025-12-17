@@ -458,14 +458,6 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  int32_t dash_spv_ffi_client_clear_storage(struct FFIDashSpvClient *client) ;
 
 /**
- * Clear only the persisted sync-state snapshot.
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- */
- int32_t dash_spv_ffi_client_clear_sync_state(struct FFIDashSpvClient *client) ;
-
-/**
  * Check if compact filter sync is currently available.
  *
  * # Safety

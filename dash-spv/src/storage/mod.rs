@@ -170,29 +170,6 @@ pub trait StorageManager: Send + Sync {
 
     // UTXO methods removed - handled by external wallet
 
-    /// Store persistent sync state.
-    async fn store_sync_state(&mut self, state: &PersistentSyncState) -> StorageResult<()>;
-
-    /// Load persistent sync state.
-    async fn load_sync_state(&self) -> StorageResult<Option<PersistentSyncState>>;
-
-    /// Clear sync state (for recovery).
-    async fn clear_sync_state(&mut self) -> StorageResult<()>;
-
-    /// Store a sync checkpoint.
-    async fn store_sync_checkpoint(
-        &mut self,
-        height: u32,
-        checkpoint: &sync_state::SyncCheckpoint,
-    ) -> StorageResult<()>;
-
-    /// Get sync checkpoints in a height range.
-    async fn get_sync_checkpoints(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<sync_state::SyncCheckpoint>>;
-
     /// Store a chain lock.
     async fn store_chain_lock(
         &mut self,

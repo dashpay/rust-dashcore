@@ -1222,45 +1222,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
     }
 }
 
-/// Clear only the persisted sync-state snapshot.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_clear_sync_state(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-
-        let res = spv_client.clear_sync_state().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
 /// Check if compact filter sync is currently available.
 ///
 /// # Safety

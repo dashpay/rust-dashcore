@@ -271,12 +271,6 @@ impl<
         Ok(())
     }
 
-    /// Clear only the persisted sync state snapshot (keep headers/filters).
-    pub async fn clear_sync_state(&mut self) -> Result<()> {
-        let mut storage = self.storage.lock().await;
-        storage.clear_sync_state().await.map_err(SpvError::Storage)
-    }
-
     /// Clear all stored filter headers and compact filters while keeping other data intact.
     pub async fn clear_filters(&mut self) -> Result<()> {
         {
