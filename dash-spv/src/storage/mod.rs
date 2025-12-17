@@ -2,7 +2,6 @@
 
 pub(crate) mod io;
 
-pub mod sync_state;
 pub mod sync_storage;
 pub mod types;
 
@@ -22,7 +21,6 @@ use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
 pub use manager::DiskStorageManager;
-pub use sync_state::{PersistentSyncState, RecoverySuggestion, SyncStateValidation};
 pub use sync_storage::MemoryStorage;
 pub use types::*;
 
