@@ -324,11 +324,6 @@ async fn test_mixed_operations() {
 
     assert_eq!(storage.load_metadata("test_key").await.unwrap().unwrap(), b"test_value");
 
-    // Get stats
-    let stats = storage.stats().await.unwrap();
-    assert_eq!(stats.header_count, 75_000);
-    assert_eq!(stats.filter_header_count, 75_000);
-
     storage.shutdown().await;
 }
 

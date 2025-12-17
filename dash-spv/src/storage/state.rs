@@ -9,7 +9,7 @@ use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
 use crate::storage::manager::WorkerCommand;
-use crate::storage::{MasternodeState, StorageManager, StorageStats};
+use crate::storage::{MasternodeState, StorageManager};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
 use super::io::atomic_write;
@@ -393,40 +393,6 @@ impl DiskStorageManager {
         Ok(())
     }
 
-    /// Get storage statistics.
-    pub async fn stats(&self) -> StorageResult<StorageStats> {
-        let mut component_sizes = HashMap::new();
-        let mut total_size = 0u64;
-
-        // Calculate directory sizes
-        if let Ok(mut entries) = tokio::fs::read_dir(&self.base_path).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                if let Ok(metadata) = entry.metadata().await {
-                    if metadata.is_file() {
-                        total_size += metadata.len();
-                    }
-                }
-            }
-        }
-
-        let header_count = self.block_headers.read().await.tip_height().map_or(0, |h| h as u64 + 1);
-        let filter_header_count =
-            self.filter_headers.read().await.tip_height().map_or(0, |h| h as u64 + 1);
-
-        component_sizes.insert("headers".to_string(), header_count * 80);
-        component_sizes.insert("filter_headers".to_string(), filter_header_count * 32);
-        component_sizes
-            .insert("index".to_string(), self.header_hash_index.read().await.len() as u64 * 40);
-
-        Ok(StorageStats {
-            header_count,
-            filter_header_count,
-            filter_count: 0, // TODO: Count filter files
-            total_size,
-            component_sizes,
-        })
-    }
-
     /// Shutdown the storage manager.
     pub async fn shutdown(&mut self) {
         // Persist all dirty data
@@ -624,10 +590,6 @@ impl StorageManager for DiskStorageManager {
         self.start_worker().await;
 
         Ok(())
-    }
-
-    async fn stats(&self) -> StorageResult<StorageStats> {
-        Self::stats(self).await
     }
 
     async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {

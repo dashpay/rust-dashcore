@@ -159,9 +159,6 @@ pub trait StorageManager: Send + Sync {
     /// Clear all filter headers and compact filters.
     async fn clear_filters(&mut self) -> StorageResult<()>;
 
-    /// Get storage statistics.
-    async fn stats(&self) -> StorageResult<StorageStats>;
-
     /// Get header height by block hash (reverse lookup).
     async fn get_header_height_by_hash(
         &self,
