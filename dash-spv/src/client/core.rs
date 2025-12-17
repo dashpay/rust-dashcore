@@ -144,7 +144,6 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) event_rx: Option<mpsc::UnboundedReceiver<SpvEvent>>,
     pub(super) mempool_state: Arc<RwLock<MempoolState>>,
     pub(super) mempool_filter: Option<Arc<MempoolFilter>>,
-    pub(super) last_sync_state_save: Arc<RwLock<u64>>,
 }
 
 impl<
@@ -270,12 +269,6 @@ impl<
         self.mempool_filter = None;
 
         Ok(())
-    }
-
-    /// Clear only the persisted sync state snapshot (keep headers/filters).
-    pub async fn clear_sync_state(&mut self) -> Result<()> {
-        let mut storage = self.storage.lock().await;
-        storage.clear_sync_state().await.map_err(SpvError::Storage)
     }
 
     /// Clear all stored filter headers and compact filters while keeping other data intact.

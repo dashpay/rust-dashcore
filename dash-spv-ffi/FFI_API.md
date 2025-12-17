@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 71
+**Total Functions**: 70
 
 ## Table of Contents
 
@@ -68,12 +68,11 @@ Functions: 27
 
 ### Synchronization
 
-Functions: 8
+Functions: 7
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_cancel_sync` | Cancels the sync operation | client |
-| `dash_spv_ffi_client_clear_sync_state` | Clear only the persisted sync-state snapshot | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
 | `dash_spv_ffi_client_is_filter_sync_available` | Check if compact filter sync is currently available | client |
 | `dash_spv_ffi_client_sync_to_tip` | Sync the SPV client to the chain tip | client |
@@ -659,22 +658,6 @@ Cancels the sync operation.  This stops the SPV client, clears callbacks, and jo
 
 **Safety:**
 The client pointer must be valid and non-null.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_clear_sync_state`
-
-```c
-dash_spv_ffi_client_clear_sync_state(client: *mut FFIDashSpvClient,) -> i32
-```
-
-**Description:**
-Clear only the persisted sync-state snapshot.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
 
 **Module:** `client`
 

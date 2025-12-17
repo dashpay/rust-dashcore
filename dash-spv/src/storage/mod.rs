@@ -2,7 +2,6 @@
 
 pub(crate) mod io;
 
-pub mod sync_state;
 pub mod sync_storage;
 pub mod types;
 
@@ -22,7 +21,6 @@ use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
 pub use manager::DiskStorageManager;
-pub use sync_state::{PersistentSyncState, RecoverySuggestion, SyncStateValidation};
 pub use sync_storage::MemoryStorage;
 pub use types::*;
 
@@ -169,29 +167,6 @@ pub trait StorageManager: Send + Sync {
     ) -> StorageResult<Option<u32>>;
 
     // UTXO methods removed - handled by external wallet
-
-    /// Store persistent sync state.
-    async fn store_sync_state(&mut self, state: &PersistentSyncState) -> StorageResult<()>;
-
-    /// Load persistent sync state.
-    async fn load_sync_state(&self) -> StorageResult<Option<PersistentSyncState>>;
-
-    /// Clear sync state (for recovery).
-    async fn clear_sync_state(&mut self) -> StorageResult<()>;
-
-    /// Store a sync checkpoint.
-    async fn store_sync_checkpoint(
-        &mut self,
-        height: u32,
-        checkpoint: &sync_state::SyncCheckpoint,
-    ) -> StorageResult<()>;
-
-    /// Get sync checkpoints in a height range.
-    async fn get_sync_checkpoints(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<sync_state::SyncCheckpoint>>;
 
     /// Store a chain lock.
     async fn store_chain_lock(
