@@ -144,7 +144,6 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) event_rx: Option<mpsc::UnboundedReceiver<SpvEvent>>,
     pub(super) mempool_state: Arc<RwLock<MempoolState>>,
     pub(super) mempool_filter: Option<Arc<MempoolFilter>>,
-    pub(super) last_sync_state_save: Arc<RwLock<u64>>,
 }
 
 impl<
