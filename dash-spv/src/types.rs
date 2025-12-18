@@ -303,7 +303,7 @@ impl ChainState {
         };
 
         // Add genesis header to the chain state
-        state.headers.push(genesis_header);
+        // TODO: Check if this is necessary -> state.headers.push(genesis_header);
 
         tracing::debug!(
             "Initialized ChainState with genesis block - network: {:?}, hash: {}",
