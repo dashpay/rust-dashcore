@@ -338,11 +338,6 @@ impl ChainState {
         self.filter_headers.get(index)
     }
 
-    /// Add headers to the chain.
-    pub fn add_headers(&mut self, headers: Vec<BlockHeader>) {
-        self.headers.extend(headers);
-    }
-
     /// Add filter headers to the chain.
     pub fn add_filter_headers(&mut self, filter_headers: Vec<FilterHeader>) {
         if let Some(last) = filter_headers.last() {
@@ -364,11 +359,6 @@ impl ChainState {
     /// Add a single header
     pub fn add_header(&mut self, header: BlockHeader) {
         self.headers.push(header);
-    }
-
-    /// Remove the tip header (for reorgs)
-    pub fn remove_tip(&mut self) -> Option<BlockHeader> {
-        self.headers.pop()
     }
 
     /// Update chain lock status
@@ -401,26 +391,6 @@ impl ChainState {
         // For now, return an empty vector as we don't track this yet
         // This would typically be populated during filter sync when matches are found
         Some(Vec::new())
-    }
-
-    /// Calculate the total chain work up to the tip
-    pub fn calculate_chain_work(&self) -> Option<crate::chain::chain_work::ChainWork> {
-        use crate::chain::chain_work::ChainWork;
-
-        // If we have no headers, return None
-        if self.headers.is_empty() {
-            return None;
-        }
-
-        // Start with zero work
-        let mut total_work = ChainWork::zero();
-
-        // Add work from each header
-        for header in &self.headers {
-            total_work = total_work.add_header(header);
-        }
-
-        Some(total_work)
     }
 
     /// Initialize chain state from a checkpoint.
@@ -471,7 +441,6 @@ impl ChainState {
 impl std::fmt::Debug for ChainState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainState")
-            .field("headers", &format!("{} headers", self.headers.len()))
             .field("filter_headers", &format!("{} filter headers", self.filter_headers.len()))
             .field("last_chainlock_height", &self.last_chainlock_height)
             .field("last_chainlock_hash", &self.last_chainlock_hash)
