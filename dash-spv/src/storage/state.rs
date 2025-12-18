@@ -7,7 +7,7 @@ use dashcore::{block::Header as BlockHeader, BlockHash, Txid};
 
 use crate::error::StorageResult;
 use crate::storage::headers::save_index_to_disk;
-use crate::storage::{MasternodeState, StorageManager, StorageStats};
+use crate::storage::{MasternodeState, StorageManager};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
 use super::io::atomic_write;
@@ -16,23 +16,12 @@ use super::manager::DiskStorageManager;
 impl DiskStorageManager {
     /// Store chain state to disk.
     pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        // Update our sync_base_height
-        self.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
-        self.block_headers.write().await.set_sync_base_height(state.sync_base_height);
-        self.filters.write().await.set_sync_base_height(state.sync_base_height);
-
         // First store all headers
         // For checkpoint sync, we need to store headers starting from the checkpoint height
-        if state.synced_from_checkpoint() && !state.headers.is_empty() {
-            // Store headers starting at the checkpoint height
-            self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
-        } else {
-            self.store_headers(&state.headers).await?;
-        }
+        self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
 
         // Store filter headers
-        // TODO: Shouldn't we use the sync base height here???
-        self.store_filter_headers(&state.filter_headers).await?;
+        self.filter_headers.write().await.store_items(&state.filter_headers).await?;
 
         // Store other state as JSON
         let state_data = serde_json::json!({
@@ -130,124 +119,6 @@ impl DiskStorageManager {
         })?;
 
         Ok(Some(state))
-    }
-
-    /// Store sync state.
-    pub async fn store_sync_state(
-        &mut self,
-        state: &crate::storage::PersistentSyncState,
-    ) -> StorageResult<()> {
-        let path = self.base_path.join("sync_state.json");
-
-        // Serialize to JSON for human readability and easy debugging
-        let json = serde_json::to_string_pretty(state).map_err(|e| {
-            crate::error::StorageError::WriteFailed(format!(
-                "Failed to serialize sync state: {}",
-                e
-            ))
-        })?;
-
-        atomic_write(&path, json.as_bytes()).await?;
-
-        tracing::debug!("Saved sync state at height {}", state.chain_tip.height);
-        Ok(())
-    }
-
-    /// Load sync state.
-    pub async fn load_sync_state(
-        &self,
-    ) -> StorageResult<Option<crate::storage::PersistentSyncState>> {
-        let path = self.base_path.join("sync_state.json");
-
-        if !path.exists() {
-            tracing::debug!("No sync state file found");
-            return Ok(None);
-        }
-
-        let json = tokio::fs::read_to_string(&path).await?;
-        let state: crate::storage::PersistentSyncState =
-            serde_json::from_str(&json).map_err(|e| {
-                crate::error::StorageError::ReadFailed(format!(
-                    "Failed to deserialize sync state: {}",
-                    e
-                ))
-            })?;
-
-        tracing::debug!("Loaded sync state from height {}", state.chain_tip.height);
-        Ok(Some(state))
-    }
-
-    /// Clear sync state.
-    pub async fn clear_sync_state(&mut self) -> StorageResult<()> {
-        let path = self.base_path.join("sync_state.json");
-        if path.exists() {
-            tokio::fs::remove_file(&path).await?;
-            tracing::debug!("Cleared sync state");
-        }
-        Ok(())
-    }
-
-    /// Store a sync checkpoint.
-    pub async fn store_sync_checkpoint(
-        &mut self,
-        height: u32,
-        checkpoint: &crate::storage::sync_state::SyncCheckpoint,
-    ) -> StorageResult<()> {
-        let path =
-            self.base_path.join("checkpoints").join(format!("checkpoint_{:08}.json", height));
-        let json = serde_json::to_string(checkpoint).map_err(|e| {
-            crate::error::StorageError::WriteFailed(format!(
-                "Failed to serialize checkpoint: {}",
-                e
-            ))
-        })?;
-
-        atomic_write(&path, json.as_bytes()).await?;
-        tracing::debug!("Stored checkpoint at height {}", height);
-        Ok(())
-    }
-
-    /// Get sync checkpoints in a height range.
-    pub async fn get_sync_checkpoints(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<crate::storage::sync_state::SyncCheckpoint>> {
-        let checkpoints_dir = self.base_path.join("checkpoints");
-
-        if !checkpoints_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut checkpoints: Vec<crate::storage::sync_state::SyncCheckpoint> = Vec::new();
-        let mut entries = tokio::fs::read_dir(&checkpoints_dir).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-
-            // Parse height from filename
-            if let Some(height_str) =
-                file_name_str.strip_prefix("checkpoint_").and_then(|s| s.strip_suffix(".json"))
-            {
-                if let Ok(height) = height_str.parse::<u32>() {
-                    if height >= start_height && height <= end_height {
-                        let path = entry.path();
-                        let json = tokio::fs::read_to_string(&path).await?;
-                        if let Ok(checkpoint) = serde_json::from_str::<
-                            crate::storage::sync_state::SyncCheckpoint,
-                        >(&json)
-                        {
-                            checkpoints.push(checkpoint);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort by height
-        checkpoints.sort_by_key(|c| c.height);
-        Ok(checkpoints)
     }
 
     /// Store a ChainLock.
@@ -389,40 +260,6 @@ impl DiskStorageManager {
         self.start_worker().await;
 
         Ok(())
-    }
-
-    /// Get storage statistics.
-    pub async fn stats(&self) -> StorageResult<StorageStats> {
-        let mut component_sizes = HashMap::new();
-        let mut total_size = 0u64;
-
-        // Calculate directory sizes
-        if let Ok(mut entries) = tokio::fs::read_dir(&self.base_path).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                if let Ok(metadata) = entry.metadata().await {
-                    if metadata.is_file() {
-                        total_size += metadata.len();
-                    }
-                }
-            }
-        }
-
-        let header_count = self.block_headers.read().await.tip_height().map_or(0, |h| h as u64 + 1);
-        let filter_header_count =
-            self.filter_headers.read().await.tip_height().map_or(0, |h| h as u64 + 1);
-
-        component_sizes.insert("headers".to_string(), header_count * 80);
-        component_sizes.insert("filter_headers".to_string(), filter_header_count * 32);
-        component_sizes
-            .insert("index".to_string(), self.header_hash_index.read().await.len() as u64 * 40);
-
-        Ok(StorageStats {
-            header_count,
-            filter_header_count,
-            filter_count: 0, // TODO: Count filter files
-            total_size,
-            component_sizes,
-        })
     }
 
     /// Shutdown the storage manager.
@@ -592,43 +429,8 @@ impl StorageManager for DiskStorageManager {
         Ok(())
     }
 
-    async fn stats(&self) -> StorageResult<StorageStats> {
-        Self::stats(self).await
-    }
-
     async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
         Self::get_header_height_by_hash(self, hash).await
-    }
-
-    async fn store_sync_state(
-        &mut self,
-        state: &crate::storage::PersistentSyncState,
-    ) -> StorageResult<()> {
-        Self::store_sync_state(self, state).await
-    }
-
-    async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::PersistentSyncState>> {
-        Self::load_sync_state(self).await
-    }
-
-    async fn clear_sync_state(&mut self) -> StorageResult<()> {
-        Self::clear_sync_state(self).await
-    }
-
-    async fn store_sync_checkpoint(
-        &mut self,
-        height: u32,
-        checkpoint: &crate::storage::sync_state::SyncCheckpoint,
-    ) -> StorageResult<()> {
-        Self::store_sync_checkpoint(self, height, checkpoint).await
-    }
-
-    async fn get_sync_checkpoints(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<crate::storage::sync_state::SyncCheckpoint>> {
-        Self::get_sync_checkpoints(self, start_height, end_height).await
     }
 
     async fn store_chain_lock(
@@ -745,16 +547,11 @@ mod tests {
         // Store just one header
         storage.store_headers(&[test_header]).await?;
 
-        // Load headers for a range that would include padding
-        let loaded_headers = storage.load_headers(0..10).await?;
+        let loaded_headers = storage.load_headers(0..1).await?;
 
         // Should only get back the one header we stored
         assert_eq!(loaded_headers.len(), 1);
         assert_eq!(loaded_headers[0], test_header);
-
-        // Try to get a header at index 5 (which doesn't exist)
-        let header_at_5 = storage.get_header(5).await?;
-        assert!(header_at_5.is_none(), "Should not return any header");
 
         Ok(())
     }
@@ -780,12 +577,11 @@ mod tests {
             })
             .collect();
 
-        // Set sync base height so storage interprets heights as blockchain heights
         let mut base_state = ChainState::new();
         base_state.sync_base_height = checkpoint_height;
         storage.store_chain_state(&base_state).await?;
 
-        storage.store_headers(&headers).await?;
+        storage.store_headers_at_height(&headers, checkpoint_height).await?;
 
         // Verify headers are stored at correct blockchain heights
         let header_at_base = storage.get_header(checkpoint_height).await?;

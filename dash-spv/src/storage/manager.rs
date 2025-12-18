@@ -1,7 +1,6 @@
 //! Core DiskStorageManager struct and background worker implementation.
 
 use std::collections::HashMap;
-use std::io::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -64,34 +63,15 @@ impl DiskStorageManager {
             StorageError::WriteFailed(format!("Failed to create state directory: {}", e))
         })?;
 
-        // Temporary fix to load the sync base height if we have data already persisted
-        let sync_base_height =
-            load_sync_base_height_if_persisted(base_path.join("state/chain.json"))
-                .await
-                .unwrap_or(0);
-
-        async fn load_sync_base_height_if_persisted(path: PathBuf) -> Result<u32> {
-            let content = tokio::fs::read_to_string(path).await?;
-            let value: serde_json::Value = serde_json::from_str(&content)?;
-
-            Ok(value
-                .get("sync_base_height")
-                .and_then(|v| v.as_u64())
-                .map(|h| h as u32)
-                .unwrap_or(0))
-        }
-
         let mut storage = Self {
             base_path: base_path.clone(),
             block_headers: Arc::new(RwLock::new(
-                SegmentCache::load_or_new(base_path.clone(), sync_base_height).await?,
+                SegmentCache::load_or_new(base_path.clone()).await?,
             )),
             filter_headers: Arc::new(RwLock::new(
-                SegmentCache::load_or_new(base_path.clone(), sync_base_height).await?,
+                SegmentCache::load_or_new(base_path.clone()).await?,
             )),
-            filters: Arc::new(RwLock::new(
-                SegmentCache::load_or_new(base_path.clone(), sync_base_height).await?,
-            )),
+            filters: Arc::new(RwLock::new(SegmentCache::load_or_new(base_path.clone()).await?)),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_handle: None,
             mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -101,9 +81,6 @@ impl DiskStorageManager {
 
         // Load chain state to get sync_base_height
         if let Ok(Some(state)) = storage.load_chain_state().await {
-            storage.filter_headers.write().await.set_sync_base_height(state.sync_base_height);
-            storage.block_headers.write().await.set_sync_base_height(state.sync_base_height);
-            storage.filters.write().await.set_sync_base_height(state.sync_base_height);
             tracing::debug!("Loaded sync_base_height: {}", state.sync_base_height);
         }
 

@@ -95,7 +95,6 @@ impl<
             event_rx: Some(event_rx),
             mempool_state,
             mempool_filter: None,
-            last_sync_state_save: Arc::new(RwLock::new(0)),
         })
     }
 
@@ -161,29 +160,6 @@ impl<
         // For sequential sync, filter processor is handled internally
         if self.config.enable_filters && self.filter_processor.is_none() {
             tracing::info!("📊 Sequential sync mode: filter processing handled internally");
-        }
-
-        // Try to restore sync state from persistent storage
-        if self.config.enable_persistence {
-            match self.restore_sync_state().await {
-                Ok(restored) => {
-                    if restored {
-                        tracing::info!(
-                            "✅ Successfully restored sync state from persistent storage"
-                        );
-                    } else {
-                        tracing::info!("No previous sync state found, starting fresh sync");
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to restore sync state: {}", e);
-                    tracing::warn!("Starting fresh sync due to state restoration failure");
-                    // Clear any corrupted state
-                    if let Err(clear_err) = self.storage.lock().await.clear_sync_state().await {
-                        tracing::error!("Failed to clear corrupted sync state: {}", clear_err);
-                    }
-                }
-            }
         }
 
         // Initialize genesis block if not already present
@@ -260,14 +236,6 @@ impl<
             if !*running {
                 return Ok(());
             }
-        }
-
-        // Save sync state before shutting down
-        if let Err(e) = self.save_sync_state().await {
-            tracing::error!("Failed to save sync state during shutdown: {}", e);
-            // Continue with shutdown even if state save fails
-        } else {
-            tracing::info!("Sync state saved successfully during shutdown");
         }
 
         // Disconnect from network
