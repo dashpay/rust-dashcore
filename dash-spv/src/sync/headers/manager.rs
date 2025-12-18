@@ -144,10 +144,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Step 2: Validate Batch
         let first_cached = &cached_headers[0];
         let first_header = first_cached.header();
-        let tip =
-            self.chain_state.read().await.get_tip_header().ok_or_else(|| {
-                SyncError::InvalidState("No tip header in chain state".to_string())
-            })?;
+
+        let tip_height = storage
+            .get_tip_height()
+            .await
+            .ok_or_else(|| SyncError::InvalidState("No tip height in storage".to_string()))?;
+
+        let tip = storage
+            .get_header(tip_height)
+            .await
+            .ok()
+            .flatten()
+            .ok_or_else(|| SyncError::InvalidState("No tip header in storage".to_string()))?;
 
         // Check if the first header connects to our tip
         // Cache tip hash to avoid recomputing it

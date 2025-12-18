@@ -346,11 +346,6 @@ impl ChainState {
         self.filter_headers.extend(filter_headers);
     }
 
-    /// Get the tip header
-    pub fn get_tip_header(&self) -> Option<BlockHeader> {
-        self.headers.last().copied()
-    }
-
     /// Get the height
     pub fn get_height(&self) -> u32 {
         self.tip_height()
