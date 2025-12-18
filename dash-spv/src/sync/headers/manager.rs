@@ -416,15 +416,19 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             let state = self.headers2_state.get_state(peer_id);
             if state.prev_header.is_none() {
                 // Initialize with header at current tip height (works for both genesis and later)
-                let chain_state = self.chain_state.read().await;
                 let tip_height = storage.get_tip_height().await.unwrap_or(0);
-                if let Some(tip_header) = chain_state.header_at_height(tip_height) {
+                if let Some(tip_header) = storage.get_header(tip_height).await.map_err(|e| {
+                    SyncError::Storage(format!(
+                        "Error trying to get block at height {} from storage: {}",
+                        tip_height, e
+                    ))
+                })? {
                     tracing::info!(
                         "Initializing headers2 compression state for peer {} with header at height {}",
                         peer_id,
                         tip_height
                     );
-                    self.headers2_state.init_peer_state(peer_id, *tip_header);
+                    self.headers2_state.init_peer_state(peer_id, tip_header);
                 }
             }
         }
@@ -536,8 +540,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     tracing::info!("No tip height found, ensuring genesis block is stored");
 
                     // Get genesis header from chain state (which was initialized with genesis)
-                    if let Some(genesis_header) = self.chain_state.read().await.header_at_height(0)
-                    {
+                    if let Some(genesis_header) = storage.get_header(0).await.map_err(|e| {
+                        SyncError::Storage(format!(
+                            "Error trying to get genesis block from storage: {}",
+                            e
+                        ))
+                    })? {
                         // Store genesis in storage if not already there
                         if storage
                             .get_header(0)
@@ -548,7 +556,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             .is_none()
                         {
                             tracing::info!("Storing genesis block in storage");
-                            storage.store_headers(&[*genesis_header]).await.map_err(|e| {
+                            storage.store_headers(&[genesis_header]).await.map_err(|e| {
                                 SyncError::Storage(format!("Failed to store genesis: {}", e))
                             })?;
                         }

@@ -329,15 +329,6 @@ impl ChainState {
         self.sync_base_height > 0
     }
 
-    /// Get header at the given height.
-    pub fn header_at_height(&self, height: u32) -> Option<&BlockHeader> {
-        if height < self.sync_base_height {
-            return None; // Height is before our sync base
-        }
-        let index = (height - self.sync_base_height) as usize;
-        self.headers.get(index)
-    }
-
     /// Get filter header at the given height.
     pub fn filter_header_at_height(&self, height: u32) -> Option<&FilterHeader> {
         if height < self.sync_base_height {
