@@ -39,7 +39,7 @@ Functions: 27
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_update_config` | Update the running client's configuration | client |
-| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts either a full socket... | config |
+| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts socket addresses with or... | config |
 | `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_get_data_dir` | Gets the data directory path from the configuration  # Safety - `config`... | config |
 | `dash_spv_ffi_config_get_mempool_strategy` | Gets the mempool synchronization strategy  # Safety - `config` must be a... | config |
@@ -254,7 +254,7 @@ dash_spv_ffi_config_add_peer(config: *mut FFIClientConfig, addr: *const c_char,)
 ```
 
 **Description:**
-Adds a peer address to the configuration  Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`) or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
+Adds a peer address to the configuration  Accepts socket addresses with or without port. When no port is specified, the default P2P port for the configured network is used.  Supported formats: - IP with port: `192.168.1.1:9999`, `[::1]:19999` - IP without port: `127.0.0.1`, `2001:db8::1` - Hostname with port: `node.example.com:9999` - Hostname without port: `node.example.com`  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call

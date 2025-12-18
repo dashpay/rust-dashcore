@@ -125,9 +125,14 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
 
 /// Adds a peer address to the configuration
 ///
-/// Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`)
-/// or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only
-/// string is given, the default P2P port for the configured network is used.
+/// Accepts socket addresses with or without port. When no port is specified,
+/// the default P2P port for the configured network is used.
+///
+/// Supported formats:
+/// - IP with port: `192.168.1.1:9999`, `[::1]:19999`
+/// - IP without port: `127.0.0.1`, `2001:db8::1`
+/// - Hostname with port: `node.example.com:9999`
+/// - Hostname without port: `node.example.com`
 ///
 /// # Safety
 /// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
@@ -171,13 +176,19 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
         return FFIErrorCode::Success as i32;
     }
 
-    // 3) Optionally attempt DNS name with explicit port only; if no port, reject
-    if !addr_str.contains(':') {
-        set_last_error("Missing port for hostname; supply 'host:port' or IP only");
+    // 3) Must be a hostname - reject empty or missing hostname
+    if addr_str.is_empty() || addr_str.starts_with(':') {
+        set_last_error("Empty or missing hostname");
         return FFIErrorCode::InvalidArgument as i32;
     }
 
-    match addr_str.to_socket_addrs() {
+    let addr_with_port = if addr_str.contains(':') {
+        addr_str.to_string()
+    } else {
+        format!("{}:{}", addr_str, default_port)
+    };
+
+    match addr_with_port.to_socket_addrs() {
         Ok(mut iter) => match iter.next() {
             Some(sock) => {
                 cfg.peers.push(sock);
