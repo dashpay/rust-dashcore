@@ -1229,21 +1229,44 @@ mod tests {
     #[test]
     fn test_gap_limit_maintenance() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new_without_generation(
-            base_path,
-            AddressPoolType::External,
-            5,
-            Network::Testnet,
-        );
         let key_source = test_key_source();
+        let gap_limit = 5;
 
-        // Generate initial addresses
-        pool.generate_addresses(3, &key_source, true).unwrap();
+        // Create pool with gap_limit addresses already generated
+        let mut pool =
+            AddressPool::new(base_path, AddressPoolType::External, gap_limit, Network::Testnet, &key_source)
+                .unwrap();
+
+        // Verify gap_limit addresses generated, none used
+        assert_eq!(pool.highest_generated, Some(gap_limit - 1));
+        assert_eq!(pool.highest_used, None);
+        assert_eq!(pool.addresses.len(), gap_limit as usize);
+
+        // Calling maintain_gap_limit should not generate any new addresses when none are used
+        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        assert_eq!(new_addresses.len(), 0);
+        assert_eq!(pool.highest_generated, Some(gap_limit - 1));
+        assert_eq!(pool.addresses.len(), gap_limit as usize);
+
+        // Mark address at index 0 as used
+        pool.mark_index_used(0);
+        assert_eq!(pool.highest_used, Some(0));
+
+        // Should generate exactly 1 address to maintain gap_limit unused after index 0
+        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        assert_eq!(new_addresses.len(), 1);
+        assert_eq!(pool.highest_generated, Some(gap_limit));
+        assert_eq!(pool.addresses.len(), gap_limit as usize + 1);
+
+        // Mark address at index 1 and 2 as used
         pool.mark_index_used(1);
+        pool.mark_index_used(2);
 
-        // Maintain gap limit
-        let _new_addrs = pool.maintain_gap_limit(&key_source).unwrap();
-        assert!(pool.highest_generated.unwrap_or(0) >= 6); // Should have at least index 1 + gap limit 5
+        // Should generate exactly 2 more addresses
+        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        assert_eq!(new_addresses.len(), 2);
+        assert_eq!(pool.highest_generated, Some(gap_limit + 2));
+        assert_eq!(pool.addresses.len(), gap_limit as usize + 3);
     }
 
     #[test]
