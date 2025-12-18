@@ -329,11 +329,6 @@ impl ChainState {
         self.sync_base_height > 0
     }
 
-    /// Get the current tip hash.
-    pub fn tip_hash(&self) -> Option<BlockHash> {
-        self.headers.last().map(|h| h.block_hash())
-    }
-
     /// Get header at the given height.
     pub fn header_at_height(&self, height: u32) -> Option<&BlockHeader> {
         if height < self.sync_base_height {

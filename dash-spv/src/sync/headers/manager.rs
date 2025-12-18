@@ -844,11 +844,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         storage.get_tip_height().await.unwrap_or(0)
     }
 
-    /// Get the tip hash
-    pub async fn get_tip_hash(&self) -> Option<BlockHash> {
-        self.chain_state.read().await.tip_hash()
-    }
-
     /// Get the sync base height (used when syncing from checkpoint)
     pub fn get_sync_base_height(&self) -> u32 {
         self.cached_sync_base_height
