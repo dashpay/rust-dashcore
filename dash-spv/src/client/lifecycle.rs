@@ -169,30 +169,12 @@ impl<
         // This ensures the ChainState has headers loaded for both checkpoint and normal sync
         let tip_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
+            storage.get_tip_height().await.unwrap_or(0)
         };
         if tip_height > 0 {
             tracing::info!("Found {} headers in storage, loading into sync manager...", tip_height);
-            let loaded_count = {
-                let storage = self.storage.lock().await;
-                self.sync_manager.load_headers_from_storage(&storage).await
-            };
-
-            match loaded_count {
-                Ok(loaded_count) => {
-                    tracing::info!("✅ Sync manager loaded {} headers from storage", loaded_count);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load headers into sync manager: {}", e);
-                    // For checkpoint sync, this is critical
-                    let state = self.state.read().await;
-                    if state.synced_from_checkpoint() {
-                        return Err(SpvError::Sync(e));
-                    }
-                    // For normal sync, we can continue as headers will be re-synced
-                    tracing::warn!("Continuing without pre-loaded headers for normal sync");
-                }
-            }
+            let storage = self.storage.lock().await;
+            self.sync_manager.load_headers_from_storage(&storage).await
         }
 
         // Connect to network
@@ -271,7 +253,7 @@ impl<
         // Check if we already have any headers in storage
         let current_tip = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?
+            storage.get_tip_height().await
         };
 
         if current_tip.is_some() {
@@ -344,7 +326,6 @@ impl<
 
                         // Clone the chain state for storage
                         let chain_state_for_storage = (*chain_state).clone();
-                        let headers_len = chain_state_for_storage.headers.len() as u32;
                         drop(chain_state);
 
                         // Update storage with chain state including sync_base_height
@@ -366,7 +347,7 @@ impl<
                         );
 
                         // Update the sync manager's cached flags from the checkpoint-initialized state
-                        self.sync_manager.update_chain_state_cache(checkpoint.height, headers_len);
+                        self.sync_manager.update_chain_state_cache(checkpoint.height);
                         tracing::info!(
                             "Updated sync manager with checkpoint-initialized chain state"
                         );
@@ -414,7 +395,7 @@ impl<
         // Verify it was stored correctly
         let stored_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?
+            storage.get_tip_height().await
         };
         tracing::info!(
             "✅ Genesis block initialized at height 0, storage reports tip height: {:?}",

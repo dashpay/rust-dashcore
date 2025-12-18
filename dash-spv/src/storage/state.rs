@@ -18,10 +18,6 @@ use super::manager::DiskStorageManager;
 impl DiskStorageManager {
     /// Store chain state to disk.
     pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        // First store all headers
-        // For checkpoint sync, we need to store headers starting from the checkpoint height
-        self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
-
         // Store filter headers
         self.filter_headers
             .write()
@@ -84,9 +80,6 @@ impl DiskStorageManager {
         };
 
         let range_start = state.sync_base_height;
-        if let Some(tip_height) = self.get_tip_height().await? {
-            state.headers = self.load_headers(range_start..tip_height + 1).await?;
-        }
         if let Some(filter_tip_height) = self.get_filter_tip_height().await? {
             state.filter_headers =
                 self.load_filter_headers(range_start..filter_tip_height + 1).await?;
@@ -388,8 +381,29 @@ impl StorageManager for DiskStorageManager {
         Ok(self.block_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
-    async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
-        Ok(self.block_headers.read().await.tip_height())
+    async fn get_tip_height(&self) -> Option<u32> {
+        self.block_headers.read().await.tip_height()
+    }
+
+    async fn get_start_height(&self) -> Option<u32> {
+        self.block_headers.read().await.start_height()
+    }
+
+    async fn get_stored_headers_len(&self) -> u32 {
+        let headers_guard = self.block_headers.read().await;
+        let start_height = if let Some(start_height) = headers_guard.start_height() {
+            start_height
+        } else {
+            return 0;
+        };
+
+        let end_height = if let Some(end_height) = headers_guard.tip_height() {
+            end_height
+        } else {
+            return 0;
+        };
+
+        end_height - start_height + 1
     }
 
     async fn store_filter_headers(
@@ -621,6 +635,7 @@ mod tests {
         storage.store_chain_state(&base_state).await?;
 
         storage.store_headers_at_height(&headers, checkpoint_height).await?;
+        assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
 
         // Verify headers are stored at correct blockchain heights
         let header_at_base = storage.get_header(checkpoint_height).await?;

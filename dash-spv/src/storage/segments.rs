@@ -107,6 +107,7 @@ impl Persistable for FilterHeader {
 pub struct SegmentCache<I: Persistable> {
     segments: HashMap<u32, Segment<I>>,
     tip_height: Option<u32>,
+    start_height: Option<u32>,
     base_path: PathBuf,
 }
 
@@ -164,12 +165,14 @@ impl<I: Persistable> SegmentCache<I> {
         let mut cache = Self {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
             tip_height: None,
+            start_height: None,
             base_path,
         };
 
         // Building the metadata
         if let Ok(entries) = fs::read_dir(&items_dir) {
-            let mut max_segment_id = None;
+            let mut max_seg_id = None;
+            let mut min_seg_id = None;
 
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
@@ -180,19 +183,27 @@ impl<I: Persistable> SegmentCache<I> {
                         let segment_id_end = segment_id_start + 4;
 
                         if let Ok(id) = name[segment_id_start..segment_id_end].parse::<u32>() {
-                            max_segment_id =
-                                Some(max_segment_id.map_or(id, |max: u32| max.max(id)));
+                            max_seg_id = Some(max_seg_id.map_or(id, |max: u32| max.max(id)));
+                            min_seg_id = Some(min_seg_id.map_or(id, |min: u32| min.min(id)));
                         }
                     }
                 }
             }
 
-            if let Some(segment_id) = max_segment_id {
+            if let Some(segment_id) = max_seg_id {
                 let segment = cache.get_segment(&segment_id).await?;
 
                 cache.tip_height = segment
                     .last_valid_offset()
-                    .map(|offset| segment_id * Segment::<I>::ITEMS_PER_SEGMENT + offset);
+                    .map(|offset| Self::segment_id_to_start_height(segment_id) + offset);
+            }
+
+            if let Some(segment_id) = min_seg_id {
+                let segment = cache.get_segment(&segment_id).await?;
+
+                cache.start_height = segment
+                    .first_valid_offset()
+                    .map(|offset| Self::segment_id_to_start_height(segment_id) + offset);
             }
         }
 
@@ -392,6 +403,11 @@ impl<I: Persistable> SegmentCache<I> {
     #[inline]
     pub fn tip_height(&self) -> Option<u32> {
         self.tip_height
+    }
+
+    #[inline]
+    pub fn start_height(&self) -> Option<u32> {
+        self.start_height
     }
 
     #[inline]

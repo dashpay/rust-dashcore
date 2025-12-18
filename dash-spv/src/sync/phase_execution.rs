@@ -32,7 +32,7 @@ impl<
                     // Already prepared, just send the initial request
                     let base_hash = self.get_base_hash_from_storage(storage).await?;
 
-                    self.header_sync.request_headers(network, base_hash).await?;
+                    self.header_sync.request_headers(network, base_hash, storage).await?;
                 } else {
                     // Not prepared yet, start sync normally
                     self.header_sync.start_sync(network, storage).await?;
@@ -44,14 +44,11 @@ impl<
             } => {
                 tracing::info!("📥 Starting masternode list download phase");
                 // Get the effective chain height from header sync which accounts for checkpoint base
-                let effective_height = self.header_sync.get_chain_height();
+                let effective_height = self.header_sync.get_chain_height(storage).await;
                 let sync_base_height = self.header_sync.get_sync_base_height();
 
                 // Also get the actual tip height to verify (blockchain height)
-                let storage_tip = storage
-                    .get_tip_height()
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to get storage tip: {}", e)))?;
+                let storage_tip = storage.get_tip_height().await;
 
                 // Debug: Check chain state
                 let chain_state = storage.load_chain_state().await.map_err(|e| {

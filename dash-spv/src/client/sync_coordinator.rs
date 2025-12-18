@@ -42,7 +42,7 @@ impl<
         let result = SyncProgress {
             header_height: {
                 let storage = self.storage.lock().await;
-                storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
+                storage.get_tip_height().await.unwrap_or(0)
             },
             filter_header_height: {
                 let storage = self.storage.lock().await;
@@ -241,7 +241,7 @@ impl<
                     // Storage tip now represents the absolute blockchain height.
                     let current_tip_height = {
                         let storage = self.storage.lock().await;
-                        storage.get_tip_height().await.ok().flatten().unwrap_or(0)
+                        storage.get_tip_height().await.unwrap_or(0)
                     };
                     let current_height = current_tip_height;
                     let peer_best = self
@@ -315,7 +315,7 @@ impl<
                 // Emit filter headers progress only when heights change
                 let (abs_header_height, filter_header_height) = {
                     let storage = self.storage.lock().await;
-                    let storage_tip = storage.get_tip_height().await.ok().flatten().unwrap_or(0);
+                    let storage_tip = storage.get_tip_height().await.unwrap_or(0);
                     let filter_tip =
                         storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
                     (storage_tip, filter_tip)

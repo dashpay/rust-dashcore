@@ -35,13 +35,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             );
 
             // Get header tip height for recovery
-            let header_tip_height = storage
-                .get_tip_height()
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
-                .ok_or_else(|| {
-                    SyncError::Storage("No headers available for filter sync".to_string())
-                })?;
+            let header_tip_height = storage.get_tip_height().await.ok_or_else(|| {
+                SyncError::Storage("No headers available for filter sync".to_string())
+            })?;
 
             // Re-calculate current batch parameters for recovery
             let recovery_batch_end_height =

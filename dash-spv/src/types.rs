@@ -254,9 +254,6 @@ impl DetailedSyncProgress {
 /// - At 2M blocks: ~160MB for headers, ~64MB for filter headers
 #[derive(Clone, Default)]
 pub struct ChainState {
-    /// Block headers indexed by height.
-    pub headers: Vec<BlockHeader>,
-
     /// Filter headers indexed by height.
     pub filter_headers: Vec<FilterHeader>,
 
@@ -308,8 +305,11 @@ impl ChainState {
         // Add genesis header to the chain state
         state.headers.push(genesis_header);
 
-        tracing::debug!("Initialized ChainState with genesis block - network: {:?}, hash: {}, headers_count: {}",
-            network, genesis_header.block_hash(), state.headers.len());
+        tracing::debug!(
+            "Initialized ChainState with genesis block - network: {:?}, hash: {}",
+            network,
+            genesis_header.block_hash()
+        );
 
         // Initialize masternode engine for the network
         let mut engine = MasternodeListEngine::default_for_network(network);

@@ -54,7 +54,6 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     chain_state: Arc<RwLock<ChainState>>,
     // WalletState removed - wallet functionality is now handled externally
     headers2_state: Headers2StateManager,
-    total_headers_synced: u32,
     syncing_headers: bool,
     last_sync_progress: std::time::Instant,
     headers2_failed: bool,
@@ -91,7 +90,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             chain_state,
             // WalletState removed
             headers2_state: Headers2StateManager::new(),
-            total_headers_synced: 0,
             syncing_headers: false,
             last_sync_progress: std::time::Instant::now(),
             headers2_failed: false,
@@ -102,10 +100,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Load headers from storage into the chain state
-    pub async fn load_headers_from_storage(&mut self, storage: &S) -> SyncResult<u32> {
-        let start_time = std::time::Instant::now();
-        let mut loaded_count = 0;
-        let mut tip_height = 0;
+    pub async fn load_headers_from_storage(&mut self, storage: &S) {
         // First, try to load the persisted chain state which may contain sync_base_height
         if let Ok(Some(stored_chain_state)) = storage.load_chain_state().await {
             tracing::info!(
@@ -114,26 +109,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             );
             // Update our chain state with the loaded one
             {
-                loaded_count = stored_chain_state.headers.len();
-                tip_height = stored_chain_state.tip_height();
                 self.cached_sync_base_height = stored_chain_state.sync_base_height;
                 let mut cs = self.chain_state.write().await;
                 *cs = stored_chain_state;
             }
         }
-
-        self.total_headers_synced = tip_height;
-
-        let elapsed = start_time.elapsed();
-        tracing::info!(
-            "✅ Loaded {} headers for tip height {} into HeaderSyncManager in {:.2}s ({:.0} headers/sec)",
-            loaded_count,
-            tip_height,
-            elapsed.as_secs_f64(),
-            loaded_count as f64 / elapsed.as_secs_f64()
-        );
-
-        Ok(loaded_count as u32)
     }
 
     /// Handle a Headers message
@@ -149,7 +129,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         if headers.is_empty() {
             tracing::info!(
                 "📊 Header sync complete - no more headers from peers. Total headers synced: {}, chain_state.tip_height: {}",
-                self.total_headers_synced,
+                storage.get_stored_headers_len().await,
                 self.chain_state.read().await.tip_height()
             );
             self.syncing_headers = false;
@@ -261,17 +241,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store headers batch: {}", e)))?;
 
-        // Update Sync Progress
-        let batch_size = headers.len() as u32;
-        let previous_total = self.total_headers_synced;
-        self.total_headers_synced += batch_size;
-
         tracing::info!(
-            "Header sync progress: processed {} headers in batch, total_headers_synced: {} -> {}, chain_state.headers.len()={}",
-            batch_size,
-            previous_total,
-            self.total_headers_synced,
-            self.chain_state.read().await.headers.len()
+            "Header sync progress: processed {} headers in batch, total_headers_synced: {}",
+            headers.len() as u32,
+            storage.get_stored_headers_len().await,
         );
 
         // Update chain tip manager with the last header in the batch
@@ -293,7 +266,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             // Use the last cached header's hash to avoid redundant X11 computation
             if let Some(last_cached) = cached_headers.last() {
                 let hash = last_cached.block_hash();
-                self.request_headers(network, Some(hash)).await?;
+                self.request_headers(network, Some(hash), storage).await?;
             }
         }
 
@@ -305,16 +278,27 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         network: &mut N,
         base_hash: Option<BlockHash>,
+        storage: &S,
     ) -> SyncResult<()> {
         let block_locator = match base_hash {
             Some(hash) => vec![hash],
             None => {
                 // Check if we're syncing from a checkpoint
-                if self.is_synced_from_checkpoint()
-                    && !self.chain_state.read().await.headers.is_empty()
-                {
+                if self.is_synced_from_checkpoint() && storage.get_stored_headers_len().await > 0 {
+                    let first_height = storage
+                        .get_start_height()
+                        .await
+                        .ok_or(SyncError::Storage(format!("Failed to get start height")))?;
+                    let checkpoint_header = storage
+                        .get_header(first_height)
+                        .await
+                        .map_err(|e| {
+                            SyncError::Storage(format!("Failed to get first header: {}", e))
+                        })?
+                        .ok_or(SyncError::Storage(format!("Storage didn't return first header")))?;
+
                     // Use the checkpoint hash from chain state
-                    let checkpoint_hash = self.chain_state.read().await.headers[0].block_hash();
+                    let checkpoint_hash = checkpoint_header.block_hash();
                     tracing::info!(
                         "📍 No base_hash provided but syncing from checkpoint at height {}. Using checkpoint hash: {}",
                         self.get_sync_base_height(),
@@ -498,14 +482,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         tracing::info!(
             "Chain state before prepare_sync: sync_base_height={}, headers_count={}",
             self.get_sync_base_height(),
-            self.chain_state.read().await.headers.len()
+            storage.get_stored_headers_len().await
         );
 
         // Get current tip from storage
-        let current_tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
+        let current_tip_height = storage.get_tip_height().await;
 
         // If we're syncing from a checkpoint, we need to account for sync_base_height
         let effective_tip_height = if self.is_synced_from_checkpoint() {
@@ -528,14 +509,21 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             current_tip_height
         };
 
+        // We're syncing from a checkpoint and have the checkpoint header
+        let first_height = storage
+            .get_start_height()
+            .await
+            .ok_or(SyncError::Storage(format!("Failed to get start height")))?;
+        let checkpoint_header = storage
+            .get_header(first_height)
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get first header: {}", e)))?
+            .ok_or(SyncError::Storage(format!("Storage didn't return first header")))?;
+
         let base_hash = match effective_tip_height {
             None => {
                 // No headers in storage - check if we're syncing from a checkpoint
-                if self.is_synced_from_checkpoint()
-                    && !self.chain_state.read().await.headers.is_empty()
-                {
-                    // We're syncing from a checkpoint and have the checkpoint header
-                    let checkpoint_header = &self.chain_state.read().await.headers[0];
+                if self.is_synced_from_checkpoint() && storage.get_stored_headers_len().await > 0 {
                     let checkpoint_hash = checkpoint_header.block_hash();
                     tracing::info!(
                         "No headers in storage but syncing from checkpoint at height {}. Using checkpoint hash: {}",
@@ -595,12 +583,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     tracing::info!(
                         "At checkpoint height {}. Chain state has {} headers",
                         height,
-                        self.chain_state.read().await.headers.len()
+                        storage.get_stored_headers_len().await
                     );
 
                     // The checkpoint header should be the first (and possibly only) header
-                    if !self.chain_state.read().await.headers.is_empty() {
-                        let checkpoint_header = &self.chain_state.read().await.headers[0];
+                    if storage.get_stored_headers_len().await > 0 {
                         let hash = checkpoint_header.block_hash();
                         tracing::info!("Using checkpoint hash for height {}: {}", height, hash);
                         Some(hash)
@@ -642,7 +629,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         let base_hash = self.prepare_sync(storage).await?;
 
         // Request headers starting from our current tip or checkpoint
-        self.request_headers(network, base_hash).await?;
+        self.request_headers(network, base_hash, storage).await?;
 
         Ok(true) // Sync started
     }
@@ -677,24 +664,30 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             );
 
             // Get current tip for recovery
-            let current_tip_height = storage
-                .get_tip_height()
+            let current_tip_height = storage.get_tip_height().await;
+
+            let first_height = storage
+                .get_start_height()
                 .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
+                .ok_or(SyncError::Storage(format!("Failed to get start height")))?;
+            let checkpoint_header = storage
+                .get_header(first_height)
+                .await
+                .map_err(|e| SyncError::Storage(format!("Failed to get first header: {}", e)))?
+                .ok_or(SyncError::Storage(format!("Storage didn't return first header")))?;
 
             let recovery_base_hash = match current_tip_height {
                 None => {
                     // No headers in storage - check if we're syncing from a checkpoint
                     if self.is_synced_from_checkpoint() {
                         // Use the checkpoint hash from chain state
-                        if !self.chain_state.read().await.headers.is_empty() {
-                            let checkpoint_hash =
-                                self.chain_state.read().await.headers[0].block_hash();
+                        if storage.get_stored_headers_len().await > 0 {
+                            let checkpoint_hash = checkpoint_header.block_hash();
                             tracing::info!(
                                 "Using checkpoint hash for recovery: {} (chain state has {} headers, first header time: {})",
                                 checkpoint_hash,
-                                self.chain_state.read().await.headers.len(),
-                                self.chain_state.read().await.headers[0].time
+                                storage.get_stored_headers_len().await,
+                                checkpoint_header.time
                             );
                             Some(checkpoint_hash)
                         } else {
@@ -723,7 +716,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 }
             };
 
-            self.request_headers(network, recovery_base_hash).await?;
+            self.request_headers(network, recovery_base_hash, storage).await?;
             self.last_sync_progress = std::time::Instant::now();
 
             return Ok(true);
@@ -809,11 +802,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         tracing::info!("📥 Requesting header for block {}", block_hash);
 
         // Get current tip hash to use as locator
-        let current_tip = if let Some(tip_height) = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
-        {
+        let current_tip = if let Some(tip_height) = storage.get_tip_height().await {
             storage
                 .get_header(tip_height)
                 .await
@@ -851,9 +840,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Get the current chain height
-    pub fn get_chain_height(&self) -> u32 {
-        // Always use total_headers_synced which tracks the absolute blockchain height
-        self.total_headers_synced
+    pub async fn get_chain_height(&self, storage: &S) -> u32 {
+        storage.get_tip_height().await.unwrap_or(0)
     }
 
     /// Get the tip hash
@@ -872,9 +860,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Update cached flags and totals based on an external state snapshot
-    pub fn update_cached_from_state_snapshot(&mut self, sync_base_height: u32, headers_len: u32) {
+    pub fn update_cached_from_state_snapshot(&mut self, sync_base_height: u32) {
         self.cached_sync_base_height = sync_base_height;
-        // Absolute blockchain tip height = base + headers_len - 1 (if any headers exist)
-        self.total_headers_synced = sync_base_height.saturating_add(headers_len).saturating_sub(1);
     }
 }
