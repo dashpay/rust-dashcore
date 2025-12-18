@@ -346,16 +346,6 @@ impl ChainState {
         self.filter_headers.extend(filter_headers);
     }
 
-    /// Get the height
-    pub fn get_height(&self) -> u32 {
-        self.tip_height()
-    }
-
-    /// Add a single header
-    pub fn add_header(&mut self, header: BlockHeader) {
-        self.headers.push(header);
-    }
-
     /// Update chain lock status
     pub fn update_chain_lock(&mut self, height: u32, hash: BlockHash) {
         // Only update if this is a newer chain lock

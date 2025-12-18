@@ -219,31 +219,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Step 3: Process the Entire Validated Batch
 
-        // Checkpoint Validation: Perform in-memory security check against checkpoints
-        let current_height = self.chain_state.read().await.get_height();
-        for (index, cached_header) in cached_headers.iter().enumerate() {
-            let prospective_height = current_height + (index as u32) + 1;
-
-            if self.reorg_config.enforce_checkpoints {
-                // Use cached hash to avoid redundant X11 computation in loop
-                let header_hash = cached_header.block_hash();
-                if !self.checkpoint_manager.validate_block(prospective_height, &header_hash) {
-                    return Err(SyncError::Validation(format!(
-                        "Block at height {} does not match checkpoint",
-                        prospective_height
-                    )));
-                }
-            }
-        }
-
-        // Update Chain State: Add all headers to in-memory chain_state
-        {
-            let mut cs = self.chain_state.write().await;
-            for header in headers {
-                cs.add_header(*header);
-            }
-        }
-
         storage
             .store_headers(headers)
             .await
@@ -257,7 +232,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Update chain tip manager with the last header in the batch
         if let Some(last_header) = headers.last() {
-            let final_height = self.chain_state.read().await.get_height();
+            let final_height = storage.get_tip_height().await.unwrap_or(0);
             let chain_work = ChainWork::from_height_and_header(final_height, last_header);
             let tip = ChainTip::new(*last_header, final_height, chain_work);
             self.tip_manager
