@@ -885,8 +885,8 @@ impl AddressPool {
     /// Generate addresses to maintain the gap limit
     pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
         let target = match self.highest_used {
-            None => self.gap_limit,
-            Some(highest) => highest + self.gap_limit + 1,
+            None => self.gap_limit - 1,
+            Some(highest) => highest + self.gap_limit,
         };
 
         let mut new_addresses = Vec::new();
@@ -1233,9 +1233,14 @@ mod tests {
         let gap_limit = 5;
 
         // Create pool with gap_limit addresses already generated
-        let mut pool =
-            AddressPool::new(base_path, AddressPoolType::External, gap_limit, Network::Testnet, &key_source)
-                .unwrap();
+        let mut pool = AddressPool::new(
+            base_path,
+            AddressPoolType::External,
+            gap_limit,
+            Network::Testnet,
+            &key_source,
+        )
+        .unwrap();
 
         // Verify gap_limit addresses generated, none used
         assert_eq!(pool.highest_generated, Some(gap_limit - 1));
