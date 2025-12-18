@@ -401,14 +401,10 @@ impl ChainState {
         network: Network,
     ) {
         // Clear any existing headers
-        self.headers.clear();
         self.filter_headers.clear();
 
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
-
-        // Add the checkpoint header as our first header
-        self.headers.push(checkpoint_header);
 
         tracing::info!(
             "Initialized ChainState from checkpoint - height: {}, hash: {}, network: {:?}",
