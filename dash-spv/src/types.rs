@@ -367,6 +367,10 @@ impl ChainState {
 impl std::fmt::Debug for ChainState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainState")
+<<<<<<< HEAD
+=======
+            .field("filter_headers", &format!("{} filter headers", self.filter_headers.len()))
+>>>>>>> 2bf3a91a (removed unused methods)
             .field("last_chainlock_height", &self.last_chainlock_height)
             .field("last_chainlock_hash", &self.last_chainlock_hash)
             .field("current_filter_tip", &self.current_filter_tip)
