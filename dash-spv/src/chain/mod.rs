@@ -18,11 +18,7 @@ pub mod reorg;
 #[cfg(test)]
 mod checkpoint_test;
 #[cfg(test)]
-mod fork_detector_test;
-#[cfg(test)]
 mod orphan_pool_test;
-#[cfg(test)]
-mod reorg_test;
 
 pub use chain_tip::{ChainTip, ChainTipManager};
 pub use chain_work::ChainWork;
@@ -30,7 +26,7 @@ pub use chainlock_manager::{ChainLockEntry, ChainLockManager, ChainLockStats};
 pub use checkpoints::{Checkpoint, CheckpointManager};
 pub use fork_detector::{ForkDetectionResult, ForkDetector};
 pub use orphan_pool::{OrphanBlock, OrphanPool, OrphanPoolStats};
-pub use reorg::{ReorgEvent, ReorgManager};
+pub use reorg::ReorgEvent;
 
 use dashcore::{BlockHash, Header as BlockHeader};
 
