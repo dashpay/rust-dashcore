@@ -130,7 +130,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             tracing::info!(
                 "📊 Header sync complete - no more headers from peers. Total headers synced: {}, chain_state.tip_height: {}",
                 storage.get_stored_headers_len().await,
-                self.chain_state.read().await.tip_height()
+                storage.get_tip_height().await.unwrap_or(0),
             );
             self.syncing_headers = false;
             return Ok(false);
@@ -335,7 +335,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Log details about the request
         tracing::info!(
             "Preparing headers request - height: {}, base_hash: {:?}, headers2_supported: {}",
-            self.chain_state.read().await.tip_height(),
+            storage.get_tip_height().await.unwrap_or(0),
             base_hash,
             use_headers2
         );
@@ -417,7 +417,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             if state.prev_header.is_none() {
                 // Initialize with header at current tip height (works for both genesis and later)
                 let chain_state = self.chain_state.read().await;
-                let tip_height = chain_state.tip_height();
+                let tip_height = storage.get_tip_height().await.unwrap_or(0);
                 if let Some(tip_header) = chain_state.header_at_height(tip_height) {
                     tracing::info!(
                         "Initializing headers2 compression state for peer {} with header at height {}",
@@ -443,7 +443,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     } else {
                         (!headers2.headers[0].is_full()).to_string()
                     },
-                    self.chain_state.read().await.tip_height()
+                    storage.get_tip_height().await.unwrap_or(0)
                 );
 
                 // Mark that headers2 failed for this sync session to trigger fallback to regular headers

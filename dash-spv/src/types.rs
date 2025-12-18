@@ -329,18 +329,6 @@ impl ChainState {
         self.sync_base_height > 0
     }
 
-    /// Get the current tip height.
-    pub fn tip_height(&self) -> u32 {
-        if self.headers.is_empty() {
-            // When headers is empty, sync_base_height represents our current position
-            // This happens when we're syncing from a checkpoint but haven't received headers yet
-            self.sync_base_height
-        } else {
-            // Normal case: base + number of headers - 1
-            self.sync_base_height + self.headers.len() as u32 - 1
-        }
-    }
-
     /// Get the current tip hash.
     pub fn tip_hash(&self) -> Option<BlockHash> {
         self.headers.last().map(|h| h.block_hash())

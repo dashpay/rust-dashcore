@@ -195,8 +195,7 @@ impl<
 
     /// Returns the current chain tip height (absolute), accounting for checkpoint base.
     pub async fn tip_height(&self) -> u32 {
-        let state = self.state.read().await;
-        state.tip_height()
+        self.storage.lock().await.get_tip_height().await.unwrap_or(0)
     }
 
     /// Get current chain state (read-only).
