@@ -250,15 +250,11 @@ impl DetailedSyncProgress {
 ///
 /// ## Memory Considerations
 /// - headers: ~80 bytes per header
-/// - filter_headers: 32 bytes per filter header
-/// - At 2M blocks: ~160MB for headers, ~64MB for filter headers
+/// - At 2M blocks: ~160MB for headers
 #[derive(Clone, Default)]
 pub struct ChainState {
     /// Block headers indexed by height.
     pub headers: Vec<BlockHeader>,
-
-    /// Filter headers indexed by height.
-    pub filter_headers: Vec<FilterHeader>,
 
     /// Last ChainLock height.
     pub last_chainlock_height: Option<u32>,
@@ -355,26 +351,9 @@ impl ChainState {
         self.headers.get(index)
     }
 
-    /// Get filter header at the given height.
-    pub fn filter_header_at_height(&self, height: u32) -> Option<&FilterHeader> {
-        if height < self.sync_base_height {
-            return None; // Height is before our sync base
-        }
-        let index = (height - self.sync_base_height) as usize;
-        self.filter_headers.get(index)
-    }
-
     /// Add headers to the chain.
     pub fn add_headers(&mut self, headers: Vec<BlockHeader>) {
         self.headers.extend(headers);
-    }
-
-    /// Add filter headers to the chain.
-    pub fn add_filter_headers(&mut self, filter_headers: Vec<FilterHeader>) {
-        if let Some(last) = filter_headers.last() {
-            self.current_filter_tip = Some(*last);
-        }
-        self.filter_headers.extend(filter_headers);
     }
 
     /// Get the tip header
@@ -458,7 +437,6 @@ impl ChainState {
     ) {
         // Clear any existing headers
         self.headers.clear();
-        self.filter_headers.clear();
 
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
@@ -498,7 +476,6 @@ impl std::fmt::Debug for ChainState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainState")
             .field("headers", &format!("{} headers", self.headers.len()))
-            .field("filter_headers", &format!("{} filter headers", self.filter_headers.len()))
             .field("last_chainlock_height", &self.last_chainlock_height)
             .field("last_chainlock_hash", &self.last_chainlock_hash)
             .field("current_filter_tip", &self.current_filter_tip)

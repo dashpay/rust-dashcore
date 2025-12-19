@@ -22,13 +22,6 @@ impl DiskStorageManager {
         // For checkpoint sync, we need to store headers starting from the checkpoint height
         self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
 
-        // Store filter headers
-        self.filter_headers
-            .write()
-            .await
-            .store_items(&state.filter_headers, state.sync_base_height, self)
-            .await?;
-
         // Store other state as JSON
         let state_data = serde_json::json!({
             "last_chainlock_height": state.last_chainlock_height,
@@ -86,10 +79,6 @@ impl DiskStorageManager {
         let range_start = state.sync_base_height;
         if let Some(tip_height) = self.get_tip_height().await? {
             state.headers = self.load_headers(range_start..tip_height + 1).await?;
-        }
-        if let Some(filter_tip_height) = self.get_filter_tip_height().await? {
-            state.filter_headers =
-                self.load_filter_headers(range_start..filter_tip_height + 1).await?;
         }
 
         Ok(Some(state))
