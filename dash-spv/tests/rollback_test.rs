@@ -42,7 +42,7 @@ async fn test_disk_storage_rollback() -> Result<(), Box<dyn std::error::Error>> 
     storage.store_headers(&headers).await?;
 
     // Verify we have 10 headers
-    let tip_height = storage.get_tip_height().await?;
+    let tip_height = storage.get_tip_height().await;
     assert_eq!(tip_height, Some(9));
 
     // Load all headers to verify
@@ -54,7 +54,7 @@ async fn test_disk_storage_rollback() -> Result<(), Box<dyn std::error::Error>> 
 
     // TODO: Test assertions commented out because rollback_to_height is not implemented
     // Verify tip height is now 5
-    let _ = storage.get_tip_height().await?;
+    let _ = storage.get_tip_height().await;
     // assert_eq!(tip_height_after_rollback, Some(5));
 
     // Verify we can only load headers up to height 5

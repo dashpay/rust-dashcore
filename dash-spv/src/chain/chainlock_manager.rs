@@ -178,7 +178,7 @@ impl ChainLockManager {
         if let Some(header) = storage
             .get_header(chain_lock.block_height)
             .await
-            .map_err(|e| ValidationError::StorageError(e))?
+            .map_err(ValidationError::StorageError)?
         {
             let header_hash = header.block_hash();
             if header_hash != chain_lock.block_hash {

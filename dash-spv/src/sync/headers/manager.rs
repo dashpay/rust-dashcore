@@ -271,14 +271,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     let first_height = storage
                         .get_start_height()
                         .await
-                        .ok_or(SyncError::Storage(format!("Failed to get start height")))?;
+                        .ok_or(SyncError::Storage("Failed to get start height".to_string()))?;
                     let checkpoint_header = storage
                         .get_header(first_height)
                         .await
                         .map_err(|e| {
                             SyncError::Storage(format!("Failed to get first header: {}", e))
                         })?
-                        .ok_or(SyncError::Storage(format!("Storage didn't return first header")))?;
+                        .ok_or(SyncError::Storage(
+                            "Storage didn't return first header".to_string(),
+                        ))?;
 
                     // Use the checkpoint hash from chain state
                     let checkpoint_hash = checkpoint_header.block_hash();
@@ -500,12 +502,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         let first_height = storage
             .get_start_height()
             .await
-            .ok_or(SyncError::Storage(format!("Failed to get start height")))?;
+            .ok_or(SyncError::Storage("Failed to get start height".to_string()))?;
         let checkpoint_header = storage
             .get_header(first_height)
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get first header: {}", e)))?
-            .ok_or(SyncError::Storage(format!("Storage didn't return first header")))?;
+            .ok_or(SyncError::Storage("Storage didn't return first header".to_string()))?;
 
         let base_hash = match effective_tip_height {
             None => {
@@ -660,12 +662,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             let first_height = storage
                 .get_start_height()
                 .await
-                .ok_or(SyncError::Storage(format!("Failed to get start height")))?;
+                .ok_or(SyncError::Storage("Failed to get start height".to_string()))?;
             let checkpoint_header = storage
                 .get_header(first_height)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to get first header: {}", e)))?
-                .ok_or(SyncError::Storage(format!("Storage didn't return first header")))?;
+                .ok_or(SyncError::Storage("Storage didn't return first header".to_string()))?;
 
             let recovery_base_hash = match current_tip_height {
                 None => {

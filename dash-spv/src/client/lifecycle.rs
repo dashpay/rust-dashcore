@@ -191,8 +191,7 @@ impl<
             // Get initial header count from storage
             let (header_height, filter_height) = {
                 let storage = self.storage.lock().await;
-                let h_height =
-                    storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
+                let h_height = storage.get_tip_height().await.unwrap_or(0);
                 let f_height =
                     storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
                 (h_height, f_height)
