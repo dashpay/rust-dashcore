@@ -378,6 +378,22 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
+        if let Some(tip_height) = self.get_tip_height().await {
+            if height > tip_height {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        }
+
+        if let Some(start_height) = self.get_start_height().await {
+            if height < start_height {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        }
+
         Ok(self.block_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
