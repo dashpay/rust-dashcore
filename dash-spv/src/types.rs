@@ -245,13 +245,10 @@ impl DetailedSyncProgress {
 ///
 /// ## Checkpoint Sync
 /// When syncing from a checkpoint (not genesis), `sync_base_height` is non-zero.
-/// The `headers` vector contains headers starting from the checkpoint, not from genesis.
-/// Use `tip_height()` to get the absolute blockchain height.
 ///
 /// ## Memory Considerations
-/// - headers: ~80 bytes per header
 /// - filter_headers: 32 bytes per filter header
-/// - At 2M blocks: ~160MB for headers, ~64MB for filter headers
+/// - At 2M blocks: ~64MB for filter headers
 #[derive(Clone, Default)]
 pub struct ChainState {
     /// Filter headers indexed by height.
@@ -285,31 +282,6 @@ impl ChainState {
     /// Create a new chain state for the given network.
     pub fn new_for_network(network: Network) -> Self {
         let mut state = Self::default();
-
-        // Initialize with genesis block
-        let genesis_header = match network {
-            Network::Dash => {
-                // Use known genesis for mainnet
-                dashcore::blockdata::constants::genesis_block(network).header
-            }
-            Network::Testnet => {
-                // Use known genesis for testnet
-                dashcore::blockdata::constants::genesis_block(network).header
-            }
-            _ => {
-                // For other networks, use the existing genesis block function
-                dashcore::blockdata::constants::genesis_block(network).header
-            }
-        };
-
-        // Add genesis header to the chain state
-        // TODO: Check if this is necessary -> state.headers.push(genesis_header);
-
-        tracing::debug!(
-            "Initialized ChainState with genesis block - network: {:?}, hash: {}",
-            network,
-            genesis_header.block_hash()
-        );
 
         // Initialize masternode engine for the network
         let mut engine = MasternodeListEngine::default_for_network(network);
