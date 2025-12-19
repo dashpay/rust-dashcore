@@ -9,7 +9,6 @@ use key_wallet_ffi::wallet_manager::{
     wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
     wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
 };
-use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
 
@@ -52,12 +51,7 @@ fn test_managed_account_collection_basic() {
         assert!(!wallet_ids_out.is_null());
 
         // Get the managed account collection
-        let collection = managed_wallet_get_account_collection(
-            manager,
-            wallet_ids_out,
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let collection = managed_wallet_get_account_collection(manager, wallet_ids_out, &mut error);
         assert!(!collection.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -155,12 +149,7 @@ fn test_managed_account_collection_with_special_accounts() {
         assert_eq!(count_out, 1);
 
         // Get the managed account collection
-        let collection = managed_wallet_get_account_collection(
-            manager,
-            wallet_ids_out,
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let collection = managed_wallet_get_account_collection(manager, wallet_ids_out, &mut error);
         assert!(!collection.is_null());
 
         // Verify BIP44 accounts
@@ -280,12 +269,7 @@ fn test_managed_account_collection_summary() {
         assert_eq!(count_out, 1);
 
         // Get the managed account collection
-        let collection = managed_wallet_get_account_collection(
-            manager,
-            wallet_ids_out,
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let collection = managed_wallet_get_account_collection(manager, wallet_ids_out, &mut error);
         assert!(!collection.is_null());
 
         // Get the summary
@@ -374,12 +358,7 @@ fn test_managed_account_collection_summary_data() {
         assert_eq!(count_out, 1);
 
         // Get the managed account collection
-        let collection = managed_wallet_get_account_collection(
-            manager,
-            wallet_ids_out,
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let collection = managed_wallet_get_account_collection(manager, wallet_ids_out, &mut error);
         assert!(!collection.is_null());
 
         // Get the summary data
@@ -425,12 +404,8 @@ fn test_managed_account_collection_null_safety() {
         let mut error = FFIError::success();
 
         // Test with null manager
-        let collection = managed_wallet_get_account_collection(
-            ptr::null(),
-            ptr::null(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let collection =
+            managed_wallet_get_account_collection(ptr::null(), ptr::null(), &mut error);
         assert!(collection.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
@@ -480,12 +455,7 @@ fn test_managed_account_collection_nonexistent_accounts() {
         assert_eq!(count_out, 1);
 
         // Get the managed account collection
-        let collection = managed_wallet_get_account_collection(
-            manager,
-            wallet_ids_out,
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let collection = managed_wallet_get_account_collection(manager, wallet_ids_out, &mut error);
         assert!(!collection.is_null());
 
         // Try to get non-existent accounts
@@ -503,59 +473,6 @@ fn test_managed_account_collection_nonexistent_accounts() {
 
         // Clean up
         managed_account_collection_free(collection);
-        wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
-        wallet_manager_free(manager);
-    }
-}
-
-#[test]
-fn test_managed_account_collection_wrong_network() {
-    unsafe {
-        let mut error = FFIError::success();
-
-        // Create wallet manager
-        let manager = wallet_manager_create(&mut error);
-        assert!(!manager.is_null());
-
-        // Create wallet on testnet
-        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
-
-        let success = wallet_manager_add_wallet_from_mnemonic_with_options(
-            manager,
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
-            ptr::null(),
-            &mut error,
-        );
-        assert!(success);
-
-        // Get wallet IDs
-        let mut wallet_ids_out: *mut u8 = ptr::null_mut();
-        let mut count_out: usize = 0;
-
-        let success =
-            wallet_manager_get_wallet_ids(manager, &mut wallet_ids_out, &mut count_out, &mut error);
-        assert!(success);
-        assert_eq!(count_out, 1);
-
-        // Try to get collection for mainnet (should fail or return empty)
-        let collection = managed_wallet_get_account_collection(
-            manager,
-            wallet_ids_out,
-            FFINetwork::Dash, // Wrong network (mainnet)
-            &mut error,
-        );
-
-        // Should either be null or have no accounts
-        if !collection.is_null() {
-            let count = managed_account_collection_count(collection);
-            assert_eq!(count, 0);
-            managed_account_collection_free(collection);
-        }
-
-        // Clean up
         wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
         wallet_manager_free(manager);
     }

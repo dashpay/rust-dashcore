@@ -14,7 +14,7 @@ fn test_multi_account_transaction() {
     // Test transaction involving multiple accounts
 
     let mut wallet = Wallet::new_random(
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -27,7 +27,6 @@ fn test_multi_account_transaction() {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
