@@ -7,7 +7,7 @@ use dashcore::{
 use dashcore_hashes::Hash;
 
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
-use crate::chain::{ChainTip, ChainTipManager, ChainWork, ForkDetector};
+use crate::chain::{ChainTip, ChainTipManager, ChainWork};
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
@@ -47,7 +47,6 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
     config: ClientConfig,
-    fork_detector: ForkDetector,
     tip_manager: ChainTipManager,
     checkpoint_manager: CheckpointManager,
     reorg_config: ReorgConfig,
@@ -82,8 +81,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         Ok(Self {
             config: config.clone(),
-            fork_detector: ForkDetector::new(reorg_config.max_forks)
-                .map_err(|e| SyncError::InvalidState(e.to_string()))?,
             tip_manager: ChainTipManager::new(reorg_config.max_forks),
             checkpoint_manager,
             reorg_config,
@@ -824,10 +821,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Reset sync state
         self.syncing_headers = false;
         self.last_sync_progress = std::time::Instant::now();
-        // Clear any fork tracking state that shouldn't persist across restarts
-        self.fork_detector = ForkDetector::new(self.reorg_config.max_forks).map_err(|e| {
-            SyncError::InvalidState(format!("Failed to create fork detector: {}", e))
-        })?;
         tracing::debug!("Reset header sync pending requests");
         Ok(())
     }
