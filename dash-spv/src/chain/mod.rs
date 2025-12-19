@@ -23,7 +23,7 @@ mod reorg_test;
 
 pub use chain_tip::{ChainTip, ChainTipManager};
 pub use chain_work::ChainWork;
-pub use chainlock_manager::{ChainLockEntry, ChainLockManager, ChainLockStats};
+pub use chainlock_manager::{ChainLockEntry, ChainLockManager};
 pub use checkpoints::{Checkpoint, CheckpointManager};
 pub use fork_detector::{ForkDetectionResult, ForkDetector};
 pub use reorg::{ReorgEvent, ReorgManager};
