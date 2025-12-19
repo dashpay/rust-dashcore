@@ -379,6 +379,11 @@ impl<I: Persistable> SegmentCache<I> {
             None => Some(height - 1),
         };
 
+        self.start_height = match self.start_height {
+            Some(current) => Some(current.min(start_height)),
+            None => Some(start_height),
+        };
+
         // Persist dirty segments periodically (every 1000 filter items)
         if items.len() >= 1000 || start_height.is_multiple_of(1000) {
             self.persist_dirty(manager).await;
