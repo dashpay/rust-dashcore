@@ -49,7 +49,6 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     config: ClientConfig,
     tip_manager: ChainTipManager,
     checkpoint_manager: CheckpointManager,
-    reorg_config: ReorgConfig,
     chain_state: Arc<RwLock<ChainState>>,
     // WalletState removed - wallet functionality is now handled externally
     headers2_state: Headers2StateManager,
@@ -81,7 +80,6 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             config: config.clone(),
             tip_manager: ChainTipManager::new(reorg_config.max_forks),
             checkpoint_manager,
-            reorg_config,
             chain_state,
             // WalletState removed
             headers2_state: Headers2StateManager::new(),
