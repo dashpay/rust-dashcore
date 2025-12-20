@@ -12,7 +12,6 @@ use std::ptr;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_account::FFIManagedAccount;
 use crate::wallet_manager::FFIWalletManager;
-use crate::FFINetwork;
 
 /// Opaque handle to a managed account collection
 pub struct FFIManagedAccountCollection {
@@ -90,15 +89,12 @@ pub struct FFIManagedAccountCollectionSummary {
 pub unsafe extern "C" fn managed_wallet_get_account_collection(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIManagedAccountCollection {
     if manager.is_null() || wallet_id.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return ptr::null_mut();
     }
-
-    let network_rust: key_wallet::Network = network.into();
 
     // Get the managed wallet info from the manager
     let managed_wallet_ptr =
@@ -111,32 +107,13 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
 
     // Get the managed account collection from the managed wallet info
     let managed_wallet = &*managed_wallet_ptr;
-    match managed_wallet.inner().accounts.get(&network_rust) {
-        Some(collection) => {
-            let ffi_collection = FFIManagedAccountCollection::new(collection);
 
-            // Clean up the managed wallet pointer since we've extracted what we need
-            crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
+    let ffi_collection = FFIManagedAccountCollection::new(&managed_wallet.inner().accounts);
 
-            Box::into_raw(Box::new(ffi_collection))
-        }
-        None => {
-            // Capture networks before freeing the pointer to avoid use-after-free
-            let networks = managed_wallet.inner().networks_supported();
-            // Clean up the managed wallet pointer
-            crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
+    // Clean up the managed wallet pointer since we've extracted what we need
+    crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
 
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                format!(
-                    "No accounts found for network {:?}, wallet has networks {:?}",
-                    network_rust, networks
-                ),
-            );
-            ptr::null_mut()
-        }
-    }
+    Box::into_raw(Box::new(ffi_collection))
 }
 
 /// Free a managed account collection handle

@@ -11,7 +11,6 @@ use crate::account::{Account, AccountType, ManagedAccount};
 use crate::bip32::ExtendedPubKey;
 use crate::error::{Error, Result};
 use crate::wallet::{Wallet, WalletType};
-use crate::Network;
 
 impl ManagedAccountOperations for ManagedWalletInfo {
     /// Add a new managed account from an existing wallet account
@@ -21,44 +20,40 @@ impl ManagedAccountOperations for ManagedWalletInfo {
     /// # Arguments
     /// * `wallet` - The wallet containing the account
     /// * `account_type` - The type of account to manage
-    /// * `network` - The network for the account
     ///
     /// # Returns
     /// Ok(()) if the managed account was successfully added
-    fn add_managed_account(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        network: Network,
-    ) -> Result<()> {
-        // First check if the account exists in the wallet
-        let account_collection = wallet.accounts.get(&network).ok_or_else(|| {
-            Error::InvalidParameter(format!("No accounts for network {:?} in wallet", network))
-        })?;
-
-        let account = account_collection.account_of_type(account_type).ok_or_else(|| {
+    fn add_managed_account(&mut self, wallet: &Wallet, account_type: AccountType) -> Result<()> {
+        // Validate network consistency
+        if wallet.network != self.network {
+            return Err(Error::InvalidParameter(
+                format!(
+                    "Network mismatch: wallet network {:?} does not match managed wallet info network {:?}",
+                    wallet.network,
+                    self.network)
+                )
+            );
+        }
+        let account = wallet.accounts.account_of_type(account_type).ok_or_else(|| {
             Error::InvalidParameter(format!(
                 "Account type {:?} not found for network {:?}",
-                account_type, network
+                account_type, wallet.network
             ))
         })?;
 
         // Create the ManagedAccount from the Account
         let managed_account = ManagedAccount::from_account(account);
 
-        // Get or create the managed account collection for this network
-        let managed_collection = self.accounts.entry(network).or_default();
-
         // Check if managed account already exists
-        if managed_collection.contains_managed_account_type(managed_account.managed_type()) {
+        if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
             return Err(Error::InvalidParameter(format!(
                 "Managed account type {:?} already exists for network {:?}",
-                account_type, network
+                account_type, self.network
             )));
         }
 
         // Insert into the collection
-        managed_collection.insert(managed_account);
+        self.accounts.insert(managed_account);
         Ok(())
     }
 
@@ -70,7 +65,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
     /// # Arguments
     /// * `wallet` - The wallet containing the account (must be MnemonicWithPassphrase type)
     /// * `account_type` - The type of account to manage
-    /// * `network` - The network for the account
     /// * `passphrase` - The passphrase to verify
     ///
     /// # Returns
@@ -79,7 +73,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         account_type: AccountType,
-        network: Network,
         passphrase: &str,
     ) -> Result<()> {
         // Verify this is a passphrase wallet
@@ -100,7 +93,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
                 }
 
                 // Passphrase is valid, proceed with adding the managed account
-                self.add_managed_account(wallet, account_type, network)
+                self.add_managed_account(wallet, account_type)
             }
             _ => Err(Error::InvalidParameter(
                 "add_managed_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
@@ -111,28 +104,32 @@ impl ManagedAccountOperations for ManagedWalletInfo {
     fn add_managed_account_from_xpub(
         &mut self,
         account_type: AccountType,
-        network: Network,
         account_xpub: ExtendedPubKey,
     ) -> Result<()> {
+        // Verify network matches
+        if account_xpub.network != self.network {
+            return Err(Error::InvalidParameter(format!(
+                "Network mismatch: expected {:?}, got {:?}",
+                self.network, account_xpub.network
+            )));
+        }
+
         // Create an Account with no wallet ID (standalone managed account)
-        let account = Account::new(None, account_type, account_xpub, network)?;
+        let account = Account::new(None, account_type, account_xpub, self.network)?;
 
         // Create the ManagedAccount from the Account
         let managed_account = ManagedAccount::from_account(&account);
 
-        // Get or create the managed account collection for this network
-        let managed_collection = self.accounts.entry(network).or_default();
-
         // Check if managed account already exists
-        if managed_collection.contains_managed_account_type(managed_account.managed_type()) {
+        if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
             return Err(Error::InvalidParameter(format!(
                 "Managed account type {:?} already exists for network {:?}",
-                account_type, network
+                account_type, self.network
             )));
         }
 
         // Insert into the collection
-        managed_collection.insert(managed_account);
+        self.accounts.insert(managed_account);
         Ok(())
     }
 
@@ -141,8 +138,16 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         account_type: AccountType,
-        network: Network,
     ) -> Result<()> {
+        // Validate network consistency
+        if wallet.network != self.network {
+            return Err(Error::InvalidParameter(format!(
+                "Network mismatch: wallet network {:?} does not match managed wallet info network {:?}",
+                wallet.network,
+                self.network
+            )));
+        }
+
         // Validate account type
         if !matches!(account_type, AccountType::ProviderOperatorKeys) {
             return Err(Error::InvalidParameter(
@@ -150,35 +155,26 @@ impl ManagedAccountOperations for ManagedWalletInfo {
             ));
         }
 
-        // First check if the BLS account exists in the wallet
-        let account_collection = wallet.accounts.get(&network).ok_or_else(|| {
-            Error::InvalidParameter(format!("No accounts for network {:?} in wallet", network))
+        let bls_account = wallet.accounts.bls_account_of_type(account_type).ok_or_else(|| {
+            Error::InvalidParameter(format!(
+                "BLS account type {:?} not found for network {:?}",
+                account_type, wallet.network
+            ))
         })?;
-
-        let bls_account =
-            account_collection.bls_account_of_type(account_type).ok_or_else(|| {
-                Error::InvalidParameter(format!(
-                    "BLS account type {:?} not found for network {:?}",
-                    account_type, network
-                ))
-            })?;
 
         // Create the ManagedAccount from the BLS Account
         let managed_account = ManagedAccount::from_bls_account(bls_account);
 
-        // Get or create the managed account collection for this network
-        let managed_collection = self.accounts.entry(network).or_default();
-
         // Check if managed account already exists
-        if managed_collection.contains_managed_account_type(managed_account.managed_type()) {
+        if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
             return Err(Error::InvalidParameter(format!(
                 "Managed BLS account type {:?} already exists for network {:?}",
-                account_type, network
+                account_type, self.network
             )));
         }
 
         // Insert into the collection
-        managed_collection.insert(managed_account);
+        self.accounts.insert(managed_account);
         Ok(())
     }
 
@@ -187,7 +183,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         account_type: AccountType,
-        network: Network,
         passphrase: &str,
     ) -> Result<()> {
         // Validate account type
@@ -215,7 +210,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
                 }
 
                 // Passphrase is valid, proceed with adding the managed BLS account
-                self.add_managed_bls_account(wallet, account_type, network)
+                self.add_managed_bls_account(wallet, account_type)
             }
             _ => Err(Error::InvalidParameter(
                 "add_managed_bls_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
@@ -227,7 +222,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
     fn add_managed_bls_account_from_public_key(
         &mut self,
         account_type: AccountType,
-        network: Network,
         bls_public_key: [u8; 48],
     ) -> Result<()> {
         // Validate account type
@@ -239,24 +233,21 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Create a BLS account with no wallet ID (standalone managed account)
         let bls_account =
-            BLSAccount::from_public_key_bytes(None, account_type, bls_public_key, network)?;
+            BLSAccount::from_public_key_bytes(None, account_type, bls_public_key, self.network)?;
 
         // Create the ManagedAccount from the BLS Account
         let managed_account = ManagedAccount::from_bls_account(&bls_account);
 
-        // Get or create the managed account collection for this network
-        let managed_collection = self.accounts.entry(network).or_default();
-
         // Check if managed account already exists
-        if managed_collection.contains_managed_account_type(managed_account.managed_type()) {
+        if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
             return Err(Error::InvalidParameter(format!(
                 "Managed BLS account type {:?} already exists for network {:?}",
-                account_type, network
+                account_type, self.network
             )));
         }
 
         // Insert into the collection
-        managed_collection.insert(managed_account);
+        self.accounts.insert(managed_account);
         Ok(())
     }
 
@@ -265,8 +256,16 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         account_type: AccountType,
-        network: Network,
     ) -> Result<()> {
+        // Validate network consistency
+        if wallet.network != self.network {
+            return Err(Error::InvalidParameter(format!(
+                "Network mismatch: wallet network {:?} does not match managed wallet info network {:?}",
+                wallet.network,
+                self.network
+            )));
+        }
+
         // Validate account type
         if !matches!(account_type, AccountType::ProviderPlatformKeys) {
             return Err(Error::InvalidParameter(
@@ -274,35 +273,27 @@ impl ManagedAccountOperations for ManagedWalletInfo {
             ));
         }
 
-        // First check if the EdDSA account exists in the wallet
-        let account_collection = wallet.accounts.get(&network).ok_or_else(|| {
-            Error::InvalidParameter(format!("No accounts for network {:?} in wallet", network))
-        })?;
-
         let eddsa_account =
-            account_collection.eddsa_account_of_type(account_type).ok_or_else(|| {
+            wallet.accounts.eddsa_account_of_type(account_type).ok_or_else(|| {
                 Error::InvalidParameter(format!(
                     "EdDSA account type {:?} not found for network {:?}",
-                    account_type, network
+                    account_type, wallet.network
                 ))
             })?;
 
         // Create the ManagedAccount from the EdDSA Account
         let managed_account = ManagedAccount::from_eddsa_account(eddsa_account);
 
-        // Get or create the managed account collection for this network
-        let managed_collection = self.accounts.entry(network).or_default();
-
         // Check if managed account already exists
-        if managed_collection.contains_managed_account_type(managed_account.managed_type()) {
+        if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
             return Err(Error::InvalidParameter(format!(
                 "Managed EdDSA account type {:?} already exists for network {:?}",
-                account_type, network
+                account_type, self.network
             )));
         }
 
         // Insert into the collection
-        managed_collection.insert(managed_account);
+        self.accounts.insert(managed_account);
         Ok(())
     }
 
@@ -311,7 +302,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         account_type: AccountType,
-        network: Network,
         passphrase: &str,
     ) -> Result<()> {
         // Validate account type
@@ -339,7 +329,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
                 }
 
                 // Passphrase is valid, proceed with adding the managed EdDSA account
-                self.add_managed_eddsa_account(wallet, account_type, network)
+                self.add_managed_eddsa_account(wallet, account_type)
             }
             _ => Err(Error::InvalidParameter(
                 "add_managed_eddsa_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
@@ -351,7 +341,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
     fn add_managed_eddsa_account_from_public_key(
         &mut self,
         account_type: AccountType,
-        network: Network,
         ed25519_public_key: [u8; 32],
     ) -> Result<()> {
         // Validate account type
@@ -362,25 +351,26 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Create an EdDSA account with no wallet ID (standalone managed account)
-        let eddsa_account =
-            EdDSAAccount::from_public_key_bytes(None, account_type, ed25519_public_key, network)?;
+        let eddsa_account = EdDSAAccount::from_public_key_bytes(
+            None,
+            account_type,
+            ed25519_public_key,
+            self.network,
+        )?;
 
         // Create the ManagedAccount from the EdDSA Account
         let managed_account = ManagedAccount::from_eddsa_account(&eddsa_account);
 
-        // Get or create the managed account collection for this network
-        let managed_collection = self.accounts.entry(network).or_default();
-
         // Check if managed account already exists
-        if managed_collection.contains_managed_account_type(managed_account.managed_type()) {
+        if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
             return Err(Error::InvalidParameter(format!(
                 "Managed EdDSA account type {:?} already exists for network {:?}",
-                account_type, network
+                account_type, self.network
             )));
         }
 
         // Insert into the collection
-        managed_collection.insert(managed_account);
+        self.accounts.insert(managed_account);
         Ok(())
     }
 }
@@ -389,12 +379,13 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::wallet::Wallet;
+    use crate::Network;
 
     #[test]
     fn test_add_managed_account() {
         // Create a test wallet without BLS accounts to avoid that complexity
         let mut wallet = Wallet::new_random(
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();
@@ -406,13 +397,12 @@ mod tests {
                     index: 0,
                     standard_account_type: crate::account::StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
 
         // Create managed wallet info - this will NOT automatically add the wallet's accounts
-        let mut managed_info = ManagedWalletInfo::new(wallet.wallet_id);
+        let mut managed_info = ManagedWalletInfo::new(Network::Testnet, wallet.wallet_id);
 
         // The managed_info should be empty initially
         assert!(managed_info.accounts.is_empty());
@@ -424,16 +414,14 @@ mod tests {
         };
 
         // Add a managed account
-        let result = managed_info.add_managed_account(&wallet, account_type, Network::Testnet);
+        let result = managed_info.add_managed_account(&wallet, account_type);
         assert!(result.is_ok(), "Failed to add managed account: {:?}", result);
 
-        // Verify it was added
-        let collection = managed_info.accounts.get(&Network::Testnet).unwrap();
-        // Check that the standard BIP44 account at index 0 exists
-        assert!(collection.standard_bip44_accounts.contains_key(&0));
+        // Verify it was added - direct access to accounts collection
+        assert!(managed_info.accounts.standard_bip44_accounts.contains_key(&0));
 
         // Try to add the same account again - should fail
-        let result = managed_info.add_managed_account(&wallet, account_type, Network::Testnet);
+        let result = managed_info.add_managed_account(&wallet, account_type);
         assert!(result.is_err());
 
         // Add a different account (index 1) - should succeed
@@ -443,7 +431,6 @@ mod tests {
                     index: 1,
                     standard_account_type: crate::account::StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
@@ -453,12 +440,11 @@ mod tests {
             standard_account_type: crate::account::StandardAccountType::BIP44Account,
         };
 
-        let result = managed_info.add_managed_account(&wallet, account_type_2, Network::Testnet);
+        let result = managed_info.add_managed_account(&wallet, account_type_2);
         assert!(result.is_ok(), "Failed to add second managed account: {:?}", result);
 
         // Verify both accounts exist
-        let collection = managed_info.accounts.get(&Network::Testnet).unwrap();
-        assert!(collection.standard_bip44_accounts.contains_key(&0));
-        assert!(collection.standard_bip44_accounts.contains_key(&1));
+        assert!(managed_info.accounts.standard_bip44_accounts.contains_key(&0));
+        assert!(managed_info.accounts.standard_bip44_accounts.contains_key(&1));
     }
 }

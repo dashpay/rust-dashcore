@@ -10,9 +10,7 @@ mod tests {
 
     #[test]
     fn test_wallet_get_account_null_wallet() {
-        let result = unsafe {
-            wallet_get_account(ptr::null(), FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
-        };
+        let result = unsafe { wallet_get_account(ptr::null(), 0, FFIAccountType::StandardBIP44) };
 
         assert!(result.account.is_null());
         assert_ne!(result.error_code, 0);
@@ -44,9 +42,7 @@ mod tests {
         };
 
         // Try to get the default account (should exist)
-        let result = unsafe {
-            wallet_get_account(wallet, FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
-        };
+        let result = unsafe { wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44) };
 
         // Note: Since the account may not exist yet (depends on wallet creation logic),
         // we just check that the call doesn't return an error for invalid parameters
@@ -76,8 +72,7 @@ mod tests {
     fn test_wallet_get_account_count_null_wallet() {
         let mut error = FFIError::success();
 
-        let count =
-            unsafe { wallet_get_account_count(ptr::null(), FFINetwork::Testnet, &mut error) };
+        let count = unsafe { wallet_get_account_count(ptr::null(), &mut error) };
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -100,46 +95,10 @@ mod tests {
             )
         };
 
-        let count = unsafe { wallet_get_account_count(wallet, FFINetwork::Testnet, &mut error) };
+        let count = unsafe { wallet_get_account_count(wallet, &mut error) };
 
         // Should have at least one default account
         assert!(count >= 1);
-        assert_eq!(error.code, FFIErrorCode::Success);
-
-        // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
-    }
-
-    #[test]
-    fn test_wallet_get_account_count_empty_network() {
-        let mut error = FFIError::success();
-
-        // Create a wallet
-        let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-        let passphrase = CString::new("").unwrap();
-
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
-                &mut error,
-            )
-        };
-
-        // Try to get account count for a different network (Mainnet)
-        let count = unsafe {
-            wallet_get_account_count(
-                wallet,
-                FFINetwork::Dash, // Different network
-                &mut error,
-            )
-        };
-
-        // Should return 0 for network with no accounts
-        assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Clean up
@@ -185,9 +144,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Get an account
-        let result = unsafe {
-            wallet_get_account(wallet, FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
-        };
+        let result = unsafe { wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44) };
 
         if !result.account.is_null() {
             // Test all the getter functions

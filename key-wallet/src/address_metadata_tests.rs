@@ -27,15 +27,15 @@ mod tests {
         // Basic test that wallet and accounts can be created
 
         let wallet = Wallet::new_random(
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
 
         // Verify wallet has a default account
-        assert!(wallet.get_bip44_account(Network::Testnet, 0).is_some());
+        assert!(wallet.get_bip44_account(0).is_some());
 
-        let account = wallet.get_bip44_account(Network::Testnet, 0).unwrap();
+        let account = wallet.get_bip44_account(0).unwrap();
         match &account.account_type {
             AccountType::Standard {
                 index,
@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn test_multiple_accounts() {
         let mut wallet = Wallet::new_random(
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -60,7 +60,6 @@ mod tests {
                     index: 1,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
@@ -70,19 +69,18 @@ mod tests {
                     index: 2,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
 
         // Verify accounts exist
-        assert!(wallet.get_bip44_account(Network::Testnet, 0).is_some());
-        assert!(wallet.get_bip44_account(Network::Testnet, 1).is_some());
-        assert!(wallet.get_bip44_account(Network::Testnet, 2).is_some());
+        assert!(wallet.get_bip44_account(0).is_some());
+        assert!(wallet.get_bip44_account(1).is_some());
+        assert!(wallet.get_bip44_account(2).is_some());
 
         // Verify account indices
         for i in 0..3 {
-            let account = wallet.get_bip44_account(Network::Testnet, i).unwrap();
+            let account = wallet.get_bip44_account(i).unwrap();
             match &account.account_type {
                 AccountType::Standard {
                     index,
