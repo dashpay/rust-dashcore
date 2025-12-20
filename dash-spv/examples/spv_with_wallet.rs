@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         DiskStorageManager::new("./.tmp/spv-with-wallet-example-storage".into()).await?;
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client with all components
     let mut client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;

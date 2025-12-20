@@ -17,7 +17,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -33,7 +33,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,           // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet
@@ -69,7 +68,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -85,7 +84,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 true,  // downgrade to pubkey wallet
@@ -118,7 +116,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -134,7 +132,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 true, // downgrade to pubkey wallet
@@ -167,7 +164,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -183,7 +180,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -216,7 +212,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -232,7 +228,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -248,7 +243,7 @@ mod tests {
         assert!(!wallet_bytes_out.is_null());
 
         // Now import the wallet into a new manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mut imported_wallet_id = [0u8; 32];
@@ -284,7 +279,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let invalid_mnemonic = CString::new("invalid mnemonic phrase").unwrap();
@@ -299,7 +294,6 @@ mod tests {
                 manager,
                 invalid_mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -323,7 +317,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
@@ -335,7 +329,6 @@ mod tests {
                 manager,
                 ptr::null(),
                 ptr::null(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -359,7 +352,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -391,7 +384,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 &account_options,
                 false,

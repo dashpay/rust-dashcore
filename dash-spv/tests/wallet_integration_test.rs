@@ -27,7 +27,7 @@ async fn create_test_client(
             .expect("Failed to create tmp storage");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap()
 }
@@ -64,7 +64,7 @@ async fn test_spv_client_start_stop() {
 #[tokio::test]
 async fn test_wallet_manager_basic_operations() {
     // Test basic wallet manager operations
-    let wallet_manager = WalletManager::<ManagedWalletInfo>::new();
+    let wallet_manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Test that we can create a wallet manager
     // Check wallet count

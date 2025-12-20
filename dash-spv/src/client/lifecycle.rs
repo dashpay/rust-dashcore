@@ -148,7 +148,6 @@ impl<
             self.storage.clone(),
             self.stats.clone(),
             self.event_tx.clone(),
-            self.config.network,
         );
 
         tokio::spawn(async move {

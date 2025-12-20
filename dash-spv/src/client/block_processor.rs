@@ -36,7 +36,6 @@ pub struct BlockProcessor<W: WalletInterface, S: StorageManager> {
     event_tx: mpsc::UnboundedSender<SpvEvent>,
     processed_blocks: HashSet<dashcore::BlockHash>,
     failed: bool,
-    network: dashcore::Network,
 }
 
 impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync + 'static>
@@ -49,7 +48,6 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
         storage: Arc<Mutex<S>>,
         stats: Arc<RwLock<SpvStats>>,
         event_tx: mpsc::UnboundedSender<SpvEvent>,
-        network: dashcore::Network,
     ) -> Self {
         Self {
             receiver,
@@ -59,7 +57,6 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
             event_tx,
             processed_blocks: HashSet::new(),
             failed: false,
-            network,
         }
     }
 
@@ -177,8 +174,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                 } => {
                     // Check compact filter with wallet
                     let mut wallet = self.wallet.write().await;
-                    let matches =
-                        wallet.check_compact_filter(&filter, &block_hash, self.network).await;
+                    let matches = wallet.check_compact_filter(&filter, &block_hash).await;
 
                     if matches {
                         tracing::info!("🎯 Compact filter matched for block {}", block_hash);
@@ -191,7 +187,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                         tracing::debug!(
                             "Compact filter did not match for block {}, {}",
                             block_hash,
-                            wallet.describe(self.network).await
+                            wallet.describe().await
                         );
                         drop(wallet);
                     }
@@ -226,7 +222,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
 
         // Process block with wallet
         let mut wallet = self.wallet.write().await;
-        let txids = wallet.process_block(&block, height, self.network).await;
+        let txids = wallet.process_block(&block, height).await;
         if !txids.is_empty() {
             tracing::info!(
                 "🎯 Wallet found {} relevant transactions in block {} at height {}",
@@ -245,7 +241,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
             for txid in &txids {
                 if let Some(tx) = block.txdata.iter().find(|t| &t.txid() == txid) {
                     // Ask the wallet for the precise effect of this transaction
-                    let effect = wallet.transaction_effect(tx, self.network).await;
+                    let effect = wallet.transaction_effect(tx).await;
                     if let Some((net_amount, affected_addresses)) = effect {
                         tracing::info!("📤 Emitting TransactionDetected event for {}", txid);
                         let _ = self.event_tx.send(SpvEvent::TransactionDetected {
@@ -291,7 +287,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
 
         // Let the wallet process the mempool transaction
         let mut wallet = self.wallet.write().await;
-        wallet.process_mempool_transaction(&tx, self.network).await;
+        wallet.process_mempool_transaction(&tx).await;
         drop(wallet);
 
         // TODO: Check if transaction affects watched addresses/scripts

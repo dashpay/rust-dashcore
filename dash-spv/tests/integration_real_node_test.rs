@@ -40,7 +40,7 @@ async fn create_test_client(
             .await?;
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     Ok(DashSpvClient::new(config, network_manager, storage_manager, wallet).await?)
 }

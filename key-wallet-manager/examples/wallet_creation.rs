@@ -18,12 +18,9 @@ fn main() {
     // Example 1: Basic wallet creation with WalletManager
     println!("1. Creating a basic wallet with WalletManager...");
 
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
-    let result = manager.create_wallet_with_random_mnemonic(
-        WalletAccountCreationOptions::Default,
-        Network::Testnet,
-    );
+    let result = manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default);
 
     let wallet_id = match result {
         Ok(wallet_id) => {
@@ -46,7 +43,6 @@ fn main() {
     let result = manager.create_wallet_from_mnemonic(
         test_mnemonic,
         "", // No passphrase
-        Network::Testnet,
         100_000,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );
@@ -145,11 +141,11 @@ fn main() {
     // Example 7: Block height tracking
     println!("\n7. Block height tracking...");
 
-    println!("   Current height (Testnet): {}", manager.current_height(Network::Testnet));
+    println!("   Current height (Testnet): {}", manager.current_height());
 
     // Update height
-    manager.update_height(Network::Testnet, 850_000);
-    println!("   Updated height to: {}", manager.current_height(Network::Testnet));
+    manager.update_height(850_000);
+    println!("   Updated height to: {}", manager.current_height());
 
     println!("\n=== Summary ===");
     println!("Total wallets created: {}", manager.wallet_count());

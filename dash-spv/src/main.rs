@@ -302,11 +302,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Sync strategy: Sequential");
 
     // Create the wallet manager
-    let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
     let wallet_id = wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
         "",
-        network,
         0,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;
@@ -415,7 +414,6 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     // Take the client's event receiver and spawn a logger task
     if let Some(mut event_rx) = client.take_event_receiver() {
         let wallet_for_logger = wallet.clone();
-        let network_for_logger = config.network;
         let wallet_id_for_logger = wallet_id;
         tokio::spawn(async move {
             use dash_spv::types::SpvEvent;
@@ -453,16 +451,11 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                     _ = tokio::time::sleep(snapshot_interval) => {
                         // Log snapshot if interval has elapsed
                         if last_snapshot.elapsed() >= snapshot_interval {
-                            let (tx_count, wallet_affecting_tx_count, confirmed, unconfirmed, locked, total, derived_incoming) = {
+                            let (tx_count, confirmed, unconfirmed, locked, total) = {
                                 let mgr = wallet_for_logger.read().await;
-                                // Count transactions via network state for the selected network
-                                let txs = mgr
-                                    .get_network_state(network_for_logger)
-                                    .map(|ns| ns.transactions.len())
-                                    .unwrap_or(0);
 
                                 // Count wallet-affecting transactions from wallet transaction history
-                                let wallet_affecting = mgr
+                                let tx_count = mgr
                                     .wallet_transaction_history(&wallet_id_for_logger)
                                     .map(|v| v.len())
                                     .unwrap_or(0);
@@ -471,36 +464,17 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                                 let wb = mgr.get_wallet_balance(&wallet_id_for_logger).ok();
                                 let (c, u, l, t) = wb.map(|b| (b.confirmed, b.unconfirmed, b.locked, b.total)).unwrap_or((0, 0, 0, 0));
 
-                                // Derive a conservative incoming total by summing tx outputs to our addresses.
-                                let incoming_sum = if let Some(ns) = mgr.get_network_state(network_for_logger) {
-                                    let addrs = mgr.monitored_addresses();
-                                    let addr_set: std::collections::HashSet<_> = addrs.into_iter().collect();
-                                    let mut sum_incoming: u64 = 0;
-                                    for rec in ns.transactions.values() {
-                                        for out in &rec.transaction.output {
-                                            if let Ok(out_addr) = dashcore::Address::from_script(&out.script_pubkey, network_for_logger) {
-                                                if addr_set.contains(&out_addr) {
-                                                    sum_incoming = sum_incoming.saturating_add(out.value);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    sum_incoming
-                                } else { 0 };
-
-                                (txs, wallet_affecting, c, u, l, t, incoming_sum)
+                                (tx_count, c, u, l, t)
                             };
                             tracing::info!(
-                                "Wallet tx summary: detected={} (blocks={} + mempool={}), affecting_wallet={}, balances: confirmed={} unconfirmed={} locked={} total={}, derived_incoming_total={} (approx)",
+                                "Wallet tx summary: tx_count={} (blocks={} + mempool={}), balances: confirmed={} unconfirmed={} locked={} total={}",
                                 tx_count,
                                 total_detected_block_txs,
                                 total_detected_mempool_txs,
-                                wallet_affecting_tx_count,
                                 confirmed,
                                 unconfirmed,
                                 locked,
                                 total,
-                                derived_incoming
                             );
                             last_snapshot = std::time::Instant::now();
                         }

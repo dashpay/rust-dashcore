@@ -606,12 +606,7 @@ impl<
 
         let matches = self
             .filter_sync
-            .check_filter_for_matches(
-                &cfilter.filter,
-                &cfilter.block_hash,
-                wallet.deref_mut(),
-                self.config.network,
-            )
+            .check_filter_for_matches(&cfilter.filter, &cfilter.block_hash, wallet.deref_mut())
             .await?;
 
         drop(wallet);
@@ -755,7 +750,7 @@ impl<
             .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
             .unwrap_or(0);
 
-        let relevant_txids = wallet.process_block(block, block_height, self.config.network).await;
+        let relevant_txids = wallet.process_block(block, block_height).await;
 
         drop(wallet);
 

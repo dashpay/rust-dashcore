@@ -278,7 +278,7 @@ async fn test_header_sync_with_client_integration() {
             .expect("Failed to create tmp storage");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await;
     assert!(client.is_ok(), "Client creation should succeed");
