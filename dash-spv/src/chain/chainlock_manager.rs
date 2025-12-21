@@ -333,7 +333,7 @@ impl ChainLockManager {
         }
 
         // Store persistently
-        let key = format!("chainlock:{}", chain_lock.block_height);
+        let key = format!("chainlock_{}", chain_lock.block_height);
         let data = bincode::serialize(&chain_lock)
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
         storage.store_metadata(&key, &data).await?;
@@ -414,7 +414,7 @@ impl ChainLockManager {
         let mut chain_locks = Vec::new();
 
         for height in start_height..=end_height {
-            let key = format!("chainlock:{}", height);
+            let key = format!("chainlock_{}", height);
             if let Some(data) = storage.load_metadata(&key).await? {
                 match bincode::deserialize::<ChainLock>(&data) {
                     Ok(chain_lock) => {
