@@ -16,7 +16,7 @@ mod tests {
         let result = manager.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             "",
-            &[Network::Testnet],
+            Network::Testnet,
             Some(100_000),
             WalletAccountCreationOptions::Default,
             false, // Don't downgrade
@@ -32,7 +32,7 @@ mod tests {
         let result = manager2.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             "",
-            &[Network::Testnet],
+            Network::Testnet,
             Some(100_000),
             WalletAccountCreationOptions::Default,
             true,  // Downgrade to pubkey wallet
@@ -51,7 +51,7 @@ mod tests {
         let result = manager3.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             "",
-            &[Network::Testnet],
+            Network::Testnet,
             Some(100_000),
             WalletAccountCreationOptions::Default,
             true, // Downgrade to pubkey wallet
@@ -80,7 +80,7 @@ mod tests {
         let result = manager.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             passphrase,
-            &[Network::Testnet],
+            Network::Testnet,
             None,
             WalletAccountCreationOptions::Default,
             false,
@@ -95,7 +95,7 @@ mod tests {
         let result2 = manager2.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             "", // No passphrase
-            &[Network::Testnet],
+            Network::Testnet,
             None,
             WalletAccountCreationOptions::Default,
             false,

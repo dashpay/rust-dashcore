@@ -6,7 +6,6 @@ use key_wallet_ffi::types::{
     FFIAccountCreationOptionType, FFINetworks, FFIWalletAccountCreationOptions,
 };
 use key_wallet_ffi::wallet::{wallet_create_from_mnemonic_with_options, wallet_free};
-use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
 
@@ -43,8 +42,7 @@ fn test_account_collection_comprehensive() {
         assert!(!wallet.is_null());
 
         // Get account collection for testnet
-        let collection =
-            wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+        let collection = wallet_get_account_collection(wallet, ptr::null_mut());
         assert!(!collection.is_null());
 
         // Test account count
@@ -161,8 +159,7 @@ fn test_account_collection_minimal() {
         assert!(!wallet.is_null());
 
         // Get account collection
-        let collection =
-            wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+        let collection = wallet_get_account_collection(wallet, ptr::null_mut());
         assert!(!collection.is_null());
 
         // Should have at least some default accounts

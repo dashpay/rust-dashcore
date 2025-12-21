@@ -59,7 +59,6 @@ impl FFIPrivateKey {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_xpriv(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -69,9 +68,8 @@ pub unsafe extern "C" fn wallet_get_account_xpriv(
     }
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
 
-    match wallet.inner().get_bip44_account(network_rust, account_index) {
+    match wallet.inner().get_bip44_account(account_index) {
         Some(account) => {
             // Extended private key is not available on Account
             // Only the wallet has access to private keys
@@ -109,7 +107,6 @@ pub unsafe extern "C" fn wallet_get_account_xpriv(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_xpub(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -119,9 +116,8 @@ pub unsafe extern "C" fn wallet_get_account_xpub(
     }
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
 
-    match wallet.inner().get_bip44_account(network_rust, account_index) {
+    match wallet.inner().get_bip44_account(account_index) {
         Some(account) => {
             let xpub = account.extended_public_key();
             FFIError::set_success(error);
@@ -156,7 +152,6 @@ pub unsafe extern "C" fn wallet_get_account_xpub(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_private_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIPrivateKey {
@@ -193,10 +188,9 @@ pub unsafe extern "C" fn wallet_derive_private_key(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
 
     // Use the new wallet method to derive the private key
-    match wallet.inner().derive_private_key(network_rust, &path) {
+    match wallet.inner().derive_private_key(&path) {
         Ok(private_key) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIPrivateKey {
@@ -226,7 +220,6 @@ pub unsafe extern "C" fn wallet_derive_private_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_extended_private_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPrivateKey {
@@ -263,10 +256,9 @@ pub unsafe extern "C" fn wallet_derive_extended_private_key(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
 
     // Use the new wallet method to derive the extended private key
-    match wallet.inner().derive_extended_private_key(network_rust, &path) {
+    match wallet.inner().derive_extended_private_key(&path) {
         Ok(extended_private_key) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIExtendedPrivateKey {
@@ -295,7 +287,6 @@ pub unsafe extern "C" fn wallet_derive_extended_private_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_private_key_as_wif(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -332,10 +323,9 @@ pub unsafe extern "C" fn wallet_derive_private_key_as_wif(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
 
     // Use the new wallet method to derive the private key as WIF
-    match wallet.inner().derive_private_key_as_wif(network_rust, &path) {
+    match wallet.inner().derive_private_key_as_wif(&path) {
         Ok(wif) => {
             FFIError::set_success(error);
             match CString::new(wif) {
@@ -522,7 +512,6 @@ pub unsafe extern "C" fn private_key_to_wif(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_public_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIPublicKey {
@@ -560,10 +549,9 @@ pub unsafe extern "C" fn wallet_derive_public_key(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = network.into();
 
         // Use the new wallet method to derive the public key
-        match wallet.inner().derive_public_key(network_rust, &path) {
+        match wallet.inner().derive_public_key(&path) {
             Ok(public_key) => {
                 FFIError::set_success(error);
                 Box::into_raw(Box::new(FFIPublicKey {
@@ -594,7 +582,6 @@ pub unsafe extern "C" fn wallet_derive_public_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_extended_public_key(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPublicKey {
@@ -632,10 +619,9 @@ pub unsafe extern "C" fn wallet_derive_extended_public_key(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = network.into();
 
         // Use the new wallet method to derive the extended public key
-        match wallet.inner().derive_extended_public_key(network_rust, &path) {
+        match wallet.inner().derive_extended_public_key(&path) {
             Ok(extended_public_key) => {
                 FFIError::set_success(error);
                 Box::into_raw(Box::new(FFIExtendedPublicKey {
@@ -665,7 +651,6 @@ pub unsafe extern "C" fn wallet_derive_extended_public_key(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_public_key_as_hex(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -703,10 +688,9 @@ pub unsafe extern "C" fn wallet_derive_public_key_as_hex(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = network.into();
 
         // Use the new wallet method to derive the public key as hex
-        match wallet.inner().derive_public_key_as_hex(network_rust, &path) {
+        match wallet.inner().derive_public_key_as_hex(&path) {
             Ok(hex) => {
                 FFIError::set_success(error);
                 match CString::new(hex) {

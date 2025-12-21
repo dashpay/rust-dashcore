@@ -29,7 +29,7 @@ fn test_wallet_manager_from_mnemonic() {
     let wallet_result = manager.create_wallet_from_mnemonic(
         &mnemonic.to_string(),
         "",
-        &[Network::Testnet],
+        Network::Testnet,
         None, // birth_height
         WalletAccountCreationOptions::Default,
     );
@@ -57,7 +57,6 @@ fn test_account_management() {
             index: 1,
             standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
         },
-        Network::Testnet,
         None,
     );
     assert!(result.is_ok());
@@ -84,13 +83,7 @@ fn test_address_generation() {
     // But the managed wallet info might not have the account collection initialized
 
     // Test address generation - it may fail if accounts aren't initialized
-    let address1 = manager.get_receive_address(
-        &wallet_id,
-        Network::Testnet,
-        0,
-        AccountTypePreference::BIP44,
-        false,
-    );
+    let address1 = manager.get_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
     // This might fail with InvalidNetwork if the account collection isn't initialized
     // We'll check if it's the expected error
     if let Err(ref e) = address1 {
@@ -104,13 +97,7 @@ fn test_address_generation() {
         }
     }
 
-    let change = manager.get_change_address(
-        &wallet_id,
-        Network::Testnet,
-        0,
-        AccountTypePreference::BIP44,
-        false,
-    );
+    let change = manager.get_change_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
     // Same check for change address
     if let Err(ref e) = change {
         match e {
