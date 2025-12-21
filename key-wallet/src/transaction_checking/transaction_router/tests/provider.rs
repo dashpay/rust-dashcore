@@ -125,10 +125,10 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -139,18 +139,18 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
 
     // Get addresses from provider accounts
     let managed_owner = managed_wallet_info
-        .provider_owner_keys_managed_account_mut(network)
+        .provider_owner_keys_managed_account_mut()
         .expect("Failed to get provider owner keys managed account");
     let owner_address = managed_owner.next_address(None, true).expect("expected owner address");
 
     let voting_address = other_managed_wallet_info
-        .provider_voting_keys_managed_account_mut(network)
+        .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account")
         .next_address(None, true)
         .expect("expected voting address");
 
     let operator_public_key = other_managed_wallet_info
-        .provider_operator_keys_managed_account_mut(network)
+        .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account")
         .next_bls_operator_key(None, true)
         .expect("expected voting address");
@@ -158,7 +158,7 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
     // Payout addresses for providers are just regular addresses, not a separate account
     // For testing, we'll use the first standard account's address
     let payout_address = other_managed_wallet_info
-        .first_bip44_managed_account_mut(network)
+        .first_bip44_managed_account_mut()
         .and_then(|acc| acc.next_receive_address(None, true).ok())
         .unwrap_or_else(|| {
             dashcore::Address::p2pkh(
@@ -229,8 +229,7 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         timestamp: Some(1234567890),
     };
 
-    let result =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     println!(
         "Provider registration transaction result: is_relevant={}, received={}",
@@ -262,10 +261,10 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -276,18 +275,18 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
-        .provider_owner_keys_managed_account_mut(network)
+        .provider_owner_keys_managed_account_mut()
         .expect("Failed to get provider owner keys managed account")
         .next_address(None, true)
         .expect("expected owner address");
 
     let managed_voting = managed_wallet_info
-        .provider_voting_keys_managed_account_mut(network)
+        .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account");
     let voting_address = managed_voting.next_address(None, true).expect("expected voting address");
 
     let operator_public_key = other_managed_wallet_info
-        .provider_operator_keys_managed_account_mut(network)
+        .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account")
         .next_bls_operator_key(None, true)
         .expect("expected operator key");
@@ -295,7 +294,7 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
     // Payout addresses for providers are just regular addresses, not a separate account
     // For testing, we'll use the first standard account's address
     let payout_address = other_managed_wallet_info
-        .first_bip44_managed_account_mut(network)
+        .first_bip44_managed_account_mut()
         .and_then(|acc| acc.next_receive_address(None, true).ok())
         .unwrap_or_else(|| {
             dashcore::Address::p2pkh(
@@ -366,8 +365,7 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         timestamp: Some(1234567890),
     };
 
-    let result =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     println!(
         "Provider registration transaction result (voting): is_relevant={}, received={}",
@@ -399,10 +397,10 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -413,19 +411,19 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
-        .provider_owner_keys_managed_account_mut(network)
+        .provider_owner_keys_managed_account_mut()
         .expect("Failed to get provider owner keys managed account")
         .next_address(None, true)
         .expect("expected owner address");
 
     let voting_address = other_managed_wallet_info
-        .provider_voting_keys_managed_account_mut(network)
+        .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account")
         .next_address(None, true)
         .expect("expected voting address");
 
     let managed_operator = managed_wallet_info
-        .provider_operator_keys_managed_account_mut(network)
+        .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account");
     let operator_public_key =
         managed_operator.next_bls_operator_key(None, true).expect("expected operator key");
@@ -433,7 +431,7 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
     // Payout addresses for providers are just regular addresses, not a separate account
     // For testing, we'll use the first standard account's address
     let payout_address = other_managed_wallet_info
-        .first_bip44_managed_account_mut(network)
+        .first_bip44_managed_account_mut()
         .and_then(|acc| acc.next_receive_address(None, true).ok())
         .unwrap_or_else(|| {
             dashcore::Address::p2pkh(
@@ -504,8 +502,7 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         timestamp: Some(1234567890),
     };
 
-    let result =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     println!(
         "Provider registration transaction result (operator): is_relevant={}, received={}",
@@ -582,10 +579,10 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -596,26 +593,26 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
-        .provider_owner_keys_managed_account_mut(network)
+        .provider_owner_keys_managed_account_mut()
         .expect("Failed to get provider owner keys managed account")
         .next_address(None, true)
         .expect("expected owner address");
 
     let voting_address = other_managed_wallet_info
-        .provider_voting_keys_managed_account_mut(network)
+        .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account")
         .next_address(None, true)
         .expect("expected voting address");
 
     let operator_public_key = other_managed_wallet_info
-        .provider_operator_keys_managed_account_mut(network)
+        .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account")
         .next_bls_operator_key(None, true)
         .expect("expected operator key");
 
     // Get platform key from our wallet
     let managed_platform = managed_wallet_info
-        .provider_platform_keys_managed_account_mut(network)
+        .provider_platform_keys_managed_account_mut()
         .expect("Failed to get provider platform keys managed account");
 
     // For platform keys, we need to get the EdDSA key and derive the node ID
@@ -633,7 +630,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
     // Payout addresses for providers are just regular addresses, not a separate account
     // For testing, we'll use the first standard account's address
     let payout_address = other_managed_wallet_info
-        .first_bip44_managed_account_mut(network)
+        .first_bip44_managed_account_mut()
         .and_then(|acc| acc.next_receive_address(None, true).ok())
         .unwrap_or_else(|| {
             dashcore::Address::p2pkh(
@@ -709,8 +706,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         timestamp: Some(1234567890),
     };
 
-    let result =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     println!(
         "Provider registration transaction result (platform): is_relevant={}, received={}",
@@ -784,8 +780,7 @@ fn test_provider_update_service_with_operator_key() {
 #[tokio::test]
 async fn test_provider_update_registrar_with_voting_and_operator() {
     // Test provider update registrar classification and routing
-    let network = Network::Testnet;
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -793,14 +788,14 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
 
     // Get voting address
     let voting_address = managed_wallet_info
-        .provider_voting_keys_managed_account_mut(network)
+        .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account")
         .next_address(None, true)
         .expect("expected voting address");
 
     // Get BLS operator key
     let operator_public_key = managed_wallet_info
-        .provider_operator_keys_managed_account_mut(network)
+        .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account")
         .next_bls_operator_key(None, true)
         .expect("expected operator key");
@@ -832,8 +827,7 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         timestamp: Some(1234567890),
     };
 
-    let result =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     // Should be recognized as relevant due to voting and operator keys
     assert!(result.is_relevant, "Provider update registrar should be relevant");
@@ -857,23 +851,22 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
 #[tokio::test]
 async fn test_provider_revocation_classification_and_routing() {
     // Test that provider revocation transactions are properly classified and routed
-    let network = Network::Testnet;
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
     // Get a standard address for collateral return
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-    let account = account_collection
+    let account = wallet
+        .accounts
         .standard_bip44_accounts
         .get(&0)
         .expect("Expected BIP44 account at index 0 to exist");
     let xpub = account.account_xpub;
 
     let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut(network)
+        .first_bip44_managed_account_mut()
         .expect("Failed to get first BIP44 managed account");
 
     let return_address = managed_account
@@ -927,8 +920,7 @@ async fn test_provider_revocation_classification_and_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result =
-        managed_wallet_info.check_transaction(&tx, network, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     // Should be recognized as relevant due to collateral return
     assert!(result.is_relevant, "Provider revocation with collateral return should be relevant");

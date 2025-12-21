@@ -63,7 +63,7 @@ mod tests {
                 .create_wallet_from_mnemonic_return_serialized_bytes(
                     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
                     "",
-                    &[Network::Dash],
+                    Network::Dash,
                     None,
                     WalletAccountCreationOptions::Default,
                     false,

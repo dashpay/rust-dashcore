@@ -10,7 +10,6 @@ use std::ptr;
 use crate::account::FFIAccount;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIWallet;
-use crate::FFINetwork;
 
 /// Opaque handle to an account collection
 pub struct FFIAccountCollection {
@@ -84,7 +83,6 @@ pub struct FFIAccountCollectionSummary {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_collection(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIAccountCollection {
     if wallet.is_null() {
@@ -93,26 +91,9 @@ pub unsafe extern "C" fn wallet_get_account_collection(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
-
-    match wallet.inner().accounts_on_network(network_rust) {
-        Some(collection) => {
-            let ffi_collection = FFIAccountCollection::new(collection);
-            Box::into_raw(Box::new(ffi_collection))
-        }
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                format!(
-                    "No accounts found for network {:?}, wallet has networks {:?}",
-                    network_rust,
-                    wallet.inner().networks_supported()
-                ),
-            );
-            ptr::null_mut()
-        }
-    }
+    FFIError::set_success(error);
+    let ffi_collection = FFIAccountCollection::new(&wallet.inner().accounts);
+    Box::into_raw(Box::new(ffi_collection))
 }
 
 /// Free an account collection handle
@@ -1100,8 +1081,7 @@ mod tests {
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection =
-                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Check that we have some accounts
@@ -1155,8 +1135,7 @@ mod tests {
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection =
-                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Check for provider operator keys account (BLS)
@@ -1202,8 +1181,7 @@ mod tests {
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection =
-                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Check for provider platform keys account (EdDSA)
@@ -1273,8 +1251,7 @@ mod tests {
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection =
-                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Get the summary
@@ -1326,8 +1303,7 @@ mod tests {
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection =
-                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
 
             // With SpecificAccounts and empty lists, collection might be null or empty
             if collection.is_null() {
@@ -1411,8 +1387,7 @@ mod tests {
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection =
-                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Get the summary data
@@ -1498,8 +1473,7 @@ mod tests {
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection =
-                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
 
             // With AllAccounts but empty lists, collection should still exist
             if collection.is_null() {
@@ -1569,8 +1543,7 @@ mod tests {
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection =
-                wallet_get_account_collection(wallet, FFINetwork::Testnet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
             assert!(!collection.is_null());
 
             // Get multiple summaries to test memory management

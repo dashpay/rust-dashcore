@@ -3,7 +3,6 @@
 
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 use key_wallet_ffi::types::FFINetworks;
-use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 
 #[test]
@@ -176,21 +175,11 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
     assert!(!wallet_with_pass.is_null());
 
     // Try to get account count for both wallets
-    let count_no_pass = unsafe {
-        key_wallet_ffi::account::wallet_get_account_count(
-            wallet_no_pass,
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let count_no_pass =
+        unsafe { key_wallet_ffi::account::wallet_get_account_count(wallet_no_pass, error) };
 
-    let count_with_pass = unsafe {
-        key_wallet_ffi::account::wallet_get_account_count(
-            wallet_with_pass,
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let count_with_pass =
+        unsafe { key_wallet_ffi::account::wallet_get_account_count(wallet_with_pass, error) };
 
     println!("Account count without passphrase: {}", count_no_pass);
     println!("Account count with passphrase: {}", count_with_pass);

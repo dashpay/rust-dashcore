@@ -6,14 +6,15 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::account::account_collection::AccountCollection;
     use crate::account::{AccountType, StandardAccountType};
     use crate::mnemonic::{Language, Mnemonic};
     use crate::wallet::Wallet;
     use crate::Network;
-    use alloc::collections::BTreeMap;
 
     // Test vectors from DashSync
-    const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const TEST_MNEMONIC: &str =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     // ============================================================================
     // Basic Wallet Tests - Updated for new architecture
@@ -22,13 +23,13 @@ mod tests {
     #[test]
     fn test_wallet_creation() {
         let wallet = Wallet::new_random(
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
 
         // Verify wallet has default accounts
-        assert!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0) >= 2); // Default creates multiple accounts
+        assert!(wallet.accounts.count() >= 2); // Default creates multiple accounts
         assert!(wallet.has_mnemonic());
         assert!(!wallet.is_watch_only());
     }
@@ -39,20 +40,20 @@ mod tests {
 
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
         let wallet2 = Wallet::from_mnemonic(
             mnemonic,
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
 
         // Verify both wallets have the same account structure
-        let account1 = wallet1.get_bip44_account(Network::Testnet, 0).unwrap();
-        let account2 = wallet2.get_bip44_account(Network::Testnet, 0).unwrap();
+        let account1 = wallet1.get_bip44_account(0).unwrap();
+        let account2 = wallet2.get_bip44_account(0).unwrap();
 
         // Should have same extended public keys
         assert_eq!(account1.extended_public_key(), account2.extended_public_key());
@@ -77,7 +78,7 @@ mod tests {
     #[test]
     fn test_multiple_accounts() {
         let mut wallet = Wallet::new_random(
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -89,7 +90,6 @@ mod tests {
                     index: 1,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
@@ -98,31 +98,30 @@ mod tests {
                 AccountType::CoinJoin {
                     index: 2,
                 },
-                Network::Testnet,
                 None,
             )
             .unwrap();
 
         // Verify accounts exist
-        assert!(wallet.get_bip44_account(Network::Testnet, 0).is_some());
-        assert!(wallet.get_bip44_account(Network::Testnet, 1).is_some());
-        assert!(wallet.get_coinjoin_account(Network::Testnet, 2).is_some());
+        assert!(wallet.get_bip44_account(0).is_some());
+        assert!(wallet.get_bip44_account(1).is_some());
+        assert!(wallet.get_coinjoin_account(2).is_some());
 
         // Verify account types
-        let account0 = wallet.get_bip44_account(Network::Testnet, 0).unwrap();
+        let account0 = wallet.get_bip44_account(0).unwrap();
         assert!(matches!(account0.account_type, AccountType::Standard { .. }));
 
-        let account1 = wallet.get_bip44_account(Network::Testnet, 1).unwrap();
+        let account1 = wallet.get_bip44_account(1).unwrap();
         assert!(matches!(account1.account_type, AccountType::Standard { .. }));
 
-        let account2 = wallet.get_coinjoin_account(Network::Testnet, 2).unwrap();
+        let account2 = wallet.get_coinjoin_account(2).unwrap();
         assert!(matches!(account2.account_type, AccountType::CoinJoin { .. }));
     }
 
     #[test]
     fn test_watch_only_wallet() {
         let wallet = Wallet::new_random(
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -132,11 +131,12 @@ mod tests {
         let root_xpub_as_extended = root_xpub.to_extended_pub_key(Network::Testnet);
 
         // Create watch-only wallet from the root xpub
-        let watch_only = Wallet::from_xpub(root_xpub_as_extended, BTreeMap::new(), false).unwrap();
+        let watch_only =
+            Wallet::from_xpub(root_xpub_as_extended, AccountCollection::new(), false).unwrap();
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());
-        assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 0); // None creates no accounts
+        assert_eq!(watch_only.accounts.count(), 0); // None creates no accounts
 
         // Both wallets should have the same root public key
         let watch_root_xpub = watch_only.root_extended_pub_key();
@@ -154,7 +154,7 @@ mod tests {
         // Create wallet without passphrase - use regular from_mnemonic for empty passphrase
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -163,7 +163,7 @@ mod tests {
         let wallet2 = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             "TREZOR".to_string(),
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();

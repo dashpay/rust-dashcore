@@ -11,10 +11,10 @@ fn test_valid_testnet_address() {
         Mnemonic::from_phrase(mnemonic_str, key_wallet::mnemonic::Language::English).unwrap();
 
     let wallet =
-        Wallet::from_mnemonic(mnemonic, &[Network::Testnet], WalletAccountCreationOptions::Default)
+        Wallet::from_mnemonic(mnemonic, Network::Testnet, WalletAccountCreationOptions::Default)
             .unwrap();
 
-    if let Some(account) = wallet.get_bip44_account(Network::Testnet, 0) {
+    if let Some(account) = wallet.get_bip44_account(0) {
         use key_wallet::ChildNumber;
         use secp256k1::Secp256k1;
         let secp = Secp256k1::new();
