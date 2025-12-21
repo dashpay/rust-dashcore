@@ -2,7 +2,6 @@
 
 pub(crate) mod io;
 
-pub mod sync_storage;
 pub mod types;
 
 mod headers;
@@ -21,38 +20,7 @@ use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
 pub use manager::DiskStorageManager;
-pub use sync_storage::MemoryStorage;
 pub use types::*;
-
-use crate::error::StorageError;
-use dashcore::BlockHash;
-
-/// Synchronous storage trait for chain operations
-pub trait ChainStorage: Send + Sync {
-    /// Get a header by its block hash
-    fn get_header(&self, hash: &BlockHash) -> Result<Option<BlockHeader>, StorageError>;
-
-    /// Get a header by its height
-    fn get_header_by_height(&self, height: u32) -> Result<Option<BlockHeader>, StorageError>;
-
-    /// Get the height of a block by its hash
-    fn get_header_height(&self, hash: &BlockHash) -> Result<Option<u32>, StorageError>;
-
-    /// Store a header at a specific height
-    fn store_header(&self, header: &BlockHeader, height: u32) -> Result<(), StorageError>;
-
-    /// Get transaction IDs in a block
-    fn get_block_transactions(
-        &self,
-        block_hash: &BlockHash,
-    ) -> Result<Option<Vec<dashcore::Txid>>, StorageError>;
-
-    /// Get a transaction by its ID
-    fn get_transaction(
-        &self,
-        txid: &dashcore::Txid,
-    ) -> Result<Option<dashcore::Transaction>, StorageError>;
-}
 
 /// Storage manager trait for abstracting data persistence.
 ///
