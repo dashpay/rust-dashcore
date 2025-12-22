@@ -144,7 +144,7 @@ async fn test_filter_sync_at_tip_edge_case() {
     storage.store_filter_headers(&filter_headers).await.unwrap();
 
     // Verify initial state
-    let tip_height = storage.get_tip_height().await.unwrap().unwrap();
+    let tip_height = storage.get_tip_height().await.unwrap();
     let filter_tip_height = storage.get_filter_tip_height().await.unwrap().unwrap();
     assert_eq!(tip_height, height - 1); // 0-indexed
     assert_eq!(filter_tip_height, height - 1); // 0-indexed

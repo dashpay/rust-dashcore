@@ -290,7 +290,11 @@ pub trait BlockHeaderStorage {
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>>;
 
     /// Get the current tip blockchain height.
-    async fn get_tip_height(&self) -> StorageResult<Option<u32>>;
+    async fn get_tip_height(&self) -> Option<u32>;
+
+    async fn get_start_height(&self) -> Option<u32>;
+
+    async fn get_stored_headers_len(&self) -> u32;
 
     /// Get header height by block hash (reverse lookup).
     async fn get_header_height_by_hash(

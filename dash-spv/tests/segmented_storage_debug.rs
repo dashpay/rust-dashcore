@@ -38,7 +38,7 @@ async fn test_basic_storage() {
     println!("Headers stored");
 
     // Check tip height
-    let tip = storage.get_tip_height().await.unwrap();
+    let tip = storage.get_tip_height().await;
     println!("Tip height: {:?}", tip);
     assert_eq!(tip, Some(9));
 

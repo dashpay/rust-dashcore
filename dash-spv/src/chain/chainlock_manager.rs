@@ -175,7 +175,11 @@ impl ChainLockManager {
         }
 
         // Verify the block exists in our chain
-        if let Some(header) = chain_state.header_at_height(chain_lock.block_height) {
+        if let Some(header) = storage
+            .get_header(chain_lock.block_height)
+            .await
+            .map_err(ValidationError::StorageError)?
+        {
             let header_hash = header.block_hash();
             if header_hash != chain_lock.block_hash {
                 return Err(ValidationError::InvalidChainLock(format!(

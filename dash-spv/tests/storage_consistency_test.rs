@@ -36,7 +36,7 @@ async fn test_tip_height_header_consistency_basic() {
     storage.store_headers(&headers).await.unwrap();
 
     // Check consistency immediately
-    let tip_height = storage.get_tip_height().await.unwrap();
+    let tip_height = storage.get_tip_height().await;
     println!("Tip height: {:?}", tip_height);
 
     if let Some(height) = tip_height {
@@ -72,7 +72,7 @@ async fn test_tip_height_header_consistency_after_save() {
         // Wait for background save to complete
         sleep(Duration::from_secs(1)).await;
 
-        let tip_height = storage.get_tip_height().await.unwrap();
+        let tip_height = storage.get_tip_height().await;
         println!("Phase 1 - Tip height: {:?}", tip_height);
 
         if let Some(height) = tip_height {
@@ -87,7 +87,7 @@ async fn test_tip_height_header_consistency_after_save() {
     {
         let storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
 
-        let tip_height = storage.get_tip_height().await.unwrap();
+        let tip_height = storage.get_tip_height().await;
         println!("Phase 2 - Tip height after reload: {:?}", tip_height);
 
         if let Some(height) = tip_height {
@@ -129,7 +129,7 @@ async fn test_tip_height_header_consistency_large_dataset() {
         storage.store_headers(&headers).await.unwrap();
 
         // Check consistency after each batch
-        let tip_height = storage.get_tip_height().await.unwrap();
+        let tip_height = storage.get_tip_height().await;
         if let Some(height) = tip_height {
             let header = storage.get_header(height).await.unwrap();
             if header.is_none() {
@@ -155,7 +155,7 @@ async fn test_tip_height_header_consistency_large_dataset() {
     }
 
     // Final consistency check
-    let final_tip = storage.get_tip_height().await.unwrap();
+    let final_tip = storage.get_tip_height().await;
     println!("Final tip height: {:?}", final_tip);
 
     if let Some(height) = final_tip {
@@ -206,7 +206,7 @@ async fn test_concurrent_tip_header_access() {
         let handle = tokio::spawn(async move {
             // Repeatedly check consistency
             for iteration in 0..100 {
-                let tip_height = storage.get_tip_height().await.unwrap();
+                let tip_height = storage.get_tip_height().await;
 
                 if let Some(height) = tip_height {
                     let header = storage.get_header(height).await.unwrap();
@@ -278,7 +278,7 @@ async fn test_reproduce_filter_sync_bug() {
     storage.store_headers(&tip_header).await.unwrap();
 
     // Now check what get_tip_height() returns
-    let reported_tip = storage.get_tip_height().await.unwrap();
+    let reported_tip = storage.get_tip_height().await;
     println!("Storage reports tip height: {:?}", reported_tip);
 
     if let Some(tip_height) = reported_tip {
@@ -346,7 +346,7 @@ async fn test_reproduce_filter_sync_bug_small() {
     storage.store_headers(&tip_header).await.unwrap();
 
     // Now check what get_tip_height() returns
-    let reported_tip = storage.get_tip_height().await.unwrap();
+    let reported_tip = storage.get_tip_height().await;
     println!("Storage reports tip height: {:?}", reported_tip);
 
     if let Some(tip_height) = reported_tip {
@@ -406,7 +406,7 @@ async fn test_segment_boundary_consistency() {
         segment_size + 1, // Second in second segment
     ];
 
-    let tip_height = storage.get_tip_height().await.unwrap().unwrap();
+    let tip_height = storage.get_tip_height().await.unwrap();
     println!("Tip height: {}", tip_height);
 
     for height in boundary_heights {
@@ -461,7 +461,7 @@ async fn test_reproduce_tip_height_segment_eviction_race() {
         storage.store_headers(&headers).await.unwrap();
 
         // Immediately check for race condition
-        let tip_height = storage.get_tip_height().await.unwrap();
+        let tip_height = storage.get_tip_height().await;
 
         if let Some(height) = tip_height {
             // Try to access the tip header multiple times to catch race condition
@@ -542,7 +542,7 @@ async fn test_concurrent_tip_height_access_with_eviction() {
             // Reduced from 50 to 20 iterations
             for iteration in 0..20 {
                 // Get tip height
-                let tip_height = storage.get_tip_height().await.unwrap();
+                let tip_height = storage.get_tip_height().await;
 
                 if let Some(height) = tip_height {
                     // Immediately try to access the tip header
@@ -606,7 +606,7 @@ async fn test_concurrent_tip_height_access_with_eviction_heavy() {
         let handle = tokio::spawn(async move {
             for iteration in 0..50 {
                 // Get tip height
-                let tip_height = storage.get_tip_height().await.unwrap();
+                let tip_height = storage.get_tip_height().await;
 
                 if let Some(height) = tip_height {
                     // Immediately try to access the tip header
@@ -659,7 +659,7 @@ async fn test_tip_height_segment_boundary_race() {
         storage.store_headers(&headers).await.unwrap();
 
         // Verify tip is at segment boundary
-        let tip_height = storage.get_tip_height().await.unwrap();
+        let tip_height = storage.get_tip_height().await;
         assert_eq!(tip_height, Some(segment_size - 1));
 
         storage.shutdown().await;
@@ -678,7 +678,7 @@ async fn test_tip_height_segment_boundary_race() {
             storage.store_headers(&headers).await.unwrap();
 
             // After storing each segment, verify tip consistency
-            let reported_tip = storage.get_tip_height().await.unwrap();
+            let reported_tip = storage.get_tip_height().await;
             if let Some(tip) = reported_tip {
                 let header = storage.get_header(tip).await.unwrap();
                 if header.is_none() {
@@ -698,7 +698,7 @@ async fn test_tip_height_segment_boundary_race() {
         }
 
         // But the current tip should always be accessible
-        let current_tip = storage.get_tip_height().await.unwrap();
+        let current_tip = storage.get_tip_height().await;
         if let Some(tip) = current_tip {
             let header = storage.get_header(tip).await.unwrap();
             assert!(header.is_some(), "Current tip header must always be accessible");

@@ -57,7 +57,7 @@ async fn test_simple_header_sync() {
             .expect("Failed to create tmp storage");
 
     // Verify starting from empty state
-    assert_eq!(storage.get_tip_height().await.unwrap(), None);
+    assert_eq!(storage.get_tip_height().await, None);
 
     // Create network manager
     let network_manager =

@@ -177,11 +177,7 @@ impl TransitionManager {
         match current_phase {
             SyncPhase::Idle => {
                 // Always start with headers
-                let start_height = storage
-                    .get_tip_height()
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
-                    .unwrap_or(0);
+                let start_height = storage.get_tip_height().await.unwrap_or(0);
 
                 Ok(Some(SyncPhase::DownloadingHeaders {
                     start_time: Instant::now(),
@@ -199,13 +195,7 @@ impl TransitionManager {
                 ..
             } => {
                 if self.config.enable_masternodes {
-                    let header_tip = storage
-                        .get_tip_height()
-                        .await
-                        .map_err(|e| {
-                            SyncError::Storage(format!("Failed to get header tip: {}", e))
-                        })?
-                        .unwrap_or(0);
+                    let header_tip = storage.get_tip_height().await.unwrap_or(0);
 
                     let mn_height = match storage.load_masternode_state().await {
                         Ok(Some(state)) => state.last_height,
@@ -417,11 +407,7 @@ impl TransitionManager {
         &self,
         storage: &S,
     ) -> SyncResult<Option<SyncPhase>> {
-        let header_tip = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header tip: {}", e)))?
-            .unwrap_or(0);
+        let header_tip = storage.get_tip_height().await.unwrap_or(0);
 
         let filter_tip = storage
             .get_filter_tip_height()

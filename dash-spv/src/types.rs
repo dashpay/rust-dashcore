@@ -245,17 +245,8 @@ impl DetailedSyncProgress {
 ///
 /// ## Checkpoint Sync
 /// When syncing from a checkpoint (not genesis), `sync_base_height` is non-zero.
-/// The `headers` vector contains headers starting from the checkpoint, not from genesis.
-/// Use `tip_height()` to get the absolute blockchain height.
-///
-/// ## Memory Considerations
-/// - headers: ~80 bytes per header
-/// - At 2M blocks: ~160MB for headers
 #[derive(Clone, Default)]
 pub struct ChainState {
-    /// Block headers indexed by height.
-    pub headers: Vec<BlockHeader>,
-
     /// Last ChainLock height.
     pub last_chainlock_height: Option<u32>,
 
@@ -285,28 +276,6 @@ impl ChainState {
     pub fn new_for_network(network: Network) -> Self {
         let mut state = Self::default();
 
-        // Initialize with genesis block
-        let genesis_header = match network {
-            Network::Dash => {
-                // Use known genesis for mainnet
-                dashcore::blockdata::constants::genesis_block(network).header
-            }
-            Network::Testnet => {
-                // Use known genesis for testnet
-                dashcore::blockdata::constants::genesis_block(network).header
-            }
-            _ => {
-                // For other networks, use the existing genesis block function
-                dashcore::blockdata::constants::genesis_block(network).header
-            }
-        };
-
-        // Add genesis header to the chain state
-        state.headers.push(genesis_header);
-
-        tracing::debug!("Initialized ChainState with genesis block - network: {:?}, hash: {}, headers_count: {}",
-            network, genesis_header.block_hash(), state.headers.len());
-
         // Initialize masternode engine for the network
         let mut engine = MasternodeListEngine::default_for_network(network);
         if let Some(genesis_hash) = network.known_genesis_block_hash() {
@@ -323,57 +292,6 @@ impl ChainState {
     /// Whether the chain was synced from a checkpoint rather than genesis.
     pub fn synced_from_checkpoint(&self) -> bool {
         self.sync_base_height > 0
-    }
-
-    /// Get the current tip height.
-    pub fn tip_height(&self) -> u32 {
-        if self.headers.is_empty() {
-            // When headers is empty, sync_base_height represents our current position
-            // This happens when we're syncing from a checkpoint but haven't received headers yet
-            self.sync_base_height
-        } else {
-            // Normal case: base + number of headers - 1
-            self.sync_base_height + self.headers.len() as u32 - 1
-        }
-    }
-
-    /// Get the current tip hash.
-    pub fn tip_hash(&self) -> Option<BlockHash> {
-        self.headers.last().map(|h| h.block_hash())
-    }
-
-    /// Get header at the given height.
-    pub fn header_at_height(&self, height: u32) -> Option<&BlockHeader> {
-        if height < self.sync_base_height {
-            return None; // Height is before our sync base
-        }
-        let index = (height - self.sync_base_height) as usize;
-        self.headers.get(index)
-    }
-
-    /// Add headers to the chain.
-    pub fn add_headers(&mut self, headers: Vec<BlockHeader>) {
-        self.headers.extend(headers);
-    }
-
-    /// Get the tip header
-    pub fn get_tip_header(&self) -> Option<BlockHeader> {
-        self.headers.last().copied()
-    }
-
-    /// Get the height
-    pub fn get_height(&self) -> u32 {
-        self.tip_height()
-    }
-
-    /// Add a single header
-    pub fn add_header(&mut self, header: BlockHeader) {
-        self.headers.push(header);
-    }
-
-    /// Remove the tip header (for reorgs)
-    pub fn remove_tip(&mut self) -> Option<BlockHeader> {
-        self.headers.pop()
     }
 
     /// Update chain lock status
@@ -408,26 +326,6 @@ impl ChainState {
         Some(Vec::new())
     }
 
-    /// Calculate the total chain work up to the tip
-    pub fn calculate_chain_work(&self) -> Option<crate::chain::chain_work::ChainWork> {
-        use crate::chain::chain_work::ChainWork;
-
-        // If we have no headers, return None
-        if self.headers.is_empty() {
-            return None;
-        }
-
-        // Start with zero work
-        let mut total_work = ChainWork::zero();
-
-        // Add work from each header
-        for header in &self.headers {
-            total_work = total_work.add_header(header);
-        }
-
-        Some(total_work)
-    }
-
     /// Initialize chain state from a checkpoint.
     pub fn init_from_checkpoint(
         &mut self,
@@ -435,14 +333,8 @@ impl ChainState {
         checkpoint_header: BlockHeader,
         network: Network,
     ) {
-        // Clear any existing headers
-        self.headers.clear();
-
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
-
-        // Add the checkpoint header as our first header
-        self.headers.push(checkpoint_header);
 
         tracing::info!(
             "Initialized ChainState from checkpoint - height: {}, hash: {}, network: {:?}",
@@ -475,7 +367,6 @@ impl ChainState {
 impl std::fmt::Debug for ChainState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainState")
-            .field("headers", &format!("{} headers", self.headers.len()))
             .field("last_chainlock_height", &self.last_chainlock_height)
             .field("last_chainlock_hash", &self.last_chainlock_hash)
             .field("current_filter_tip", &self.current_filter_tip)
