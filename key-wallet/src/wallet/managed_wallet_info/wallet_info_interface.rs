@@ -15,6 +15,7 @@ use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletBalance};
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address as DashAddress, Address, Transaction};
 
 /// Trait that wallet info types must implement to work with WalletManager
@@ -45,11 +46,11 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Set the wallet's description
     fn set_description(&mut self, description: Option<String>);
 
-    /// Get the birth height for tracking
-    fn birth_height(&self) -> Option<u32>;
+    /// Get the birth height of the wallet
+    fn birth_height(&self) -> CoreBlockHeight;
 
     /// Set the birth height
-    fn set_birth_height(&mut self, height: Option<u32>);
+    fn set_birth_height(&mut self, height: CoreBlockHeight);
 
     /// Get the timestamp when first loaded
     fn first_loaded_at(&self) -> u64;
@@ -147,11 +148,11 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.description = description;
     }
 
-    fn birth_height(&self) -> Option<u32> {
+    fn birth_height(&self) -> CoreBlockHeight {
         self.metadata.birth_height
     }
 
-    fn set_birth_height(&mut self, height: Option<u32>) {
+    fn set_birth_height(&mut self, height: CoreBlockHeight) {
         self.metadata.birth_height = height;
     }
 
