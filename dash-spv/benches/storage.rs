@@ -6,6 +6,7 @@ use dash_spv::{
     Hash,
 };
 use dashcore::{block::Version, BlockHash, CompactTarget, Header};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use tempfile::TempDir;
 use tokio::runtime::Builder;
 
@@ -23,10 +24,12 @@ fn create_test_header(height: u32) -> Header {
 fn bench_disk_storage(c: &mut Criterion) {
     const CHUNK_SIZE: u32 = 13_000;
     const NUM_ELEMENTS: u32 = CHUNK_SIZE * 20;
+    const SEED: u64 = 42;
 
     let rt = Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
 
     let headers = (0..NUM_ELEMENTS).map(create_test_header).collect::<Vec<Header>>();
+    let mut rng = StdRng::seed_from_u64(SEED);
 
     c.bench_function("storage/disk/store", |b| {
         b.to_async(&rt).iter_batched(
@@ -58,7 +61,7 @@ fn bench_disk_storage(c: &mut Criterion) {
 
     c.bench_function("storage/disk/get", |b| {
         b.to_async(&rt).iter_batched(
-            || rand::random::<u32>() % NUM_ELEMENTS,
+            || rng.gen::<u32>() % NUM_ELEMENTS,
             async |height| {
                 let _ = storage.get_header(height).await.unwrap();
             },
