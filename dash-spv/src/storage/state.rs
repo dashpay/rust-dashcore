@@ -127,84 +127,6 @@ impl DiskStorageManager {
         Ok(Some(state))
     }
 
-    /// Store a ChainLock.
-    pub async fn store_chain_lock(
-        &mut self,
-        height: u32,
-        chain_lock: &dashcore::ChainLock,
-    ) -> StorageResult<()> {
-        let path = self.base_path.join("chainlocks").join(format!("chainlock_{:08}.bin", height));
-        let data = bincode::serialize(chain_lock).map_err(|e| {
-            crate::error::StorageError::WriteFailed(format!(
-                "Failed to serialize chain lock: {}",
-                e
-            ))
-        })?;
-
-        atomic_write(&path, &data).await?;
-        tracing::debug!("Stored chain lock at height {}", height);
-        Ok(())
-    }
-
-    /// Load a ChainLock.
-    pub async fn load_chain_lock(&self, height: u32) -> StorageResult<Option<dashcore::ChainLock>> {
-        let path = self.base_path.join("chainlocks").join(format!("chainlock_{:08}.bin", height));
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let data = tokio::fs::read(&path).await?;
-        let chain_lock = bincode::deserialize(&data).map_err(|e| {
-            crate::error::StorageError::ReadFailed(format!(
-                "Failed to deserialize chain lock: {}",
-                e
-            ))
-        })?;
-
-        Ok(Some(chain_lock))
-    }
-
-    /// Get ChainLocks in a height range.
-    pub async fn get_chain_locks(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<(u32, dashcore::ChainLock)>> {
-        let chainlocks_dir = self.base_path.join("chainlocks");
-
-        if !chainlocks_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut chain_locks = Vec::new();
-        let mut entries = tokio::fs::read_dir(&chainlocks_dir).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-
-            // Parse height from filename
-            if let Some(height_str) =
-                file_name_str.strip_prefix("chainlock_").and_then(|s| s.strip_suffix(".bin"))
-            {
-                if let Ok(height) = height_str.parse::<u32>() {
-                    if height >= start_height && height <= end_height {
-                        let path = entry.path();
-                        let data = tokio::fs::read(&path).await?;
-                        if let Ok(chain_lock) = bincode::deserialize(&data) {
-                            chain_locks.push((height, chain_lock));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort by height
-        chain_locks.sort_by_key(|(h, _)| *h);
-        Ok(chain_locks)
-    }
-
     /// Store metadata.
     pub async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("state/{}.dat", key));
@@ -221,104 +143,6 @@ impl DiskStorageManager {
 
         let data = tokio::fs::read(path).await?;
         Ok(Some(data))
-    }
-
-    /// Clear all storage.
-    pub async fn clear(&mut self) -> StorageResult<()> {
-        // First, stop the background worker to avoid races with file deletion
-        self.stop_worker().await;
-
-        // Clear in-memory state
-        self.block_headers.write().await.clear_in_memory();
-        self.filter_headers.write().await.clear_in_memory();
-        self.filters.write().await.clear_in_memory();
-
-        self.header_hash_index.write().await.clear();
-        self.mempool_transactions.write().await.clear();
-        *self.mempool_state.write().await = None;
-
-        // Remove all files and directories under base_path
-        if self.base_path.exists() {
-            // Best-effort removal; if concurrent files appear, retry once
-            match tokio::fs::remove_dir_all(&self.base_path).await {
-                Ok(_) => {}
-                Err(e) => {
-                    // Retry once after a short delay to handle transient races
-                    if e.kind() == std::io::ErrorKind::Other
-                        || e.kind() == std::io::ErrorKind::DirectoryNotEmpty
-                    {
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        tokio::fs::remove_dir_all(&self.base_path).await?;
-                    } else {
-                        return Err(crate::error::StorageError::Io(e));
-                    }
-                }
-            }
-            tokio::fs::create_dir_all(&self.base_path).await?;
-        }
-
-        // Recreate expected subdirectories
-        tokio::fs::create_dir_all(self.base_path.join("headers")).await?;
-        tokio::fs::create_dir_all(self.base_path.join("filters")).await?;
-        tokio::fs::create_dir_all(self.base_path.join("state")).await?;
-
-        // Restart the background worker for future operations
-        self.start_worker().await;
-
-        Ok(())
-    }
-
-    /// Shutdown the storage manager.
-    pub async fn shutdown(&mut self) {
-        // Persist all dirty data
-        self.save_dirty().await;
-
-        // Shutdown background worker
-        if let Some(tx) = self.worker_tx.take() {
-            // Save the header index before shutdown
-            let index = self.header_hash_index.read().await.clone();
-            let _ = tx
-                .send(super::manager::WorkerCommand::SaveIndex {
-                    index,
-                })
-                .await;
-            let _ = tx.send(super::manager::WorkerCommand::Shutdown).await;
-        }
-
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.await;
-        }
-    }
-
-    /// Save all dirty segments to disk via background worker.
-    pub(super) async fn save_dirty(&self) {
-        self.filter_headers.write().await.persist_dirty(self).await;
-        self.block_headers.write().await.persist_dirty(self).await;
-        self.filters.write().await.persist_dirty(self).await;
-
-        if let Some(tx) = &self.worker_tx {
-            // Save the index only if it has grown significantly (every 10k new entries)
-            let current_index_size = self.header_hash_index.read().await.len();
-            let last_save_count = *self.last_index_save_count.read().await;
-
-            // Save if index has grown by 10k entries, or if we've never saved before
-            if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
-                let index = self.header_hash_index.read().await.clone();
-                let _ = tx
-                    .send(WorkerCommand::SaveIndex {
-                        index,
-                    })
-                    .await;
-
-                // Update the last save count
-                *self.last_index_save_count.write().await = current_index_size;
-                tracing::debug!(
-                    "Scheduled index save (size: {}, last_save: {})",
-                    current_index_size,
-                    last_save_count
-                );
-            }
-        }
     }
 }
 
@@ -364,13 +188,6 @@ impl DiskStorageManager {
     /// Load mempool state.
     pub async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>> {
         Ok(self.mempool_state.read().await.clone())
-    }
-
-    /// Clear mempool.
-    pub async fn clear_mempool(&mut self) -> StorageResult<()> {
-        self.mempool_transactions.write().await.clear();
-        *self.mempool_state.write().await = None;
-        Ok(())
     }
 }
 
@@ -453,20 +270,6 @@ impl StorageManager for DiskStorageManager {
 
     async fn clear(&mut self) -> StorageResult<()> {
         Self::clear(self).await
-    }
-
-    async fn clear_filters(&mut self) -> StorageResult<()> {
-        // Stop worker to prevent concurrent writes to filter directories
-        self.stop_worker().await;
-
-        // Clear in-memory and on-disk filter headers segments
-        self.filter_headers.write().await.clear_all().await?;
-        self.filters.write().await.clear_all().await?;
-
-        // Restart background worker for future operations
-        self.start_worker().await;
-
-        Ok(())
     }
 
     async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
