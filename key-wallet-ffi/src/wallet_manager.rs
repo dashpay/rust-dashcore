@@ -33,7 +33,7 @@ pub struct FFIWalletManager {
 }
 
 impl FFIWalletManager {
-    /// Create a new FFIWalletManager from an Arc<RwLock<WalletManager>>
+    /// Create a new FFIWalletManager from an `Arc<RwLock<WalletManager>>`
     pub fn from_arc(
         manager: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
         runtime: Arc<tokio::runtime::Runtime>,

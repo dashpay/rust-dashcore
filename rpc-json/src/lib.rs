@@ -543,7 +543,7 @@ pub struct GetRawTransactionResultVin {
 
 impl GetRawTransactionResultVin {
     /// Whether this input is from a coinbase tx.
-    /// The [txid], [vout] and [script_sig] fields are not provided
+    /// The `txid`, `vout` and `script_sig` fields are not provided
     /// for coinbase transactions.
     pub fn is_coinbase(&self) -> bool {
         self.coinbase.is_some()
@@ -620,7 +620,7 @@ pub struct GetBlockFilterResult {
 impl GetBlockFilterResult {
     /// Get the filter.
     /// Note that this copies the underlying filter data. To prevent this,
-    /// use [into_filter] instead.
+    /// use [`Self::into_filter`] instead.
     pub fn to_filter(&self) -> bip158::BlockFilter {
         bip158::BlockFilter::new(&self.filter)
     }

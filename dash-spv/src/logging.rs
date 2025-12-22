@@ -74,7 +74,7 @@ pub fn init_console_logging(level: LevelFilter) -> LoggingResult<LoggingGuard> {
 /// Note: If neither console nor file output is enabled, logging is disabled
 /// (tracing macros become no-ops) and Ok is returned.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```no_run
 /// use dash_spv::logging::{init_logging, LoggingConfig, LogFileConfig};

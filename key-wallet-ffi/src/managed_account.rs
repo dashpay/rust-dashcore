@@ -2,7 +2,7 @@
 //!
 //! This module provides FFI-compatible managed account functionality that wraps
 //! ManagedAccount instances from the key-wallet crate. FFIManagedAccount is a
-//! simple wrapper around Arc<ManagedAccount> without additional fields.
+//! simple wrapper around `Arc<ManagedAccount>` without additional fields.
 
 use std::os::raw::c_uint;
 use std::sync::Arc;

@@ -105,7 +105,7 @@ fn empty_obj() -> Value {
 ///
 /// Note, that `defaults` corresponds to the last elements of `args`.
 ///
-/// ```norust
+/// ```text
 /// arg1 arg2 arg3 arg4
 ///           def1 def2
 /// ```
@@ -671,7 +671,7 @@ pub trait RpcApi: Sized {
         self.call("listunspent", handle_defaults(&mut args, &defaults))
     }
 
-    /// To unlock, use [unlock_unspent].
+    /// To unlock, use [`Self::unlock_unspent`].
     fn lock_unspent(&self, outputs: &[OutPoint]) -> Result<bool> {
         let outputs: Vec<_> =
             outputs.iter().map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap()).collect();

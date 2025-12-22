@@ -9,7 +9,7 @@
 //! - types/balances.rs - AddressBalance, UnconfirmedTransaction
 //!
 //! # Thread Safety
-//! Many types here are wrapped in Arc<RwLock> or Arc<Mutex> when used.
+//! Many types here are wrapped in `Arc<RwLock>` or `Arc<Mutex>` when used.
 //! Always acquire locks in consistent order to prevent deadlocks:
 //! 1. state (ChainState)
 //! 2. stats (SpvStats)
@@ -27,13 +27,13 @@ use std::sync::Arc;
 
 /// Shared, mutex-protected set of filter heights used across components.
 ///
-/// # Why Arc<Mutex<HashSet>>?
+/// # Why `Arc<Mutex<HashSet>>`?
 /// - Arc: Shared ownership between FilterSyncManager and SpvStats
 /// - Mutex: Interior mutability for concurrent updates from filter download tasks
 /// - HashSet: Fast O(1) membership testing for gap detection
 ///
 /// # Performance Note
-/// Consider Arc<RwLock> if read contention becomes an issue (most operations are reads).
+/// Consider `Arc<RwLock>` if read contention becomes an issue (most operations are reads).
 pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>;
 
 /// A block header with its cached hash to avoid expensive X11 recomputation.
@@ -240,7 +240,7 @@ impl DetailedSyncProgress {
 /// # CRITICAL: This is the heart of the SPV client's state
 ///
 /// ## Thread Safety
-/// Almost always wrapped in Arc<RwLock<ChainState>> for shared access.
+/// Almost always wrapped in `Arc<RwLock<ChainState>>` for shared access.
 /// Multiple readers can access simultaneously, but writes are exclusive.
 ///
 /// ## Checkpoint Sync

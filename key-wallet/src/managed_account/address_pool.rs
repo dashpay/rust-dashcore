@@ -24,7 +24,7 @@ use dashcore::{Address, AddressType, ScriptBuf};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[allow(clippy::upper_case_acronyms)]
 pub enum PublicKeyType {
-    /// ECDSA public key (standard Bitcoin/Dash addresses) - stored as Vec<u8> for serialization
+    /// ECDSA public key (standard Bitcoin/Dash addresses) - stored as `Vec<u8>` for serialization
     ECDSA(Vec<u8>),
     /// EdDSA public key (Ed25519, used in some Platform operations)
     EdDSA(Vec<u8>),

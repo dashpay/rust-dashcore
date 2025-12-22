@@ -13,7 +13,7 @@ use crate::{BlockHash, ProTxHash, QuorumHash, Transaction};
 /// - A full masternode list (if `base_block_hash` is all-zero)
 /// - An update to a previously requested masternode list
 ///
-/// https://docs.dash.org/en/stable/docs/core/reference/p2p-network-data-messages.html#getmnlistd
+/// <https://docs.dash.org/en/stable/docs/core/reference/p2p-network-data-messages.html#getmnlistd>
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct GetMnListDiff {
     /// Hash of a block the requester already has a valid masternode list of.
@@ -28,7 +28,7 @@ impl_consensus_encoding!(GetMnListDiff, base_block_hash, block_hash);
 /// The `mnlistdiff` message is a reply to a `getmnlistd` message which requested
 /// either a full masternode list or a diff for a range of blocks.
 ///
-/// https://docs.dash.org/en/stable/docs/core/reference/p2p-network-data-messages.html#mnlistdiff
+/// <https://docs.dash.org/en/stable/docs/core/reference/p2p-network-data-messages.html#mnlistdiff>
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

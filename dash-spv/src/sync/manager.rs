@@ -304,7 +304,7 @@ impl<
     /// - `filters_downloaded`: Should be calculated from storage
     /// - `last_synced_filter_height`: Should be queried from storage
     ///
-    /// # Example
+    /// # Examples
     /// ```ignore
     /// let mut progress = sync_manager.get_progress();
     /// progress.header_height = storage.get_tip_height().await?.unwrap_or(0);
