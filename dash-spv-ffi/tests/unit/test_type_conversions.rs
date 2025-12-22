@@ -165,13 +165,11 @@ mod tests {
         let state = dash_spv::ChainState {
             last_chainlock_height: None,
             last_chainlock_hash: None,
-            last_masternode_diff_height: None,
             sync_base_height: 0,
         };
 
         let ffi_state = FFIChainState::from(state);
 
-        assert_eq!(ffi_state.masternode_height, 0);
         assert_eq!(ffi_state.last_chainlock_height, 0);
         assert_eq!(ffi_state.current_filter_tip, 0);
 

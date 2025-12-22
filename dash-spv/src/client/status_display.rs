@@ -115,16 +115,27 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
         // Calculate the actual header height considering checkpoint sync
         let header_height = self.calculate_header_height(&state).await;
 
-        // Get filter header height from storage
         let storage = self.storage.lock().await;
+
+        // Get filter header height from storage
         let filter_header_height =
             storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
+
+        // Get masternode height from storage
+        let masternode_height = storage
+            .load_masternode_state()
+            .await
+            .ok()
+            .flatten()
+            .map(|state| state.last_height)
+            .unwrap_or(0);
+
         drop(storage);
 
         Ok(SyncProgress {
             header_height,
             filter_header_height,
-            masternode_height: state.last_masternode_diff_height.unwrap_or(0),
+            masternode_height,
             peer_count: 1,                // TODO: Get from network manager
             filter_sync_available: false, // TODO: Get from network manager
             filters_downloaded: filters_received,
