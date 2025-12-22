@@ -44,7 +44,6 @@ impl ChainStateStorage for PersistentChainStateStorage {
         let state_data = serde_json::json!({
             "last_chainlock_height": state.last_chainlock_height,
             "last_chainlock_hash": state.last_chainlock_hash,
-            "current_filter_tip": state.current_filter_tip,
             "last_masternode_diff_height": state.last_masternode_diff_height,
             "sync_base_height": state.sync_base_height,
         });
@@ -78,10 +77,6 @@ impl ChainStateStorage for PersistentChainStateStorage {
                 .map(|h| h as u32),
             last_chainlock_hash: value
                 .get("last_chainlock_hash")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok()),
-            current_filter_tip: value
-                .get("current_filter_tip")
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse().ok()),
             masternode_engine: None,

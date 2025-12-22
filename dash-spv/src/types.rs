@@ -20,7 +20,6 @@ use std::time::{Duration, Instant, SystemTime};
 use dashcore::{
     block::Header as BlockHeader,
     consensus::{Decodable, Encodable},
-    hash_types::FilterHeader,
     network::constants::NetworkExt,
     sml::masternode_list_engine::MasternodeListEngine,
     Amount, BlockHash, Network, Transaction, Txid,
@@ -265,9 +264,6 @@ pub struct ChainState {
     /// Last ChainLock hash.
     pub last_chainlock_hash: Option<BlockHash>,
 
-    /// Current filter tip.
-    pub current_filter_tip: Option<FilterHeader>,
-
     /// Masternode list engine.
     pub masternode_engine: Option<MasternodeListEngine>,
 
@@ -381,7 +377,6 @@ impl std::fmt::Debug for ChainState {
         f.debug_struct("ChainState")
             .field("last_chainlock_height", &self.last_chainlock_height)
             .field("last_chainlock_hash", &self.last_chainlock_hash)
-            .field("current_filter_tip", &self.current_filter_tip)
             .field("last_masternode_diff_height", &self.last_masternode_diff_height)
             .field("sync_base_height", &self.sync_base_height)
             .finish()

@@ -165,7 +165,6 @@ mod tests {
         let state = dash_spv::ChainState {
             last_chainlock_height: None,
             last_chainlock_hash: None,
-            current_filter_tip: None,
             masternode_engine: None,
             last_masternode_diff_height: None,
             sync_base_height: 0,
