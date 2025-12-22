@@ -47,7 +47,7 @@ fn main() {
         test_mnemonic,
         "", // No passphrase
         Network::Testnet,
-        Some(100_000), // Birth height
+        100_000,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );
 

@@ -3941,7 +3941,7 @@ bool wallet_manager_add_wallet_from_mnemonic(FFIWalletManager *manager,
  - `manager` must be a valid pointer to an FFIWalletManager instance
  - `mnemonic` must be a valid pointer to a null-terminated C string
  - `passphrase` must be a valid pointer to a null-terminated C string or null
- - `birth_height` is optional, pass 0 for default
+ - `birth_height` is the block height to start syncing from (0 = sync from genesis)
  - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
  - `downgrade_to_pubkey_wallet` if true, creates a watch-only or externally signable wallet
  - `allow_external_signing` if true AND downgrade_to_pubkey_wallet is true, creates an externally signable wallet

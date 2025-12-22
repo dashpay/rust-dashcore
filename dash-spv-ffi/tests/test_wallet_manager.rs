@@ -64,7 +64,7 @@ mod tests {
                     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
                     "",
                     Network::Dash,
-                    None,
+                    0,
                     WalletAccountCreationOptions::Default,
                     false,
                     false,

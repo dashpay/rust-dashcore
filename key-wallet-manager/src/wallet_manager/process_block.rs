@@ -174,23 +174,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
     }
 
-    async fn earliest_required_height(&self, network: Network) -> Option<CoreBlockHeight> {
-        let mut earliest: Option<CoreBlockHeight> = None;
-
-        for info in self.wallet_infos.values() {
-            // Only consider wallets that actually track this network AND have a known birth height
-            if info.network() == network {
-                if let Some(birth_height) = info.birth_height() {
-                    earliest = Some(match earliest {
-                        Some(current) => current.min(birth_height),
-                        None => birth_height,
-                    });
-                }
-            }
-        }
-
-        // Return None if no wallets with known birth heights were found for this network
-        earliest
+    async fn earliest_required_height(&self, network: Network) -> CoreBlockHeight {
+        self.wallet_infos
+            .values()
+            .filter(|info| info.network() == network)
+            .map(|info| info.birth_height())
+            .min()
+            .unwrap_or(0)
     }
 
     async fn describe(&self, network: Network) -> String {

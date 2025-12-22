@@ -215,7 +215,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
                 mnemonic_str,
                 passphrase_str,
                 network_rust,
-                None, // birth_height
+                0,
                 creation_options,
             )
         });
@@ -274,7 +274,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
 /// - `passphrase` must be a valid pointer to a null-terminated C string or null
-/// - `birth_height` is optional, pass 0 for default
+/// - `birth_height` is the block height to start syncing from (0 = sync from genesis)
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
 /// - `downgrade_to_pubkey_wallet` if true, creates a watch-only or externally signable wallet
 /// - `allow_external_signing` if true AND downgrade_to_pubkey_wallet is true, creates an externally signable wallet
@@ -368,13 +368,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
 
     // Get the manager and call the proper method
     let manager_ref = unsafe { &*manager };
-
-    // Convert birth_height: 0 means None, any other value means Some(value)
-    let birth_height = if birth_height == 0 {
-        None
-    } else {
-        Some(birth_height)
-    };
 
     let result = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;

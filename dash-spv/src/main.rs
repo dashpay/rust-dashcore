@@ -307,7 +307,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         mnemonic_phrase.as_str(),
         "",
         network,
-        None,
+        0,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));

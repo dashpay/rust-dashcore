@@ -17,7 +17,7 @@ mod tests {
             test_mnemonic,
             "",
             Network::Testnet,
-            Some(100_000),
+            100_000,
             WalletAccountCreationOptions::Default,
             false, // Don't downgrade
             false,
@@ -33,7 +33,7 @@ mod tests {
             test_mnemonic,
             "",
             Network::Testnet,
-            Some(100_000),
+            100_000,
             WalletAccountCreationOptions::Default,
             true,  // Downgrade to pubkey wallet
             false, // Watch-only, not externally signable
@@ -52,7 +52,7 @@ mod tests {
             test_mnemonic,
             "",
             Network::Testnet,
-            Some(100_000),
+            100_000,
             WalletAccountCreationOptions::Default,
             true, // Downgrade to pubkey wallet
             true, // Externally signable (for hardware wallets)
@@ -81,7 +81,7 @@ mod tests {
             test_mnemonic,
             passphrase,
             Network::Testnet,
-            None,
+            0,
             WalletAccountCreationOptions::Default,
             false,
             false,
@@ -96,7 +96,7 @@ mod tests {
             test_mnemonic,
             "", // No passphrase
             Network::Testnet,
-            None,
+            0,
             WalletAccountCreationOptions::Default,
             false,
             false,
