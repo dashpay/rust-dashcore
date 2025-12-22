@@ -78,41 +78,8 @@ pub struct ClientConfig {
     /// Maximum concurrent filter requests (default: 8).
     pub max_concurrent_filter_requests: usize,
 
-    /// Enable flow control for filter requests (default: true).
-    pub enable_filter_flow_control: bool,
-
     /// Delay between filter requests in milliseconds (default: 50).
     pub filter_request_delay_ms: u64,
-
-    /// Enable automatic CFHeader gap detection and restart
-    pub enable_cfheader_gap_restart: bool,
-
-    /// Interval for checking CFHeader gaps (seconds)
-    pub cfheader_gap_check_interval_secs: u64,
-
-    /// Cooldown between CFHeader restart attempts (seconds)
-    pub cfheader_gap_restart_cooldown_secs: u64,
-
-    /// Maximum CFHeader gap restart attempts
-    pub max_cfheader_gap_restart_attempts: u32,
-
-    /// Enable automatic filter gap detection and restart
-    pub enable_filter_gap_restart: bool,
-
-    /// Interval for checking filter gaps (seconds)
-    pub filter_gap_check_interval_secs: u64,
-
-    /// Minimum filter gap size to trigger restart (blocks)
-    pub min_filter_gap_size: u32,
-
-    /// Cooldown between filter restart attempts (seconds)
-    pub filter_gap_restart_cooldown_secs: u64,
-
-    /// Maximum filter gap restart attempts
-    pub max_filter_gap_restart_attempts: u32,
-
-    /// Maximum number of filters to sync in a single gap sync batch
-    pub max_filter_gap_sync_size: u32,
 
     // Mempool configuration
     /// Enable tracking of unconfirmed (mempool) transactions.
@@ -158,9 +125,6 @@ pub struct ClientConfig {
     // CFHeaders flow control configuration
     /// Maximum concurrent CFHeaders requests for parallel sync (default: 50).
     pub max_concurrent_cfheaders_requests_parallel: usize,
-
-    /// Enable flow control for CFHeaders requests (default: true).
-    pub enable_cfheaders_flow_control: bool,
 
     /// Timeout for CFHeaders requests in seconds (default: 30).
     pub cfheaders_request_timeout_secs: u64,
@@ -210,18 +174,7 @@ impl Default for ClientConfig {
             log_level: "info".to_string(),
             user_agent: None,
             max_concurrent_filter_requests: 16,
-            enable_filter_flow_control: true,
             filter_request_delay_ms: 0,
-            enable_cfheader_gap_restart: true,
-            cfheader_gap_check_interval_secs: 15,
-            cfheader_gap_restart_cooldown_secs: 30,
-            max_cfheader_gap_restart_attempts: 5,
-            enable_filter_gap_restart: true,
-            filter_gap_check_interval_secs: 20,
-            min_filter_gap_size: 10,
-            filter_gap_restart_cooldown_secs: 30,
-            max_filter_gap_restart_attempts: 5,
-            max_filter_gap_sync_size: 50000,
             // Mempool defaults
             enable_mempool_tracking: true,
             mempool_strategy: MempoolStrategy::FetchAll,
@@ -243,7 +196,6 @@ impl Default for ClientConfig {
             wallet_creation_time: None,
             // CFHeaders flow control defaults
             max_concurrent_cfheaders_requests_parallel: 50,
-            enable_cfheaders_flow_control: true,
             cfheaders_request_timeout_secs: 30,
             max_cfheaders_retries: 3,
             // QRInfo defaults (simplified per plan)
@@ -338,12 +290,6 @@ impl ClientConfig {
     /// Set maximum concurrent filter requests.
     pub fn with_max_concurrent_filter_requests(mut self, max_requests: usize) -> Self {
         self.max_concurrent_filter_requests = max_requests;
-        self
-    }
-
-    /// Enable or disable filter flow control.
-    pub fn with_filter_flow_control(mut self, enabled: bool) -> Self {
-        self.enable_filter_flow_control = enabled;
         self
     }
 

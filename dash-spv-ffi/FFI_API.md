@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 79
+**Total Functions**: 78
 
 ## Table of Contents
 
@@ -68,12 +68,11 @@ Functions: 27
 
 ### Synchronization
 
-Functions: 8
+Functions: 7
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_cancel_sync` | Cancels the sync operation | client |
-| `dash_spv_ffi_client_clear_sync_state` | Clear only the persisted sync-state snapshot | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
 | `dash_spv_ffi_client_is_filter_sync_available` | Check if compact filter sync is currently available | client |
 | `dash_spv_ffi_client_sync_to_tip` | Sync the SPV client to the chain tip | client |
@@ -95,7 +94,7 @@ Functions: 5
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_broadcast_transaction` | No description | broadcast |
+| `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | broadcast |
 | `dash_spv_ffi_client_get_blocks_with_transactions_count` | Get the count of blocks that contained relevant transactions | client |
 | `dash_spv_ffi_client_get_transaction_count` | Get the total count of transactions across all wallets | client |
 | `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  #... | types |
@@ -263,7 +262,7 @@ dash_spv_ffi_config_add_peer(config: *mut FFIClientConfig, addr: *const c_char,)
 ```
 
 **Description:**
-Adds a peer address to the configuration  Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999") or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
+Adds a peer address to the configuration  Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`) or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
@@ -672,22 +671,6 @@ The client pointer must be valid and non-null.
 
 ---
 
-#### `dash_spv_ffi_client_clear_sync_state`
-
-```c
-dash_spv_ffi_client_clear_sync_state(client: *mut FFIDashSpvClient,) -> i32
-```
-
-**Description:**
-Clear only the persisted sync-state snapshot.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_client_get_sync_progress`
 
 ```c
@@ -809,6 +792,12 @@ Destroys the addresses array allocated for an FFIUnconfirmedTransaction  # Safet
 ```c
 dash_spv_ffi_client_broadcast_transaction(client: *mut FFIDashSpvClient, tx_hex: *const c_char,) -> i32
 ```
+
+**Description:**
+Broadcasts a transaction to the Dash network via connected peers.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string containing a hex-encoded serialized transaction
+
+**Safety:**
+- `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string containing a hex-encoded serialized transaction
 
 **Module:** `broadcast`
 
@@ -1312,14 +1301,14 @@ Destroys an array of filter match entries.  # Safety  - `matches` must be a vali
 #### `dash_spv_ffi_init_logging`
 
 ```c
-dash_spv_ffi_init_logging(level: *const c_char) -> i32
+dash_spv_ffi_init_logging(level: *const c_char, enable_console: bool, log_dir: *const c_char, max_files: usize,) -> i32
 ```
 
 **Description:**
-Initialize logging for the SPV library.  # Safety - `level` may be null or point to a valid, NUL-terminated C string. - If non-null, the pointer must remain valid for the duration of this call.
+Initialize logging for the SPV library.  # Arguments - `level`: Log level string (null uses RUST_LOG env var or defaults to INFO). Valid values: "error", "warn", "info", "debug", "trace" - `enable_console`: Whether to output logs to console (stderr) - `log_dir`: Directory for log files (null to disable file logging) - `max_files`: Maximum archived log files to retain (ignored if log_dir is null)  # Safety - `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
 
 **Safety:**
-- `level` may be null or point to a valid, NUL-terminated C string. - If non-null, the pointer must remain valid for the duration of this call.
+- `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
 
 **Module:** `utils`
 

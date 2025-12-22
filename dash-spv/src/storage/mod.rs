@@ -1,13 +1,16 @@
 //! Storage abstraction for the Dash SPV client.
 
-pub mod disk;
-pub mod memory;
-pub mod sync_state;
-pub mod sync_storage;
+pub(crate) mod io;
+
 pub mod types;
 
+mod headers;
+mod lockfile;
+mod manager;
+mod segments;
+mod state;
+
 use async_trait::async_trait;
-use std::any::Any;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -16,41 +19,8 @@ use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Txid};
 use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
-pub use disk::DiskStorageManager;
-pub use memory::MemoryStorageManager;
-pub use sync_state::{PersistentSyncState, RecoverySuggestion, SyncStateValidation};
-pub use sync_storage::MemoryStorage;
+pub use manager::DiskStorageManager;
 pub use types::*;
-
-use crate::error::StorageError;
-use dashcore::BlockHash;
-
-/// Synchronous storage trait for chain operations
-pub trait ChainStorage: Send + Sync {
-    /// Get a header by its block hash
-    fn get_header(&self, hash: &BlockHash) -> Result<Option<BlockHeader>, StorageError>;
-
-    /// Get a header by its height
-    fn get_header_by_height(&self, height: u32) -> Result<Option<BlockHeader>, StorageError>;
-
-    /// Get the height of a block by its hash
-    fn get_header_height(&self, hash: &BlockHash) -> Result<Option<u32>, StorageError>;
-
-    /// Store a header at a specific height
-    fn store_header(&self, header: &BlockHeader, height: u32) -> Result<(), StorageError>;
-
-    /// Get transaction IDs in a block
-    fn get_block_transactions(
-        &self,
-        block_hash: &BlockHash,
-    ) -> Result<Option<Vec<dashcore::Txid>>, StorageError>;
-
-    /// Get a transaction by its ID
-    fn get_transaction(
-        &self,
-        txid: &dashcore::Txid,
-    ) -> Result<Option<dashcore::Transaction>, StorageError>;
-}
 
 /// Storage manager trait for abstracting data persistence.
 ///
@@ -75,11 +45,11 @@ pub trait ChainStorage: Send + Sync {
 /// ```rust,no_run
 /// # use std::sync::Arc;
 /// # use tokio::sync::Mutex;
-/// # use dash_spv::storage::{StorageManager, MemoryStorageManager};
+/// # use dash_spv::storage::DiskStorageManager;
 /// # use dashcore::blockdata::block::Header as BlockHeader;
 /// #
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let storage: Arc<Mutex<dyn StorageManager>> = Arc::new(Mutex::new(MemoryStorageManager::new().await?));
+/// let storage: Arc<Mutex<DiskStorageManager>> = Arc::new(Mutex::new(DiskStorageManager::new("./.tmp/example-storage".into()).await?));
 /// let headers: Vec<BlockHeader> = vec![]; // Your headers here
 ///
 /// // In async context:
@@ -101,8 +71,6 @@ pub trait ChainStorage: Send + Sync {
 /// at a time when using external synchronization, which naturally provides consistency.
 #[async_trait]
 pub trait StorageManager: Send + Sync {
-    /// Convert to Any for downcasting
-    fn as_any_mut(&mut self) -> &mut dyn Any;
     /// Store block headers.
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()>;
 
@@ -142,16 +110,8 @@ pub trait StorageManager: Send + Sync {
     /// Store a compact filter at a blockchain height.
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()>;
 
-    /// Load a compact filter by blockchain height.
-    async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>>;
-
     /// Load compact filters in the given blockchain height range.
-    /// Returns a vector of tuples (height, filter_data) for filters that exist in the range.
-    /// Missing filters are skipped (not included in the result).
-    ///
-    /// # Limits
-    /// The range must not exceed 10,000 blocks. Larger ranges will return an error.
-    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<(u32, Vec<u8>)>>;
+    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>>;
 
     /// Store metadata.
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()>;
@@ -165,47 +125,13 @@ pub trait StorageManager: Send + Sync {
     /// Clear all filter headers and compact filters.
     async fn clear_filters(&mut self) -> StorageResult<()>;
 
-    /// Get storage statistics.
-    async fn stats(&self) -> StorageResult<StorageStats>;
-
     /// Get header height by block hash (reverse lookup).
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,
     ) -> StorageResult<Option<u32>>;
 
-    /// Get multiple headers in a single batch operation using blockchain heights.
-    /// Returns headers with their heights. More efficient than calling get_header multiple times.
-    async fn get_headers_batch(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<(u32, BlockHeader)>>;
-
     // UTXO methods removed - handled by external wallet
-
-    /// Store persistent sync state.
-    async fn store_sync_state(&mut self, state: &PersistentSyncState) -> StorageResult<()>;
-
-    /// Load persistent sync state.
-    async fn load_sync_state(&self) -> StorageResult<Option<PersistentSyncState>>;
-
-    /// Clear sync state (for recovery).
-    async fn clear_sync_state(&mut self) -> StorageResult<()>;
-
-    /// Store a sync checkpoint.
-    async fn store_sync_checkpoint(
-        &mut self,
-        height: u32,
-        checkpoint: &sync_state::SyncCheckpoint,
-    ) -> StorageResult<()>;
-
-    /// Get sync checkpoints in a height range.
-    async fn get_sync_checkpoints(
-        &self,
-        start_height: u32,
-        end_height: u32,
-    ) -> StorageResult<Vec<sync_state::SyncCheckpoint>>;
 
     /// Store a chain lock.
     async fn store_chain_lock(
@@ -257,15 +183,4 @@ pub trait StorageManager: Send + Sync {
 
     /// Shutdown the storage manager
     async fn shutdown(&mut self) -> StorageResult<()>;
-}
-
-/// Helper trait to provide as_any_mut for all StorageManager implementations
-pub trait AsAnyMut {
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-}
-
-impl<T: 'static> AsAnyMut for T {
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }

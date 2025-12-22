@@ -7,83 +7,54 @@ use super::root_extended_keys::RootExtendedPrivKey;
 use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
-use crate::{AccountCollection, Error, Network};
+use crate::Error;
 use alloc::vec::Vec;
 use hex;
 
 impl Wallet {
-    /// Get the networks supported for the wallet
-    pub fn networks_supported(&self) -> Vec<Network> {
-        self.accounts.keys().cloned().collect()
-    }
-    /// Get the collection of accounts on a network
-    pub fn accounts_on_network(&self, network: Network) -> Option<&AccountCollection> {
-        self.accounts.get(&network)
-    }
-    /// Get a bip44 account by network and index
-    pub fn get_bip44_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.accounts
-            .get(&network)
-            .and_then(|collection| collection.standard_bip44_accounts.get(&index))
+    /// Get a bip44 account and index
+    pub fn get_bip44_account(&self, index: u32) -> Option<&Account> {
+        self.accounts.standard_bip44_accounts.get(&index)
     }
 
-    /// Get a bip32 account by network and index
-    pub fn get_bip32_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.accounts
-            .get(&network)
-            .and_then(|collection| collection.standard_bip32_accounts.get(&index))
+    /// Get a bip32 account and index
+    pub fn get_bip32_account(&self, index: u32) -> Option<&Account> {
+        self.accounts.standard_bip32_accounts.get(&index)
     }
 
-    /// Get a coinjoin account by network and index
-    pub fn get_coinjoin_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.accounts.get(&network).and_then(|collection| collection.coinjoin_accounts.get(&index))
+    /// Get a coinjoin account and index
+    pub fn get_coinjoin_account(&self, index: u32) -> Option<&Account> {
+        self.accounts.coinjoin_accounts.get(&index)
     }
 
-    /// Get a mutable bip44 account by network and index
-    pub fn get_bip44_account_mut(&mut self, network: Network, index: u32) -> Option<&mut Account> {
-        self.accounts
-            .get_mut(&network)
-            .and_then(|collection| collection.standard_bip44_accounts.get_mut(&index))
+    /// Get a mutable bip44 account by index
+    pub fn get_bip44_account_mut(&mut self, index: u32) -> Option<&mut Account> {
+        self.accounts.standard_bip44_accounts.get_mut(&index)
     }
 
-    /// Get a mutable bip32 account by network and index
-    pub fn get_bip32_account_mut(&mut self, network: Network, index: u32) -> Option<&mut Account> {
-        self.accounts
-            .get_mut(&network)
-            .and_then(|collection| collection.standard_bip32_accounts.get_mut(&index))
+    /// Get a mutable bip32 account and index
+    pub fn get_bip32_account_mut(&mut self, index: u32) -> Option<&mut Account> {
+        self.accounts.standard_bip32_accounts.get_mut(&index)
     }
 
-    /// Get a mutable coinjoin account by network and index
-    pub fn get_coinjoin_account_mut(
-        &mut self,
-        network: Network,
-        index: u32,
-    ) -> Option<&mut Account> {
-        self.accounts
-            .get_mut(&network)
-            .and_then(|collection| collection.coinjoin_accounts.get_mut(&index))
+    /// Get a mutable coinjoin account by index
+    pub fn get_coinjoin_account_mut(&mut self, index: u32) -> Option<&mut Account> {
+        self.accounts.coinjoin_accounts.get_mut(&index)
     }
 
     /// Get all accounts (both standard and coinjoin)
     pub fn all_accounts(&self) -> Vec<&Account> {
-        let mut accounts = Vec::new();
-        for collection in self.accounts.values() {
-            accounts.extend(collection.all_accounts());
-        }
-        accounts
+        self.accounts.all_accounts()
     }
 
     /// Get the count of accounts (both standard and coinjoin)
     pub fn account_count(&self) -> usize {
-        self.accounts.values().map(|collection| collection.count()).sum()
+        self.accounts.count()
     }
 
-    /// Get all account indices for a network (both standard and coinjoin)
-    pub fn account_indices(&self, network: Network) -> Vec<u32> {
-        let mut indices = Vec::new();
-        if let Some(collection) = self.accounts.get(&network) {
-            indices.extend(collection.all_indices());
-        }
+    /// Get all account indices (both standard and coinjoin)
+    pub fn account_indices(&self) -> Vec<u32> {
+        let mut indices = self.accounts.all_indices();
         indices.sort();
         indices
     }
@@ -116,10 +87,8 @@ impl Wallet {
         watch_only.wallet_type = WalletType::WatchOnly(root_pub_key);
 
         // Convert all accounts to watch-only
-        for collection in watch_only.accounts.values_mut() {
-            for account in collection.all_accounts_mut() {
-                *account = account.to_watch_only();
-            }
+        for account in watch_only.accounts.all_accounts_mut() {
+            *account = account.to_watch_only();
         }
 
         watch_only
@@ -162,7 +131,6 @@ impl Wallet {
     pub(crate) fn create_accounts_from_options(
         &mut self,
         options: WalletAccountCreationOptions,
-        network: Network,
     ) -> Result<()> {
         if matches!(self.wallet_type, WalletType::MnemonicWithPassphrase { .. }) {
             return Err(Error::InvalidParameter(
@@ -177,7 +145,6 @@ impl Wallet {
                         index: 0,
                         standard_account_type: StandardAccountType::BIP32Account,
                     },
-                    network,
                     None,
                 )?;
 
@@ -187,7 +154,6 @@ impl Wallet {
                         index: 0,
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
-                    network,
                     None,
                 )?;
 
@@ -196,12 +162,11 @@ impl Wallet {
                     AccountType::CoinJoin {
                         index: 0,
                     },
-                    network,
                     None,
                 )?;
 
                 // Create all special purpose accounts
-                self.create_special_purpose_accounts(network)?;
+                self.create_special_purpose_accounts()?;
             }
 
             WalletAccountCreationOptions::AllAccounts(
@@ -217,7 +182,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP44Account,
                         },
-                        network,
                         None,
                     )?;
                 }
@@ -229,7 +193,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP32Account,
                         },
-                        network,
                         None,
                     )?;
                 }
@@ -240,7 +203,6 @@ impl Wallet {
                         AccountType::CoinJoin {
                             index,
                         },
-                        network,
                         None,
                     )?;
                 }
@@ -251,13 +213,12 @@ impl Wallet {
                         AccountType::IdentityTopUp {
                             registration_index,
                         },
-                        network,
                         None,
                     )?;
                 }
 
                 // Create all special purpose accounts
-                self.create_special_purpose_accounts(network)?;
+                self.create_special_purpose_accounts()?;
             }
 
             WalletAccountCreationOptions::BIP44AccountsOnly(bip44_indices) => {
@@ -268,7 +229,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP44Account,
                         },
-                        network,
                         None,
                     )?;
                 }
@@ -288,7 +248,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP44Account,
                         },
-                        network,
                         None,
                     )?;
                 }
@@ -300,7 +259,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP32Account,
                         },
-                        network,
                         None,
                     )?;
                 }
@@ -311,7 +269,6 @@ impl Wallet {
                         AccountType::CoinJoin {
                             index,
                         },
-                        network,
                         None,
                     )?;
                 }
@@ -322,7 +279,6 @@ impl Wallet {
                         AccountType::IdentityTopUp {
                             registration_index,
                         },
-                        network,
                         None,
                     )?;
                 }
@@ -330,7 +286,7 @@ impl Wallet {
                 // Create any additional special accounts if provided
                 if let Some(special_types) = special_accounts {
                     for account_type in special_types {
-                        self.add_account(account_type, network, None)?;
+                        self.add_account(account_type, None)?;
                     }
                 }
             }
@@ -348,7 +304,6 @@ impl Wallet {
         &mut self,
         options: WalletAccountCreationOptions,
         passphrase: &str,
-        network: Network,
     ) -> Result<()> {
         if !matches!(self.wallet_type, WalletType::MnemonicWithPassphrase { .. }) {
             return Err(Error::InvalidParameter(
@@ -363,7 +318,6 @@ impl Wallet {
                         index: 0,
                         standard_account_type: StandardAccountType::BIP32Account,
                     },
-                    network,
                     passphrase,
                 )?;
 
@@ -373,7 +327,6 @@ impl Wallet {
                         index: 0,
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
-                    network,
                     passphrase,
                 )?;
 
@@ -382,12 +335,11 @@ impl Wallet {
                     AccountType::CoinJoin {
                         index: 0,
                     },
-                    network,
                     passphrase,
                 )?;
 
                 // Create all special purpose accounts
-                self.create_special_purpose_accounts_with_passphrase(passphrase, network)?;
+                self.create_special_purpose_accounts_with_passphrase(passphrase)?;
             }
 
             WalletAccountCreationOptions::AllAccounts(
@@ -403,7 +355,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP44Account,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
@@ -415,7 +366,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP32Account,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
@@ -426,7 +376,6 @@ impl Wallet {
                         AccountType::CoinJoin {
                             index,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
@@ -437,13 +386,12 @@ impl Wallet {
                         AccountType::IdentityTopUp {
                             registration_index,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
 
                 // Create all special purpose accounts
-                self.create_special_purpose_accounts_with_passphrase(passphrase, network)?;
+                self.create_special_purpose_accounts_with_passphrase(passphrase)?;
             }
 
             WalletAccountCreationOptions::BIP44AccountsOnly(bip44_indices) => {
@@ -454,7 +402,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP44Account,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
@@ -474,7 +421,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP44Account,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
@@ -486,7 +432,6 @@ impl Wallet {
                             index,
                             standard_account_type: StandardAccountType::BIP32Account,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
@@ -497,7 +442,6 @@ impl Wallet {
                         AccountType::CoinJoin {
                             index,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
@@ -508,7 +452,6 @@ impl Wallet {
                         AccountType::IdentityTopUp {
                             registration_index,
                         },
-                        network,
                         passphrase,
                     )?;
                 }
@@ -516,7 +459,7 @@ impl Wallet {
                 // Create any additional special accounts if provided
                 if let Some(special_types) = special_accounts {
                     for account_type in special_types {
-                        self.add_account_with_passphrase(account_type, network, passphrase)?;
+                        self.add_account_with_passphrase(account_type, passphrase)?;
                     }
                 }
             }
@@ -530,61 +473,45 @@ impl Wallet {
     }
 
     /// Create all special purpose accounts
-    fn create_special_purpose_accounts(&mut self, network: Network) -> Result<()> {
+    fn create_special_purpose_accounts(&mut self) -> Result<()> {
         // Identity registration account
-        self.add_account(AccountType::IdentityRegistration, network, None)?;
+        self.add_account(AccountType::IdentityRegistration, None)?;
 
         // Identity invitation account
-        self.add_account(AccountType::IdentityInvitation, network, None)?;
+        self.add_account(AccountType::IdentityInvitation, None)?;
 
         // Identity top-up not bound to identity
-        self.add_account(AccountType::IdentityTopUpNotBoundToIdentity, network, None)?;
+        self.add_account(AccountType::IdentityTopUpNotBoundToIdentity, None)?;
 
         // Provider keys accounts
-        self.add_account(AccountType::ProviderVotingKeys, network, None)?;
-        self.add_account(AccountType::ProviderOwnerKeys, network, None)?;
+        self.add_account(AccountType::ProviderVotingKeys, None)?;
+        self.add_account(AccountType::ProviderOwnerKeys, None)?;
         #[cfg(feature = "bls")]
-        self.add_bls_account(AccountType::ProviderOperatorKeys, network, None)?;
+        self.add_bls_account(AccountType::ProviderOperatorKeys, None)?;
         #[cfg(feature = "eddsa")]
-        self.add_eddsa_account(AccountType::ProviderPlatformKeys, network, None)?;
+        self.add_eddsa_account(AccountType::ProviderPlatformKeys, None)?;
 
         Ok(())
     }
 
     /// Create all special purpose accounts
-    fn create_special_purpose_accounts_with_passphrase(
-        &mut self,
-        passphrase: &str,
-        network: Network,
-    ) -> Result<()> {
+    fn create_special_purpose_accounts_with_passphrase(&mut self, passphrase: &str) -> Result<()> {
         // Identity registration account
-        self.add_account_with_passphrase(AccountType::IdentityRegistration, network, passphrase)?;
+        self.add_account_with_passphrase(AccountType::IdentityRegistration, passphrase)?;
 
         // Identity invitation account
-        self.add_account_with_passphrase(AccountType::IdentityInvitation, network, passphrase)?;
+        self.add_account_with_passphrase(AccountType::IdentityInvitation, passphrase)?;
 
         // Identity top-up not bound to identity
-        self.add_account_with_passphrase(
-            AccountType::IdentityTopUpNotBoundToIdentity,
-            network,
-            passphrase,
-        )?;
+        self.add_account_with_passphrase(AccountType::IdentityTopUpNotBoundToIdentity, passphrase)?;
 
         // Provider keys accounts
-        self.add_account_with_passphrase(AccountType::ProviderVotingKeys, network, passphrase)?;
-        self.add_account_with_passphrase(AccountType::ProviderOwnerKeys, network, passphrase)?;
+        self.add_account_with_passphrase(AccountType::ProviderVotingKeys, passphrase)?;
+        self.add_account_with_passphrase(AccountType::ProviderOwnerKeys, passphrase)?;
         #[cfg(feature = "bls")]
-        self.add_bls_account_with_passphrase(
-            AccountType::ProviderOperatorKeys,
-            network,
-            passphrase,
-        )?;
+        self.add_bls_account_with_passphrase(AccountType::ProviderOperatorKeys, passphrase)?;
         #[cfg(feature = "eddsa")]
-        self.add_eddsa_account_with_passphrase(
-            AccountType::ProviderPlatformKeys,
-            network,
-            passphrase,
-        )?;
+        self.add_eddsa_account_with_passphrase(AccountType::ProviderPlatformKeys, passphrase)?;
 
         Ok(())
     }
@@ -596,7 +523,6 @@ impl Wallet {
     /// For MnemonicWithPassphrase wallets, you must provide the passphrase.
     ///
     /// # Arguments
-    /// * `network` - The network to derive for
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     /// * `passphrase` - Optional passphrase for MnemonicWithPassphrase wallets
     ///
@@ -604,7 +530,6 @@ impl Wallet {
     /// The extended private key, or an error if the wallet is watch-only or path is invalid
     pub fn derive_extended_private_key_with_passphrase(
         &self,
-        network: Network,
         path: &crate::DerivationPath,
         passphrase: Option<&str>,
     ) -> Result<crate::bip32::ExtendedPrivKey> {
@@ -616,7 +541,7 @@ impl Wallet {
             WalletType::Mnemonic {
                 root_extended_private_key,
                 ..
-            } => root_extended_private_key.to_extended_priv_key(network),
+            } => root_extended_private_key.to_extended_priv_key(self.network),
             WalletType::MnemonicWithPassphrase {
                 mnemonic,
                 ..
@@ -625,13 +550,13 @@ impl Wallet {
                     "Passphrase required for this wallet type".to_string(),
                 ))?;
                 let seed = mnemonic.to_seed(pass);
-                ExtendedPrivKey::new_master(network, &seed)?
+                ExtendedPrivKey::new_master(self.network, &seed)?
             }
             WalletType::Seed {
                 root_extended_private_key,
                 ..
-            } => root_extended_private_key.to_extended_priv_key(network),
-            WalletType::ExtendedPrivKey(root_priv) => root_priv.to_extended_priv_key(network),
+            } => root_extended_private_key.to_extended_priv_key(self.network),
+            WalletType::ExtendedPrivKey(root_priv) => root_priv.to_extended_priv_key(self.network),
             WalletType::ExternalSignable(_) | WalletType::WatchOnly(_) => {
                 return Err(Error::InvalidParameter(
                     "Cannot derive private keys from watch-only wallet".to_string(),
@@ -651,17 +576,15 @@ impl Wallet {
     /// For MnemonicWithPassphrase wallets, this will fail.
     ///
     /// # Arguments
-    /// * `network` - The network to derive for
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
     /// The extended private key, or an error if the wallet is watch-only or path is invalid
     pub fn derive_extended_private_key(
         &self,
-        network: Network,
         path: &crate::DerivationPath,
     ) -> Result<crate::bip32::ExtendedPrivKey> {
-        self.derive_extended_private_key_with_passphrase(network, path, None)
+        self.derive_extended_private_key_with_passphrase(path, None)
     }
 
     /// Derive a private key at a specific derivation path
@@ -671,17 +594,12 @@ impl Wallet {
     /// For MnemonicWithPassphrase wallets, this will fail.
     ///
     /// # Arguments
-    /// * `network` - The network to derive for
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
     /// The private key (SecretKey), or an error if the wallet is watch-only or path is invalid
-    pub fn derive_private_key(
-        &self,
-        network: Network,
-        path: &crate::DerivationPath,
-    ) -> Result<secp256k1::SecretKey> {
-        let extended = self.derive_extended_private_key(network, path)?;
+    pub fn derive_private_key(&self, path: &crate::DerivationPath) -> Result<secp256k1::SecretKey> {
+        let extended = self.derive_extended_private_key(path)?;
         Ok(extended.private_key)
     }
 
@@ -692,23 +610,18 @@ impl Wallet {
     /// For MnemonicWithPassphrase wallets, this will fail.
     ///
     /// # Arguments
-    /// * `network` - The network to derive for
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
     /// The private key in WIF format, or an error if the wallet is watch-only or path is invalid
-    pub fn derive_private_key_as_wif(
-        &self,
-        network: Network,
-        path: &crate::DerivationPath,
-    ) -> Result<String> {
-        let private_key = self.derive_private_key(network, path)?;
+    pub fn derive_private_key_as_wif(&self, path: &crate::DerivationPath) -> Result<String> {
+        let private_key = self.derive_private_key(path)?;
 
         // Convert to WIF format
         use dashcore::PrivateKey as DashPrivateKey;
         let dash_key = DashPrivateKey {
             compressed: true,
-            network,
+            network: self.network,
             inner: private_key,
         };
         Ok(dash_key.to_wif())
@@ -720,14 +633,12 @@ impl Wallet {
     /// For non-hardened paths, this works with watch-only wallets.
     ///
     /// # Arguments
-    /// * `network` - The network to derive for
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
     /// The extended public key, or an error if the path is invalid
     pub fn derive_extended_public_key(
         &self,
-        network: Network,
         path: &crate::DerivationPath,
     ) -> Result<crate::bip32::ExtendedPubKey> {
         use secp256k1::Secp256k1;
@@ -743,14 +654,14 @@ impl Wallet {
 
         if has_hardened {
             // For hardened paths, derive the extended private key first, then get extended public key
-            let extended_private = self.derive_extended_private_key(network, path)?;
+            let extended_private = self.derive_extended_private_key(path)?;
             use crate::bip32::ExtendedPubKey;
             let secp = Secp256k1::new();
             Ok(ExtendedPubKey::from_priv(&secp, &extended_private))
         } else {
             // For non-hardened paths, derive directly from public key
             let secp = Secp256k1::new();
-            let xpub = self.root_extended_pub_key().to_extended_pub_key(network);
+            let xpub = self.root_extended_pub_key().to_extended_pub_key(self.network);
             xpub.derive_pub(&secp, path).map_err(|e| e.into())
         }
     }
@@ -761,16 +672,11 @@ impl Wallet {
     /// For non-hardened paths, this works with watch-only wallets.
     ///
     /// # Arguments
-    /// * `network` - The network to derive for
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
     /// The public key (secp256k1::PublicKey), or an error if the path is invalid
-    pub fn derive_public_key(
-        &self,
-        network: Network,
-        path: &crate::DerivationPath,
-    ) -> Result<secp256k1::PublicKey> {
+    pub fn derive_public_key(&self, path: &crate::DerivationPath) -> Result<secp256k1::PublicKey> {
         // Check if the path contains hardened derivation
         let has_hardened = path.into_iter().any(|child| child.is_hardened());
 
@@ -782,13 +688,13 @@ impl Wallet {
 
         if has_hardened {
             // For hardened paths, derive the private key first, then get public key
-            let private_key = self.derive_private_key(network, path)?;
+            let private_key = self.derive_private_key(path)?;
             use secp256k1::Secp256k1;
             let secp = Secp256k1::new();
             Ok(secp256k1::PublicKey::from_secret_key(&secp, &private_key))
         } else {
             // For non-hardened paths, derive directly from public key
-            let extended = self.derive_extended_public_key(network, path)?;
+            let extended = self.derive_extended_public_key(path)?;
             Ok(extended.public_key)
         }
     }
@@ -799,17 +705,12 @@ impl Wallet {
     /// For non-hardened paths, this works with watch-only wallets.
     ///
     /// # Arguments
-    /// * `network` - The network to derive for
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
     /// The public key as hex string, or an error if the path is invalid
-    pub fn derive_public_key_as_hex(
-        &self,
-        network: Network,
-        path: &crate::DerivationPath,
-    ) -> Result<String> {
-        let public_key = self.derive_public_key(network, path)?;
+    pub fn derive_public_key_as_hex(&self, path: &crate::DerivationPath) -> Result<String> {
+        let public_key = self.derive_public_key(path)?;
 
         // Return as hex string
         let serialized = public_key.serialize(); // compressed
@@ -824,7 +725,6 @@ impl Wallet {
     /// # Arguments
     /// * `account_type` - The type of account to get the xpub for
     /// * `account_index` - The account index for indexed account types
-    /// * `network` - The network to look up accounts for
     ///
     /// # Returns
     /// The extended public key for the account, or None if not found
@@ -832,48 +732,51 @@ impl Wallet {
         &self,
         account_type: &crate::transaction_checking::transaction_router::AccountTypeToCheck,
         account_index: Option<u32>,
-        network: Network,
     ) -> Option<crate::bip32::ExtendedPubKey> {
-        self.accounts.get(&network).and_then(|coll| {
-            match account_type {
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP44 => {
-                    account_index.and_then(|idx| coll.standard_bip44_accounts.get(&idx).map(|a| a.account_xpub))
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP32 => {
-                    account_index.and_then(|idx| coll.standard_bip32_accounts.get(&idx).map(|a| a.account_xpub))
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::CoinJoin => {
-                    account_index.and_then(|idx| coll.coinjoin_accounts.get(&idx).map(|a| a.account_xpub))
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityRegistration => {
-                    coll.identity_registration.as_ref().map(|a| a.account_xpub)
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityTopUp => {
-                    account_index.and_then(|idx| coll.identity_topup.get(&idx).map(|a| a.account_xpub))
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityTopUpNotBound => {
-                    coll.identity_topup_not_bound.as_ref().map(|a| a.account_xpub)
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityInvitation => {
-                    coll.identity_invitation.as_ref().map(|a| a.account_xpub)
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys => {
-                    coll.provider_voting_keys.as_ref().map(|a| a.account_xpub)
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys => {
-                    coll.provider_owner_keys.as_ref().map(|a| a.account_xpub)
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys |
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderPlatformKeys => {
-                    // These use BLS/EdDSA keys, not regular xpubs
-                    None
-                }
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::DashpayReceivingFunds |
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::DashpayExternalAccount => {
-                    // Currently not retrieved via this helper
-                    None
-                }
+        let coll = &self.accounts;
+        match account_type {
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP44 => {
+                account_index.and_then(|idx| coll.standard_bip44_accounts.get(&idx).map(|a| a.account_xpub))
             }
-        })
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP32 => {
+                account_index.and_then(|idx| coll.standard_bip32_accounts.get(&idx).map(|a| a.account_xpub))
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::CoinJoin => {
+                account_index.and_then(|idx| coll.coinjoin_accounts.get(&idx).map(|a| a.account_xpub))
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityRegistration => {
+                coll.identity_registration.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityTopUp => {
+                account_index.and_then(|idx| coll.identity_topup.get(&idx).map(|a| a.account_xpub))
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityTopUpNotBound => {
+                coll.identity_topup_not_bound.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityInvitation => {
+                coll.identity_invitation.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys => {
+                coll.provider_voting_keys.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys => {
+                coll.provider_owner_keys.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys |
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderPlatformKeys => {
+                // These use BLS/EdDSA keys, not regular xpubs
+                None
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::DashpayReceivingFunds |
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::DashpayExternalAccount => {
+                // Currently not retrieved via this helper
+                None
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::PlatformPayment => {
+                // Platform Payment addresses are not used in Core chain transactions
+                // and xpubs are not retrieved via this helper
+                None
+            }
+        }
     }
 }

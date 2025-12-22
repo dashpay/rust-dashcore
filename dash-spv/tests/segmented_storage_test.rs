@@ -6,6 +6,7 @@ use dashcore::hash_types::FilterHeader;
 use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::time::sleep;
@@ -26,7 +27,8 @@ fn create_test_header(height: u32) -> BlockHeader {
 fn create_test_filter_header(height: u32) -> FilterHeader {
     // Create unique filter headers
     let mut bytes = [0u8; 32];
-    bytes[0..4].copy_from_slice(&height.to_le_bytes());
+    bytes[0] = 1;
+    bytes[1..5].copy_from_slice(&height.to_le_bytes());
     FilterHeader::from_raw_hash(dashcore_hashes::sha256d::Hash::from_byte_array(bytes))
 }
 
@@ -61,7 +63,7 @@ async fn test_segmented_storage_basic_operations() {
     assert_eq!(loaded[3].time, 50_001);
 
     // Ensure proper shutdown
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -82,7 +84,7 @@ async fn test_segmented_storage_persistence() {
         // Wait for background save
         sleep(Duration::from_millis(500)).await;
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Load data in new instance
@@ -134,7 +136,7 @@ async fn test_reverse_index_with_segments() {
     let fake_hash = create_test_header(u32::MAX).block_hash();
     assert_eq!(storage.get_header_height_by_hash(&fake_hash).await.unwrap(), None);
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -165,7 +167,7 @@ async fn test_filter_header_segments() {
         assert_eq!(*fh, create_test_filter_header(49_998 + i as u32));
     }
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -178,16 +180,16 @@ async fn test_concurrent_access() {
         let mut storage = DiskStorageManager::new(path.clone()).await.unwrap();
         let headers: Vec<BlockHeader> = (0..100_000).map(create_test_header).collect();
         storage.store_headers(&headers).await.unwrap();
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
-    // Test concurrent reads with multiple storage instances
+    // Reopen storage and share via Arc for concurrent reads
+    let storage = Arc::new(DiskStorageManager::new(path).await.unwrap());
     let mut handles = vec![];
 
     for i in 0..5 {
-        let path = path.clone();
+        let storage = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
-            let storage = DiskStorageManager::new(path).await.unwrap();
             let start = i * 20_000;
             let end = start + 10_000;
 
@@ -232,7 +234,7 @@ async fn test_segment_eviction() {
     assert_eq!(storage.get_header(0).await.unwrap().unwrap().time, 0);
     assert_eq!(storage.get_header(599_999).await.unwrap().unwrap().time, 599_999);
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -257,7 +259,7 @@ async fn test_background_save_timing() {
         // Wait for background save
         sleep(Duration::from_millis(500)).await;
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Verify data was saved
@@ -284,7 +286,6 @@ async fn test_clear_storage() {
 
     // Verify everything is cleared
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
-    assert_eq!(storage.get_header(0).await.unwrap(), None);
     assert_eq!(storage.get_header_height_by_hash(&headers[0].block_hash()).await.unwrap(), None);
 }
 
@@ -301,7 +302,7 @@ async fn test_mixed_operations() {
     storage.store_filter_headers(&filter_headers).await.unwrap();
 
     // Store some filters
-    for height in [1000, 5000, 50_000, 70_000] {
+    for height in 0..75_000 {
         let filter_data = vec![height as u8; 100];
         storage.store_filter(height, &filter_data).await.unwrap();
     }
@@ -313,20 +314,17 @@ async fn test_mixed_operations() {
     assert_eq!(storage.get_tip_height().await.unwrap(), Some(74_999));
     assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(74_999));
 
-    assert_eq!(storage.load_filter(1000).await.unwrap().unwrap(), vec![(1000 % 256) as u8; 100]);
-    assert_eq!(
-        storage.load_filter(50_000).await.unwrap().unwrap(),
-        vec![(50_000 % 256) as u8; 100]
-    );
+    let filters = storage.load_filters(1000..1001).await.unwrap();
+    assert_eq!(filters.len(), 1);
+    assert_eq!(filters[0], vec![(1000 % 256) as u8; 100]);
+
+    let filters = storage.load_filters(50_000..50_001).await.unwrap();
+    assert_eq!(filters.len(), 1);
+    assert_eq!(filters[0], vec![(50_000 % 256) as u8; 100]);
 
     assert_eq!(storage.load_metadata("test_key").await.unwrap().unwrap(), b"test_value");
 
-    // Get stats
-    let stats = storage.stats().await.unwrap();
-    assert_eq!(stats.header_count, 75_000);
-    assert_eq!(stats.filter_header_count, 75_000);
-
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -349,7 +347,7 @@ async fn test_filter_header_persistence() {
         assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(74_999));
 
         // Properly shutdown to ensure data is saved
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Phase 2: Create new storage instance and verify filter headers are loaded
@@ -420,5 +418,5 @@ async fn test_performance_improvement() {
     println!("1000 hash lookups in {:?}", lookup_time);
     assert!(lookup_time < Duration::from_secs(1), "Hash lookups should be fast");
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }

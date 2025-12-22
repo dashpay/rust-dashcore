@@ -62,8 +62,8 @@ pub trait WalletInterface: Send + Sync {
     ///
     /// The default implementation returns `None`, which signals that the caller should
     /// fall back to its existing behaviour.
-    async fn earliest_required_height(&self, _network: Network) -> Option<CoreBlockHeight> {
-        None
+    async fn earliest_required_height(&self, _network: Network) -> CoreBlockHeight {
+        0
     }
 
     /// Provide a human-readable description of the wallet implementation.

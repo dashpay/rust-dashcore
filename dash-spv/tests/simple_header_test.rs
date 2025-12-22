@@ -3,7 +3,7 @@
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::{MemoryStorageManager, StorageManager},
+    storage::{DiskStorageManager, StorageManager},
     types::ValidationMode,
 };
 use dashcore::Network;
@@ -11,6 +11,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::info;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 const DASH_NODE_ADDR: &str = "127.0.0.1:9999";
@@ -50,7 +51,10 @@ async fn test_simple_header_sync() {
     config.peers.push(peer_addr);
 
     // Create fresh storage
-    let storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Verify starting from empty state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);

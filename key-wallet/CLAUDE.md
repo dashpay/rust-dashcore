@@ -187,7 +187,7 @@ let managed_account = ManagedAccount::from_account(&account);
 ```rust
 // Pre-generate addresses for performance
 let pool = &mut managed_account.account_type.receive_pool_mut()?;
-pool.ensure_addresses_generated(current_index + lookahead)?;
+pool.ensure_addresses_generated(current_index + gap_limit)?;
 ```
 
 ### 3. Transaction Checking Pattern

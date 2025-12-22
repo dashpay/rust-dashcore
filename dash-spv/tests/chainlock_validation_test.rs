@@ -312,12 +312,6 @@ async fn test_chainlock_manager_cache_operations() {
     let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&genesis.block_hash());
     assert!(entry_by_hash.is_some());
     assert_eq!(entry_by_hash.unwrap().chain_lock.block_height, 0);
-
-    // Check stats
-    let stats = chainlock_manager.get_stats();
-    assert!(stats.total_chain_locks > 0);
-    assert_eq!(stats.highest_locked_height, Some(0));
-    assert_eq!(stats.lowest_locked_height, Some(0));
 }
 
 #[ignore = "mock implementation incomplete"]
@@ -355,7 +349,7 @@ async fn test_client_chainlock_update_flow() {
     // Simulate masternode sync by manually setting sequential sync state
     // In real usage, this would happen automatically during sync
     // Note: sync_manager is private, can't access directly
-    // client.sync_manager.set_phase(dash_spv::sync::sequential::phases::SyncPhase::FullySynced {
+    // client.sync_manager.set_phase(dash_spv::sync::SyncPhase::FullySynced {
     //     sync_completed_at: std::time::Instant::now(),
     //     total_sync_time: Duration::from_secs(10),
     //     headers_synced: 1000,

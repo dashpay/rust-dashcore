@@ -537,14 +537,6 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  int32_t dash_spv_ffi_client_clear_storage(struct FFIDashSpvClient *client) ;
 
 /**
- * Clear only the persisted sync-state snapshot.
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- */
- int32_t dash_spv_ffi_client_clear_sync_state(struct FFIDashSpvClient *client) ;
-
-/**
  * Check if compact filter sync is currently available.
  *
  * # Safety
@@ -794,7 +786,7 @@ int32_t dash_spv_ffi_config_set_max_peers(struct FFIClientConfig *config,
 /**
  * Adds a peer address to the configuration
  *
- * Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999")
+ * Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`)
  * or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only
  * string is given, the default P2P port for the configured network is used.
  *
@@ -1200,16 +1192,36 @@ void dash_spv_ffi_unconfirmed_transaction_destroy_addresses(struct FFIString *ad
 /**
  * Initialize logging for the SPV library.
  *
+ * # Arguments
+ * - `level`: Log level string (null uses RUST_LOG env var or defaults to INFO).
+ *   Valid values: "error", "warn", "info", "debug", "trace"
+ * - `enable_console`: Whether to output logs to console (stderr)
+ * - `log_dir`: Directory for log files (null to disable file logging)
+ * - `max_files`: Maximum archived log files to retain (ignored if log_dir is null)
+ *
  * # Safety
- * - `level` may be null or point to a valid, NUL-terminated C string.
- * - If non-null, the pointer must remain valid for the duration of this call.
+ * - `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
  */
- int32_t dash_spv_ffi_init_logging(const char *level) ;
+
+int32_t dash_spv_ffi_init_logging(const char *level,
+                                  bool enable_console,
+                                  const char *log_dir,
+                                  uintptr_t max_files)
+;
 
  const char *dash_spv_ffi_version(void) ;
 
  void dash_spv_ffi_enable_test_mode(void) ;
 
+/**
+ * Broadcasts a transaction to the Dash network via connected peers.
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient
+ * - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string
+ *   containing a hex-encoded serialized transaction
+ */
 
 int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
                                                   const char *tx_hex)

@@ -363,8 +363,6 @@ pub struct DerivationStrategy {
     base_path: DerivationPath,
     /// Gap limit for address discovery
     gap_limit: u32,
-    /// Lookahead window
-    lookahead: u32,
 }
 
 impl DerivationStrategy {
@@ -373,19 +371,12 @@ impl DerivationStrategy {
         Self {
             base_path,
             gap_limit: 20,
-            lookahead: 20,
         }
     }
 
     /// Set the gap limit
     pub fn with_gap_limit(mut self, limit: u32) -> Self {
         self.gap_limit = limit;
-        self
-    }
-
-    /// Set the lookahead window
-    pub fn with_lookahead(mut self, lookahead: u32) -> Self {
-        self.lookahead = lookahead;
         self
     }
 

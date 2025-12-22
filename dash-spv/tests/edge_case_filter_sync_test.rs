@@ -9,13 +9,14 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 use dash_spv::{
     client::ClientConfig,
     error::NetworkResult,
     network::NetworkManager,
-    storage::{MemoryStorageManager, StorageManager},
+    storage::{DiskStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
 };
 use dashcore::{
@@ -118,10 +119,12 @@ impl NetworkManager for MockNetworkManager {
 async fn test_filter_sync_at_tip_edge_case() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
-    let mut storage = MemoryStorageManager::new().await.unwrap();
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     // Set up storage with headers and filter headers at the same height (tip)
@@ -158,75 +161,15 @@ async fn test_filter_sync_at_tip_edge_case() {
 
 #[ignore = "mock implementation incomplete"]
 #[tokio::test]
-async fn test_filter_sync_gap_detection_edge_case() {
-    let config = ClientConfig::new(Network::Dash);
-    let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
-        FilterSyncManager::new(&config, received_heights);
-
-    let mut storage = MemoryStorageManager::new().await.unwrap();
-
-    // Test case 1: No gap (same height)
-    let height = 1000;
-    let mut headers = Vec::new();
-    let mut filter_headers = Vec::new();
-    let mut prev_hash = BlockHash::all_zeros();
-
-    for i in 1..=height {
-        let header = create_mock_header(i, prev_hash);
-        prev_hash = header.block_hash();
-        headers.push(header);
-        filter_headers.push(create_mock_filter_header(i));
-    }
-
-    storage.store_headers(&headers).await.unwrap();
-    storage.store_filter_headers(&filter_headers).await.unwrap();
-
-    let (has_gap, block_height, filter_height, gap_size) =
-        filter_sync.check_cfheader_gap(&storage).await.unwrap();
-
-    assert!(!has_gap, "Should not detect gap when heights are equal");
-    assert_eq!(block_height, height - 1); // 0-indexed
-    assert_eq!(filter_height, height - 1);
-    assert_eq!(gap_size, 0);
-
-    // Test case 2: Gap of 1 (considered no gap)
-    // Add one more header to create a gap of 1
-    let next_header = create_mock_header(height + 1, prev_hash);
-    storage.store_headers(&[next_header]).await.unwrap();
-
-    let (has_gap, block_height, filter_height, gap_size) =
-        filter_sync.check_cfheader_gap(&storage).await.unwrap();
-
-    assert!(!has_gap, "Should not detect gap when difference is only 1 block");
-    assert_eq!(block_height, height); // 0-indexed, so 1001 blocks = height 1000
-    assert_eq!(filter_height, height - 1);
-    assert_eq!(gap_size, 1);
-
-    // Test case 3: Gap of 2 (should be detected)
-    // Add one more header to create a gap of 2
-    prev_hash = next_header.block_hash();
-    let next_header2 = create_mock_header(height + 2, prev_hash);
-    storage.store_headers(&[next_header2]).await.unwrap();
-
-    let (has_gap, block_height, filter_height, gap_size) =
-        filter_sync.check_cfheader_gap(&storage).await.unwrap();
-
-    assert!(has_gap, "Should detect gap when difference is 2 or more blocks");
-    assert_eq!(block_height, height + 1); // 0-indexed
-    assert_eq!(filter_height, height - 1);
-    assert_eq!(gap_size, 2);
-}
-
-#[ignore = "mock implementation incomplete"]
-#[tokio::test]
 async fn test_no_invalid_getcfheaders_at_tip() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
-    let mut storage = MemoryStorageManager::new().await.unwrap();
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     // Create a scenario where we're one block behind

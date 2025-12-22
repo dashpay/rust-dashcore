@@ -49,6 +49,6 @@ async fn test_basic_storage() {
     assert_eq!(header.unwrap().time, 5);
 
     println!("Shutting down storage...");
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
     println!("Test completed successfully");
 }

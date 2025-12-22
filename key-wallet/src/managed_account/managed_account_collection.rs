@@ -3,11 +3,11 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
-use crate::account::account_collection::DashpayAccountKey;
+use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::account::account_type::AccountType;
 use crate::gap_limit::{
     DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
-    DEFAULT_SPECIAL_GAP_LIMIT,
+    DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
 };
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
@@ -49,6 +49,8 @@ pub struct ManagedAccountCollection {
     pub dashpay_receival_accounts: BTreeMap<DashpayAccountKey, ManagedAccount>,
     /// DashPay external accounts keyed by (index, user_id, friend_id)
     pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, ManagedAccount>,
+    /// Platform Payment accounts (DIP-17)
+    pub platform_payment_accounts: BTreeMap<PlatformPaymentAccountKey, ManagedAccount>,
 }
 
 impl ManagedAccountCollection {
@@ -68,6 +70,7 @@ impl ManagedAccountCollection {
             provider_platform_keys: None,
             dashpay_receival_accounts: BTreeMap::new(),
             dashpay_external_accounts: BTreeMap::new(),
+            platform_payment_accounts: BTreeMap::new(),
         }
     }
 
@@ -142,6 +145,17 @@ impl ManagedAccountCollection {
                     friend_identity_id: *friend_identity_id,
                 };
                 self.dashpay_external_accounts.contains_key(&key)
+            }
+            ManagedAccountType::PlatformPayment {
+                account,
+                key_class,
+                ..
+            } => {
+                let key = PlatformPaymentAccountKey {
+                    account: *account,
+                    key_class: *key_class,
+                };
+                self.platform_payment_accounts.contains_key(&key)
             }
         }
     }
@@ -236,6 +250,17 @@ impl ManagedAccountCollection {
                 };
                 self.dashpay_external_accounts.insert(key, account);
             }
+            ManagedAccountType::PlatformPayment {
+                account: acc_index,
+                key_class,
+                ..
+            } => {
+                let key = PlatformPaymentAccountKey {
+                    account: *acc_index,
+                    key_class: *key_class,
+                };
+                self.platform_payment_accounts.insert(key, account);
+            }
         }
     }
 
@@ -329,6 +354,13 @@ impl ManagedAccountCollection {
         for (key, account) in &account_collection.dashpay_external_accounts {
             if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
                 managed_collection.dashpay_external_accounts.insert(*key, managed_account);
+            }
+        }
+
+        // Convert Platform Payment accounts
+        for (key, account) in &account_collection.platform_payment_accounts {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.platform_payment_accounts.insert(*key, managed_account);
             }
         }
 
@@ -569,6 +601,24 @@ impl ManagedAccountCollection {
                     index,
                     user_identity_id,
                     friend_identity_id,
+                    addresses,
+                }
+            }
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                // DIP-17/DIP-18: Platform Payment addresses
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DIP17_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                ManagedAccountType::PlatformPayment {
+                    account,
+                    key_class,
                     addresses,
                 }
             }

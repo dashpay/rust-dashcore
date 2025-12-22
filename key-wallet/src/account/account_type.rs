@@ -52,16 +52,16 @@ pub enum AccountType {
     /// Identity invitation funding
     IdentityInvitation,
     /// Provider voting keys (DIP-3)
-    /// Path: m/9'/5'/3'/1'/[key_index]
+    /// Path: `m/9'/5'/3'/1'/[key_index]`
     ProviderVotingKeys,
     /// Provider owner keys (DIP-3)
-    /// Path: m/9'/5'/3'/2'/[key_index]
+    /// Path: `m/9'/5'/3'/2'/[key_index]`
     ProviderOwnerKeys,
     /// Provider operator keys (DIP-3)
-    /// Path: m/9'/5'/3'/3'/[key_index]
+    /// Path: `m/9'/5'/3'/3'/[key_index]`
     ProviderOperatorKeys,
     /// Provider platform P2P keys (DIP-3, ED25519)
-    /// Path: m/9'/5'/3'/4'/[key_index]
+    /// Path: `m/9'/5'/3'/4'/[key_index]`
     ProviderPlatformKeys,
     /// Incoming DashPay funds account using 256-bit derivation
     /// The derivation path used is user_identity_id/friend_identity_id
@@ -82,6 +82,15 @@ pub enum AccountType {
         user_identity_id: [u8; 32],
         /// Our contact's identity id (32 bytes)
         friend_identity_id: [u8; 32],
+    },
+    /// Platform Payment account (DIP-17)
+    /// Path: m/9'/coin_type'/17'/account'/key_class'/index
+    /// Address encoding (DIP-18 bech32m) is handled by the Platform repo.
+    PlatformPayment {
+        /// Account index (hardened) - default 0'
+        account: u32,
+        /// Key class (hardened) - default 0', 1' reserved for change-like segregation
+        key_class: u32,
     },
 }
 
@@ -116,6 +125,9 @@ impl From<AccountType> for AccountTypeToCheck {
             AccountType::DashpayExternalAccount {
                 ..
             } => AccountTypeToCheck::DashpayExternalAccount,
+            AccountType::PlatformPayment {
+                ..
+            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }
@@ -140,6 +152,10 @@ impl AccountType {
                 index,
                 ..
             } => Some(*index),
+            Self::PlatformPayment {
+                account,
+                ..
+            } => Some(*account),
             // Identity and provider types don't have account indices
             Self::IdentityRegistration
             | Self::IdentityTopUp {
@@ -208,6 +224,9 @@ impl AccountType {
             Self::DashpayExternalAccount {
                 ..
             } => DerivationPathReference::ContactBasedFundsExternal,
+            Self::PlatformPayment {
+                ..
+            } => DerivationPathReference::PlatformPayment,
         }
     }
 
@@ -390,6 +409,30 @@ impl AccountType {
                 path.push(ChildNumber::Normal256 {
                     index: *user_identity_id,
                 });
+                Ok(path)
+            }
+            Self::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                // DIP-17: m/9'/coin_type'/17'/account'/key_class'
+                // The leaf index is non-hardened and appended during address generation
+                let mut path = match network {
+                    Network::Dash => {
+                        DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_MAINNET)
+                    }
+                    Network::Testnet => {
+                        DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_TESTNET)
+                    }
+                    _ => return Err(crate::error::Error::InvalidNetwork),
+                };
+                path.push(
+                    ChildNumber::from_hardened_idx(*account).map_err(crate::error::Error::Bip32)?,
+                );
+                path.push(
+                    ChildNumber::from_hardened_idx(*key_class)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
                 Ok(path)
             }
         }

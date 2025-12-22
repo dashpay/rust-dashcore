@@ -20,9 +20,8 @@ use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
-use crate::sync::sequential::SequentialSyncManager;
+use crate::sync::SyncManager;
 use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
-use crate::validation::ValidationManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
@@ -53,7 +52,7 @@ use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
 /// - Essential for a reusable library
 ///
 /// ### 4. **Testing Without Mocks** 🧪
-/// - Test implementations (`MockNetworkManager`, `MemoryStorageManager`) are
+/// - Test implementations (`MockNetworkManager`) are
 ///   first-class types, not runtime injections
 /// - No conditional compilation or feature flags needed for tests
 /// - Type system ensures test and production code are compatible
@@ -85,7 +84,7 @@ use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
 /// type TestSpvClient = DashSpvClient<
 ///     WalletManager,
 ///     MockNetworkManager,
-///     MemoryStorageManager,
+///     DiskStorageManager,
 /// >;
 /// ```
 ///
@@ -110,7 +109,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     ///
     /// # Architectural Design
     ///
-    /// The sync manager is stored as a non-shared field (not wrapped in Arc<Mutex<T>>)
+    /// The sync manager is stored as a non-shared field (not wrapped in `Arc<Mutex<T>>`)
     /// for the following reasons:
     ///
     /// 1. **Single Owner Pattern**: The sync manager is exclusively owned by the client,
@@ -127,13 +126,12 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     ///
     /// If concurrent access becomes necessary (e.g., for monitoring sync progress from
     /// multiple threads), consider:
-    /// - Using interior mutability patterns (Arc<Mutex<SequentialSyncManager>>)
+    /// - Using interior mutability patterns (`Arc<Mutex<SyncManager>>`)
     /// - Extracting read-only state into a separate shared structure
     /// - Implementing a message-passing architecture for sync commands
     ///
     /// The current design prioritizes simplicity and correctness over concurrent access.
-    pub(super) sync_manager: SequentialSyncManager<S, N, W>,
-    pub(super) validation: ValidationManager,
+    pub(super) sync_manager: SyncManager<S, N, W>,
     pub(super) chainlock_manager: Arc<ChainLockManager>,
     pub(super) running: Arc<RwLock<bool>>,
     #[cfg(feature = "terminal-ui")]
@@ -146,7 +144,6 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) event_rx: Option<mpsc::UnboundedReceiver<SpvEvent>>,
     pub(super) mempool_state: Arc<RwLock<MempoolState>>,
     pub(super) mempool_filter: Option<Arc<MempoolFilter>>,
-    pub(super) last_sync_state_save: Arc<RwLock<u64>>,
 }
 
 impl<
@@ -179,7 +176,7 @@ impl<
 
     /// Get mutable reference to sync manager (for testing).
     #[cfg(test)]
-    pub fn sync_manager_mut(&mut self) -> &mut SequentialSyncManager<S, N, W> {
+    pub fn sync_manager_mut(&mut self) -> &mut SyncManager<S, N, W> {
         &mut self.sync_manager
     }
 
@@ -272,12 +269,6 @@ impl<
         self.mempool_filter = None;
 
         Ok(())
-    }
-
-    /// Clear only the persisted sync state snapshot (keep headers/filters).
-    pub async fn clear_sync_state(&mut self) -> Result<()> {
-        let mut storage = self.storage.lock().await;
-        storage.clear_sync_state().await.map_err(SpvError::Storage)
     }
 
     /// Clear all stored filter headers and compact filters while keeping other data intact.

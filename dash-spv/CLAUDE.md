@@ -24,7 +24,7 @@ The project follows a layered, trait-based architecture with clear separation of
 ### Key Design Patterns
 - **Trait-based abstractions**: `NetworkManager`, `StorageManager` for swappable implementations
 - **Async/await throughout**: Built on tokio runtime
-- **Sequential sync**: Uses `SequentialSyncManager` for organized phase-based synchronization
+- **Sequential sync**: Uses `SyncManager` for organized phase-based synchronization
 - **State management**: Each sync phase tracked independently with clear state transitions
 - **Modular validation**: Configurable validation modes (None/Basic/Full)
 
@@ -97,7 +97,7 @@ cargo check --all-features
 ## Key Concepts
 
 ### Sync Coordination
-The `SequentialSyncManager` coordinates all synchronization through a phase-based approach:
+The `SyncManager` coordinates all synchronization through a phase-based approach:
 - **Phase 1: Headers** - Synchronize blockchain headers
 - **Phase 2: Masternode List** - Download masternode state
 - **Phase 3: Filter Headers** - Synchronize compact filter headers
@@ -107,9 +107,8 @@ The `SequentialSyncManager` coordinates all synchronization through a phase-base
 Each phase must complete before the next begins, ensuring consistency and simplifying error recovery.
 
 ### Storage Backends
-Two storage implementations via the `StorageManager` trait:
-- `MemoryStorageManager`: In-memory storage for testing
-- `DiskStorageManager`: Persistent disk storage for production
+One storage implementation via the `StorageManager` trait:
+- `DiskStorageManager`: Persistent disk storage
 
 ### Network Layer
 TCP-based networking with proper Dash protocol implementation:
@@ -157,7 +156,7 @@ Basic wallet functionality for address monitoring:
 The sync system uses a sequential phase-based pattern:
 1. Create `DashSpvClient` with desired configuration
 2. Call `start()` to begin synchronization
-3. The client internally uses `SequentialSyncManager` to progress through sync phases
+3. The client internally uses `SyncManager` to progress through sync phases
 4. Monitor progress via `get_sync_progress()` or progress receiver
 5. Each phase completes before the next begins
 

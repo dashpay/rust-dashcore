@@ -9,7 +9,7 @@
 //! - types/balances.rs - AddressBalance, UnconfirmedTransaction
 //!
 //! # Thread Safety
-//! Many types here are wrapped in Arc<RwLock> or Arc<Mutex> when used.
+//! Many types here are wrapped in `Arc<RwLock>` or `Arc<Mutex>` when used.
 //! Always acquire locks in consistent order to prevent deadlocks:
 //! 1. state (ChainState)
 //! 2. stats (SpvStats)
@@ -28,13 +28,13 @@ use std::sync::Arc;
 
 /// Shared, mutex-protected set of filter heights used across components.
 ///
-/// # Why Arc<Mutex<HashSet>>?
+/// # Why `Arc<Mutex<HashSet>>`?
 /// - Arc: Shared ownership between FilterSyncManager and SpvStats
 /// - Mutex: Interior mutability for concurrent updates from filter download tasks
 /// - HashSet: Fast O(1) membership testing for gap detection
 ///
 /// # Performance Note
-/// Consider Arc<RwLock> if read contention becomes an issue (most operations are reads).
+/// Consider `Arc<RwLock>` if read contention becomes an issue (most operations are reads).
 pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>;
 
 /// A block header with its cached hash to avoid expensive X11 recomputation.
@@ -241,7 +241,7 @@ impl DetailedSyncProgress {
 /// # CRITICAL: This is the heart of the SPV client's state
 ///
 /// ## Thread Safety
-/// Almost always wrapped in Arc<RwLock<ChainState>> for shared access.
+/// Almost always wrapped in `Arc<RwLock<ChainState>>` for shared access.
 /// Multiple readers can access simultaneously, but writes are exclusive.
 ///
 /// ## Checkpoint Sync
@@ -278,9 +278,6 @@ pub struct ChainState {
 
     /// Base height when syncing from a checkpoint (0 if syncing from genesis).
     pub sync_base_height: u32,
-
-    /// Whether the chain was synced from a checkpoint rather than genesis.
-    pub synced_from_checkpoint: bool,
 
     /// Filter matches: height -> Vec of wallet IDs (32-byte arrays) that matched
     /// This tracks which wallet IDs had transactions in blocks with matching compact filters.
@@ -328,9 +325,13 @@ impl ChainState {
 
         // Initialize checkpoint fields
         state.sync_base_height = 0;
-        state.synced_from_checkpoint = false;
 
         state
+    }
+
+    /// Whether the chain was synced from a checkpoint rather than genesis.
+    pub fn synced_from_checkpoint(&self) -> bool {
+        self.sync_base_height > 0
     }
 
     /// Get the current tip height.
@@ -507,7 +508,6 @@ impl ChainState {
 
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
-        self.synced_from_checkpoint = true;
 
         // Add the checkpoint header as our first header
         self.headers.push(checkpoint_header);
@@ -550,7 +550,6 @@ impl std::fmt::Debug for ChainState {
             .field("current_filter_tip", &self.current_filter_tip)
             .field("last_masternode_diff_height", &self.last_masternode_diff_height)
             .field("sync_base_height", &self.sync_base_height)
-            .field("synced_from_checkpoint", &self.synced_from_checkpoint)
             .finish()
     }
 }

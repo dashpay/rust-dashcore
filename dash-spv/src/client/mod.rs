@@ -17,25 +17,23 @@
 //!
 //! - `block_processor.rs` (649 lines) - Block processing and validation
 //! - `config.rs` (484 lines) - Client configuration
-//! - `filter_sync.rs` (171 lines) - Filter synchronization
 //! - `message_handler.rs` (585 lines) - Network message handling
 //! - `status_display.rs` (242 lines) - Status display formatting
 //!
 //! ## Lock Ordering (CRITICAL - Prevents Deadlocks)
 //!
 //! When acquiring multiple locks, ALWAYS use this order:
-//! 1. running (Arc<RwLock<bool>>)
-//! 2. state (Arc<RwLock<ChainState>>)
-//! 3. stats (Arc<RwLock<SpvStats>>)
-//! 4. mempool_state (Arc<RwLock<MempoolState>>)
-//! 5. storage (Arc<Mutex<S>>)
+//! 1. running (`Arc<RwLock<bool>>`)
+//! 2. state (`Arc<RwLock<ChainState>>`)
+//! 3. stats (`Arc<RwLock<SpvStats>>`)
+//! 4. mempool_state (`Arc<RwLock<MempoolState>>`)
+//! 5. storage (`Arc<Mutex<S>>`)
 //!
 //! Never acquire locks in reverse order or deadlock will occur!
 
 // Existing extracted modules
 pub mod block_processor;
 pub mod config;
-pub mod filter_sync;
 pub mod interface;
 pub mod message_handler;
 pub mod status_display;
@@ -54,7 +52,6 @@ mod transactions;
 // Re-export public types from extracted modules
 pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
-pub use filter_sync::FilterSyncCoordinator;
 pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
 
@@ -73,9 +70,8 @@ mod message_handler_test;
 #[cfg(test)]
 mod tests {
     use super::{ClientConfig, DashSpvClient};
-    use crate::network::mock::MockNetworkManager;
-    use crate::storage::MemoryStorageManager;
     use crate::types::UnconfirmedTransaction;
+    use crate::{network::mock::MockNetworkManager, storage::DiskStorageManager};
     use dashcore::{Amount, Network, Transaction, TxOut};
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::wallet_manager::WalletManager;
@@ -99,7 +95,8 @@ mod tests {
         };
 
         let network_manager = MockNetworkManager::new();
-        let storage = MemoryStorageManager::new().await.expect("memory storage should initialize");
+        let storage =
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
         let client = DashSpvClient::new(config, network_manager, storage, wallet)
@@ -126,7 +123,8 @@ mod tests {
         };
 
         let network_manager = MockNetworkManager::new();
-        let storage = MemoryStorageManager::new().await.expect("memory storage should initialize");
+        let storage =
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
 
         let mut client = DashSpvClient::new(config, network_manager, storage, wallet)

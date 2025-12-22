@@ -11,15 +11,15 @@ mod tests {
     fn test_init_logging() {
         unsafe {
             let level = CString::new("debug").unwrap();
-            let result = dash_spv_ffi_init_logging(level.as_ptr());
+            let result = dash_spv_ffi_init_logging(level.as_ptr(), true, std::ptr::null(), 0);
             // May fail if already initialized, but should handle gracefully
             assert!(
                 result == FFIErrorCode::Success as i32
                     || result == FFIErrorCode::RuntimeError as i32
             );
 
-            // Test with null pointer (should use default)
-            let result = dash_spv_ffi_init_logging(std::ptr::null());
+            // Test with null level pointer (should use RUST_LOG or default to INFO)
+            let result = dash_spv_ffi_init_logging(std::ptr::null(), true, std::ptr::null(), 0);
             assert!(
                 result == FFIErrorCode::Success as i32
                     || result == FFIErrorCode::RuntimeError as i32

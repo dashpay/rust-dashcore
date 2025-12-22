@@ -33,7 +33,7 @@ pub struct FFIWalletManager {
 }
 
 impl FFIWalletManager {
-    /// Create a new FFIWalletManager from an Arc<RwLock<WalletManager>>
+    /// Create a new FFIWalletManager from an `Arc<RwLock<WalletManager>>`
     pub fn from_arc(
         manager: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
         runtime: Arc<tokio::runtime::Runtime>,
@@ -183,6 +183,19 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
 
     let networks_rust = network.parse_networks();
 
+    // Use first network from the list for now. Follow up PR will clean it up more.
+    let network_rust = match networks_rust.first() {
+        Some(n) => *n,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "No network specified".to_string(),
+            );
+            return false;
+        }
+    };
+
     unsafe {
         let manager_ref = &*manager;
 
@@ -201,8 +214,8 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
             manager_guard.create_wallet_from_mnemonic(
                 mnemonic_str,
                 passphrase_str,
-                networks_rust.as_slice(),
-                None, // birth_height
+                network_rust,
+                0,
                 creation_options,
             )
         });
@@ -261,7 +274,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
 /// - `passphrase` must be a valid pointer to a null-terminated C string or null
-/// - `birth_height` is optional, pass 0 for default
+/// - `birth_height` is the block height to start syncing from (0 = sync from genesis)
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
 /// - `downgrade_to_pubkey_wallet` if true, creates a watch-only or externally signable wallet
 /// - `allow_external_signing` if true AND downgrade_to_pubkey_wallet is true, creates an externally signable wallet
@@ -332,8 +345,19 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         }
     };
 
-    // Convert networks
+    // Use first network from the list for now. Follow up PR will clean it up more.
     let networks = network.parse_networks();
+    let network_rust = match networks.first() {
+        Some(n) => *n,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "No network specified".to_string(),
+            );
+            return false;
+        }
+    };
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -345,20 +369,13 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
     // Get the manager and call the proper method
     let manager_ref = unsafe { &*manager };
 
-    // Convert birth_height: 0 means None, any other value means Some(value)
-    let birth_height = if birth_height == 0 {
-        None
-    } else {
-        Some(birth_height)
-    };
-
     let result = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
 
         manager_guard.create_wallet_from_mnemonic_return_serialized_bytes(
             mnemonic_str,
             passphrase_str,
-            &networks,
+            network_rust,
             birth_height,
             creation_options,
             downgrade_to_pubkey_wallet,

@@ -103,6 +103,13 @@ pub enum AccountTypeMatch {
         account_index: u32,
         involved_addresses: Vec<AddressInfo>,
     },
+    /// Platform Payment account (DIP-17)
+    /// Note: Platform addresses are NOT used in Core chain transactions
+    PlatformPayment {
+        account_index: u32,
+        key_class: u32,
+        involved_addresses: Vec<AddressInfo>,
+    },
 }
 
 impl AccountTypeMatch {
@@ -159,6 +166,10 @@ impl AccountTypeMatch {
             | AccountTypeMatch::DashpayExternalAccount {
                 involved_addresses,
                 ..
+            }
+            | AccountTypeMatch::PlatformPayment {
+                involved_addresses,
+                ..
             } => involved_addresses.clone(),
         }
     }
@@ -187,6 +198,10 @@ impl AccountTypeMatch {
                 ..
             }
             | AccountTypeMatch::DashpayExternalAccount {
+                account_index,
+                ..
+            }
+            | AccountTypeMatch::PlatformPayment {
                 account_index,
                 ..
             } => Some(*account_index),
@@ -236,6 +251,9 @@ impl AccountTypeMatch {
             AccountTypeMatch::DashpayExternalAccount {
                 ..
             } => AccountTypeToCheck::DashpayExternalAccount,
+            AccountTypeMatch::PlatformPayment {
+                ..
+            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }
@@ -365,6 +383,12 @@ impl ManagedAccountCollection {
                     }
                 }
                 matches
+            }
+            AccountTypeToCheck::PlatformPayment => {
+                // Platform Payment addresses (DIP-17) are NOT used in Core chain transactions.
+                // They are only for Platform-side payments. This account type should never match
+                // any Core chain transaction by design.
+                Vec::new()
             }
         }
     }
@@ -619,6 +643,15 @@ impl ManagedAccount {
                     ..
                 } => AccountTypeMatch::DashpayExternalAccount {
                     account_index: index.unwrap_or(0),
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::PlatformPayment {
+                    account,
+                    key_class,
+                    ..
+                } => AccountTypeMatch::PlatformPayment {
+                    account_index: *account,
+                    key_class: *key_class,
                     involved_addresses: involved_other_addresses,
                 },
             };

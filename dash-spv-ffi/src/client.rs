@@ -2,6 +2,7 @@ use crate::{
     null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
     FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress, FFIWalletManager,
 };
+use dash_spv::storage::StorageManager;
 // Import wallet types from key-wallet-ffi
 use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
 
@@ -155,9 +156,20 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     let mut client_config = config.clone_inner();
 
     let storage_path = client_config.storage_path.clone().unwrap_or_else(|| {
+        // Create a unique temporary directory if none was provided
+        static PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut path = std::env::temp_dir();
         path.push("dash-spv");
-        path.push(format!("{:?}", client_config.network).to_lowercase());
+        path.push(
+            format!(
+                "{:?}-{}-{}",
+                client_config.network,
+                std::process::id(),
+                PATH_COUNTER.fetch_add(1, Ordering::Relaxed)
+            )
+            .to_lowercase(),
+        );
         tracing::warn!(
             "dash-spv FFI config missing storage path, falling back to temp dir {:?}",
             path
@@ -1211,45 +1223,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
     }
 }
 
-/// Clear only the persisted sync-state snapshot.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_clear_sync_state(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-
-        let res = spv_client.clear_sync_state().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
 /// Check if compact filter sync is currently available.
 ///
 /// # Safety
@@ -1346,7 +1319,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_load_filters(
             Ok(filters) => {
                 // Convert to FFI format
                 let mut ffi_filters = Vec::with_capacity(filters.len());
-                for (height, data) in filters {
+                for (rel_height, data) in filters.into_iter().enumerate() {
+                    let height = start_height + rel_height as u32;
                     let mut data_vec = data;
                     let data_ptr = data_vec.as_mut_ptr();
                     let data_len = data_vec.len();

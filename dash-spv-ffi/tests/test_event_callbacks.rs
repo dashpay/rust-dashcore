@@ -138,7 +138,7 @@ extern "C" fn test_balance_callback(confirmed: u64, unconfirmed: u64, user_data:
 fn test_event_callbacks_setup() {
     // Initialize logging
     unsafe {
-        dash_spv_ffi_init_logging(c"debug".as_ptr());
+        dash_spv_ffi_init_logging(c"debug".as_ptr(), true, std::ptr::null(), 0);
     }
 
     // Create test data
@@ -238,7 +238,7 @@ fn test_event_callbacks_setup() {
 #[serial]
 fn test_enhanced_event_callbacks() {
     unsafe {
-        dash_spv_ffi_init_logging(c"info".as_ptr());
+        dash_spv_ffi_init_logging(c"info".as_ptr(), true, std::ptr::null(), 0);
 
         // Create test data
         let event_data = TestEventData::new();

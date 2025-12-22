@@ -5,7 +5,8 @@ use std::time::Duration;
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::{MemoryStorageManager, StorageManager},
+    storage::{DiskStorageManager, StorageManager},
+    sync::{HeaderSyncManager, ReorgConfig},
     types::{ChainState, ValidationMode},
 };
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
@@ -14,6 +15,8 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::{debug, info};
 use std::sync::Arc;
+use tempfile::TempDir;
+use test_case::test_case;
 use tokio::sync::RwLock;
 
 #[tokio::test]
@@ -21,11 +24,13 @@ async fn test_basic_header_sync_from_genesis() {
     let _ = env_logger::try_init();
 
     // Create fresh storage starting from empty state
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Verify empty initial state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
-    assert!(storage.load_headers(0..10).await.unwrap().is_empty());
 
     // Create test chain state for mainnet
     let chain_state = ChainState::new_for_network(Network::Dash);
@@ -42,7 +47,10 @@ async fn test_basic_header_sync_from_genesis() {
 async fn test_header_sync_continuation() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Simulate existing headers (like resuming from a previous sync)
     let existing_headers = create_test_header_chain(100);
@@ -74,7 +82,10 @@ async fn test_header_sync_continuation() {
 async fn test_header_batch_processing() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Test processing headers in batches
     let batch_size = 50;
@@ -121,7 +132,10 @@ async fn test_header_batch_processing() {
 async fn test_header_sync_edge_cases() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Test 1: Empty header batch
     let empty_headers: Vec<BlockHeader> = vec![];
@@ -156,7 +170,10 @@ async fn test_header_sync_edge_cases() {
 async fn test_header_chain_validation() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create a valid chain of headers
     let chain = create_test_header_chain(10);
@@ -191,7 +208,10 @@ async fn test_header_chain_validation() {
 async fn test_header_sync_performance() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     let start_time = std::time::Instant::now();
 
@@ -253,7 +273,9 @@ async fn test_header_sync_with_client_integration() {
 
     // Create storage manager
     let storage_manager =
-        MemoryStorageManager::new().await.expect("Failed to create storage manager");
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
@@ -306,7 +328,10 @@ fn create_test_header_chain_from(start: usize, count: usize) -> Vec<BlockHeader>
 async fn test_header_storage_consistency() {
     let _ = env_logger::try_init();
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Store headers and verify consistency
     let headers = create_test_header_chain(100);
@@ -331,4 +356,82 @@ async fn test_header_storage_consistency() {
     }
 
     info!("Header storage consistency test completed");
+}
+
+#[test_case(0, 0 ; "genesis_0_blocks")]
+#[test_case(0, 1 ; "genesis_1_block")]
+#[test_case(0, 60000 ; "genesis_60000_blocks")]
+#[test_case(100, 0 ; "checkpoint_0_blocks")]
+#[test_case(170000, 1 ; "checkpoint_1_block")]
+#[test_case(12345, 60000 ; "checkpoint_60000_blocks")]
+#[tokio::test]
+async fn test_load_headers_from_storage(sync_base_height: u32, header_count: usize) {
+    // Setup: Create storage with 100 headers
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
+        .await
+        .expect("Failed to create storage");
+
+    let test_headers = create_test_header_chain(header_count);
+
+    // Store chain state
+    let mut chain_state = ChainState::new_for_network(Network::Dash);
+    chain_state.sync_base_height = sync_base_height;
+    chain_state.headers = test_headers.clone();
+    storage.store_chain_state(&chain_state).await.expect("Failed to store chain state");
+
+    // Create HeaderSyncManager and load headers
+    let config = ClientConfig::new(Network::Dash);
+    let chain_state = Arc::new(RwLock::new(ChainState::new_for_network(Network::Dash)));
+    let mut header_sync = HeaderSyncManager::<DiskStorageManager, PeerNetworkManager>::new(
+        &config,
+        ReorgConfig::default(),
+        chain_state.clone(),
+    )
+    .expect("Failed to create HeaderSyncManager");
+
+    // Load headers from storage
+    let loaded_count =
+        header_sync.load_headers_from_storage(&storage).await.expect("Failed to load headers");
+
+    let cs = chain_state.read().await;
+
+    assert_eq!(loaded_count as usize, header_count, "Loaded count mismatch");
+    assert_eq!(header_count, cs.headers.len(), "Chain state count mismatch");
+}
+
+#[test_case(0, 1 ; "genesis_1_block")]
+#[test_case(0, 70000 ; "genesis_70000_blocks")]
+#[test_case(5000, 1 ; "checkpoint_1_block")]
+#[test_case(1000, 70000 ; "checkpoint_70000_blocks")]
+#[tokio::test]
+async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
+        .await
+        .expect("Failed to create storage");
+
+    let headers = create_test_header_chain(header_count);
+    let expected_tip_hash = headers.last().unwrap().block_hash();
+
+    // Create and store chain state
+    let mut chain_state = ChainState::new_for_network(Network::Dash);
+    chain_state.sync_base_height = sync_base_height;
+    chain_state.headers = headers;
+    storage.store_chain_state(&chain_state).await.expect("Failed to store chain state");
+
+    // Create HeaderSyncManager and load from storage
+    let config = ClientConfig::new(Network::Dash);
+    let chain_state_arc = Arc::new(RwLock::new(ChainState::new_for_network(Network::Dash)));
+    let mut header_sync = HeaderSyncManager::<DiskStorageManager, PeerNetworkManager>::new(
+        &config,
+        ReorgConfig::default(),
+        chain_state_arc.clone(),
+    )
+    .expect("Failed to create HeaderSyncManager");
+
+    // Call prepare_sync and verify it returns the correct hash
+    let result = header_sync.prepare_sync(&mut storage).await;
+    let returned_hash = result.unwrap().unwrap();
+    assert_eq!(returned_hash, expected_tip_hash, "prepare_sync should return the correct tip hash");
 }

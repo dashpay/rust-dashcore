@@ -210,7 +210,9 @@ impl Decodable for CompressedHeader {
     ) -> Result<Self, crate::consensus::encode::Error> {
         let flags = CompressionFlags::consensus_decode(r)?;
 
-        let version = if flags.version_offset() == 7 {
+        // C++ semantics: offset=0 means version IS present (not in cache)
+        // offset=1-7 means version is in cache at position (offset-1)
+        let version = if flags.version_offset() == 0 {
             Some(i32::consensus_decode(r)?)
         } else {
             None
@@ -251,13 +253,20 @@ impl Decodable for CompressedHeader {
     }
 }
 
-/// State required for compression/decompression
+/// Maximum number of unique versions to cache (matches C++ implementation)
+const MAX_VERSION_CACHE_SIZE: usize = 7;
+
+/// State required for compression/decompression.
+///
+/// This implementation matches the C++ Dash Core reference implementation:
+/// - Uses a list with MRU (Most Recently Used) ordering
+/// - Front of list = most recently used version
+/// - Version offset encoding: 0 = not in cache (full version present), 1-7 = position + 1
 #[derive(Debug, Clone)]
 pub struct CompressionState {
-    /// Last 7 unique versions seen (circular buffer)
-    pub version_cache: [i32; 7],
-    /// Current index in version cache
-    pub version_index: usize,
+    /// Last 7 unique versions seen (front = most recently used)
+    /// Matches C++ std::list<int32_t> with MRU reordering
+    pub version_cache: Vec<i32>,
     /// Previous header for delta encoding
     pub prev_header: Option<Header>,
 }
@@ -266,25 +275,32 @@ impl CompressionState {
     /// Create a new compression state
     pub fn new() -> Self {
         Self {
-            version_cache: [0; 7],
-            version_index: 0,
+            version_cache: Vec::with_capacity(MAX_VERSION_CACHE_SIZE),
             prev_header: None,
         }
     }
 
-    /// Compress a header given the current state
+    /// Compress a header given the current state.
+    ///
+    /// Version offset encoding (matching C++ DIP-0025):
+    /// - offset = 0: version NOT in cache, full version field IS present
+    /// - offset = 1-7: version found at position (offset-1) in cache, no version field
     pub fn compress(&mut self, header: &Header) -> CompressedHeader {
         let mut flags = CompressionFlags(0);
 
-        // Version compression
+        // Version compression (C++ semantics)
         let version_i32 = header.version.to_consensus();
-        let version = if let Some(offset) = self.find_version_offset(version_i32) {
-            flags.0 |= offset as u8;
+        let version = if let Some(position) = self.find_version_position(version_i32) {
+            // Version found in cache at `position` (0-indexed)
+            // C++ uses 1-indexed offset: offset = position + 1
+            flags.0 |= (position + 1) as u8;
+            // Move to front (MRU)
+            self.mark_version_as_mru(position);
             None
         } else {
-            // Version not in cache, set offset to 7 and include full version
-            flags.0 |= 7;
-            self.add_version(version_i32);
+            // Version NOT in cache, offset = 0 means "uncompressed"
+            // flags.0 |= 0; // no-op, explicit for clarity
+            self.save_version_as_mru(version_i32);
             Some(version_i32)
         };
 
@@ -339,23 +355,31 @@ impl CompressionState {
         }
     }
 
-    /// Decompress a header given the current state
+    /// Decompress a header given the current state.
+    ///
+    /// Version offset decoding (matching C++ DIP-0025):
+    /// - offset = 0: version NOT in cache, read full version from message
+    /// - offset = 1-7: version at position (offset-1) in cache
     pub fn decompress(
         &mut self,
         compressed: &CompressedHeader,
     ) -> Result<Header, DecompressionError> {
-        // Version
-        let version = if let Some(v) = compressed.version {
-            self.add_version(v);
-            v
-        } else {
-            let offset = compressed.flags.version_offset() as usize;
-            if offset >= 7 {
-                return Err(DecompressionError::InvalidVersionOffset);
+        // Version (C++ semantics)
+        let version = match compressed.flags.version_offset() {
+            0 => {
+                // Offset 0 means NOT in cache, full version should be present
+                let v = compressed.version.ok_or(DecompressionError::MissingVersion)?;
+                self.save_version_as_mru(v);
+                v
             }
-            // Calculate the index in the circular buffer
-            let idx = (self.version_index + 7 - offset - 1) % 7;
-            self.version_cache[idx]
+            offset @ 1..=7 => {
+                // Offset 1-7 means position 0-6 in cache (1-indexed)
+                let position = (offset - 1) as usize;
+                let v = self.get_version_at(position)?;
+                self.mark_version_as_mru(position);
+                v
+            }
+            _ => return Err(DecompressionError::InvalidVersionOffset),
         };
 
         // Previous block hash
@@ -395,24 +419,32 @@ impl CompressionState {
         Ok(header)
     }
 
-    /// Find the offset of a version in the cache
-    fn find_version_offset(&self, version: i32) -> Option<usize> {
-        for i in 0..7 {
-            // Calculate the actual index in the circular buffer
-            let idx = (self.version_index + 7 - i - 1) % 7;
-            if self.version_cache[idx] == version {
-                return Some(i);
-            }
-        }
-        None
+    /// Find the position of a version in the cache (0-indexed).
+    /// Returns None if not found.
+    fn find_version_position(&self, version: i32) -> Option<usize> {
+        self.version_cache.iter().position(|&v| v == version)
     }
 
-    /// Add a version to the cache
-    fn add_version(&mut self, version: i32) {
-        // Only add if it's different from the last added version
-        if self.version_index == 0 || self.version_cache[(self.version_index + 6) % 7] != version {
-            self.version_cache[self.version_index] = version;
-            self.version_index = (self.version_index + 1) % 7;
+    /// Get version at a specific position in the cache.
+    fn get_version_at(&self, position: usize) -> Result<i32, DecompressionError> {
+        self.version_cache.get(position).copied().ok_or(DecompressionError::InvalidVersionOffset)
+    }
+
+    /// Move a version at the given position to the front (MRU).
+    /// Matches C++ MarkVersionAsMostRecent behavior.
+    fn mark_version_as_mru(&mut self, position: usize) {
+        if position > 0 && position < self.version_cache.len() {
+            let version = self.version_cache.remove(position);
+            self.version_cache.insert(0, version);
+        }
+    }
+
+    /// Save a new version as the most recently used.
+    /// Matches C++ SaveVersionAsMostRecent behavior.
+    fn save_version_as_mru(&mut self, version: i32) {
+        self.version_cache.insert(0, version);
+        if self.version_cache.len() > MAX_VERSION_CACHE_SIZE {
+            self.version_cache.pop();
         }
     }
 
@@ -427,8 +459,7 @@ impl CompressionState {
 
     /// Reset the compression state
     pub fn reset(&mut self) {
-        self.version_cache = [0; 7];
-        self.version_index = 0;
+        self.version_cache.clear();
         self.prev_header = None;
     }
 }
@@ -442,12 +473,14 @@ impl Default for CompressionState {
 /// Errors that can occur during decompression
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecompressionError {
-    /// Version offset is invalid (must be 0-6)
+    /// Version offset is invalid (must be 0-7)
     InvalidVersionOffset,
     /// Previous header required but not available
     MissingPreviousHeader,
     /// Timestamp required but not provided
     MissingTimestamp,
+    /// Version field expected but not present (offset=0 but no version in message)
+    MissingVersion,
 }
 
 impl fmt::Display for DecompressionError {
@@ -461,6 +494,9 @@ impl fmt::Display for DecompressionError {
             }
             DecompressionError::MissingTimestamp => {
                 write!(f, "timestamp missing in compressed header")
+            }
+            DecompressionError::MissingVersion => {
+                write!(f, "version field expected but not present in compressed header")
             }
         }
     }
@@ -573,19 +609,21 @@ mod tests {
     fn test_version_cache() {
         let mut state = CompressionState::new();
 
-        // Add versions
+        // Add versions using save_version_as_mru (simulating uncompressed versions)
+        // This matches C++ behavior where new versions are added to the front
         for i in 1..=10 {
-            state.add_version(i);
+            state.save_version_as_mru(i);
         }
 
-        // Check that version 4 is still in cache (10-4 = 6, within last 7)
-        assert_eq!(state.find_version_offset(4), Some(6));
+        // Cache should contain [10, 9, 8, 7, 6, 5, 4] (front = most recent)
+        // Version 4 should be at position 6 (last valid position)
+        assert_eq!(state.find_version_position(4), Some(6));
 
-        // Check that version 3 is not in cache (10-3 = 7, outside last 7)
-        assert_eq!(state.find_version_offset(3), None);
+        // Version 3 should not be in cache (evicted)
+        assert_eq!(state.find_version_position(3), None);
 
-        // Check most recent version
-        assert_eq!(state.find_version_offset(10), Some(0));
+        // Version 10 should be at position 0 (most recent)
+        assert_eq!(state.find_version_position(10), Some(0));
     }
 
     #[test]
@@ -669,15 +707,92 @@ mod tests {
         let mut state = CompressionState::new();
 
         // Add some data
-        state.add_version(1);
+        state.save_version_as_mru(1);
         state.prev_header = Some(create_test_header(1, 0));
 
         // Reset
         state.reset();
 
         // Verify reset
-        assert_eq!(state.version_index, 0);
+        assert!(state.version_cache.is_empty());
         assert!(state.prev_header.is_none());
-        assert_eq!(state.version_cache, [0; 7]);
+    }
+
+    #[test]
+    fn test_version_offset_cpp_semantics() {
+        // Test that offset encoding matches C++ DIP-0025:
+        // offset = 0: version NOT in cache (full version present)
+        // offset = 1-7: version at position (offset-1) in cache
+
+        let mut state = CompressionState::new();
+
+        // First header - version not in cache, should use offset=0
+        let header1 = create_test_header(1, 0);
+        let compressed1 = state.compress(&header1);
+
+        assert_eq!(
+            compressed1.flags.version_offset(),
+            0,
+            "First header should have offset=0 (not in cache)"
+        );
+        assert!(compressed1.version.is_some(), "First header should include version field");
+
+        // Second header - same version, now in cache at position 0
+        // Should use offset = position + 1 = 1
+        let mut header2 = create_test_header(2, 1);
+        header2.prev_blockhash = header1.block_hash();
+        header2.version = header1.version; // Same version
+        let compressed2 = state.compress(&header2);
+
+        assert_eq!(
+            compressed2.flags.version_offset(),
+            1,
+            "Second header should have offset=1 (cache position 0)"
+        );
+        assert!(compressed2.version.is_none(), "Second header should not include version field");
+    }
+
+    #[test]
+    fn test_mru_reordering() {
+        // Test that using a cached version moves it to front (MRU behavior)
+        let mut state = CompressionState::new();
+
+        // Add 3 different versions
+        state.save_version_as_mru(100);
+        state.save_version_as_mru(200);
+        state.save_version_as_mru(300);
+        // Cache is now [300, 200, 100]
+
+        assert_eq!(state.find_version_position(100), Some(2));
+        assert_eq!(state.find_version_position(200), Some(1));
+        assert_eq!(state.find_version_position(300), Some(0));
+
+        // Mark version 100 as MRU (simulating it being used)
+        state.mark_version_as_mru(2);
+        // Cache should now be [100, 300, 200]
+
+        assert_eq!(state.find_version_position(100), Some(0));
+        assert_eq!(state.find_version_position(300), Some(1));
+        assert_eq!(state.find_version_position(200), Some(2));
+    }
+
+    #[test]
+    fn test_first_header_flags_cpp_compatible() {
+        // Verify first header produces C++-compatible flags
+        let mut state = CompressionState::new();
+        let header = create_test_header(1, 0);
+        let compressed = state.compress(&header);
+
+        // C++ produces flags = 0b00111000 for first header:
+        // - version_offset = 0 (bits 0-2)
+        // - PREV_BLOCK_HASH = 1 (bit 3)
+        // - TIMESTAMP = 1 (bit 4)
+        // - NBITS = 1 (bit 5)
+        let expected_flags = 0b00111000u8;
+        assert_eq!(
+            compressed.flags.0, expected_flags,
+            "First header flags should match C++ format: expected 0b{:08b}, got 0b{:08b}",
+            expected_flags, compressed.flags.0
+        );
     }
 }

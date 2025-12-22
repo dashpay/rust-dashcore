@@ -17,9 +17,8 @@ use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::sequential::SequentialSyncManager;
+use crate::sync::SyncManager;
 use crate::types::{ChainState, MempoolState, SpvStats};
-use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
 use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -52,7 +51,7 @@ impl<
         // Create sync manager
         let received_filter_heights = stats.read().await.received_filter_heights.clone();
         tracing::info!("Creating sequential sync manager");
-        let sync_manager = SequentialSyncManager::new(
+        let sync_manager = SyncManager::new(
             &config,
             received_filter_heights,
             wallet.clone(),
@@ -60,9 +59,6 @@ impl<
             stats.clone(),
         )
         .map_err(SpvError::Sync)?;
-
-        // Create validation manager
-        let validation = ValidationManager::new(config.validation_mode);
 
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
@@ -87,7 +83,6 @@ impl<
             storage,
             wallet,
             sync_manager,
-            validation,
             chainlock_manager,
             running: Arc::new(RwLock::new(false)),
             #[cfg(feature = "terminal-ui")]
@@ -100,7 +95,6 @@ impl<
             event_rx: Some(event_rx),
             mempool_state,
             mempool_filter: None,
-            last_sync_state_save: Arc::new(RwLock::new(0)),
         })
     }
 
@@ -168,29 +162,6 @@ impl<
             tracing::info!("📊 Sequential sync mode: filter processing handled internally");
         }
 
-        // Try to restore sync state from persistent storage
-        if self.config.enable_persistence {
-            match self.restore_sync_state().await {
-                Ok(restored) => {
-                    if restored {
-                        tracing::info!(
-                            "✅ Successfully restored sync state from persistent storage"
-                        );
-                    } else {
-                        tracing::info!("No previous sync state found, starting fresh sync");
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to restore sync state: {}", e);
-                    tracing::warn!("Starting fresh sync due to state restoration failure");
-                    // Clear any corrupted state
-                    if let Err(clear_err) = self.storage.lock().await.clear_sync_state().await {
-                        tracing::error!("Failed to clear corrupted sync state: {}", clear_err);
-                    }
-                }
-            }
-        }
-
         // Initialize genesis block if not already present
         self.initialize_genesis_block().await?;
 
@@ -215,7 +186,7 @@ impl<
                     tracing::error!("Failed to load headers into sync manager: {}", e);
                     // For checkpoint sync, this is critical
                     let state = self.state.read().await;
-                    if state.synced_from_checkpoint {
+                    if state.synced_from_checkpoint() {
                         return Err(SpvError::Sync(e));
                     }
                     // For normal sync, we can continue as headers will be re-synced
@@ -265,14 +236,6 @@ impl<
             if !*running {
                 return Ok(());
             }
-        }
-
-        // Save sync state before shutting down
-        if let Err(e) = self.save_sync_state().await {
-            tracing::error!("Failed to save sync state during shutdown: {}", e);
-            // Continue with shutdown even if state save fails
-        } else {
-            tracing::info!("Sync state saved successfully during shutdown");
         }
 
         // Disconnect from network
@@ -330,8 +293,7 @@ impl<
             let checkpoint_manager = crate::chain::checkpoints::CheckpointManager::new(checkpoints);
 
             // Find the best checkpoint at or before the requested height
-            if let Some(checkpoint) =
-                checkpoint_manager.best_checkpoint_at_or_before_height(start_height)
+            if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)
             {
                 if checkpoint.height > 0 {
                     tracing::info!(
@@ -404,11 +366,7 @@ impl<
                         );
 
                         // Update the sync manager's cached flags from the checkpoint-initialized state
-                        self.sync_manager.update_chain_state_cache(
-                            true,
-                            checkpoint.height,
-                            headers_len,
-                        );
+                        self.sync_manager.update_chain_state_cache(checkpoint.height, headers_len);
                         tracing::info!(
                             "Updated sync manager with checkpoint-initialized chain state"
                         );

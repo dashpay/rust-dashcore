@@ -9,7 +9,6 @@
 //! - `headers` - CFHeaders synchronization
 //! - `download` - CFilter download logic
 //! - `matching` - Filter matching against wallet
-//! - `gaps` - Gap detection and recovery
 //! - `retry` - Retry and timeout logic
 //! - `stats` - Statistics and progress tracking
 //! - `requests` - Request queue management
@@ -20,10 +19,8 @@
 //! 1. pending_requests
 //! 2. active_requests
 //! 3. received_heights
-//! 4. gap_tracker
 
 pub mod download;
-pub mod gaps;
 pub mod headers;
 pub mod manager;
 pub mod matching;
@@ -40,6 +37,5 @@ pub use types::{
 };
 pub use types::{
     DEFAULT_FILTER_SYNC_RANGE, FILTER_BATCH_SIZE, FILTER_REQUEST_BATCH_SIZE, FILTER_RETRY_DELAY_MS,
-    MAX_CONCURRENT_FILTER_REQUESTS, MAX_FILTER_REQUEST_SIZE, REQUEST_TIMEOUT_SECONDS,
-    SYNC_TIMEOUT_SECONDS,
+    MAX_CONCURRENT_FILTER_REQUESTS, REQUEST_TIMEOUT_SECONDS, SYNC_TIMEOUT_SECONDS,
 };

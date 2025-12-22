@@ -37,9 +37,6 @@ rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol libra
 - `rpc-json/` - JSON types for RPC communication
 - `rpc-integration-test/` - Integration tests for RPC
 
-### Mobile SDK
-- `swift-dash-core-sdk/` - Swift SDK for iOS/macOS applications
-
 ### Testing
 - `fuzz/` - Fuzzing tests for security testing
 
@@ -61,9 +58,6 @@ cargo build -p dash-spv
 ```bash
 # Build iOS libraries for key-wallet-ffi
 cd key-wallet-ffi && ./build-ios.sh
-
-# Build iOS libraries for swift-dash-core-sdk
-cd swift-dash-core-sdk && ./build-ios.sh
 ```
 
 ### iOS/macOS Targets
@@ -180,7 +174,6 @@ cargo doc --open
 ## Current Status
 
 The project is actively developing:
-- Swift SDK implementation for iOS/macOS
 - FFI bindings improvements
 - Support for Dash Core versions 0.18.0 - 0.21.0
 

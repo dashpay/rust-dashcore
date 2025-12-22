@@ -124,7 +124,7 @@ impl Midstate {
         self.0
     }
 
-    /// Unwraps the [Midstate] and returns the underlying byte array.
+    /// Unwraps the [`Midstate`] and returns the underlying byte array.
     pub fn into_inner(self) -> [u8; 32] {
         self.0
     }

@@ -33,6 +33,9 @@ pub enum SpvError {
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),
 
+    #[error("Logging error: {0}")]
+    Logging(#[from] LoggingError),
+
     #[error("Wallet error: {0}")]
     Wallet(#[from] WalletError),
 
@@ -54,6 +57,19 @@ pub enum ParseError {
 
     #[error("Invalid argument value for {0}: {1}")]
     InvalidArgument(String, String),
+}
+
+/// Logging-related errors.
+#[derive(Debug, Error)]
+pub enum LoggingError {
+    #[error("Failed to create log directory: {0}")]
+    DirectoryCreation(#[from] std::io::Error),
+
+    #[error("Subscriber initialization failed: {0}")]
+    SubscriberInit(String),
+
+    #[error("Log rotation failed: {0}")]
+    RotationFailed(String),
 }
 
 /// Network-related errors.
@@ -119,6 +135,9 @@ pub enum StorageError {
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("Data directory locked: {0}")]
+    DirectoryLocked(String),
 }
 
 impl Clone for StorageError {
@@ -133,6 +152,7 @@ impl Clone for StorageError {
             StorageError::InconsistentState(s) => StorageError::InconsistentState(s.clone()),
             StorageError::LockPoisoned(s) => StorageError::LockPoisoned(s.clone()),
             StorageError::InvalidInput(s) => StorageError::InvalidInput(s.clone()),
+            StorageError::DirectoryLocked(s) => StorageError::DirectoryLocked(s.clone()),
         }
     }
 }
@@ -244,6 +264,9 @@ pub type ValidationResult<T> = std::result::Result<T, ValidationError>;
 
 /// Type alias for sync operation results.
 pub type SyncResult<T> = std::result::Result<T, SyncError>;
+
+/// Type alias for logging operation results.
+pub type LoggingResult<T> = std::result::Result<T, LoggingError>;
 
 /// Wallet-related errors.
 #[derive(Debug, Error)]

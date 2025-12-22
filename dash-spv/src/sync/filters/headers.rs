@@ -151,337 +151,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             // Not currently syncing, ignore
             return Ok(true);
         }
-
-        // Check if we're using flow control
-        if self.cfheaders_flow_control_enabled {
-            return self.handle_cfheaders_with_flow_control(cf_headers, storage, network).await;
-        }
-
-        // Don't update last_sync_progress here - only update when we actually make progress
-
-        if cf_headers.filter_hashes.is_empty() {
-            // Empty response indicates end of sync
-            self.syncing_filter_headers = false;
-            return Ok(false);
-        }
-
-        // Get the height range for this batch
-        let (batch_start_height, stop_height, header_tip_height) =
-            self.get_batch_height_range(&cf_headers, storage).await?;
-
-        // Best-effort: resolve start hash for this batch for better diagnostics
-        let recv_start_hash_opt =
-            storage.get_header(batch_start_height).await.ok().flatten().map(|h| h.block_hash());
-
-        // Resolve expected start hash (what we asked for), for clarity
-        let expected_start_hash_opt = storage
-            .get_header(self.current_sync_height)
-            .await
-            .ok()
-            .flatten()
-            .map(|h| h.block_hash());
-
-        let prev_height = batch_start_height.saturating_sub(1);
-        let effective_prev_height = self.current_sync_height.saturating_sub(1);
-        match (recv_start_hash_opt, expected_start_hash_opt) {
-            (Some(batch_hash), Some(expected_hash)) => {
-                tracing::debug!(
-                    "Received CFHeaders batch: batch_start={} (hash={}), msg_prev_header={} at {}, expected_start={} (hash={}), effective_prev_height={}, stop={}, count={}",
-                    batch_start_height,
-                    batch_hash,
-                    cf_headers.previous_filter_header,
-                    prev_height,
-                    self.current_sync_height,
-                    expected_hash,
-                    effective_prev_height,
-                    stop_height,
-                    cf_headers.filter_hashes.len()
-                );
-            }
-            (None, Some(expected_hash)) => {
-                tracing::debug!(
-                    "Received CFHeaders batch: batch_start={} (hash=<not stored>), msg_prev_header={} at {}, expected_start={} (hash={}), effective_prev_height={}, stop={}, count={}",
-                    batch_start_height,
-                    cf_headers.previous_filter_header,
-                    prev_height,
-                    self.current_sync_height,
-                    expected_hash,
-                    effective_prev_height,
-                    stop_height,
-                    cf_headers.filter_hashes.len()
-                );
-            }
-            (Some(batch_hash), None) => {
-                tracing::debug!(
-                    "Received CFHeaders batch: batch_start={} (hash={}), msg_prev_header={} at {}, expected_start={} (hash=<unknown>), effective_prev_height={}, stop={}, count={}",
-                    batch_start_height,
-                    batch_hash,
-                    cf_headers.previous_filter_header,
-                    prev_height,
-                    self.current_sync_height,
-                    effective_prev_height,
-                    stop_height,
-                    cf_headers.filter_hashes.len()
-                );
-            }
-            (None, None) => {
-                tracing::debug!(
-                    "Received CFHeaders batch: batch_start={} (hash=<not stored>), msg_prev_header={} at {}, expected_start={} (hash=<unknown>), effective_prev_height={}, stop={}, count={}",
-                    batch_start_height,
-                    cf_headers.previous_filter_header,
-                    prev_height,
-                    self.current_sync_height,
-                    effective_prev_height,
-                    stop_height,
-                    cf_headers.filter_hashes.len()
-                );
-            }
-        }
-
-        // Check if this is the expected batch or if there's overlap
-        if batch_start_height < self.current_sync_height {
-            // Special-case benign overlaps around checkpoint boundaries; log at debug level
-            let benign_checkpoint_overlap = self.sync_base_height > 0
-                && ((batch_start_height + 1 == self.sync_base_height
-                    && self.current_sync_height == self.sync_base_height)
-                    || (batch_start_height == self.sync_base_height
-                        && self.current_sync_height == self.sync_base_height + 1));
-
-            // Try to include the peer address for diagnostics
-            let peer_addr = network.get_last_message_peer_addr().await;
-            if benign_checkpoint_overlap {
-                match peer_addr {
-                    Some(addr) => {
-                        tracing::debug!(
-                            "📋 Benign checkpoint overlap from {}: expected start={}, received start={}",
-                            addr,
-                            self.current_sync_height,
-                            batch_start_height
-                        );
-                    }
-                    None => {
-                        tracing::debug!(
-                            "📋 Benign checkpoint overlap: expected start={}, received start={}",
-                            self.current_sync_height,
-                            batch_start_height
-                        );
-                    }
-                }
-            } else {
-                match peer_addr {
-                    Some(addr) => {
-                        tracing::warn!(
-                            "📋 Received overlapping filter headers from {}: expected start={}, received start={} (likely from recovery/retry)",
-                            addr,
-                            self.current_sync_height,
-                            batch_start_height
-                        );
-                    }
-                    None => {
-                        tracing::warn!(
-                            "📋 Received overlapping filter headers: expected start={}, received start={} (likely from recovery/retry)",
-                            self.current_sync_height,
-                            batch_start_height
-                        );
-                    }
-                }
-            }
-
-            // Handle overlapping headers using the helper method
-            let (new_headers_stored, new_current_height) = self
-                .handle_overlapping_headers(&cf_headers, self.current_sync_height, storage)
-                .await?;
-            self.current_sync_height = new_current_height;
-
-            // Only record progress if we actually stored new headers
-            if new_headers_stored > 0 {
-                self.last_sync_progress = std::time::Instant::now();
-            }
-        } else if batch_start_height > self.current_sync_height {
-            // Gap in the sequence - this shouldn't happen in normal operation
-            tracing::error!(
-                "❌ Gap detected in filter header sequence: expected start={}, received start={} (gap of {} headers)",
-                self.current_sync_height,
-                batch_start_height,
-                batch_start_height - self.current_sync_height
-            );
-            return Err(SyncError::Validation(format!(
-                "Gap in filter header sequence: expected {}, got {}",
-                self.current_sync_height, batch_start_height
-            )));
-        } else {
-            // This is the expected batch - process it
-            match self.verify_filter_header_chain(&cf_headers, batch_start_height, storage).await {
-                Ok(true) => {
-                    tracing::debug!(
-                        "✅ Filter header chain verification successful for batch {}-{}",
-                        batch_start_height,
-                        stop_height
-                    );
-
-                    // Store the verified filter headers
-                    self.store_filter_headers(cf_headers.clone(), storage).await?;
-
-                    // Update current height and record progress
-                    self.current_sync_height = stop_height + 1;
-                    self.last_sync_progress = std::time::Instant::now();
-
-                    // Check if we've reached the header tip
-                    if stop_height >= header_tip_height {
-                        // Perform stability check before declaring completion
-                        if let Ok(is_stable) = self.check_filter_header_stability(storage).await {
-                            if is_stable {
-                                tracing::info!(
-                                    "🎯 Filter header sync complete at height {} (stability confirmed)",
-                                    stop_height
-                                );
-                                self.syncing_filter_headers = false;
-                                return Ok(false);
-                            } else {
-                                tracing::debug!(
-                                    "Filter header sync reached tip at height {} but stability check failed, continuing sync",
-                                    stop_height
-                                );
-                            }
-                        } else {
-                            tracing::debug!(
-                                "Filter header sync reached tip at height {} but stability check errored, continuing sync",
-                                stop_height
-                            );
-                        }
-                    }
-
-                    // Check if our next sync height would exceed the header tip
-                    if self.current_sync_height > header_tip_height {
-                        tracing::info!(
-                            "Filter header sync complete - current sync height {} exceeds header tip {}",
-                            self.current_sync_height,
-                            header_tip_height
-                        );
-                        self.syncing_filter_headers = false;
-                        return Ok(false);
-                    }
-
-                    // Request next batch
-                    let next_batch_end_height =
-                        (self.current_sync_height + FILTER_BATCH_SIZE - 1).min(header_tip_height);
-                    tracing::debug!(
-                        "Calculated next batch end height: {} (current: {}, tip: {})",
-                        next_batch_end_height,
-                        self.current_sync_height,
-                        header_tip_height
-                    );
-
-                    let stop_hash = if next_batch_end_height < header_tip_height {
-                        // Try to get the header at the calculated height
-                        match storage.get_header(next_batch_end_height).await {
-                            Ok(Some(header)) => header.block_hash(),
-                            Ok(None) => {
-                                tracing::warn!(
-                                    "Header not found at blockchain height {}, scanning backwards to find actual available height",
-                                    next_batch_end_height
-                                );
-
-                                let min_height = self.current_sync_height; // Don't go below where we are
-                                match self
-                                    .find_available_header_at_or_before(
-                                        next_batch_end_height.saturating_sub(1),
-                                        min_height,
-                                        storage,
-                                    )
-                                    .await
-                                {
-                                    Some((hash, height)) => {
-                                        if height < self.current_sync_height {
-                                            tracing::warn!(
-                                                "Found header at height {} which is less than current sync height {}. This means we already have filter headers up to {}. Marking sync as complete.",
-                                                height,
-                                                self.current_sync_height,
-                                                self.current_sync_height - 1
-                                            );
-                                            self.syncing_filter_headers = false;
-                                            return Ok(false);
-                                        }
-                                        hash
-                                    }
-                                    None => {
-                                        tracing::error!(
-                                            "No available headers found between {} and {} - storage appears to have gaps",
-                                            min_height,
-                                            next_batch_end_height
-                                        );
-                                        tracing::error!(
-                                            "This indicates a serious storage inconsistency. Stopping filter header sync."
-                                        );
-                                        self.syncing_filter_headers = false;
-                                        return Err(SyncError::Storage(format!(
-                                            "No available headers found between {} and {} while selecting next batch stop hash",
-                                            min_height,
-                                            next_batch_end_height
-                                        )));
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                return Err(SyncError::Storage(format!(
-                                    "Failed to get next batch stop header at height {}: {}",
-                                    next_batch_end_height, e
-                                )));
-                            }
-                        }
-                    } else {
-                        // Special handling for chain tip: if we can't find the exact tip header,
-                        // try the previous header as we might be at the actual chain tip
-                        match storage.get_header(header_tip_height).await {
-                            Ok(Some(header)) => header.block_hash(),
-                            Ok(None) if header_tip_height > 0 => {
-                                tracing::debug!(
-                                    "Tip header not found at blockchain height {}, trying previous header",
-                                    header_tip_height
-                                );
-                                // Try previous header when at chain tip
-                                match storage.get_header(header_tip_height - 1).await {
-                                    Ok(Some(header)) => header.block_hash(),
-                                    _ => {
-                                        tracing::warn!(
-                                            "⚠️ No header found at tip or tip-1 during CFHeaders handling"
-                                        );
-                                        return Err(SyncError::Validation(
-                                            "No header found at tip or tip-1".to_string(),
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {
-                                return Err(SyncError::Validation(
-                                    "No header found at computed end height".to_string(),
-                                ));
-                            }
-                        }
-                    };
-
-                    self.request_filter_headers(network, self.current_sync_height, stop_hash)
-                        .await?;
-                }
-                Ok(false) => {
-                    tracing::warn!(
-                        "⚠️ Filter header chain verification failed for batch {}-{}",
-                        batch_start_height,
-                        stop_height
-                    );
-                    return Err(SyncError::Validation(
-                        "Filter header chain verification failed".to_string(),
-                    ));
-                }
-                Err(e) => {
-                    tracing::error!("❌ Filter header chain verification failed: {}", e);
-                    return Err(e);
-                }
-            }
-        }
-
-        Ok(true)
+        self.handle_filter_headers(cf_headers, storage, network).await
     }
+
     pub async fn start_sync_headers(
         &mut self,
         network: &mut N,
@@ -700,8 +372,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(())
     }
 
-    /// Start synchronizing filter headers with flow control for parallel requests.
-    pub async fn start_sync_headers_with_flow_control(
+    /// Start synchronizing filter headers.
+    pub async fn start_sync_filter_headers(
         &mut self,
         network: &mut N,
         storage: &mut S,
@@ -721,7 +393,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Ok(false); // No sync started
         }
 
-        tracing::info!("🚀 Starting filter header synchronization with flow control");
+        tracing::info!("🚀 Starting filter header synchronization");
 
         // Get current filter tip
         let current_filter_height = storage
@@ -779,7 +451,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.process_cfheader_request_queue(network).await?;
 
         tracing::info!(
-            "✅ CFHeaders flow control initiated ({} requests queued, {} active)",
+            "✅ CFHeaders sync initiated ({} requests queued, {} active)",
             self.pending_cfheader_requests.len(),
             self.active_cfheader_requests.len()
         );
@@ -855,7 +527,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(())
     }
 
-    /// Process the CFHeaders request queue with flow control.
+    /// Process the CFHeaders request queue.
     async fn process_cfheader_request_queue(&mut self, network: &mut N) -> SyncResult<()> {
         // Send initial batch up to max_concurrent_cfheader_requests
         let initial_send_count =
@@ -904,8 +576,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(())
     }
 
-    /// Handle CFHeaders message with flow control (buffering and sequential processing).
-    async fn handle_cfheaders_with_flow_control(
+    /// Handle CFHeaders message (buffering and sequential processing).
+    async fn handle_filter_headers(
         &mut self,
         cf_headers: CFHeaders,
         storage: &mut S,
@@ -915,7 +587,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         if cf_headers.filter_hashes.is_empty() {
             tracing::info!("Received empty CFHeaders response - sync complete");
             self.syncing_filter_headers = false;
-            self.clear_cfheader_flow_control_state();
+            self.clear_filter_header_sync_state();
             return Ok(false);
         }
 
@@ -972,7 +644,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         if self.is_cfheader_sync_complete(storage).await? {
             tracing::info!("✅ CFHeaders sync complete!");
             self.syncing_filter_headers = false;
-            self.clear_cfheader_flow_control_state();
+            self.clear_filter_header_sync_state();
             return Ok(false);
         }
 
@@ -999,7 +671,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 );
 
                 // Store the verified filter headers
-                self.store_filter_headers(cf_headers.clone(), storage).await?;
+                self.store_filter_headers(&cf_headers, storage).await?;
 
                 // Update next expected height
                 self.next_cfheader_height_to_process = stop_height + 1;
@@ -1110,8 +782,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(self.next_cfheader_height_to_process > header_tip)
     }
 
-    /// Clear flow control state.
-    fn clear_cfheader_flow_control_state(&mut self) {
+    /// Clear sync state.
+    fn clear_filter_header_sync_state(&mut self) {
         self.pending_cfheader_requests.clear();
         self.active_cfheader_requests.clear();
         self.cfheader_retry_counts.clear();
@@ -1307,42 +979,5 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             cf_headers.filter_hashes.len()
         );
         Ok(true)
-    }
-
-    async fn check_filter_header_stability(&mut self, storage: &S) -> SyncResult<bool> {
-        let current_filter_tip = storage
-            .get_filter_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?;
-
-        let now = std::time::Instant::now();
-
-        // Check if the tip height has changed since last check
-        if self.last_filter_tip_height != current_filter_tip {
-            // Tip height changed, reset stability timer
-            self.last_filter_tip_height = current_filter_tip;
-            self.last_stability_check = now;
-            tracing::debug!(
-                "Filter tip height changed to {:?}, resetting stability timer",
-                current_filter_tip
-            );
-            return Ok(false);
-        }
-
-        // Check if enough time has passed since last change
-        const STABILITY_DURATION: std::time::Duration = std::time::Duration::from_secs(3);
-        if now.duration_since(self.last_stability_check) >= STABILITY_DURATION {
-            tracing::debug!(
-                "Filter header sync stability confirmed (tip height {:?} stable for 3+ seconds)",
-                current_filter_tip
-            );
-            return Ok(true);
-        }
-
-        tracing::debug!(
-            "Filter header sync stability check: waiting for tip height {:?} to stabilize",
-            current_filter_tip
-        );
-        Ok(false)
     }
 }

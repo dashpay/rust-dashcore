@@ -21,7 +21,7 @@ mod tests {
         let wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic.clone(),
             passphrase.to_string(),
-            &[network],
+            network,
             WalletAccountCreationOptions::None,
         )
         .expect("Should create wallet with passphrase");
@@ -30,7 +30,7 @@ mod tests {
         // We can't easily check the wallet type from outside, but we know it's created
 
         // Try to get account 0 - should not exist yet
-        assert!(wallet.get_bip44_account(network, 0).is_none());
+        assert!(wallet.get_bip44_account(0).is_none());
 
         // Try to add account 0 without providing passphrase
         // THIS WILL FAIL because the wallet needs the passphrase to derive accounts
@@ -41,7 +41,7 @@ mod tests {
         };
 
         // This should fail with an error about needing the passphrase
-        let result = wallet_mut.add_account(account_type, network, None);
+        let result = wallet_mut.add_account(account_type, None);
 
         // EXPECTED: This will fail because we can't derive the account without the passphrase
         assert!(result.is_err());
@@ -70,7 +70,7 @@ mod tests {
         let wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase.to_string(),
-            &[network],
+            network,
             WalletAccountCreationOptions::None,
         )
         .expect("Should create wallet");
@@ -104,13 +104,13 @@ mod tests {
         let mut wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase.to_string(),
-            &[network],
+            network,
             WalletAccountCreationOptions::None,
         )
         .expect("Should create wallet");
 
         // Verify no accounts exist initially
-        assert!(wallet.get_bip44_account(network, 0).is_none());
+        assert!(wallet.get_bip44_account(0).is_none());
 
         // Add account using the new function with the correct passphrase
         let account_type = AccountType::Standard {
@@ -118,15 +118,14 @@ mod tests {
             standard_account_type: StandardAccountType::BIP44Account,
         };
 
-        let result = wallet.add_account_with_passphrase(account_type, network, passphrase);
+        let result = wallet.add_account_with_passphrase(account_type, passphrase);
         assert!(result.is_ok(), "Should successfully add account with correct passphrase");
 
         // Verify account was added
-        assert!(wallet.get_bip44_account(network, 0).is_some());
+        assert!(wallet.get_bip44_account(0).is_some());
 
         // Try to add the same account again - should fail
-        let duplicate_result =
-            wallet.add_account_with_passphrase(account_type, network, passphrase);
+        let duplicate_result = wallet.add_account_with_passphrase(account_type, passphrase);
         assert!(duplicate_result.is_err());
         assert!(duplicate_result.unwrap_err().to_string().contains("already exists"));
 
@@ -135,9 +134,9 @@ mod tests {
             index: 1,
             standard_account_type: StandardAccountType::BIP44Account,
         };
-        let result2 = wallet.add_account_with_passphrase(account_type_2, network, passphrase);
+        let result2 = wallet.add_account_with_passphrase(account_type_2, passphrase);
         assert!(result2.is_ok());
-        assert!(wallet.get_bip44_account(network, 1).is_some());
+        assert!(wallet.get_bip44_account(1).is_some());
     }
 
     #[test]
@@ -150,7 +149,7 @@ mod tests {
 
         // Create regular wallet WITHOUT passphrase
         let mut wallet =
-            Wallet::from_mnemonic(mnemonic, &[network], WalletAccountCreationOptions::Default)
+            Wallet::from_mnemonic(mnemonic, network, WalletAccountCreationOptions::Default)
                 .expect("Should create wallet");
 
         // Try to use add_account_with_passphrase - should fail
@@ -159,7 +158,7 @@ mod tests {
             standard_account_type: StandardAccountType::BIP44Account,
         };
 
-        let result = wallet.add_account_with_passphrase(account_type, network, "some_passphrase");
+        let result = wallet.add_account_with_passphrase(account_type, "some_passphrase");
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
