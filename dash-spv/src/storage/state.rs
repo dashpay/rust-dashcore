@@ -4,11 +4,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 use dashcore::{block::Header as BlockHeader, BlockHash, Txid};
-#[cfg(test)]
-use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
-use crate::storage::manager::WorkerCommand;
+use crate::storage::headers::save_index_to_disk;
 use crate::storage::{MasternodeState, StorageManager};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
@@ -23,11 +21,7 @@ impl DiskStorageManager {
         self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
 
         // Store filter headers
-        self.filter_headers
-            .write()
-            .await
-            .store_items(&state.filter_headers, state.sync_base_height, self)
-            .await?;
+        self.filter_headers.write().await.store_items(&state.filter_headers).await?;
 
         // Store other state as JSON
         let state_data = serde_json::json!({
@@ -213,9 +207,7 @@ impl StorageManager for DiskStorageManager {
         &mut self,
         headers: &[dashcore::hash_types::FilterHeader],
     ) -> StorageResult<()> {
-        let mut filter_headers = self.filter_headers.write().await;
-        let next_height = filter_headers.next_height();
-        filter_headers.store_items(headers, next_height, self).await
+        self.filter_headers.write().await.store_items(headers).await
     }
 
     async fn load_filter_headers(
@@ -253,7 +245,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
-        self.filters.write().await.store_items(&[filter.to_vec()], height, self).await
+        self.filters.write().await.store_items_at_height(&[filter.to_vec()], height).await
     }
 
     async fn load_filters(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
@@ -343,6 +335,7 @@ impl StorageManager for DiskStorageManager {
 mod tests {
     use super::*;
     use dashcore::{block::Version, pow::CompactTarget};
+    use dashcore_hashes::Hash;
     use tempfile::TempDir;
 
     fn build_headers(count: usize) -> Vec<BlockHeader> {
@@ -462,7 +455,6 @@ mod tests {
 
         // Force save to disk
         storage.save_dirty().await;
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         drop(storage);
 

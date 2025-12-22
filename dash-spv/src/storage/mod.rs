@@ -115,9 +115,7 @@ impl DiskStorageManager {
             )),
             filters: Arc::new(RwLock::new(SegmentCache::load_or_new(base_path.clone()).await?)),
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
-            worker_tx: None,
             worker_handle: None,
-            last_index_save_count: Arc::new(RwLock::new(0)),
             mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
             mempool_state: Arc::new(RwLock::new(None)),
             _lock_file: lock_file,
@@ -128,7 +126,8 @@ impl DiskStorageManager {
             tracing::debug!("Loaded sync_base_height: {}", state.sync_base_height);
         }
 
-        // Start background worker
+        // Start background worker that
+        // persists data when appropriate
         storage.start_worker().await;
 
         // Rebuild index
@@ -157,125 +156,36 @@ impl DiskStorageManager {
 
     /// Start the background worker
     pub(super) async fn start_worker(&mut self) {
-        let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerCommand>(100);
-
-        let worker_base_path = self.base_path.clone();
-        let base_path = self.base_path.clone();
-
         let block_headers = Arc::clone(&self.block_headers);
         let filter_headers = Arc::clone(&self.filter_headers);
-        let cfilters = Arc::clone(&self.filters);
+        let filters = Arc::clone(&self.filters);
 
         let worker_handle = tokio::spawn(async move {
-            while let Some(cmd) = worker_rx.recv().await {
-                match cmd {
-                    WorkerCommand::SaveBlockHeaderSegmentCache {
-                        segment_id,
-                    } => {
-                        let mut cache = block_headers.write().await;
-                        let segment = match cache.get_segment_mut(&segment_id).await {
-                            Ok(segment) => segment,
-                            Err(e) => {
-                                eprintln!("Failed to get segment {}: {}", segment_id, e);
-                                continue;
-                            }
-                        };
+            let mut ticker = tokio::time::interval(Duration::from_secs(5));
 
-                        match segment.persist(&base_path).await {
-                            Ok(()) => {
-                                tracing::trace!(
-                                    "Background worker completed saving header segment {}",
-                                    segment_id
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to save segment {}: {}", segment_id, e);
-                            }
-                        }
-                    }
-                    WorkerCommand::SaveFilterHeaderSegmentCache {
-                        segment_id,
-                    } => {
-                        let mut cache = filter_headers.write().await;
-                        let segment = match cache.get_segment_mut(&segment_id).await {
-                            Ok(segment) => segment,
-                            Err(e) => {
-                                eprintln!("Failed to get segment {}: {}", segment_id, e);
-                                continue;
-                            }
-                        };
+            loop {
+                ticker.tick().await;
 
-                        match segment.persist(&base_path).await {
-                            Ok(()) => {
-                                tracing::trace!(
-                                    "Background worker completed saving header segment {}",
-                                    segment_id
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to save segment {}: {}", segment_id, e);
-                            }
-                        }
-                    }
-                    WorkerCommand::SaveFilterSegmentCache {
-                        segment_id,
-                    } => {
-                        let mut cache = cfilters.write().await;
-                        let segment = match cache.get_segment_mut(&segment_id).await {
-                            Ok(segment) => segment,
-                            Err(e) => {
-                                eprintln!("Failed to get segment {}: {}", segment_id, e);
-                                continue;
-                            }
-                        };
-
-                        match segment.persist(&base_path).await {
-                            Ok(()) => {
-                                tracing::trace!(
-                                    "Background worker completed saving filter segment {}",
-                                    segment_id
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to save segment {}: {}", segment_id, e);
-                            }
-                        }
-                    }
-                    WorkerCommand::SaveIndex {
-                        index,
-                    } => {
-                        let path = worker_base_path.join("headers/index.dat");
-                        if let Err(e) = super::headers::save_index_to_disk(&path, &index).await {
-                            eprintln!("Failed to save index: {}", e);
-                        } else {
-                            tracing::trace!("Background worker completed saving index");
-                        }
-                    }
-                    WorkerCommand::Shutdown => {
-                        break;
-                    }
-                }
+                block_headers.write().await.persist_evicted().await;
+                filter_headers.write().await.persist_evicted().await;
+                filters.write().await.persist_evicted().await;
             }
         });
 
-        self.worker_tx = Some(worker_tx);
         self.worker_handle = Some(worker_handle);
     }
 
     /// Stop the background worker without forcing a save.
-    pub(super) async fn stop_worker(&mut self) {
-        if let Some(tx) = self.worker_tx.take() {
-            let _ = tx.send(WorkerCommand::Shutdown).await;
-        }
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.await;
+    pub(super) fn stop_worker(&self) {
+        if let Some(handle) = &self.worker_handle {
+            handle.abort();
         }
     }
 
     /// Clear all data.
     pub(super) async fn clear(&mut self) -> StorageResult<()> {
         // First, stop the background worker to avoid races with file deletion
-        self.stop_worker().await;
+        self.stop_worker();
 
         // Clear in-memory state
         self.block_headers.write().await.clear_in_memory();
@@ -320,7 +230,7 @@ impl DiskStorageManager {
     /// Clear all filter headers and compact filters.
     pub(super) async fn clear_filters(&mut self) -> StorageResult<()> {
         // Stop worker to prevent concurrent writes to filter directories
-        self.stop_worker().await;
+        self.stop_worker();
 
         // Clear in-memory and on-disk filter headers segments
         self.filter_headers.write().await.clear_all().await?;
@@ -354,34 +264,16 @@ impl DiskStorageManager {
         }
     }
 
-    /// Save all dirty segments to disk via background worker.
+    /// Save all dirty data.
     pub(super) async fn save_dirty(&self) {
-        self.filter_headers.write().await.persist_dirty(self).await;
-        self.block_headers.write().await.persist_dirty(self).await;
-        self.filters.write().await.persist_dirty(self).await;
+        self.filter_headers.write().await.persist().await;
+        self.block_headers.write().await.persist().await;
+        self.filters.write().await.persist().await;
 
-        if let Some(tx) = &self.worker_tx {
-            // Save the index only if it has grown significantly (every 10k new entries)
-            let current_index_size = self.header_hash_index.read().await.len();
-            let last_save_count = *self.last_index_save_count.read().await;
-
-            // Save if index has grown by 10k entries, or if we've never saved before
-            if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
-                let index = self.header_hash_index.read().await.clone();
-                let _ = tx
-                    .send(WorkerCommand::SaveIndex {
-                        index,
-                    })
-                    .await;
-
-                // Update the last save count
-                *self.last_index_save_count.write().await = current_index_size;
-                tracing::debug!(
-                    "Scheduled index save (size: {}, last_save: {})",
-                    current_index_size,
-                    last_save_count
-                );
-            }
+        let path = self.base_path.join("headers/index.dat");
+        let index = self.header_hash_index.read().await;
+        if let Err(e) = save_index_to_disk(&path, &index).await {
+            tracing::error!("Failed to persist header index: {}", e);
         }
     }
 }
