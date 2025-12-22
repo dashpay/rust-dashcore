@@ -165,17 +165,14 @@ cargo doc --open
 - Use proptest for property-based testing where appropriate
 
 ### Git Workflow
-- Current development branch: `v0.40-dev`
+- Current development branch: `v0.42-dev`
 - Main branch: `master`
-- Recent work:
-  - Removed interleaved sync logic from dash-spv (now uses sequential sync only)
-  - Swift SDK and FFI improvements
 
 ## Current Status
 
 The project is actively developing:
 - FFI bindings improvements
-- Support for Dash Core versions 0.18.0 - 0.21.0
+- Support for Dash Core versions 0.18.0 - 0.23.x
 
 ## Security Considerations
 
