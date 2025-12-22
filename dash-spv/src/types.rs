@@ -20,8 +20,6 @@ use std::time::{Duration, Instant, SystemTime};
 use dashcore::{
     block::Header as BlockHeader,
     consensus::{Decodable, Encodable},
-    network::constants::NetworkExt,
-    sml::masternode_list_engine::MasternodeListEngine,
     Amount, BlockHash, Network, Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
@@ -264,9 +262,6 @@ pub struct ChainState {
     /// Last ChainLock hash.
     pub last_chainlock_hash: Option<BlockHash>,
 
-    /// Masternode list engine.
-    pub masternode_engine: Option<MasternodeListEngine>,
-
     /// Last masternode diff height processed.
     pub last_masternode_diff_height: Option<u32>,
 
@@ -281,15 +276,8 @@ impl ChainState {
     }
 
     /// Create a new chain state for the given network.
-    pub fn new_for_network(network: Network) -> Self {
+    pub fn new_for_network() -> Self {
         let mut state = Self::default();
-
-        // Initialize masternode engine for the network
-        let mut engine = MasternodeListEngine::default_for_network(network);
-        if let Some(genesis_hash) = network.known_genesis_block_hash() {
-            engine.feed_block_height(0, genesis_hash);
-        }
-        state.masternode_engine = Some(engine);
 
         // Initialize checkpoint fields
         state.sync_base_height = 0;
@@ -335,26 +323,15 @@ impl ChainState {
     }
 
     /// Initialize chain state from a checkpoint.
-    pub fn init_from_checkpoint(
-        &mut self,
-        checkpoint_height: u32,
-        checkpoint_header: BlockHeader,
-        network: Network,
-    ) {
+    pub fn init_from_checkpoint(&mut self, checkpoint_height: u32, network: Network) {
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
 
         tracing::info!(
-            "Initialized ChainState from checkpoint - height: {}, hash: {}, network: {:?}",
+            "Initialized ChainState from checkpoint - height: {}, network: {:?}",
             checkpoint_height,
-            checkpoint_header.block_hash(),
             network
         );
-
-        // Initialize masternode engine for the network, starting from checkpoint
-        let mut engine = MasternodeListEngine::default_for_network(network);
-        engine.feed_block_height(checkpoint_height, checkpoint_header.block_hash());
-        self.masternode_engine = Some(engine);
     }
 
     /// Get the absolute height for a given index in our headers vector.

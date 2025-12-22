@@ -79,7 +79,6 @@ impl ChainStateStorage for PersistentChainStateStorage {
                 .get("last_chainlock_hash")
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse().ok()),
-            masternode_engine: None,
             last_masternode_diff_height: value
                 .get("last_masternode_diff_height")
                 .and_then(|v| v.as_u64())
