@@ -3,8 +3,9 @@
 mod tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::{FFIAccountType, FFINetworks};
+    use crate::types::FFIAccountType;
     use crate::wallet;
+    use crate::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 
@@ -36,7 +37,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -90,7 +91,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -135,7 +136,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -158,7 +159,7 @@ mod tests {
 
                 // Test get network
                 let network = account_get_network(result.account);
-                assert_eq!(network as u32, FFINetworks::TestnetFlag as u32);
+                assert_eq!(network, FFINetwork::Testnet);
 
                 // Test get parent wallet id (may be null)
                 let _wallet_id = account_get_parent_wallet_id(result.account);
@@ -200,7 +201,7 @@ mod tests {
             assert!(xpub.is_null());
 
             let network = account_get_network(ptr::null());
-            assert_eq!(network as u32, FFINetworks::NoNetworks as u32);
+            assert_eq!(network, crate::FFINetwork::Dash);
 
             let wallet_id = account_get_parent_wallet_id(ptr::null());
             assert!(wallet_id.is_null());

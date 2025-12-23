@@ -9,7 +9,7 @@
 //! - types/balances.rs - AddressBalance, UnconfirmedTransaction
 //!
 //! # Thread Safety
-//! Many types here are wrapped in Arc<RwLock> or Arc<Mutex> when used.
+//! Many types here are wrapped in `Arc<RwLock>` or `Arc<Mutex>` when used.
 //! Always acquire locks in consistent order to prevent deadlocks:
 //! 1. state (ChainState)
 //! 2. stats (SpvStats)
@@ -27,13 +27,13 @@ use std::sync::Arc;
 
 /// Shared, mutex-protected set of filter heights used across components.
 ///
-/// # Why Arc<Mutex<HashSet>>?
+/// # Why `Arc<Mutex<HashSet>>`?
 /// - Arc: Shared ownership between FilterSyncManager and SpvStats
 /// - Mutex: Interior mutability for concurrent updates from filter download tasks
 /// - HashSet: Fast O(1) membership testing for gap detection
 ///
 /// # Performance Note
-/// Consider Arc<RwLock> if read contention becomes an issue (most operations are reads).
+/// Consider `Arc<RwLock>` if read contention becomes an issue (most operations are reads).
 pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>;
 
 /// A block header with its cached hash to avoid expensive X11 recomputation.
@@ -240,20 +240,13 @@ impl DetailedSyncProgress {
 /// # CRITICAL: This is the heart of the SPV client's state
 ///
 /// ## Thread Safety
-/// Almost always wrapped in Arc<RwLock<ChainState>> for shared access.
+/// Almost always wrapped in `Arc<RwLock<ChainState>>` for shared access.
 /// Multiple readers can access simultaneously, but writes are exclusive.
 ///
 /// ## Checkpoint Sync
 /// When syncing from a checkpoint (not genesis), `sync_base_height` is non-zero.
-///
-/// ## Memory Considerations
-/// - filter_headers: 32 bytes per filter header
-/// - At 2M blocks: ~64MB for filter headers
 #[derive(Clone, Default)]
 pub struct ChainState {
-    /// Filter headers indexed by height.
-    pub filter_headers: Vec<FilterHeader>,
-
     /// Last ChainLock height.
     pub last_chainlock_height: Option<u32>,
 
@@ -301,23 +294,6 @@ impl ChainState {
         self.sync_base_height > 0
     }
 
-    /// Get filter header at the given height.
-    pub fn filter_header_at_height(&self, height: u32) -> Option<&FilterHeader> {
-        if height < self.sync_base_height {
-            return None; // Height is before our sync base
-        }
-        let index = (height - self.sync_base_height) as usize;
-        self.filter_headers.get(index)
-    }
-
-    /// Add filter headers to the chain.
-    pub fn add_filter_headers(&mut self, filter_headers: Vec<FilterHeader>) {
-        if let Some(last) = filter_headers.last() {
-            self.current_filter_tip = Some(*last);
-        }
-        self.filter_headers.extend(filter_headers);
-    }
-
     /// Update chain lock status
     pub fn update_chain_lock(&mut self, height: u32, hash: BlockHash) {
         // Only update if this is a newer chain lock
@@ -357,9 +333,6 @@ impl ChainState {
         checkpoint_header: BlockHeader,
         network: Network,
     ) {
-        // Clear any existing headers
-        self.filter_headers.clear();
-
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
 
@@ -394,7 +367,6 @@ impl ChainState {
 impl std::fmt::Debug for ChainState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainState")
-            .field("filter_headers", &format!("{} filter headers", self.filter_headers.len()))
             .field("last_chainlock_height", &self.last_chainlock_height)
             .field("last_chainlock_hash", &self.last_chainlock_hash)
             .field("current_filter_tip", &self.current_filter_tip)

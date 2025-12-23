@@ -2,7 +2,7 @@
 //!
 //! This module provides FFI-compatible managed account functionality that wraps
 //! ManagedAccount instances from the key-wallet crate. FFIManagedAccount is a
-//! simple wrapper around Arc<ManagedAccount> without additional fields.
+//! simple wrapper around `Arc<ManagedAccount>` without additional fields.
 
 use std::os::raw::c_uint;
 use std::sync::Arc;
@@ -384,6 +384,7 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
 /// # Safety
 ///
 /// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - Returns `FFINetwork::Dash` if the account is null
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_get_network(
     account: *const FFIManagedAccount,
@@ -969,7 +970,7 @@ mod tests {
         wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
         wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
     };
-    use crate::FFINetworks;
+    use crate::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 
@@ -993,7 +994,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1061,7 +1062,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &options,
                 &mut error,
             );
@@ -1136,7 +1137,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &options,
                 &mut error,
             );
@@ -1185,7 +1186,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1271,7 +1272,7 @@ mod tests {
     #[test]
     fn test_managed_account_getter_edge_cases() {
         unsafe {
-            // Test null account
+            // Test null account for get_network
             let network = managed_account_get_network(ptr::null());
             assert_eq!(network, FFINetwork::Dash);
 
@@ -1305,7 +1306,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1361,7 +1362,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1455,7 +1456,7 @@ mod tests {
                 manager,
                 mnemonic2.as_ptr(),
                 passphrase2.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &options,
                 &mut error,
             );

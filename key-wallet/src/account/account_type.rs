@@ -52,16 +52,16 @@ pub enum AccountType {
     /// Identity invitation funding
     IdentityInvitation,
     /// Provider voting keys (DIP-3)
-    /// Path: m/9'/5'/3'/1'/[key_index]
+    /// Path: `m/9'/5'/3'/1'/[key_index]`
     ProviderVotingKeys,
     /// Provider owner keys (DIP-3)
-    /// Path: m/9'/5'/3'/2'/[key_index]
+    /// Path: `m/9'/5'/3'/2'/[key_index]`
     ProviderOwnerKeys,
     /// Provider operator keys (DIP-3)
-    /// Path: m/9'/5'/3'/3'/[key_index]
+    /// Path: `m/9'/5'/3'/3'/[key_index]`
     ProviderOperatorKeys,
     /// Provider platform P2P keys (DIP-3, ED25519)
-    /// Path: m/9'/5'/3'/4'/[key_index]
+    /// Path: `m/9'/5'/3'/4'/[key_index]`
     ProviderPlatformKeys,
     /// Incoming DashPay funds account using 256-bit derivation
     /// The derivation path used is user_identity_id/friend_identity_id

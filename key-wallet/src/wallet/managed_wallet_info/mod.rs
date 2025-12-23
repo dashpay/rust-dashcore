@@ -21,6 +21,7 @@ use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::Network;
 use alloc::string::String;
+use dashcore::prelude::CoreBlockHeight;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -104,7 +105,7 @@ impl ManagedWalletInfo {
     pub fn with_birth_height(
         network: Network,
         wallet_id: [u8; 32],
-        birth_height: Option<u32>,
+        birth_height: CoreBlockHeight,
     ) -> Self {
         let mut info = Self::new(network, wallet_id);
         info.metadata.birth_height = birth_height;

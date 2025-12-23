@@ -18,13 +18,6 @@ use super::manager::DiskStorageManager;
 impl DiskStorageManager {
     /// Store chain state to disk.
     pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        // Store filter headers
-        self.filter_headers
-            .write()
-            .await
-            .store_items(&state.filter_headers, state.sync_base_height, self)
-            .await?;
-
         // Store other state as JSON
         let state_data = serde_json::json!({
             "last_chainlock_height": state.last_chainlock_height,
@@ -53,7 +46,7 @@ impl DiskStorageManager {
             crate::error::StorageError::Serialization(format!("Failed to parse chain state: {}", e))
         })?;
 
-        let mut state = ChainState {
+        let state = ChainState {
             last_chainlock_height: value
                 .get("last_chainlock_height")
                 .and_then(|v| v.as_u64())
@@ -76,14 +69,7 @@ impl DiskStorageManager {
                 .and_then(|v| v.as_u64())
                 .map(|h| h as u32)
                 .unwrap_or(0),
-            ..Default::default()
         };
-
-        let range_start = state.sync_base_height;
-        if let Some(filter_tip_height) = self.get_filter_tip_height().await? {
-            state.filter_headers =
-                self.load_filter_headers(range_start..filter_tip_height + 1).await?;
-        }
 
         Ok(Some(state))
     }

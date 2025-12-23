@@ -104,7 +104,7 @@ impl<
 
         // Validate the InstantLock (structure + BLS signature)
         // This is REQUIRED for security - never accept InstantLocks without signature verification
-        let validator = crate::validation::instantlock::InstantLockValidator::new();
+        let validator = crate::validation::InstantLockValidator::new();
         if let Err(e) = validator.validate(&islock, masternode_engine) {
             // Penalize the peer that relayed the invalid InstantLock
             let reason = format!("Invalid InstantLock: {}", e);

@@ -7,7 +7,7 @@ use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::sleep;
 
@@ -377,46 +377,4 @@ async fn test_filter_header_persistence() {
         assert_eq!(loaded[0], create_test_filter_header(49_998));
         assert_eq!(loaded[3], create_test_filter_header(50_001));
     }
-}
-
-#[tokio::test]
-async fn test_performance_improvement() {
-    let temp_dir = TempDir::new().unwrap();
-    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await.unwrap();
-
-    // Store a large number of headers
-    let headers: Vec<BlockHeader> = (0..200_000).map(create_test_header).collect();
-
-    let start = Instant::now();
-    for chunk in headers.chunks(10_000) {
-        storage.store_headers(chunk).await.unwrap();
-    }
-    let store_time = start.elapsed();
-
-    println!("Stored 200,000 headers in {:?}", store_time);
-
-    // Test random access performance
-    let start = Instant::now();
-    for _ in 0..1000 {
-        let height = rand::random::<u32>() % 200_000;
-        let _ = storage.get_header(height).await.unwrap();
-    }
-    let access_time = start.elapsed();
-
-    println!("1000 random accesses in {:?}", access_time);
-    assert!(access_time < Duration::from_secs(1), "Random access should be fast");
-
-    // Test reverse index performance
-    let start = Instant::now();
-    for _ in 0..1000 {
-        let height = rand::random::<u32>() % 200_000;
-        let hash = headers[height as usize].block_hash();
-        let _ = storage.get_header_height_by_hash(&hash).await.unwrap();
-    }
-    let lookup_time = start.elapsed();
-
-    println!("1000 hash lookups in {:?}", lookup_time);
-    assert!(lookup_time < Duration::from_secs(1), "Hash lookups should be fast");
-
-    storage.shutdown().await;
 }

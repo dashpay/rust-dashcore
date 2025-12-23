@@ -13,7 +13,7 @@ impl Wallet {
     /// # Returns
     /// A `Vec<u8>` containing the serialized wallet data
     ///
-    /// # Example
+    /// # Examples
     /// ```no_run
     /// use key_wallet::wallet::Wallet;
     ///
@@ -39,7 +39,7 @@ impl Wallet {
     /// # Returns
     /// The restored `Wallet`
     ///
-    /// # Example
+    /// # Examples
     /// ```no_run
     /// use key_wallet::wallet::Wallet;
     ///

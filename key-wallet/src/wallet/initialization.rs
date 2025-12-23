@@ -214,7 +214,7 @@ impl Wallet {
     /// # Returns
     /// A new watch-only or externally signable wallet instance
     ///
-    /// # Example
+    /// # Examples
     /// ```ignore
     /// // Create a pure watch-only wallet
     /// let watch_wallet = Wallet::from_xpub(master_xpub, account_collection, false)?;
@@ -256,7 +256,7 @@ impl Wallet {
     /// A new external signable wallet instance that can create transactions but requires
     /// the external device/service for signing
     ///
-    /// # Example
+    /// # Examples
     /// ```ignore
     /// // Get master xpub from hardware wallet
     /// let master_xpub = hardware_wallet.get_master_xpub()?;

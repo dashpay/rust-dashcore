@@ -964,7 +964,7 @@ pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FFINetworks;
+    use crate::FFINetwork;
 
     #[test]
     fn test_address_pool_type_values() {
@@ -1069,7 +1069,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1169,7 +1169,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );

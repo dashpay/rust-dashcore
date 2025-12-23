@@ -94,7 +94,7 @@ Functions: 3
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_broadcast_transaction` | No description | broadcast |
+| `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | broadcast |
 | `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  #... | types |
 | `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx` | Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction... | types |
 
@@ -254,7 +254,7 @@ dash_spv_ffi_config_add_peer(config: *mut FFIClientConfig, addr: *const c_char,)
 ```
 
 **Description:**
-Adds a peer address to the configuration  Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999") or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
+Adds a peer address to the configuration  Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`) or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
@@ -784,6 +784,12 @@ Destroys the addresses array allocated for an FFIUnconfirmedTransaction  # Safet
 ```c
 dash_spv_ffi_client_broadcast_transaction(client: *mut FFIDashSpvClient, tx_hex: *const c_char,) -> i32
 ```
+
+**Description:**
+Broadcasts a transaction to the Dash network via connected peers.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string containing a hex-encoded serialized transaction
+
+**Safety:**
+- `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string containing a hex-encoded serialized transaction
 
 **Module:** `broadcast`
 

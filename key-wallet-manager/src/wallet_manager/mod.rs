@@ -11,6 +11,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{BlockHash, Txid};
 use key_wallet::account::AccountCollection;
 use key_wallet::transaction_checking::TransactionContext;
@@ -121,7 +122,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         mnemonic: &str,
         passphrase: &str,
         network: Network,
-        birth_height: Option<u32>,
+        birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
         let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
@@ -178,7 +179,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// * `mnemonic` - The mnemonic phrase
     /// * `passphrase` - Optional BIP39 passphrase (empty string for no passphrase)
     /// * `network` - The network for the wallet
-    /// * `birth_height` - Optional birth height for wallet scanning
+    /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `account_creation_options` - Which accounts to create initially
     /// * `downgrade_to_pubkey_wallet` - If true, creates a wallet without private keys
     /// * `allow_external_signing` - If true and downgraded, creates an externally signable wallet (e.g., for hardware wallets)
@@ -198,7 +199,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         mnemonic: &str,
         passphrase: &str,
         network: Network,
-        birth_height: Option<u32>,
+        birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
         downgrade_to_pubkey_wallet: bool,
         allow_external_signing: bool,
@@ -302,7 +303,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
         let network_state = self.get_or_create_network_state(network);
-        managed_info.set_birth_height(Some(network_state.current_height));
+        managed_info.set_birth_height(network_state.current_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -396,8 +397,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info
-            .set_birth_height(Some(self.get_or_create_network_state(network).current_height));
+        managed_info.set_birth_height(self.get_or_create_network_state(network).current_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -446,8 +446,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info
-            .set_birth_height(Some(self.get_or_create_network_state(network).current_height));
+        managed_info.set_birth_height(self.get_or_create_network_state(network).current_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -492,7 +491,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Use the current network's height as the birth height since we don't know when it was originally created
         let network_state = self.get_or_create_network_state(wallet.network);
-        managed_info.set_birth_height(Some(network_state.current_height));
+        managed_info.set_birth_height(network_state.current_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
