@@ -1687,17 +1687,26 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_filter_matched_heights(
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        // Get chain state without taking the client
-        let chain_state = {
-            let guard = inner.lock().unwrap();
-            match guard.as_ref() {
-                Some(client) => client.chain_state().await,
+        // Take client out of the mutex so no std::sync::MutexGuard is held across .await
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
                 None => {
                     set_last_error("Client not initialized");
                     return None;
                 }
             }
         };
+
+        // Query chain state without holding the mutex
+        let chain_state = spv_client.chain_state().await;
+
+        // Put client back
+        {
+            let mut guard = inner.lock().unwrap();
+            *guard = Some(spv_client);
+        }
 
         // Get filter matches in range - works even during sync
         let matches_result = chain_state.get_filter_matched_heights(start_height..end_height);
@@ -1765,21 +1774,33 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_transaction_count(
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        // Get wallet without taking the client
-        let guard = inner.lock().unwrap();
-        match guard.as_ref() {
-            Some(spv_client) => {
-                // Access wallet and get transaction count
-                let wallet = spv_client.wallet();
-                let wallet_guard = wallet.read().await;
-                let tx_history = wallet_guard.transaction_history();
-                tx_history.len()
+        // Take client out of the mutex so no std::sync::MutexGuard is held across .await
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    tracing::warn!("Client not initialized when querying transaction count");
+                    return 0;
+                }
             }
-            None => {
-                tracing::warn!("Client not initialized when querying transaction count");
-                0
-            }
+        };
+
+        // Access wallet and get transaction count
+        let tx_len = {
+            let wallet = spv_client.wallet();
+            let wallet_guard = wallet.read().await;
+            let tx_history = wallet_guard.transaction_history();
+            tx_history.len()
+        };
+
+        // Put client back
+        {
+            let mut guard = inner.lock().unwrap();
+            *guard = Some(spv_client);
         }
+
+        tx_len
     });
 
     result
@@ -1810,32 +1831,44 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_blocks_with_transactions_count(
     let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        // Get wallet without taking the client
-        let guard = inner.lock().unwrap();
-        match guard.as_ref() {
-            Some(spv_client) => {
-                // Access wallet and get unique block heights
-                let wallet = spv_client.wallet();
-                let wallet_guard = wallet.read().await;
-                let tx_history = wallet_guard.transaction_history();
-
-                // Count unique block heights (confirmed transactions only)
-                let mut unique_heights = std::collections::HashSet::new();
-                for tx in tx_history {
-                    if let Some(height) = tx.height {
-                        unique_heights.insert(height);
-                    }
+        // Take client out of the mutex so no std::sync::MutexGuard is held across .await
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    tracing::warn!(
+                        "Client not initialized when querying blocks with transactions count"
+                    );
+                    return 0;
                 }
+            }
+        };
 
-                unique_heights.len()
+        let unique_heights_len = {
+            // Access wallet and get unique block heights
+            let wallet = spv_client.wallet();
+            let wallet_guard = wallet.read().await;
+            let tx_history = wallet_guard.transaction_history();
+
+            // Count unique block heights (confirmed transactions only)
+            let mut unique_heights = std::collections::HashSet::new();
+            for tx in tx_history {
+                if let Some(height) = tx.height {
+                    unique_heights.insert(height);
+                }
             }
-            None => {
-                tracing::warn!(
-                    "Client not initialized when querying blocks with transactions count"
-                );
-                0
-            }
+
+            unique_heights.len()
+        };
+
+        // Put client back
+        {
+            let mut guard = inner.lock().unwrap();
+            *guard = Some(spv_client);
         }
+
+        unique_heights_len
     });
 
     result
