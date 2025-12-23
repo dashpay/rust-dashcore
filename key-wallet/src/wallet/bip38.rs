@@ -36,7 +36,6 @@ impl Wallet {
     /// Export an account's private key as BIP38 encrypted
     pub fn export_bip44_account_key_bip38(
         &self,
-        network: Network,
         account_index: u32,
         password: &str,
     ) -> Result<Bip38EncryptedKey> {
@@ -47,14 +46,13 @@ impl Wallet {
         }
 
         // Verify account exists
-        let account =
-            self.get_bip44_account(network, account_index).ok_or(Error::InvalidParameter(
-                format!("Account {} not found for network {:?}", account_index, network),
-            ))?;
+        let account = self.get_bip44_account(account_index).ok_or(Error::InvalidParameter(
+            format!("Account {} not found for network {:?}", account_index, self.network),
+        ))?;
 
         // Derive the account key from the root key
         let root_key = self.root_extended_priv_key()?;
-        let master_key = root_key.to_extended_priv_key(network);
+        let master_key = root_key.to_extended_priv_key(self.network);
 
         use crate::account::AccountType;
         use crate::derivation::HDWallet;
@@ -75,7 +73,7 @@ impl Wallet {
         };
 
         let secret_key = account_key.private_key;
-        encrypt_private_key(&secret_key, password, true, network)
+        encrypt_private_key(&secret_key, password, true, self.network)
     }
 
     /// Import a BIP38 encrypted private key

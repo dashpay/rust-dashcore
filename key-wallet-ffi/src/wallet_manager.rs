@@ -15,7 +15,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetworks;
 use crate::FFINetwork;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
@@ -33,7 +32,7 @@ pub struct FFIWalletManager {
 }
 
 impl FFIWalletManager {
-    /// Create a new FFIWalletManager from an Arc<RwLock<WalletManager>>
+    /// Create a new FFIWalletManager from an `Arc<RwLock<WalletManager>>`
     pub fn from_arc(
         manager: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
         runtime: Arc<tokio::runtime::Runtime>,
@@ -140,7 +139,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> bool {
@@ -181,7 +180,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
         }
     };
 
-    let networks_rust = network.parse_networks();
+    let network_rust: Network = network.into();
 
     unsafe {
         let manager_ref = &*manager;
@@ -201,8 +200,8 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
             manager_guard.create_wallet_from_mnemonic(
                 mnemonic_str,
                 passphrase_str,
-                networks_rust.as_slice(),
-                None, // birth_height
+                network_rust,
+                0,
                 creation_options,
             )
         });
@@ -238,7 +237,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> bool {
     wallet_manager_add_wallet_from_mnemonic_with_options(
@@ -261,7 +260,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
 /// - `passphrase` must be a valid pointer to a null-terminated C string or null
-/// - `birth_height` is optional, pass 0 for default
+/// - `birth_height` is the block height to start syncing from (0 = sync from genesis)
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
 /// - `downgrade_to_pubkey_wallet` if true, creates a watch-only or externally signable wallet
 /// - `allow_external_signing` if true AND downgrade_to_pubkey_wallet is true, creates an externally signable wallet
@@ -277,7 +276,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     birth_height: c_uint,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     downgrade_to_pubkey_wallet: bool,
@@ -332,8 +331,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         }
     };
 
-    // Convert networks
-    let networks = network.parse_networks();
+    let network_rust: Network = network.into();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -345,20 +343,13 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
     // Get the manager and call the proper method
     let manager_ref = unsafe { &*manager };
 
-    // Convert birth_height: 0 means None, any other value means Some(value)
-    let birth_height = if birth_height == 0 {
-        None
-    } else {
-        Some(birth_height)
-    };
-
     let result = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
 
         manager_guard.create_wallet_from_mnemonic_return_serialized_bytes(
             mnemonic_str,
             passphrase_str,
-            &networks,
+            network_rust,
             birth_height,
             creation_options,
             downgrade_to_pubkey_wallet,

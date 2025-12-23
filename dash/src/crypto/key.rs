@@ -645,7 +645,7 @@ pub trait TapTweak {
     type TweakedKey;
 
     /// Tweaks an untweaked key with corresponding public key value and optional script tree merkle
-    /// root. For the [`KeyPair`] type this also tweaks the private key in the pair.
+    /// root. For the `KeyPair` type this also tweaks the private key in the pair.
     ///
     /// This is done by using the equation Q = P + H(P|c)G, where
     ///  * Q is the tweaked public key
@@ -706,7 +706,7 @@ impl TapTweak for UntweakedKeyPair {
     type TweakedAux = TweakedKeyPair;
     type TweakedKey = TweakedKeyPair;
 
-    /// Tweaks private and public keys within an untweaked [`KeyPair`] with corresponding public key
+    /// Tweaks private and public keys within an untweaked `KeyPair` with corresponding public key
     /// value and optional script tree merkle root.
     ///
     /// This is done by tweaking private key within the pair using the equation q = p + H(P|c), where
@@ -767,7 +767,7 @@ impl TweakedPublicKey {
 }
 
 impl TweakedKeyPair {
-    /// Creates a new [`TweakedKeyPair`] from a [`KeyPair`]. No tweak is applied, consider
+    /// Creates a new [`TweakedKeyPair`] from a `KeyPair`. No tweak is applied, consider
     /// calling `tap_tweak` on an [`UntweakedKeyPair`] instead of using this constructor.
     ///
     /// This method is dangerous and can lead to loss of funds if used incorrectly.

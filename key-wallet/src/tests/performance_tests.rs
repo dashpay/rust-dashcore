@@ -89,7 +89,7 @@ fn test_key_derivation_performance() {
 #[test]
 fn test_account_creation_performance() {
     let mut wallet = Wallet::new_random(
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -106,7 +106,6 @@ fn test_account_creation_performance() {
                     index: i as u32,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .ok();
@@ -125,7 +124,8 @@ fn test_wallet_recovery_performance() {
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
-    ).unwrap();
+    )
+    .unwrap();
 
     let iterations = 10;
     let mut times = Vec::new();
@@ -134,7 +134,7 @@ fn test_wallet_recovery_performance() {
         let start = Instant::now();
         let _wallet = Wallet::from_mnemonic(
             mnemonic.clone(),
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();
@@ -203,7 +203,7 @@ fn test_address_generation_batch_performance() {
 #[test]
 fn test_large_wallet_memory_usage() {
     let mut wallet = Wallet::new_random(
-        &[Network::Testnet],
+        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -218,7 +218,6 @@ fn test_large_wallet_memory_usage() {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
-                Network::Testnet,
                 None,
             )
             .ok(); // OK if already exists
@@ -226,10 +225,7 @@ fn test_large_wallet_memory_usage() {
 
     // Memory usage would be measured with external tools
     // For now, just verify the wallet can handle many accounts
-    assert_eq!(
-        wallet.accounts.get(&Network::Testnet).unwrap().standard_bip44_accounts.len(),
-        num_accounts as usize
-    );
+    assert_eq!(wallet.accounts.standard_bip44_accounts.len(), num_accounts as usize);
 }
 
 #[test]
@@ -301,7 +297,7 @@ fn test_wallet_serialization_performance() {
     for _ in 0..iterations {
         let start = Instant::now();
         let _wallet = Wallet::new_random(
-            &[Network::Testnet],
+            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();

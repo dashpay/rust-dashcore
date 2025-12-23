@@ -51,7 +51,7 @@ fn main() {
         let affected = wallet_manager_process_transaction(
             wallet_manager,
             tx_hex.as_ptr() as *const i8,
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             100000, // block height
             &mut error
         );

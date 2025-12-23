@@ -152,6 +152,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .default_value("20")
                 .value_parser(clap::value_parser!(usize)),
         )
+        .arg(
+            Arg::new("mnemonic-file")
+                .long("mnemonic-file")
+                .value_name("PATH")
+                .help("Path to file containing BIP39 mnemonic phrase")
+                .required(true),
+        )
         .get_matches();
 
     let log_level: LevelFilter = matches
@@ -168,6 +175,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "regtest" => Network::Regtest,
         n => return Err(format!("Invalid network: {}", n).into()),
     };
+
+    let mnemonic_path =
+        matches.get_one::<String>("mnemonic-file").ok_or("Missing mnemonic-file argument")?;
+    let mnemonic_phrase = std::fs::read_to_string(mnemonic_path)
+        .map_err(|e| format!("Failed to read mnemonic file '{}': {}", mnemonic_path, e))?
+        .trim()
+        .to_string();
 
     // Parse validation mode
     let validation_str =
@@ -290,10 +304,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new();
     let wallet_id = wallet_manager.create_wallet_from_mnemonic(
-        "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside",
+        mnemonic_phrase.as_str(),
         "",
-        &[network],
-        None,
+        network,
+        0,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
@@ -459,7 +473,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
 
                                 // Derive a conservative incoming total by summing tx outputs to our addresses.
                                 let incoming_sum = if let Some(ns) = mgr.get_network_state(network_for_logger) {
-                                    let addrs = mgr.monitored_addresses(network_for_logger);
+                                    let addrs = mgr.monitored_addresses();
                                     let addr_set: std::collections::HashSet<_> = addrs.into_iter().collect();
                                     let mut sum_incoming: u64 = 0;
                                     for rec in ns.transactions.values() {
@@ -579,7 +593,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     // Display current wallet addresses
     {
         let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.monitored_addresses(config.network);
+        let monitored = wallet_lock.monitored_addresses();
         if !monitored.is_empty() {
             tracing::info!("Wallet monitoring {} addresses:", monitored.len());
             for (i, addr) in monitored.iter().take(10).enumerate() {
@@ -621,7 +635,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     // Check filters for matches if wallet has addresses before starting monitoring
     let should_check_filters = {
         let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.monitored_addresses(config.network);
+        let monitored = wallet_lock.monitored_addresses();
         !monitored.is_empty() && !matches.get_flag("no-filters")
     };
 

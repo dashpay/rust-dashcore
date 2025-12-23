@@ -7,7 +7,7 @@ use key_wallet::wallet::managed_wallet_info::transaction_building::{
     AccountTypePreference, TransactionError,
 };
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use key_wallet::{Address, Network};
+use key_wallet::Address;
 
 impl<T: WalletInfoInterface> WalletManager<T> {
     /// Creates an unsigned transaction from a specific wallet and account
@@ -18,7 +18,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn create_unsigned_payment_transaction(
         &mut self,
         wallet_id: &WalletId,
-        network: Network,
         account_index: u32,
         account_type_pref: Option<AccountTypePreference>,
         recipients: Vec<(Address, u64)>,
@@ -36,7 +35,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         managed_info
             .create_unsigned_payment_transaction(
                 wallet,
-                network,
                 account_index,
                 account_type_pref,
                 recipients,

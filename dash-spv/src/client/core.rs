@@ -109,7 +109,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     ///
     /// # Architectural Design
     ///
-    /// The sync manager is stored as a non-shared field (not wrapped in Arc<Mutex<T>>)
+    /// The sync manager is stored as a non-shared field (not wrapped in `Arc<Mutex<T>>`)
     /// for the following reasons:
     ///
     /// 1. **Single Owner Pattern**: The sync manager is exclusively owned by the client,
@@ -126,7 +126,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     ///
     /// If concurrent access becomes necessary (e.g., for monitoring sync progress from
     /// multiple threads), consider:
-    /// - Using interior mutability patterns (Arc<Mutex<SyncManager>>)
+    /// - Using interior mutability patterns (`Arc<Mutex<SyncManager>>`)
     /// - Extracting read-only state into a separate shared structure
     /// - Implementing a message-passing architecture for sync commands
     ///
@@ -267,42 +267,6 @@ impl<
             *mempool_state = MempoolState::default();
         }
         self.mempool_filter = None;
-
-        Ok(())
-    }
-
-    /// Clear all stored filter headers and compact filters while keeping other data intact.
-    pub async fn clear_filters(&mut self) -> Result<()> {
-        {
-            let mut storage = self.storage.lock().await;
-            storage.clear_filters().await.map_err(SpvError::Storage)?;
-        }
-
-        // Reset in-memory chain state for filters
-        {
-            let mut state = self.state.write().await;
-            state.filter_headers.clear();
-            state.current_filter_tip = None;
-        }
-
-        // Reset filter sync manager tracking
-        self.sync_manager.filter_sync_mut().clear_filter_state().await;
-
-        // Reset filter-related statistics
-        let received_heights = {
-            let stats = self.stats.read().await;
-            stats.received_filter_heights.clone()
-        };
-
-        {
-            let mut stats = self.stats.write().await;
-            stats.filter_headers_downloaded = 0;
-            stats.filter_height = 0;
-            stats.filters_downloaded = 0;
-            stats.filters_received = 0;
-        }
-
-        received_heights.lock().await.clear();
 
         Ok(())
     }

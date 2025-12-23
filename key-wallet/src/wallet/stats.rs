@@ -29,11 +29,8 @@ impl Wallet {
     /// Get wallet statistics
     /// Note: Address statistics would need to be implemented using ManagedAccounts
     pub fn stats(&self) -> WalletStats {
-        let total_accounts: usize =
-            self.accounts.values().map(|collection| collection.count()).sum();
-
-        let coinjoin_enabled_accounts: usize =
-            self.accounts.values().map(|collection| collection.coinjoin_accounts.len()).sum();
+        let total_accounts: usize = self.accounts.count();
+        let coinjoin_enabled_accounts: usize = self.accounts.coinjoin_accounts.len();
 
         // Address statistics would need to be retrieved from ManagedAccountCollection
         // For now, we return basic stats based on account counts

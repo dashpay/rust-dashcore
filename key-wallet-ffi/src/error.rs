@@ -83,7 +83,7 @@ pub unsafe extern "C" fn error_message_free(message: *mut c_char) {
     }
 }
 
-/// Helper macro to convert any error that implements Into<FFIError> and set it on the error pointer
+/// Helper macro to convert any error that implements `Into<FFIError>` and set it on the error pointer
 #[macro_export]
 macro_rules! ffi_error_set {
     ($error_ptr:expr, $err:expr) => {{

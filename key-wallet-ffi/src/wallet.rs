@@ -11,11 +11,12 @@ use std::slice;
 
 use crate::types::FFIAccountResult;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-use key_wallet::{Mnemonic, Network, Seed, Wallet};
+use key_wallet::{Mnemonic, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetworks, FFIWallet, FFIWalletAccountCreationOptions};
+use crate::types::{FFIWallet, FFIWalletAccountCreationOptions};
 use crate::FFINetwork;
+use key_wallet::Network;
 
 /// Create a new wallet from mnemonic with options
 ///
@@ -31,7 +32,7 @@ use crate::FFINetwork;
 pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    networks: FFINetworks,
+    network: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -85,8 +86,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
         }
     };
 
-    // Convert networks bit flags to vector
-    let networks_rust = networks.parse_networks();
+    let network_rust: Network = network.into();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     };
 
     let wallet = if passphrase_str.is_empty() {
-        match Wallet::from_mnemonic(mnemonic, &networks_rust, creation_options) {
+        match Wallet::from_mnemonic(mnemonic, network_rust, creation_options) {
             Ok(w) => w,
             Err(e) => {
                 FFIError::set_error(
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
         match Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase_str.to_string(),
-            &networks_rust,
+            network_rust,
             creation_options,
         ) {
             Ok(w) => w,
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 pub unsafe extern "C" fn wallet_create_from_mnemonic(
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_from_mnemonic_with_options(
@@ -169,7 +169,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic(
 pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     seed: *const u8,
     seed_len: usize,
-    networks: FFINetworks,
+    network: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -192,8 +192,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     seed_array.copy_from_slice(seed_bytes);
     let seed = Seed::new(seed_array);
 
-    // Convert networks bit flags to vector
-    let networks_rust = networks.parse_networks();
+    let network_rust: Network = network.into();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -202,7 +201,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::from_seed(seed, &networks_rust, creation_options) {
+    match Wallet::from_seed(seed, network_rust, creation_options) {
         Ok(wallet) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIWallet::new(wallet)))
@@ -229,7 +228,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
 pub unsafe extern "C" fn wallet_create_from_seed(
     seed: *const u8,
     seed_len: usize,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_from_seed_with_options(
@@ -250,12 +249,11 @@ pub unsafe extern "C" fn wallet_create_from_seed(
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random_with_options(
-    networks: FFINetworks,
+    network: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
-    // Convert networks bit flags to vector
-    let networks_rust = networks.parse_networks();
+    let network_rust: Network = network.into();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -264,7 +262,7 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::new_random(&networks_rust, creation_options) {
+    match Wallet::new_random(network_rust, creation_options) {
         Ok(wallet) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIWallet::new(wallet)))
@@ -288,7 +286,7 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
 /// - The caller must ensure the pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random(
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_random_with_options(
@@ -384,7 +382,6 @@ pub unsafe extern "C" fn wallet_is_watch_only(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_xpub(
     wallet: *const FFIWallet,
-    network: FFINetwork,
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -396,10 +393,7 @@ pub unsafe extern "C" fn wallet_get_xpub(
     unsafe {
         let wallet = &*wallet;
 
-        // Convert to a single network
-        let network_rust: Network = network.into();
-
-        match wallet.inner().get_bip44_account(network_rust, account_index) {
+        match wallet.inner().get_bip44_account(account_index) {
             Some(account) => {
                 let xpub = account.extended_public_key();
                 FFIError::set_success(error);
@@ -473,7 +467,6 @@ pub unsafe extern "C" fn wallet_free_const(wallet: *const FFIWallet) {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
 ) -> crate::types::FFIAccountResult {
@@ -485,24 +478,20 @@ pub unsafe extern "C" fn wallet_add_account(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
     match wallet.inner_mut() {
         Some(w) => {
             // Use the proper add_account method
-            match w.add_account(account_type_rust, network_rust, None) {
+            match w.add_account(account_type_rust, None) {
                 Ok(()) => {
                     // Get the account we just added
-                    if let Some(account_collection) = w.accounts.get(&network_rust) {
-                        if let Some(account) = account_collection.account_of_type(account_type_rust)
-                        {
-                            let ffi_account = crate::types::FFIAccount::new(account);
-                            return crate::types::FFIAccountResult::success(Box::into_raw(
-                                Box::new(ffi_account),
-                            ));
-                        }
+                    if let Some(account) = w.accounts.account_of_type(account_type_rust) {
+                        let ffi_account = crate::types::FFIAccount::new(account);
+                        return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
+                            ffi_account,
+                        )));
                     }
                     crate::types::FFIAccountResult::error(
                         FFIErrorCode::WalletError,
@@ -530,7 +519,6 @@ pub unsafe extern "C" fn wallet_add_account(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_dashpay_receiving_account(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
     account_index: c_uint,
     user_identity_id: *const u8,
     friend_identity_id: *const u8,
@@ -562,14 +550,11 @@ pub unsafe extern "C" fn wallet_add_dashpay_receiving_account(
         user_identity_id: user_id,
         friend_identity_id: friend_id,
     };
-    let network_rust: key_wallet::Network = network.into();
-    match wallet_mut.add_account(acct, network_rust, None) {
+    match wallet_mut.add_account(acct, None) {
         Ok(()) => {
-            if let Some(coll) = wallet_mut.accounts.get(&network_rust) {
-                if let Some(account) = coll.account_of_type(acct) {
-                    let ffi_account = crate::types::FFIAccount::new(account);
-                    return FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)));
-                }
+            if let Some(account) = wallet_mut.accounts.account_of_type(acct) {
+                let ffi_account = crate::types::FFIAccount::new(account);
+                return FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)));
             }
             FFIAccountResult::error(
                 crate::error::FFIErrorCode::WalletError,
@@ -588,7 +573,6 @@ pub unsafe extern "C" fn wallet_add_dashpay_receiving_account(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_dashpay_external_account_with_xpub_bytes(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
     account_index: c_uint,
     user_identity_id: *const u8,
     friend_identity_id: *const u8,
@@ -636,14 +620,11 @@ pub unsafe extern "C" fn wallet_add_dashpay_external_account_with_xpub_bytes(
         user_identity_id: user_id,
         friend_identity_id: friend_id,
     };
-    let network_rust: key_wallet::Network = network.into();
-    match wallet_mut.add_account(acct, network_rust, Some(xpub)) {
+    match wallet_mut.add_account(acct, Some(xpub)) {
         Ok(()) => {
-            if let Some(coll) = wallet_mut.accounts.get(&network_rust) {
-                if let Some(account) = coll.account_of_type(acct) {
-                    let ffi_account = crate::types::FFIAccount::new(account);
-                    return FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)));
-                }
+            if let Some(account) = wallet_mut.accounts.account_of_type(acct) {
+                let ffi_account = crate::types::FFIAccount::new(account);
+                return FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)));
             }
             FFIAccountResult::error(
                 crate::error::FFIErrorCode::WalletError,
@@ -666,7 +647,6 @@ pub unsafe extern "C" fn wallet_add_dashpay_external_account_with_xpub_bytes(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
     xpub_bytes: *const u8,
@@ -687,7 +667,6 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: Network = network.into();
 
     use key_wallet::ExtendedPubKey;
 
@@ -716,16 +695,14 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     };
 
     match wallet.inner_mut() {
-        Some(w) => match w.add_account(account_type_rust, network_rust, Some(xpub)) {
+        Some(w) => match w.add_account(account_type_rust, Some(xpub)) {
             Ok(()) => {
                 // Get the account we just added
-                if let Some(account_collection) = w.accounts.get(&network_rust) {
-                    if let Some(account) = account_collection.account_of_type(account_type_rust) {
-                        let ffi_account = crate::types::FFIAccount::new(account);
-                        return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
-                            ffi_account,
-                        )));
-                    }
+                if let Some(account) = w.accounts.account_of_type(account_type_rust) {
+                    let ffi_account = crate::types::FFIAccount::new(account);
+                    return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
+                        ffi_account,
+                    )));
                 }
                 crate::types::FFIAccountResult::error(
                     FFIErrorCode::WalletError,
@@ -756,7 +733,6 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
     xpub_string: *const c_char,
@@ -776,7 +752,6 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: Network = network.into();
 
     use key_wallet::ExtendedPubKey;
 
@@ -804,16 +779,14 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     };
 
     match wallet.inner_mut() {
-        Some(w) => match w.add_account(account_type_rust, network_rust, Some(xpub)) {
+        Some(w) => match w.add_account(account_type_rust, Some(xpub)) {
             Ok(()) => {
                 // Get the account we just added
-                if let Some(account_collection) = w.accounts.get(&network_rust) {
-                    if let Some(account) = account_collection.account_of_type(account_type_rust) {
-                        let ffi_account = crate::types::FFIAccount::new(account);
-                        return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
-                            ffi_account,
-                        )));
-                    }
+                if let Some(account) = w.accounts.account_of_type(account_type_rust) {
+                    let ffi_account = crate::types::FFIAccount::new(account);
+                    return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
+                        ffi_account,
+                    )));
                 }
                 crate::types::FFIAccountResult::error(
                     FFIErrorCode::WalletError,

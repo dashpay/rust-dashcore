@@ -13,8 +13,10 @@ use crate::wallet::managed_wallet_info::transaction_building::{
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletBalance};
+use alloc::collections::BTreeSet;
+use alloc::vec::Vec;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address as DashAddress, Address, Transaction};
-use std::collections::BTreeSet;
 
 /// Trait that wallet info types must implement to work with WalletManager
 pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccountOperations {
@@ -25,6 +27,9 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Create a wallet info from an existing wallet with proper account initialization
     /// Default implementation just uses with_name (backward compatibility)
     fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self;
+
+    /// Get the wallet's network
+    fn network(&self) -> Network;
 
     /// Get the wallet's unique ID
     fn wallet_id(&self) -> [u8; 32];
@@ -41,11 +46,11 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Set the wallet's description
     fn set_description(&mut self, description: Option<String>);
 
-    /// Get the birth height for tracking
-    fn birth_height(&self) -> Option<u32>;
+    /// Get the birth height of the wallet
+    fn birth_height(&self) -> CoreBlockHeight;
 
     /// Set the birth height
-    fn set_birth_height(&mut self, height: Option<u32>);
+    fn set_birth_height(&mut self, height: CoreBlockHeight);
 
     /// Get the timestamp when first loaded
     fn first_loaded_at(&self) -> u64;
@@ -56,8 +61,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Update last synced timestamp
     fn update_last_synced(&mut self, timestamp: u64);
 
-    /// Get all monitored addresses for a network
-    fn monitored_addresses(&self, network: Network) -> Vec<DashAddress>;
+    /// Get all monitored addresses
+    fn monitored_addresses(&self) -> Vec<DashAddress>;
 
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
@@ -74,33 +79,29 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get transaction history
     fn transaction_history(&self) -> Vec<&TransactionRecord>;
 
-    /// Get accounts for a network (mutable)
-    fn accounts_mut(&mut self, network: Network) -> Option<&mut ManagedAccountCollection>;
+    /// Get accounts (mutable)
+    fn accounts_mut(&mut self) -> &mut ManagedAccountCollection;
 
-    /// Get accounts for a network (immutable)
-    fn accounts(&self, network: Network) -> Option<&ManagedAccountCollection>;
+    /// Get accounts (immutable)
+    fn accounts(&self) -> &ManagedAccountCollection;
 
     /// Process matured transactions for a given chain height
-    fn process_matured_transactions(
-        &mut self,
-        network: Network,
-        current_height: u32,
-    ) -> Vec<ImmatureTransaction>;
+    fn process_matured_transactions(&mut self, current_height: u32) -> Vec<ImmatureTransaction>;
 
     /// Add an immature transaction
-    fn add_immature_transaction(&mut self, network: Network, tx: ImmatureTransaction);
-    /// Get immature transactions for a network
-    fn immature_transactions(&self, network: Network) -> Option<&ImmatureTransactionCollection>;
+    fn add_immature_transaction(&mut self, tx: ImmatureTransaction);
 
-    /// Get immature balance for a specific network
-    fn network_immature_balance(&self, network: Network) -> u64;
+    /// Get immature transactions
+    fn immature_transactions(&self) -> &ImmatureTransactionCollection;
 
-    /// Get immature balance for a specific network
+    /// Get immature balance
+    fn immature_balance(&self) -> u64;
+
+    /// Create an unsigned payment transaction
     #[allow(clippy::too_many_arguments)]
     fn create_unsigned_payment_transaction(
         &mut self,
         wallet: &Wallet,
-        network: Network,
         account_index: u32,
         account_type_pref: Option<AccountTypePreference>,
         recipients: Vec<(Address, u64)>,
@@ -110,7 +111,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
-    fn update_chain_height(&mut self, network: Network, current_height: u32);
+    fn update_chain_height(&mut self, current_height: u32);
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -121,6 +122,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self {
         Self::from_wallet_with_name(wallet, name)
+    }
+
+    fn network(&self) -> Network {
+        self.network
     }
 
     fn wallet_id(&self) -> [u8; 32] {
@@ -143,11 +148,11 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.description = description;
     }
 
-    fn birth_height(&self) -> Option<u32> {
+    fn birth_height(&self) -> CoreBlockHeight {
         self.metadata.birth_height
     }
 
-    fn set_birth_height(&mut self, height: Option<u32>) {
+    fn set_birth_height(&mut self, height: CoreBlockHeight) {
         self.metadata.birth_height = height;
     }
 
@@ -163,29 +168,19 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.metadata.last_synced = Some(timestamp);
     }
 
-    fn monitored_addresses(&self, network: Network) -> Vec<DashAddress> {
+    fn monitored_addresses(&self) -> Vec<DashAddress> {
         let mut addresses = Vec::new();
-
-        if let Some(collection) = self.accounts.get(&network) {
-            // Collect from all accounts using the account's get_all_addresses method
-            for account in collection.all_accounts() {
-                addresses.extend(account.all_addresses());
-            }
+        for account in self.accounts.all_accounts() {
+            addresses.extend(account.all_addresses());
         }
-
         addresses
     }
 
     fn utxos(&self) -> BTreeSet<&Utxo> {
         let mut utxos = BTreeSet::new();
-
-        // Collect UTXOs from all accounts across all networks
-        for collection in self.accounts.values() {
-            for account in collection.all_accounts() {
-                utxos.extend(account.utxos.values());
-            }
+        for account in self.accounts.all_accounts() {
+            utxos.extend(account.utxos.values());
         }
-
         utxos
     }
     fn get_spendable_utxos(&self) -> BTreeSet<&Utxo> {
@@ -204,18 +199,15 @@ impl WalletInfoInterface for ManagedWalletInfo {
         let mut unconfirmed = 0u64;
         let mut locked = 0u64;
 
-        // Sum balances from all accounts across all networks
-        for collection in self.accounts.values() {
-            for account in collection.all_accounts() {
-                for utxo in account.utxos.values() {
-                    let value = utxo.txout.value;
-                    if utxo.is_locked {
-                        locked += value;
-                    } else if utxo.is_confirmed {
-                        confirmed += value;
-                    } else {
-                        unconfirmed += value;
-                    }
+        for account in self.accounts.all_accounts() {
+            for utxo in account.utxos.values() {
+                let value = utxo.txout.value;
+                if utxo.is_locked {
+                    locked += value;
+                } else if utxo.is_confirmed {
+                    confirmed += value;
+                } else {
+                    unconfirmed += value;
                 }
             }
         }
@@ -227,118 +219,92 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn transaction_history(&self) -> Vec<&TransactionRecord> {
         let mut transactions = Vec::new();
-
-        // Collect transactions from all accounts across all networks
-        for collection in self.accounts.values() {
-            for account in collection.all_accounts() {
-                transactions.extend(account.transactions.values());
-            }
+        for account in self.accounts.all_accounts() {
+            transactions.extend(account.transactions.values());
         }
-
         transactions
     }
 
-    fn accounts_mut(&mut self, network: Network) -> Option<&mut ManagedAccountCollection> {
-        self.accounts.get_mut(&network)
+    fn accounts_mut(&mut self) -> &mut ManagedAccountCollection {
+        &mut self.accounts
     }
 
-    fn accounts(&self, network: Network) -> Option<&ManagedAccountCollection> {
-        self.accounts.get(&network)
+    fn accounts(&self) -> &ManagedAccountCollection {
+        &self.accounts
     }
 
-    fn process_matured_transactions(
-        &mut self,
-        network: Network,
-        current_height: u32,
-    ) -> Vec<ImmatureTransaction> {
-        if let Some(collection) = self.immature_transactions.get_mut(&network) {
-            let matured = collection.remove_matured(current_height);
+    fn process_matured_transactions(&mut self, current_height: u32) -> Vec<ImmatureTransaction> {
+        let matured = self.immature_transactions.remove_matured(current_height);
 
-            // Update accounts with matured transactions
-            if let Some(account_collection) = self.accounts.get_mut(&network) {
-                for tx in &matured {
-                    // Process BIP44 accounts
-                    for &index in &tx.affected_accounts.bip44_accounts {
-                        if let Some(account) =
-                            account_collection.standard_bip44_accounts.get_mut(&index)
-                        {
-                            // Add transaction record as confirmed
-                            let tx_record = TransactionRecord::new_confirmed(
-                                tx.transaction.clone(),
-                                tx.height,
-                                tx.block_hash,
-                                tx.timestamp,
-                                tx.total_received as i64,
-                                false, // Not ours (we received)
-                            );
-                            account.transactions.insert(tx.txid, tx_record);
-                        }
-                    }
-
-                    // Process BIP32 accounts
-                    for &index in &tx.affected_accounts.bip32_accounts {
-                        if let Some(account) =
-                            account_collection.standard_bip32_accounts.get_mut(&index)
-                        {
-                            let tx_record = TransactionRecord::new_confirmed(
-                                tx.transaction.clone(),
-                                tx.height,
-                                tx.block_hash,
-                                tx.timestamp,
-                                tx.total_received as i64,
-                                false,
-                            );
-                            account.transactions.insert(tx.txid, tx_record);
-                        }
-                    }
-
-                    // Process CoinJoin accounts
-                    for &index in &tx.affected_accounts.coinjoin_accounts {
-                        if let Some(account) = account_collection.coinjoin_accounts.get_mut(&index)
-                        {
-                            let tx_record = TransactionRecord::new_confirmed(
-                                tx.transaction.clone(),
-                                tx.height,
-                                tx.block_hash,
-                                tx.timestamp,
-                                tx.total_received as i64,
-                                false,
-                            );
-                            account.transactions.insert(tx.txid, tx_record);
-                        }
-                    }
+        // Update accounts with matured transactions
+        for tx in &matured {
+            // Process BIP44 accounts
+            for &index in &tx.affected_accounts.bip44_accounts {
+                if let Some(account) = self.accounts.standard_bip44_accounts.get_mut(&index) {
+                    let tx_record = TransactionRecord::new_confirmed(
+                        tx.transaction.clone(),
+                        tx.height,
+                        tx.block_hash,
+                        tx.timestamp,
+                        tx.total_received as i64,
+                        false,
+                    );
+                    account.transactions.insert(tx.txid, tx_record);
                 }
             }
 
-            // Update balance after processing matured transactions
-            self.update_balance();
+            // Process BIP32 accounts
+            for &index in &tx.affected_accounts.bip32_accounts {
+                if let Some(account) = self.accounts.standard_bip32_accounts.get_mut(&index) {
+                    let tx_record = TransactionRecord::new_confirmed(
+                        tx.transaction.clone(),
+                        tx.height,
+                        tx.block_hash,
+                        tx.timestamp,
+                        tx.total_received as i64,
+                        false,
+                    );
+                    account.transactions.insert(tx.txid, tx_record);
+                }
+            }
 
-            matured
-        } else {
-            Vec::new()
+            // Process CoinJoin accounts
+            for &index in &tx.affected_accounts.coinjoin_accounts {
+                if let Some(account) = self.accounts.coinjoin_accounts.get_mut(&index) {
+                    let tx_record = TransactionRecord::new_confirmed(
+                        tx.transaction.clone(),
+                        tx.height,
+                        tx.block_hash,
+                        tx.timestamp,
+                        tx.total_received as i64,
+                        false,
+                    );
+                    account.transactions.insert(tx.txid, tx_record);
+                }
+            }
         }
+
+        // Update balance after processing matured transactions
+        self.update_balance();
+
+        matured
     }
 
-    /// Add an immature transaction
-    fn add_immature_transaction(&mut self, network: Network, tx: ImmatureTransaction) {
-        self.immature_transactions.entry(network).or_default().insert(tx);
+    fn add_immature_transaction(&mut self, tx: ImmatureTransaction) {
+        self.immature_transactions.insert(tx);
     }
 
-    fn immature_transactions(&self, network: Network) -> Option<&ImmatureTransactionCollection> {
-        self.immature_transactions.get(&network)
+    fn immature_transactions(&self) -> &ImmatureTransactionCollection {
+        &self.immature_transactions
     }
 
-    fn network_immature_balance(&self, network: Network) -> u64 {
-        self.immature_transactions
-            .get(&network)
-            .map(|collection| collection.total_immature_balance())
-            .unwrap_or(0)
+    fn immature_balance(&self) -> u64 {
+        self.immature_transactions.total_immature_balance()
     }
 
     fn create_unsigned_payment_transaction(
         &mut self,
         wallet: &Wallet,
-        network: Network,
         account_index: u32,
         account_type_pref: Option<AccountTypePreference>,
         recipients: Vec<(Address, u64)>,
@@ -347,7 +313,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
     ) -> Result<Transaction, TransactionError> {
         self.create_unsigned_payment_transaction_internal(
             wallet,
-            network,
+            self.network,
             account_index,
             account_type_pref,
             recipients,
@@ -356,13 +322,12 @@ impl WalletInfoInterface for ManagedWalletInfo {
         )
     }
 
-    fn update_chain_height(&mut self, network: Network, current_height: u32) {
-        // Process any matured transactions for this network
-        let matured = self.process_matured_transactions(network, current_height);
+    fn update_chain_height(&mut self, current_height: u32) {
+        let matured = self.process_matured_transactions(current_height);
 
         if !matured.is_empty() {
             tracing::info!(
-                network = ?network,
+                network = ?self.network,
                 current_height = current_height,
                 matured_count = matured.len(),
                 "Processed matured coinbase transactions"

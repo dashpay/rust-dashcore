@@ -257,7 +257,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("- `FFIWalletManager` - Wallet manager handle")
     md.append("- `FFIBalance` - Balance information")
     md.append("- `FFIUTXO` - Unspent transaction output")
-    md.append("- `FFINetworks` - Network enumeration")
+    md.append("- `FFINetwork` - Network enumeration")
     md.append("")
 
     # Memory Management

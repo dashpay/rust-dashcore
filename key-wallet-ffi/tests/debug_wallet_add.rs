@@ -1,8 +1,8 @@
 #[test]
 fn test_debug_wallet_add() {
     use key_wallet_ffi::error::FFIError;
-    use key_wallet_ffi::types::FFINetworks;
     use key_wallet_ffi::wallet_manager;
+    use key_wallet_ffi::FFINetwork;
     use std::ffi::CString;
 
     let mut error = FFIError::success();
@@ -21,7 +21,7 @@ fn test_debug_wallet_add() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };

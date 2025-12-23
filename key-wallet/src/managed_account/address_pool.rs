@@ -24,7 +24,7 @@ use dashcore::{Address, AddressType, ScriptBuf};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[allow(clippy::upper_case_acronyms)]
 pub enum PublicKeyType {
-    /// ECDSA public key (standard Bitcoin/Dash addresses) - stored as Vec<u8> for serialization
+    /// ECDSA public key (standard Bitcoin/Dash addresses) - stored as `Vec<u8>` for serialization
     ECDSA(Vec<u8>),
     /// EdDSA public key (Ed25519, used in some Platform operations)
     EdDSA(Vec<u8>),
@@ -346,8 +346,6 @@ pub struct AddressPool {
     pub highest_generated: Option<u32>,
     /// Highest used index
     pub highest_used: Option<u32>,
-    /// Lookahead window for performance
-    pub lookahead_size: u32,
     /// Address type preference
     pub address_type: AddressType,
 }
@@ -389,7 +387,6 @@ impl AddressPool {
             used_indices: HashSet::new(),
             highest_generated: None,
             highest_used: None,
-            lookahead_size: gap_limit * 2,
             address_type: AddressType::P2pkh,
         }
     }
@@ -885,25 +882,8 @@ impl AddressPool {
     /// Generate addresses to maintain the gap limit
     pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
         let target = match self.highest_used {
-            None => self.gap_limit,
-            Some(highest) => highest + self.gap_limit + 1,
-        };
-
-        let mut new_addresses = Vec::new();
-        while self.highest_generated.unwrap_or(0) < target {
-            let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-            let address = self.generate_address_at_index(next_index, key_source, true)?;
-            new_addresses.push(address);
-        }
-
-        Ok(new_addresses)
-    }
-
-    /// Generate lookahead addresses for performance
-    pub fn generate_lookahead(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
-        let target = match self.highest_used {
-            None => self.lookahead_size,
-            Some(highest) => highest + self.lookahead_size + 1,
+            None => self.gap_limit - 1,
+            Some(highest) => highest + self.gap_limit,
         };
 
         let mut new_addresses = Vec::new();
@@ -1040,7 +1020,6 @@ pub struct AddressPoolBuilder {
     pool_type: AddressPoolType,
     gap_limit: u32,
     network: Network,
-    lookahead_size: u32,
     address_type: AddressType,
     key_source: Option<KeySource>,
 }
@@ -1053,7 +1032,6 @@ impl AddressPoolBuilder {
             pool_type: AddressPoolType::External,
             gap_limit: DEFAULT_EXTERNAL_GAP_LIMIT,
             network: Network::Dash,
-            lookahead_size: 40,
             address_type: AddressType::P2pkh,
             key_source: None,
         }
@@ -1093,12 +1071,6 @@ impl AddressPoolBuilder {
         self
     }
 
-    /// Set the lookahead size
-    pub fn lookahead(mut self, size: u32) -> Self {
-        self.lookahead_size = size;
-        self
-    }
-
     /// Set the address type
     pub fn address_type(mut self, addr_type: AddressType) -> Self {
         self.address_type = addr_type;
@@ -1122,7 +1094,6 @@ impl AddressPoolBuilder {
             self.gap_limit,
             self.network,
         );
-        pool.lookahead_size = self.lookahead_size;
         pool.address_type = self.address_type;
 
         // Generate addresses if a key source was provided
@@ -1229,21 +1200,49 @@ mod tests {
     #[test]
     fn test_gap_limit_maintenance() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new_without_generation(
+        let key_source = test_key_source();
+        let gap_limit = 5;
+
+        // Create pool with gap_limit addresses already generated
+        let mut pool = AddressPool::new(
             base_path,
             AddressPoolType::External,
-            5,
+            gap_limit,
             Network::Testnet,
-        );
-        let key_source = test_key_source();
+            &key_source,
+        )
+        .unwrap();
 
-        // Generate initial addresses
-        pool.generate_addresses(3, &key_source, true).unwrap();
+        // Verify gap_limit addresses generated, none used
+        assert_eq!(pool.highest_generated, Some(gap_limit - 1));
+        assert_eq!(pool.highest_used, None);
+        assert_eq!(pool.addresses.len(), gap_limit as usize);
+
+        // Calling maintain_gap_limit should not generate any new addresses when none are used
+        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        assert_eq!(new_addresses.len(), 0);
+        assert_eq!(pool.highest_generated, Some(gap_limit - 1));
+        assert_eq!(pool.addresses.len(), gap_limit as usize);
+
+        // Mark address at index 0 as used
+        pool.mark_index_used(0);
+        assert_eq!(pool.highest_used, Some(0));
+
+        // Should generate exactly 1 address to maintain gap_limit unused after index 0
+        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        assert_eq!(new_addresses.len(), 1);
+        assert_eq!(pool.highest_generated, Some(gap_limit));
+        assert_eq!(pool.addresses.len(), gap_limit as usize + 1);
+
+        // Mark address at index 1 and 2 as used
         pool.mark_index_used(1);
+        pool.mark_index_used(2);
 
-        // Maintain gap limit
-        let _new_addrs = pool.maintain_gap_limit(&key_source).unwrap();
-        assert!(pool.highest_generated.unwrap_or(0) >= 6); // Should have at least index 1 + gap limit 5
+        // Should generate exactly 2 more addresses
+        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        assert_eq!(new_addresses.len(), 2);
+        assert_eq!(pool.highest_generated, Some(gap_limit + 2));
+        assert_eq!(pool.addresses.len(), gap_limit as usize + 3);
     }
 
     #[test]
@@ -1253,7 +1252,6 @@ mod tests {
             .internal(true)
             .gap_limit(10)
             .network(Network::Testnet)
-            .lookahead(20)
             .address_type(AddressType::P2pkh)
             .build()
             .unwrap();
@@ -1261,7 +1259,6 @@ mod tests {
         assert!(pool.is_internal());
         assert_eq!(pool.gap_limit, 10);
         assert_eq!(pool.network, Network::Testnet);
-        assert_eq!(pool.lookahead_size, 20);
     }
 
     #[test]

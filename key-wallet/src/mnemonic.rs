@@ -147,7 +147,7 @@ impl Mnemonic {
     ///
     /// This allows using custom random number generators like StdRng, ChaChaRng, etc.
     ///
-    /// # Example
+    /// # Examples
     /// ```no_run
     /// use key_wallet::mnemonic::{Mnemonic, Language};
     /// use rand::rngs::StdRng;
@@ -194,7 +194,7 @@ impl Mnemonic {
     /// This is deterministic - the same seed will always produce the same mnemonic.
     /// This should only be used for testing or when deterministic generation is specifically required.
     ///
-    /// # Example
+    /// # Examples
     /// ```no_run
     /// use key_wallet::mnemonic::{Mnemonic, Language};
     ///

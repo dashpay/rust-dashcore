@@ -102,9 +102,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         // Get all wallet addresses for this network
         for info in self.wallet_infos.values() {
-            let monitored = info.monitored_addresses(network);
-            for address in monitored {
-                script_bytes.push(address.script_pubkey().as_bytes().to_vec());
+            if info.network() == network {
+                let monitored = info.monitored_addresses();
+                for address in monitored {
+                    script_bytes.push(address.script_pubkey().as_bytes().to_vec());
+                }
             }
         }
 
@@ -139,7 +141,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut is_relevant_any = false;
         for info in self.wallet_infos.values() {
             // Only consider wallets tracking this network
-            if let Some(collection) = info.accounts(network) {
+            if info.network() == network {
+                let collection = info.accounts();
                 // Reuse the same routing/check logic used in normal processing
                 let tx_type = TransactionRouter::classify_transaction(tx);
                 let account_types = TransactionRouter::get_relevant_account_types(&tx_type);
@@ -171,23 +174,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
     }
 
-    async fn earliest_required_height(&self, network: Network) -> Option<CoreBlockHeight> {
-        let mut earliest: Option<CoreBlockHeight> = None;
-
-        for info in self.wallet_infos.values() {
-            // Only consider wallets that actually track this network AND have a known birth height
-            if info.accounts(network).is_some() {
-                if let Some(birth_height) = info.birth_height() {
-                    earliest = Some(match earliest {
-                        Some(current) => current.min(birth_height),
-                        None => birth_height,
-                    });
-                }
-            }
-        }
-
-        // Return None if no wallets with known birth heights were found for this network
-        earliest
+    async fn earliest_required_height(&self, network: Network) -> CoreBlockHeight {
+        self.wallet_infos
+            .values()
+            .filter(|info| info.network() == network)
+            .map(|info| info.birth_height())
+            .min()
+            .unwrap_or(0)
     }
 
     async fn describe(&self, network: Network) -> String {
@@ -205,7 +198,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 let _ = write!(&mut wallet_id_hex, "{:02x}", byte);
             }
 
-            let script_count = info.monitored_addresses(network).len();
+            let script_count = info.monitored_addresses().len();
             let summary = format!("{} scripts", script_count);
 
             details.push(format!("{} ({}): {}", name, wallet_id_hex, summary));

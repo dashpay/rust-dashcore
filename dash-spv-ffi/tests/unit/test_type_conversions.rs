@@ -164,7 +164,6 @@ mod tests {
     fn test_chain_state_none_values() {
         let state = dash_spv::ChainState {
             headers: vec![],
-            filter_headers: vec![],
             last_chainlock_height: None,
             last_chainlock_hash: None,
             current_filter_tip: None,
@@ -175,7 +174,6 @@ mod tests {
 
         let ffi_state = FFIChainState::from(state);
         assert_eq!(ffi_state.header_height, 0);
-        assert_eq!(ffi_state.filter_header_height, 0);
         assert_eq!(ffi_state.masternode_height, 0);
         assert_eq!(ffi_state.last_chainlock_height, 0);
         assert_eq!(ffi_state.current_filter_tip, 0);

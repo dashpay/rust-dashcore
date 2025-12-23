@@ -9,6 +9,7 @@ use crate::storage::StorageManager;
 use crate::sync::{FilterSyncManager, HeaderSyncManager, MasternodeSyncManager, ReorgConfig};
 use crate::types::{SharedFilterHeights, SyncProgress};
 use crate::{SpvStats, SyncError};
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 use key_wallet_manager::{wallet_interface::WalletInterface, Network as WalletNetwork};
 use std::sync::Arc;
@@ -158,14 +159,14 @@ impl<
     }
 
     /// Get the earliest wallet birth height hint for the configured network, if available.
-    pub async fn wallet_birth_height_hint(&self) -> Option<u32> {
+    pub async fn wallet_birth_height_hint(&self) -> CoreBlockHeight {
         // Map the dashcore network to wallet network, returning None for unknown variants
         let wallet_network = match self.config.network {
             dashcore::Network::Dash => WalletNetwork::Dash,
             dashcore::Network::Testnet => WalletNetwork::Testnet,
             dashcore::Network::Devnet => WalletNetwork::Devnet,
             dashcore::Network::Regtest => WalletNetwork::Regtest,
-            _ => return None, // Unknown network variant - return None instead of defaulting
+            _ => return 0, // Unknown network variant - return None instead of defaulting
         };
 
         // Only acquire the wallet lock if we have a valid network mapping
@@ -304,7 +305,7 @@ impl<
     /// - `filters_downloaded`: Should be calculated from storage
     /// - `last_synced_filter_height`: Should be queried from storage
     ///
-    /// # Example
+    /// # Examples
     /// ```ignore
     /// let mut progress = sync_manager.get_progress();
     /// progress.header_height = storage.get_tip_height().await?.unwrap_or(0);

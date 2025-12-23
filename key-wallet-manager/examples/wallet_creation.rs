@@ -46,8 +46,8 @@ fn main() {
     let result = manager.create_wallet_from_mnemonic(
         test_mnemonic,
         "", // No passphrase
-        &[Network::Testnet],
-        Some(100_000), // Birth height
+        Network::Testnet,
+        100_000,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );
 
@@ -73,7 +73,6 @@ fn main() {
             index: 1,
             standard_account_type: StandardAccountType::BIP44Account,
         },
-        Network::Testnet,
         None,
     );
 
@@ -98,7 +97,6 @@ fn main() {
     // isn't properly initialized in the managed wallet info
     let address_result = manager.get_receive_address(
         &wallet_id,
-        Network::Testnet,
         0, // Account index
         AccountTypePreference::BIP44,
         false, // Don't advance index

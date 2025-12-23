@@ -13,7 +13,7 @@ use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::FFIManagedWalletInfo;
-use crate::types::{FFINetwork, FFINetworks, FFITransactionContext, FFIWallet};
+use crate::types::{FFINetwork, FFITransactionContext, FFIWallet};
 
 // MARK: - Transaction Types
 
@@ -71,7 +71,6 @@ pub struct FFITxOutput {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_build_transaction(
     wallet: *mut FFIWallet,
-    _network: FFINetworks,
     account_index: c_uint,
     outputs: *const FFITxOutput,
     outputs_count: usize,
@@ -116,7 +115,6 @@ pub unsafe extern "C" fn wallet_build_transaction(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_sign_transaction(
     wallet: *const FFIWallet,
-    _network: FFINetworks,
     tx_bytes: *const u8,
     tx_len: usize,
     signed_tx_out: *mut *mut u8,
@@ -155,7 +153,6 @@ pub unsafe extern "C" fn wallet_sign_transaction(
 ///
 /// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `wallet` must be a valid pointer to an FFIWallet
-/// - `network` must be a valid FFINetwork
 /// - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements
 /// - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer
 /// - `tx_len_out` must be a valid pointer to store the transaction length
@@ -165,7 +162,6 @@ pub unsafe extern "C" fn wallet_sign_transaction(
 pub unsafe extern "C" fn wallet_build_and_sign_transaction(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetwork,
     account_index: c_uint,
     outputs: *const FFITxOutput,
     outputs_count: usize,
@@ -202,61 +198,49 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 
         let managed_wallet_ref = &mut *managed_wallet;
         let wallet_ref = &*wallet;
-        let network_rust: Network = network.into();
+        let network_rust = managed_wallet_ref.inner().network;
         let outputs_slice = slice::from_raw_parts(outputs, outputs_count);
 
-        // Get the managed account collection
-        let account_collection =
-            match managed_wallet_ref.inner_mut().accounts.get_mut(&network_rust) {
-                Some(collection) => collection,
-                None => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("No accounts found for network {:?}", network_rust),
-                    );
-                    return false;
-                }
-            };
-
         // Get the managed account
-        let managed_account =
-            match account_collection.standard_bip44_accounts.get_mut(&account_index) {
-                Some(account) => account,
-                None => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("Account {} not found", account_index),
-                    );
-                    return false;
-                }
-            };
-
-        // Get the wallet account (for getting extended keys)
-        let wallet_accounts = match wallet_ref.inner().accounts.get(&network_rust) {
-            Some(accounts) => accounts,
-            None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("No wallet accounts for network {:?}", network_rust),
-                );
-                return false;
-            }
-        };
-
-        let wallet_account = match wallet_accounts.standard_bip44_accounts.get(&account_index) {
+        let managed_account = match managed_wallet_ref
+            .inner_mut()
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&account_index)
+        {
             Some(account) => account,
             None => {
                 FFIError::set_error(
                     error,
                     FFIErrorCode::WalletError,
-                    format!("Wallet account {} not found", account_index),
+                    format!("Account {} not found", account_index),
                 );
                 return false;
             }
         };
+
+        // Verify wallet and managed wallet have matching networks
+        if wallet_ref.inner().network != network_rust {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::WalletError,
+                "Wallet and managed wallet have different networks".to_string(),
+            );
+            return false;
+        }
+
+        let wallet_account =
+            match wallet_ref.inner().accounts.standard_bip44_accounts.get(&account_index) {
+                Some(account) => account,
+                None => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Wallet account {} not found", account_index),
+                    );
+                    return false;
+                }
+            };
 
         // Convert FFI outputs to Rust outputs
         let mut tx_builder = TransactionBuilder::new();
@@ -465,7 +449,6 @@ pub struct FFITransactionCheckResult {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_check_transaction(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
     tx_bytes: *const u8,
     tx_len: usize,
     context_type: FFITransactionContext,
@@ -483,7 +466,6 @@ pub unsafe extern "C" fn wallet_check_transaction(
 
     unsafe {
         let wallet = &mut *wallet;
-        let network_rust: Network = network.into();
         let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
         // Parse the transaction
@@ -566,9 +548,8 @@ pub unsafe extern "C" fn wallet_check_transaction(
         };
 
         // Block on the async check_transaction call
-        let check_result = tokio::runtime::Handle::current().block_on(
-            managed_info.check_transaction(&tx, network_rust, context, wallet_mut, update_state),
-        );
+        let check_result = tokio::runtime::Handle::current()
+            .block_on(managed_info.check_transaction(&tx, context, wallet_mut, update_state));
 
         // If we updated state, we need to update the wallet's managed info
         // Note: This would require storing ManagedWalletInfo in FFIWallet
