@@ -49,7 +49,7 @@ fn bench_disk_storage(c: &mut Criterion) {
 
     let temp_dir = TempDir::new().unwrap();
 
-    let mut storage = rt.block_on(async {
+    let storage = rt.block_on(async {
         let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await.unwrap();
 
         for chunk in headers.chunks(CHUNK_SIZE as usize) {
