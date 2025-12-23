@@ -4,26 +4,43 @@ pub(crate) mod io;
 
 pub mod types;
 
-mod headers;
+mod blocks;
+mod chainstate;
+mod filters;
 mod lockfile;
+mod masternode;
+mod metadata;
 mod segments;
-mod state;
+mod transactions;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::ops::Range;
-
-use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Txid};
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use crate::error::StorageResult;
-use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
+use crate::storage::blocks::PersistentBlockHeaderStorage;
+use crate::storage::chainstate::PersistentChainStateStorage;
+use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
+use crate::storage::lockfile::LockFile;
+use crate::storage::metadata::PersistentMetadataStorage;
+use crate::storage::segments::SegmentCache;
+use crate::storage::transactions::PersistentTransactionStorage;
+use crate::StorageError;
 
 pub use types::*;
 
 #[async_trait]
+pub trait PersistentStorage {
+    async fn load(&self) -> StorageResult<Self>;
+    async fn persist(&self);
+}
+
+#[async_trait]
 pub trait StorageManager:
-    BlockHeaderStorage
-    + FilterHeaderStorage
+    blocks::BlockHeaderStorage
+    + filters::FilterHeaderStorage
     + FilterStorage
     + TransactionStorage
     + MempoolStateStorage
@@ -37,26 +54,17 @@ pub trait StorageManager:
 
 /// Disk-based storage manager with segmented files and async background saving.
 pub struct DiskStorageManager {
-    pub(super) base_path: PathBuf,
+    base_path: PathBuf,
 
-    // Segmented header storage
-    pub(super) block_headers: Arc<RwLock<SegmentCache<BlockHeader>>>,
-    pub(super) filter_headers: Arc<RwLock<SegmentCache<FilterHeader>>>,
-    pub(super) filters: Arc<RwLock<SegmentCache<Vec<u8>>>>,
-
-    // Reverse index for O(1) lookups
-    pub(super) header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
+    block_headers_storage: PersistentBlockHeaderStorage,
+    filter_headers_storage: PersistentFilterHeaderStorage,
+    filter_storage: PersistentFilterStorage,
+    transactions_storage: PersistentTransactionStorage,
+    metadata_storage: PersistentMetadataStorage,
+    chainstate_storage: PersistentChainStateStorage,
 
     // Background worker
-    pub(super) worker_tx: Option<mpsc::Sender<WorkerCommand>>,
     pub(super) worker_handle: Option<tokio::task::JoinHandle<()>>,
-
-    // Index save tracking to avoid redundant saves
-    pub(super) last_index_save_count: Arc<RwLock<usize>>,
-
-    // Mempool storage
-    pub(super) mempool_transactions: Arc<RwLock<HashMap<Txid, UnconfirmedTransaction>>>,
-    pub(super) mempool_state: Arc<RwLock<Option<MempoolState>>>,
 
     // Lock file to prevent concurrent access from multiple processes.
     _lock_file: LockFile,
@@ -72,20 +80,6 @@ impl DiskStorageManager {
 
         // Acquire exclusive lock on the data directory
         let lock_file = LockFile::new(base_path.join(".lock"))?;
-
-        let headers_dir = base_path.join("headers");
-        let filters_dir = base_path.join("filters");
-        let state_dir = base_path.join("state");
-
-        fs::create_dir_all(&headers_dir).map_err(|e| {
-            StorageError::WriteFailed(format!("Failed to create headers directory: {}", e))
-        })?;
-        fs::create_dir_all(&filters_dir).map_err(|e| {
-            StorageError::WriteFailed(format!("Failed to create filters directory: {}", e))
-        })?;
-        fs::create_dir_all(&state_dir).map_err(|e| {
-            StorageError::WriteFailed(format!("Failed to create state directory: {}", e))
-        })?;
 
         let mut storage = Self {
             base_path: base_path.clone(),
@@ -105,12 +99,8 @@ impl DiskStorageManager {
             _lock_file: lock_file,
         };
 
-        // Load chain state to get sync_base_height
-        if let Ok(Some(state)) = storage.load_chain_state().await {
-            tracing::debug!("Loaded sync_base_height: {}", state.sync_base_height);
-        }
-
-        // Start background worker
+        // Start background worker that
+        // persists data when appropriate
         storage.start_worker().await;
 
         // Rebuild index
@@ -247,111 +237,177 @@ impl DiskStorageManager {
     }
 }
 
-#[async_trait]
-pub trait BlockHeaderStorage {
-    /// Store block headers.
-    async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()>;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashcore::{block::Version, pow::CompactTarget};
+    use dashcore_hashes::Hash;
+    use tempfile::TempDir;
 
-    /// Load block headers in the given range.
-    async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>>;
+    fn build_headers(count: usize) -> Vec<BlockHeader> {
+        let mut headers = Vec::with_capacity(count);
+        let mut prev_hash = BlockHash::from_byte_array([0u8; 32]);
 
-    /// Get a specific header by blockchain height.
-    async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>>;
+        for i in 0..count {
+            let header = BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: prev_hash,
+                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array(
+                    [(i % 255) as u8; 32],
+                )
+                .into(),
+                time: 1 + i as u32,
+                bits: CompactTarget::from_consensus(0x1d00ffff),
+                nonce: i as u32,
+            };
+            prev_hash = header.block_hash();
+            headers.push(header);
+        }
 
-    /// Get the current tip blockchain height.
-    async fn get_tip_height(&self) -> Option<u32>;
+        headers
+    }
 
-    async fn get_start_height(&self) -> Option<u32>;
+    #[tokio::test]
+    async fn test_load_headers() -> Result<(), Box<dyn std::error::Error>> {
+        // Create a temporary directory for the test
+        let temp_dir = TempDir::new()?;
+        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("Unable to create storage");
 
-    async fn get_stored_headers_len(&self) -> u32;
+        // Create a test header
+        let test_header = BlockHeader {
+            version: Version::from_consensus(1),
+            prev_blockhash: BlockHash::from_byte_array([1; 32]),
+            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([2; 32]).into(),
+            time: 12345,
+            bits: CompactTarget::from_consensus(0x1d00ffff),
+            nonce: 67890,
+        };
 
-    /// Get header height by block hash (reverse lookup).
-    async fn get_header_height_by_hash(
-        &self,
-        hash: &dashcore::BlockHash,
-    ) -> StorageResult<Option<u32>>;
-}
+        // Store just one header
+        storage.store_headers(&[test_header]).await?;
 
-#[async_trait]
-pub trait FilterHeaderStorage {
-    /// Store filter headers.
-    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()>;
+        let loaded_headers = storage.load_headers(0..1).await?;
 
-    /// Load filter headers in the given blockchain height range.
-    async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>>;
+        // Should only get back the one header we stored
+        assert_eq!(loaded_headers.len(), 1);
+        assert_eq!(loaded_headers[0], test_header);
 
-    /// Get a specific filter header by blockchain height.
-    async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>>;
+        Ok(())
+    }
 
-    /// Get the current filter tip blockchain height.
-    async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>>;
-}
+    #[tokio::test]
+    async fn test_checkpoint_storage_indexing() -> StorageResult<()> {
+        use dashcore::TxMerkleNode;
+        use tempfile::tempdir;
 
-#[async_trait]
-pub trait FilterStorage {
-    /// Store a compact filter at a blockchain height.
-    async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()>;
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
 
-    /// Load compact filters in the given blockchain height range.
-    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>>;
-}
+        // Create test headers starting from checkpoint height
+        let checkpoint_height = 1_100_000;
+        let headers: Vec<BlockHeader> = (0..100)
+            .map(|i| BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: BlockHash::from_byte_array([i as u8; 32]),
+                merkle_root: TxMerkleNode::from_byte_array([(i + 1) as u8; 32]),
+                time: 1234567890 + i,
+                bits: CompactTarget::from_consensus(0x1a2b3c4d),
+                nonce: 67890 + i,
+            })
+            .collect();
 
-#[async_trait]
-pub trait TransactionStorage {
-    /// Store an unconfirmed transaction.
-    async fn store_mempool_transaction(
-        &mut self,
-        txid: &Txid,
-        tx: &UnconfirmedTransaction,
-    ) -> StorageResult<()>;
+        let mut base_state = ChainState::new();
+        base_state.sync_base_height = checkpoint_height;
+        storage.store_chain_state(&base_state).await?;
 
-    /// Remove a mempool transaction.
-    async fn remove_mempool_transaction(&mut self, txid: &Txid) -> StorageResult<()>;
+        storage.store_headers_at_height(&headers, checkpoint_height).await?;
+        assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
 
-    /// Get a mempool transaction.
-    async fn get_mempool_transaction(
-        &self,
-        txid: &Txid,
-    ) -> StorageResult<Option<UnconfirmedTransaction>>;
+        // Verify headers are stored at correct blockchain heights
+        let header_at_base = storage.get_header(checkpoint_height).await?;
+        assert_eq!(
+            header_at_base.expect("Header at base blockchain height should exist"),
+            headers[0]
+        );
 
-    /// Get all mempool transactions.
-    async fn get_all_mempool_transactions(
-        &self,
-    ) -> StorageResult<HashMap<Txid, UnconfirmedTransaction>>;
-}
+        let header_at_ending = storage.get_header(checkpoint_height + 99).await?;
+        assert_eq!(
+            header_at_ending.expect("Header at ending blockchain height should exist"),
+            headers[99]
+        );
 
-#[async_trait]
-pub trait MempoolStateStorage {
-    /// Store the complete mempool state.
-    async fn store_mempool_state(&mut self, state: &MempoolState) -> StorageResult<()>;
+        // Test the reverse index (hash -> blockchain height)
+        let hash_0 = headers[0].block_hash();
+        let height_0 = storage.get_header_height_by_hash(&hash_0).await?;
+        assert_eq!(
+            height_0,
+            Some(checkpoint_height),
+            "Hash should map to blockchain height 1,100,000"
+        );
 
-    /// Load the mempool state.
-    async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>>;
-}
+        let hash_99 = headers[99].block_hash();
+        let height_99 = storage.get_header_height_by_hash(&hash_99).await?;
+        assert_eq!(
+            height_99,
+            Some(checkpoint_height + 99),
+            "Hash should map to blockchain height 1,100,099"
+        );
 
-#[async_trait]
-pub trait MetadataStorage {
-    /// Store metadata.
-    async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()>;
+        // Store chain state to persist sync_base_height
+        let mut chain_state = ChainState::new();
+        chain_state.sync_base_height = checkpoint_height;
+        storage.store_chain_state(&chain_state).await?;
 
-    /// Load metadata.
-    async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>>;
-}
+        // Force save to disk
+        storage.save_dirty().await;
 
-#[async_trait]
-pub trait ChainStateStorage {
-    /// Store chain state.
-    async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()>;
+        drop(storage);
 
-    /// Load chain state.
-    async fn load_chain_state(&self) -> StorageResult<Option<ChainState>>;
-}
+        // Create a new storage instance to test index rebuilding
+        let storage2 = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
 
-#[async_trait]
-pub trait MasternodeStateStorage {
-    /// Store masternode state.
-    async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()>;
+        // Verify the index was rebuilt correctly
+        let height_after_rebuild = storage2.get_header_height_by_hash(&hash_0).await?;
+        assert_eq!(
+            height_after_rebuild,
+            Some(checkpoint_height),
+            "After index rebuild, hash should still map to blockchain height 1,100,000"
+        );
 
-    /// Load masternode state.
-    async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>>;
+        // Verify header can still be retrieved by blockchain height after reload
+        let header_after_reload = storage2.get_header(checkpoint_height).await?;
+        assert!(
+            header_after_reload.is_some(),
+            "Header at base blockchain height should exist after reload"
+        );
+        assert_eq!(header_after_reload.unwrap(), headers[0]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_flushes_index() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_path_buf();
+        let headers = build_headers(11_000);
+        let last_hash = headers.last().unwrap().block_hash();
+
+        {
+            let mut storage = DiskStorageManager::new(base_path.clone()).await?;
+
+            storage.store_headers(&headers[..10_000]).await?;
+            storage.save_dirty().await;
+
+            storage.store_headers(&headers[10_000..]).await?;
+            storage.shutdown().await;
+        }
+
+        let storage = DiskStorageManager::new(base_path).await?;
+        let height = storage.get_header_height_by_hash(&last_hash).await?;
+        assert_eq!(height, Some(10_999));
+
+        Ok(())
+    }
 }
