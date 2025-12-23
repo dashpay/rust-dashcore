@@ -4,8 +4,8 @@
 #[cfg(test)]
 mod tests {
     use key_wallet_ffi::error::{FFIError, FFIErrorCode};
-    use key_wallet_ffi::types::FFINetworks;
     use key_wallet_ffi::wallet_manager::*;
+    use key_wallet_ffi::FFINetwork;
     use std::os::raw::c_char;
     use std::ptr;
 
@@ -26,7 +26,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr() as *const c_char,
                 passphrase.as_ptr() as *const c_char,
-                FFINetworks::DashFlag,
+                FFINetwork::Dash,
                 &mut error,
             );
             assert!(success);

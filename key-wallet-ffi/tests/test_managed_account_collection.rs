@@ -2,13 +2,12 @@
 
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 use key_wallet_ffi::managed_account_collection::*;
-use key_wallet_ffi::types::{
-    FFIAccountCreationOptionType, FFINetworks, FFIWalletAccountCreationOptions,
-};
+use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
 use key_wallet_ffi::wallet_manager::{
     wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
     wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
 };
+use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
 
@@ -33,7 +32,7 @@ fn test_managed_account_collection_basic() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             ptr::null(), // Use default options
             &mut error,
         );
@@ -133,7 +132,7 @@ fn test_managed_account_collection_with_special_accounts() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             &options,
             &mut error,
         );
@@ -253,7 +252,7 @@ fn test_managed_account_collection_summary() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             &options,
             &mut error,
         );
@@ -342,7 +341,7 @@ fn test_managed_account_collection_summary_data() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             &options,
             &mut error,
         );
@@ -439,7 +438,7 @@ fn test_managed_account_collection_nonexistent_accounts() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             ptr::null(), // Default options
             &mut error,
         );

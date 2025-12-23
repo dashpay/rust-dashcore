@@ -2,7 +2,6 @@
 mod utxo_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::FFINetworks;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::CStr;
     use std::ptr;
@@ -81,13 +80,7 @@ mod utxo_tests {
         // The deprecated function should always return an empty list
         let success = unsafe {
             #[allow(deprecated)]
-            wallet_get_utxos(
-                ptr::null(),
-                FFINetworks::TestnetFlag,
-                &mut utxos_out,
-                &mut count_out,
-                error,
-            )
+            wallet_get_utxos(ptr::null(), &mut utxos_out, &mut count_out, error)
         };
 
         assert!(success);

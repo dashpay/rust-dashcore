@@ -5,7 +5,7 @@
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::keys::*;
-    use crate::types::{FFINetwork, FFINetworks};
+    use crate::types::FFINetwork;
     use crate::wallet;
     use std::ffi::{CStr, CString};
     use std::ptr;
@@ -21,7 +21,7 @@ mod tests {
             let wallet = wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             );
             assert!(!wallet.is_null());
@@ -111,7 +111,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -142,7 +142,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -177,7 +177,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -225,7 +225,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -279,7 +279,7 @@ mod tests {
             let wallet = wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             );
             assert!(!wallet.is_null());
@@ -427,7 +427,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -561,7 +561,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -606,7 +606,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };

@@ -3,8 +3,9 @@
 #[cfg(all(test, feature = "bincode"))]
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::{FFINetworks, FFIWalletAccountCreationOptions};
+    use crate::types::FFIWalletAccountCreationOptions;
     use crate::wallet_manager;
+    use crate::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 
@@ -32,7 +33,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,           // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet
@@ -84,7 +85,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 true,  // downgrade to pubkey wallet
@@ -133,7 +134,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 true, // downgrade to pubkey wallet
@@ -182,7 +183,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -231,7 +232,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -298,7 +299,7 @@ mod tests {
                 manager,
                 invalid_mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -334,7 +335,7 @@ mod tests {
                 manager,
                 ptr::null(),
                 ptr::null(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -390,7 +391,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 0,
                 &account_options,
                 false,

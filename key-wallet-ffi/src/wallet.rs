@@ -14,7 +14,9 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::{Mnemonic, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetworks, FFIWallet, FFIWalletAccountCreationOptions};
+use crate::types::{FFIWallet, FFIWalletAccountCreationOptions};
+use crate::FFINetwork;
+use key_wallet::Network;
 
 /// Create a new wallet from mnemonic with options
 ///
@@ -30,7 +32,7 @@ use crate::types::{FFINetworks, FFIWallet, FFIWalletAccountCreationOptions};
 pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    networks: FFINetworks,
+    network: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -84,19 +86,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
         }
     };
 
-    // Convert networks bit flags to single network
-    let networks_rust = networks.parse_networks();
-    let network_rust = match networks_rust.first() {
-        Some(n) => *n,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "No network specified".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: Network = network.into();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -155,7 +145,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 pub unsafe extern "C" fn wallet_create_from_mnemonic(
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_from_mnemonic_with_options(
@@ -179,7 +169,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic(
 pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     seed: *const u8,
     seed_len: usize,
-    networks: FFINetworks,
+    network: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -202,19 +192,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     seed_array.copy_from_slice(seed_bytes);
     let seed = Seed::new(seed_array);
 
-    // Convert networks bit flags to single network
-    let networks_rust = networks.parse_networks();
-    let network_rust = match networks_rust.first() {
-        Some(n) => *n,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "No network specified".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: Network = network.into();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -250,7 +228,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
 pub unsafe extern "C" fn wallet_create_from_seed(
     seed: *const u8,
     seed_len: usize,
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_from_seed_with_options(
@@ -271,23 +249,11 @@ pub unsafe extern "C" fn wallet_create_from_seed(
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random_with_options(
-    networks: FFINetworks,
+    network: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
-    // Convert networks bit flags to single network
-    let networks_rust = networks.parse_networks();
-    let network_rust = match networks_rust.first() {
-        Some(n) => *n,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "No network specified".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let network_rust: Network = network.into();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -320,7 +286,7 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
 /// - The caller must ensure the pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random(
-    network: FFINetworks,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_random_with_options(

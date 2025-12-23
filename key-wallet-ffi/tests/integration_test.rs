@@ -3,7 +3,6 @@
 //! These tests verify the interaction between different FFI modules
 
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
-use key_wallet_ffi::types::FFINetworks;
 use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
@@ -36,7 +35,7 @@ fn test_full_wallet_workflow() {
             manager,
             mnemonic,
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
@@ -111,7 +110,7 @@ fn test_seed_to_wallet_workflow() {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             seed.as_ptr(),
             seed_len,
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
@@ -182,7 +181,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             invalid_mnemonic.as_ptr(),
             ptr::null(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
@@ -194,7 +193,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             ptr::null(),
             ptr::null(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
@@ -207,7 +206,7 @@ fn test_error_handling() {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             invalid_seed.as_ptr(),
             invalid_seed.len(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
