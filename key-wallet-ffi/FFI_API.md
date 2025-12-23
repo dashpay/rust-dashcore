@@ -42,7 +42,7 @@ Functions: 3
 
 ### Wallet Manager
 
-Functions: 19
+Functions: 18
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -63,12 +63,11 @@ Functions: 19
 | `wallet_manager_get_wallet_ids` | Get wallet IDs  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
 | `wallet_manager_import_wallet_from_bytes` | No description | wallet_manager |
 | `wallet_manager_process_transaction` | Process a transaction through all wallets  Checks a transaction against all... | wallet_manager |
-| `wallet_manager_update_height` | Update block height for a network  # Safety  - `manager` must be a valid... | wallet_manager |
 | `wallet_manager_wallet_count` | Get wallet count  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
 
 ### Wallet Operations
 
-Functions: 62
+Functions: 63
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -99,6 +98,7 @@ Functions: 62
 | `managed_wallet_info_free` | Free managed wallet info returned by wallet_manager_get_managed_wallet_info ... | managed_wallet |
 | `managed_wallet_mark_address_used` | Mark an address as used in the pool  This updates the pool's tracking of... | address_pool |
 | `managed_wallet_set_gap_limit` | Set the gap limit for an address pool  The gap limit determines how many... | address_pool |
+| `managed_wallet_synced_height` | Get current synced height from wallet info  # Safety  - `managed_wallet`... | managed_wallet |
 | `wallet_add_account` | Add an account to the wallet without xpub  # Safety  This function... | wallet |
 | `wallet_add_account_with_string_xpub` | Add an account to the wallet with xpub as string  # Safety  This function... | wallet |
 | `wallet_add_account_with_xpub_bytes` | Add an account to the wallet with xpub as byte array  # Safety  This... | wallet |
@@ -666,22 +666,6 @@ Process a transaction through all wallets  Checks a transaction against all wall
 
 ---
 
-#### `wallet_manager_update_height`
-
-```c
-wallet_manager_update_height(manager: *mut FFIWalletManager, height: c_uint, error: *mut FFIError,) -> bool
-```
-
-**Description:**
-Update block height for a network  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
-
-**Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
-
-**Module:** `wallet_manager`
-
----
-
 #### `wallet_manager_wallet_count`
 
 ```c
@@ -1117,6 +1101,22 @@ Set the gap limit for an address pool  The gap limit determines how many unused 
 - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError or null
 
 **Module:** `address_pool`
+
+---
+
+#### `managed_wallet_synced_height`
+
+```c
+managed_wallet_synced_height(managed_wallet: *const FFIManagedWalletInfo, error: *mut FFIError,) -> c_uint
+```
+
+**Description:**
+Get current synced height from wallet info  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+
+**Safety:**
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+
+**Module:** `managed_wallet`
 
 ---
 

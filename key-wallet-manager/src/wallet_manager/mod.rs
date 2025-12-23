@@ -935,9 +935,12 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         self.current_height
     }
 
-    /// Update current block height for a specific network
+    /// Update current block height and propagate to all wallet infos
     pub fn update_height(&mut self, height: u32) {
-        self.current_height = height
+        self.current_height = height;
+        for info in self.wallet_infos.values_mut() {
+            info.update_synced_height(height);
+        }
     }
 
     /// Get monitored addresses for all wallets for a specific network

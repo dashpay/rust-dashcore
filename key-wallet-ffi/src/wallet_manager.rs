@@ -787,35 +787,6 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     !relevant_wallets.is_empty()
 }
 
-/// Update block height for a network
-///
-/// # Safety
-///
-/// - `manager` must be a valid pointer to an FFIWalletManager
-/// - `error` must be a valid pointer to an FFIError structure or null
-/// - The caller must ensure all pointers remain valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn wallet_manager_update_height(
-    manager: *mut FFIWalletManager,
-    height: c_uint,
-    error: *mut FFIError,
-) -> bool {
-    if manager.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
-        return false;
-    }
-
-    let manager_ref = &*manager;
-
-    manager_ref.runtime.block_on(async {
-        let mut manager_guard = manager_ref.manager.write().await;
-        manager_guard.update_height(height);
-    });
-
-    FFIError::set_success(error);
-    true
-}
-
 /// Get current height for a network
 ///
 /// # Safety

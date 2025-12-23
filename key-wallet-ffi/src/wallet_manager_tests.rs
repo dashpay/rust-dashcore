@@ -209,34 +209,6 @@ mod tests {
     }
 
     #[test]
-    fn test_height_management() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
-        assert!(!manager.is_null());
-
-        // Get initial height
-        let height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
-        assert_eq!(height, 0);
-
-        // Update height
-        let success =
-            unsafe { wallet_manager::wallet_manager_update_height(manager, 100000, error) };
-        assert!(success);
-
-        // Verify height was updated
-        let height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
-        assert_eq!(height, 100000);
-
-        // Clean up
-        unsafe {
-            wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
-        }
-    }
-
-    #[test]
     fn test_error_handling() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
@@ -469,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wallet_manager_height_operations() {
+    fn test_wallet_manager_current_height() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
@@ -477,12 +449,17 @@ mod tests {
         assert!(!manager.is_null());
 
         // Get initial height
-        let _height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
+        let height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
+        assert_eq!(height, 0);
 
         // Update height
         let new_height = 12345;
         unsafe {
-            wallet_manager::wallet_manager_update_height(manager, new_height, error);
+            let manager_ref = &*manager;
+            manager_ref.runtime.block_on(async {
+                let mut manager_guard = manager_ref.manager.write().await;
+                manager_guard.update_height(new_height);
+            });
         }
 
         // Get updated height
