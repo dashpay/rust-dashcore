@@ -169,9 +169,6 @@ async fn test_chainlock_validation_with_masternode_engine() {
     let chain_lock = create_test_chainlock(0, genesis.block_hash());
     network.add_chain_lock(chain_lock.clone());
 
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
     // Create client config with masternodes enabled
     let config = ClientConfig {
         network: Network::Dash,
@@ -180,6 +177,9 @@ async fn test_chainlock_validation_with_masternode_engine() {
         validation_mode: ValidationMode::Basic,
         ..Default::default()
     };
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
@@ -222,9 +222,6 @@ async fn test_chainlock_queue_and_process_flow() {
     let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
     // Create client config
     let config = ClientConfig {
         network: Network::Dash,
@@ -233,6 +230,9 @@ async fn test_chainlock_queue_and_process_flow() {
         validation_mode: ValidationMode::Basic,
         ..Default::default()
     };
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
@@ -275,9 +275,6 @@ async fn test_chainlock_manager_cache_operations() {
     let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
     // Create client config
     let config = ClientConfig {
         network: Network::Dash,
@@ -286,6 +283,9 @@ async fn test_chainlock_manager_cache_operations() {
         validation_mode: ValidationMode::Basic,
         ..Default::default()
     };
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
@@ -327,9 +327,6 @@ async fn test_client_chainlock_update_flow() {
     let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
     // Create client config with masternodes enabled
     let config = ClientConfig {
         network: Network::Dash,
@@ -338,6 +335,9 @@ async fn test_client_chainlock_update_flow() {
         validation_mode: ValidationMode::Basic,
         ..Default::default()
     };
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();

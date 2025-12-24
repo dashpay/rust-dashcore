@@ -51,7 +51,7 @@ async fn test_chainlock_validation_flow() {
         DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client =
@@ -101,7 +101,7 @@ async fn test_chainlock_manager_initialization() {
         DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client =

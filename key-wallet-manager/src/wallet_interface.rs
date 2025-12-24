@@ -7,30 +7,16 @@ use async_trait::async_trait;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Block, Transaction, Txid};
-use key_wallet::Network;
 
 /// Trait for wallet implementations to receive SPV events
 #[async_trait]
 pub trait WalletInterface: Send + Sync {
     /// Called when a new block is received that may contain relevant transactions
     /// Returns transaction IDs that were relevant to the wallet
-    async fn process_block(
-        &mut self,
-        block: &Block,
-        height: CoreBlockHeight,
-        network: Network,
-    ) -> Vec<Txid>;
+    async fn process_block(&mut self, block: &Block, height: CoreBlockHeight) -> Vec<Txid>;
 
     /// Called when a transaction is seen in the mempool
-    async fn process_mempool_transaction(&mut self, tx: &Transaction, network: Network);
-
-    /// Called when a reorg occurs and blocks need to be rolled back
-    async fn handle_reorg(
-        &mut self,
-        from_height: CoreBlockHeight,
-        to_height: CoreBlockHeight,
-        network: Network,
-    );
+    async fn process_mempool_transaction(&mut self, tx: &Transaction);
 
     /// Check if a compact filter matches any watched items
     /// Returns true if the block should be downloaded
@@ -38,7 +24,6 @@ pub trait WalletInterface: Send + Sync {
         &mut self,
         filter: &BlockFilter,
         block_hash: &dashcore::BlockHash,
-        network: Network,
     ) -> bool;
 
     /// Return the wallet's per-transaction net change and involved addresses if known.
@@ -47,7 +32,6 @@ pub trait WalletInterface: Send + Sync {
     async fn transaction_effect(
         &self,
         _tx: &Transaction,
-        _network: Network,
     ) -> Option<(i64, alloc::vec::Vec<alloc::string::String>)> {
         None
     }
@@ -58,7 +42,7 @@ pub trait WalletInterface: Send + Sync {
     ///
     /// The default implementation returns `None`, which signals that the caller should
     /// fall back to its existing behaviour.
-    async fn earliest_required_height(&self, _network: Network) -> CoreBlockHeight {
+    async fn earliest_required_height(&self) -> CoreBlockHeight {
         0
     }
 
@@ -66,7 +50,7 @@ pub trait WalletInterface: Send + Sync {
     ///
     /// Implementations are encouraged to include high-level state such as the
     /// number of managed wallets, networks, or tracked scripts.
-    async fn describe(&self, _network: Network) -> String {
+    async fn describe(&self) -> String {
         "Wallet interface description unavailable".to_string()
     }
 }

@@ -8,7 +8,7 @@ mod tests {
 
     #[test]
     fn test_create_wallet_return_serialized_bytes() {
-        let mut manager = WalletManager::<ManagedWalletInfo>::new();
+        let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
         let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
@@ -16,7 +16,6 @@ mod tests {
         let result = manager.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             "",
-            Network::Testnet,
             100_000,
             WalletAccountCreationOptions::Default,
             false, // Don't downgrade
@@ -28,11 +27,10 @@ mod tests {
         println!("Full wallet ID: {}", hex::encode(wallet_id));
 
         // Test 2: Create watch-only wallet (no private keys)
-        let mut manager2 = WalletManager::<ManagedWalletInfo>::new();
+        let mut manager2 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
         let result = manager2.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             "",
-            Network::Testnet,
             100_000,
             WalletAccountCreationOptions::Default,
             true,  // Downgrade to pubkey wallet
@@ -47,11 +45,10 @@ mod tests {
         println!("Watch-only wallet ID: {}", hex::encode(wallet_id2));
 
         // Test 3: Create externally signable wallet (for hardware wallets)
-        let mut manager3 = WalletManager::<ManagedWalletInfo>::new();
+        let mut manager3 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
         let result = manager3.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             "",
-            Network::Testnet,
             100_000,
             WalletAccountCreationOptions::Default,
             true, // Downgrade to pubkey wallet
@@ -64,7 +61,7 @@ mod tests {
         println!("Externally signable wallet ID: {}", hex::encode(wallet_id3));
 
         // Test 4: Import the serialized wallet back
-        let mut manager4 = WalletManager::<ManagedWalletInfo>::new();
+        let mut manager4 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
         let import_result = manager4.import_wallet_from_bytes(&bytes);
         assert!(import_result.is_ok());
         assert_eq!(import_result.unwrap(), wallet_id);
@@ -72,7 +69,7 @@ mod tests {
 
     #[test]
     fn test_wallet_with_passphrase() {
-        let mut manager = WalletManager::<ManagedWalletInfo>::new();
+        let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
         let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let passphrase = "test_passphrase";
@@ -80,7 +77,6 @@ mod tests {
         let result = manager.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             passphrase,
-            Network::Testnet,
             0,
             WalletAccountCreationOptions::Default,
             false,
@@ -91,11 +87,10 @@ mod tests {
         assert!(!bytes.is_empty());
 
         // Wallet ID with passphrase should be different
-        let mut manager2 = WalletManager::<ManagedWalletInfo>::new();
+        let mut manager2 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
         let result2 = manager2.create_wallet_from_mnemonic_return_serialized_bytes(
             test_mnemonic,
             "", // No passphrase
-            Network::Testnet,
             0,
             WalletAccountCreationOptions::Default,
             false,

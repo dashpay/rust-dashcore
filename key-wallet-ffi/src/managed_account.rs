@@ -982,7 +982,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -994,7 +994,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1045,7 +1044,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
             // Add a wallet with minimal accounts
@@ -1062,7 +1061,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 &options,
                 &mut error,
             );
@@ -1112,7 +1110,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
             // Add a wallet with multiple accounts
@@ -1137,7 +1135,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 &options,
                 &mut error,
             );
@@ -1174,7 +1171,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -1186,7 +1183,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1295,7 +1291,7 @@ mod tests {
 
             // Test null balance_out
             let mut error = FFIError::success();
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
             // Add a wallet
@@ -1306,7 +1302,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1350,7 +1345,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let mut manager = wallet_manager_create(&mut error);
+            let mut manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -1362,7 +1357,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1440,7 +1434,7 @@ mod tests {
             wallet_manager_free(manager);
 
             // Create a new manager
-            manager = wallet_manager_create(&mut error);
+            manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
             // Create wallet with CoinJoin account
@@ -1456,7 +1450,6 @@ mod tests {
                 manager,
                 mnemonic2.as_ptr(),
                 passphrase2.as_ptr(),
-                FFINetwork::Testnet,
                 &options,
                 &mut error,
             );

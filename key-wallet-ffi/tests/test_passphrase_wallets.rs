@@ -57,7 +57,7 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     let error = &mut error as *mut FFIError;
 
     // Create wallet manager
-    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
+    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
     assert!(!manager.is_null());
 
     let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
@@ -69,7 +69,6 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
             error,
         )
     };

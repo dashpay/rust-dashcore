@@ -418,7 +418,7 @@ Free a managed account result's error message (if any) Note: This does NOT free 
 #### `wallet_manager_add_wallet_from_mnemonic`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, network: FFINetwork, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -434,7 +434,7 @@ Add a wallet from mnemonic to the manager (backward compatibility)  # Safety  - 
 #### `wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, network: FFINetwork, birth_height: c_uint, account_options: *const crate::types::FFIWalletAccountCreationOptions, downgrade_to_pubkey_wallet: bool, allow_external_signing: bool, wallet_bytes_out: *mut *mut u8, wallet_bytes_len_out: *mut usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, birth_height: c_uint, account_options: *const crate::types::FFIWalletAccountCreationOptions, downgrade_to_pubkey_wallet: bool, allow_external_signing: bool, wallet_bytes_out: *mut *mut u8, wallet_bytes_len_out: *mut usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
 ```
 
 **Module:** `wallet_manager`
@@ -444,7 +444,7 @@ wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FF
 #### `wallet_manager_add_wallet_from_mnemonic_with_options`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic_with_options(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, network: FFINetwork, account_options: *const crate::types::FFIWalletAccountCreationOptions, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic_with_options(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, account_options: *const crate::types::FFIWalletAccountCreationOptions, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -460,7 +460,7 @@ Add a wallet from mnemonic to the manager with options  # Safety  - `manager` mu
 #### `wallet_manager_create`
 
 ```c
-wallet_manager_create(error: *mut FFIError) -> *mut FFIWalletManager
+wallet_manager_create(network: FFINetwork, error: *mut FFIError,) -> *mut FFIWalletManager
 ```
 
 **Description:**
@@ -473,7 +473,7 @@ Create a new wallet manager
 #### `wallet_manager_current_height`
 
 ```c
-wallet_manager_current_height(manager: *const FFIWalletManager, network: FFINetwork, error: *mut FFIError,) -> c_uint
+wallet_manager_current_height(manager: *const FFIWalletManager, error: *mut FFIError,) -> c_uint
 ```
 
 **Description:**
@@ -489,7 +489,7 @@ Get current height for a network  # Safety  - `manager` must be a valid pointer 
 #### `wallet_manager_describe`
 
 ```c
-wallet_manager_describe(manager: *const FFIWalletManager, network: crate::FFINetwork, error: *mut FFIError,) -> *mut c_char
+wallet_manager_describe(manager: *const FFIWalletManager, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -653,14 +653,14 @@ wallet_manager_import_wallet_from_bytes(manager: *mut FFIWalletManager, wallet_b
 #### `wallet_manager_process_transaction`
 
 ```c
-wallet_manager_process_transaction(manager: *mut FFIWalletManager, tx_bytes: *const u8, tx_len: usize, network: FFINetwork, context: *const crate::types::FFITransactionContextDetails, update_state_if_found: bool, error: *mut FFIError,) -> bool
+wallet_manager_process_transaction(manager: *mut FFIWalletManager, tx_bytes: *const u8, tx_len: usize, context: *const crate::types::FFITransactionContextDetails, update_state_if_found: bool, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Process a transaction through all wallets  Checks a transaction against all wallets and updates their states if relevant. Returns true if the transaction was relevant to at least one wallet.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `network` is the network type - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Process a transaction through all wallets  Checks a transaction against all wallets and updates their states if relevant. Returns true if the transaction was relevant to at least one wallet.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `network` is the network type - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -669,7 +669,7 @@ Process a transaction through all wallets  Checks a transaction against all wall
 #### `wallet_manager_update_height`
 
 ```c
-wallet_manager_update_height(manager: *mut FFIWalletManager, network: FFINetwork, height: c_uint, error: *mut FFIError,) -> bool
+wallet_manager_update_height(manager: *mut FFIWalletManager, height: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**

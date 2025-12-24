@@ -67,13 +67,13 @@ fn create_mock_filter(block: &Block) -> BlockFilter {
 
 #[tokio::test]
 async fn test_filter_checking() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Add a test address to monitor - simplified for testing
     // In reality, addresses would be generated from wallet accounts
 
     let _wallet_id = manager
-        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default, Network::Testnet)
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
     // Create a test block with a transaction
@@ -83,8 +83,7 @@ async fn test_filter_checking() {
     let block_hash = block.block_hash();
 
     // Check the filter
-    let should_download =
-        manager.check_compact_filter(&filter, &block_hash, Network::Testnet).await;
+    let should_download = manager.check_compact_filter(&filter, &block_hash).await;
 
     // The filter matching depends on whether the wallet has any addresses
     // being watched. Since we just created an empty wallet, it may or may not match.
@@ -92,18 +91,17 @@ async fn test_filter_checking() {
     let _ = should_download;
 
     // Test filter caching - calling again should use cached result
-    let should_download_cached =
-        manager.check_compact_filter(&filter, &block_hash, Network::Testnet).await;
+    let should_download_cached = manager.check_compact_filter(&filter, &block_hash).await;
     assert_eq!(should_download, should_download_cached, "Cached result should match original");
 }
 
 #[tokio::test]
 async fn test_block_processing() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Create a test wallet
     let _wallet_id = manager
-        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default, Network::Testnet)
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
     // Create a transaction
@@ -113,7 +111,7 @@ async fn test_block_processing() {
     let block = create_test_block(100, vec![tx.clone()]);
 
     // Process the block
-    let result = manager.process_block(&block, 100, Network::Testnet).await;
+    let result = manager.process_block(&block, 100).await;
 
     // Since we're not watching specific addresses, no transactions should be relevant
     assert_eq!(result.len(), 0);
@@ -121,11 +119,11 @@ async fn test_block_processing() {
 
 #[tokio::test]
 async fn test_filter_caching() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Create a wallet with some addresses
     let _wallet_id = manager
-        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default, Network::Testnet)
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
     // Create multiple blocks with different hashes
@@ -139,12 +137,12 @@ async fn test_filter_caching() {
     let hash2 = block2.block_hash();
 
     // Check filters for both blocks
-    let result1 = manager.check_compact_filter(&filter1, &hash1, Network::Testnet).await;
-    let result2 = manager.check_compact_filter(&filter2, &hash2, Network::Testnet).await;
+    let result1 = manager.check_compact_filter(&filter1, &hash1).await;
+    let result2 = manager.check_compact_filter(&filter2, &hash2).await;
 
     // Check again - should use cached results
-    let cached1 = manager.check_compact_filter(&filter1, &hash1, Network::Testnet).await;
-    let cached2 = manager.check_compact_filter(&filter2, &hash2, Network::Testnet).await;
+    let cached1 = manager.check_compact_filter(&filter1, &hash1).await;
+    let cached2 = manager.check_compact_filter(&filter2, &hash2).await;
 
     // Cached results should match originals
     assert_eq!(result1, cached1, "Cached result for block1 should match");
