@@ -10,7 +10,6 @@ pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;
 pub mod transaction_building;
-pub mod utxo;
 pub mod wallet_info_interface;
 
 pub use managed_account_operations::ManagedAccountOperations;
