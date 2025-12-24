@@ -265,7 +265,7 @@ impl ManagedAccount {
     }
 
     /// Update the account balance
-    pub fn update_balance(&mut self) {
+    pub fn update_balance(&mut self, synced_height: u32) {
         let mut spendable = 0;
         let mut unconfirmed = 0;
         let mut locked = 0;
@@ -273,7 +273,7 @@ impl ManagedAccount {
             let value = utxo.txout.value;
             if utxo.is_locked {
                 locked += value;
-            } else if utxo.is_confirmed {
+            } else if utxo.is_spendable(synced_height) {
                 spendable += value;
             } else {
                 unconfirmed += value;
