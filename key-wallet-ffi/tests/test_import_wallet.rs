@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use key_wallet_ffi::error::{FFIError, FFIErrorCode};
+    use key_wallet_ffi::wallet::wallet_free_const;
     use key_wallet_ffi::wallet_manager::*;
     use key_wallet_ffi::FFINetwork;
     use std::os::raw::c_char;
@@ -66,6 +67,8 @@ mod tests {
             assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
             // Clean up
+            error.free_message();
+            wallet_free_const(wallet_ptr);
             wallet_manager_free_wallet_ids(wallet_ids_ptr, count);
             wallet_manager_free(manager);
             wallet_manager_free(manager2);
