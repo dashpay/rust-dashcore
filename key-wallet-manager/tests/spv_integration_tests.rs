@@ -10,6 +10,7 @@ use dashcore_hashes::Hash;
 
 use dashcore::bip158::{BlockFilter, BlockFilterWriter};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -147,4 +148,36 @@ async fn test_filter_caching() {
     // Cached results should match originals
     assert_eq!(result1, cached1, "Cached result for block1 should match");
     assert_eq!(result2, cached2, "Cached result for block2 should match");
+}
+
+fn assert_wallet_heights(manager: &WalletManager<ManagedWalletInfo>, expected_height: u32) {
+    assert_eq!(manager.current_height(), expected_height, "height should be {}", expected_height);
+    for wallet_info in manager.get_all_wallet_infos().values() {
+        assert_eq!(
+            wallet_info.synced_height(),
+            expected_height,
+            "synced_height should be {}",
+            expected_height
+        );
+    }
+}
+
+/// Test that the wallet heights are updated after block processing.
+#[tokio::test]
+async fn test_height_updated_after_block_processing() {
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+
+    // Create a wallet
+    let _wallet_id = manager
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
+        .expect("Failed to create wallet");
+
+    // Initial state - no blocks processed yet
+    assert_wallet_heights(&manager, 0);
+
+    for height in [1000, 2000, 3000] {
+        let block = create_test_block(height, vec![create_test_transaction(1000)]);
+        manager.process_block(&block, height).await;
+        assert_wallet_heights(&manager, height);
+    }
 }
