@@ -66,7 +66,9 @@ pub struct SegmentCache<I: Persistable> {
 }
 
 impl SegmentCache<BlockHeader> {
-    pub async fn build_block_index_from_segments(&self) -> StorageResult<HashMap<BlockHash, u32>> {
+    pub async fn build_block_index_from_segments(
+        &mut self,
+    ) -> StorageResult<HashMap<BlockHash, u32>> {
         let entries = fs::read_dir(&self.segments_dir)?;
 
         let mut block_index = HashMap::new();
