@@ -26,7 +26,6 @@ use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterSto
 use crate::storage::lockfile::LockFile;
 use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
-use crate::StorageError;
 
 pub use types::*;
 
@@ -59,7 +58,7 @@ pub trait StorageManager:
 
 /// Disk-based storage manager with segmented files and async background saving.
 pub struct DiskStorageManager {
-    base_path: PathBuf,
+    storage_path: PathBuf,
 
     block_headers: Arc<RwLock<PersistentBlockHeaderStorage>>,
     filter_headers: Arc<RwLock<PersistentFilterHeaderStorage>>,
@@ -76,33 +75,34 @@ pub struct DiskStorageManager {
 }
 
 impl DiskStorageManager {
-    pub async fn new(base_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+    pub async fn new(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
         use std::fs;
 
-        let base_path = base_path.into();
+        let storage_path = storage_path.into();
 
         // Create directories if they don't exist
-        fs::create_dir_all(&base_path)
-            .map_err(|e| StorageError::WriteFailed(format!("Failed to create directory: {}", e)))?;
+        fs::create_dir_all(&storage_path)?;
 
         // Acquire exclusive lock on the data directory
-        let lock_file = LockFile::new(base_path.join(".lock"))?;
+        let lock_file = LockFile::new(storage_path.with_added_extension(".lock"))?;
 
         let mut storage = Self {
-            base_path: base_path.clone(),
+            storage_path: storage_path.clone(),
 
             block_headers: Arc::new(RwLock::new(
-                PersistentBlockHeaderStorage::load(&base_path).await?,
+                PersistentBlockHeaderStorage::load(&storage_path).await?,
             )),
             filter_headers: Arc::new(RwLock::new(
-                PersistentFilterHeaderStorage::load(&base_path).await?,
+                PersistentFilterHeaderStorage::load(&storage_path).await?,
             )),
-            filters: Arc::new(RwLock::new(PersistentFilterStorage::load(&base_path).await?)),
+            filters: Arc::new(RwLock::new(PersistentFilterStorage::load(&storage_path).await?)),
             transactions: Arc::new(RwLock::new(
-                PersistentTransactionStorage::load(&base_path).await?,
+                PersistentTransactionStorage::load(&storage_path).await?,
             )),
-            metadata: Arc::new(RwLock::new(PersistentMetadataStorage::load(&base_path).await?)),
-            chainstate: Arc::new(RwLock::new(PersistentChainStateStorage::load(&base_path).await?)),
+            metadata: Arc::new(RwLock::new(PersistentMetadataStorage::load(&storage_path).await?)),
+            chainstate: Arc::new(RwLock::new(
+                PersistentChainStateStorage::load(&storage_path).await?,
+            )),
 
             worker_handle: None,
 
@@ -133,7 +133,7 @@ impl DiskStorageManager {
         let metadata = Arc::clone(&self.metadata);
         let chainstate = Arc::clone(&self.chainstate);
 
-        let storage_path = self.base_path.clone();
+        let storage_path = self.storage_path.clone();
 
         let worker_handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(5));
@@ -180,19 +180,10 @@ impl DiskStorageManager {
         // First, stop the background worker to avoid races with file deletion
         self.stop_worker();
 
-        // Clear in-memory state
-        self.block_headers.write().await.clear_in_memory();
-        self.filter_headers.write().await.clear_in_memory();
-        self.filters.write().await.clear_in_memory();
-
-        self.header_hash_index.write().await.clear();
-        self.mempool_transactions.write().await.clear();
-        *self.mempool_state.write().await = None;
-
         // Remove all files and directories under base_path
-        if self.base_path.exists() {
+        if self.storage_path.exists() {
             // Best-effort removal; if concurrent files appear, retry once
-            match tokio::fs::remove_dir_all(&self.base_path).await {
+            match tokio::fs::remove_dir_all(&self.storage_path).await {
                 Ok(_) => {}
                 Err(e) => {
                     // Retry once after a short delay to handle transient races
@@ -200,14 +191,28 @@ impl DiskStorageManager {
                         || e.kind() == std::io::ErrorKind::DirectoryNotEmpty
                     {
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        tokio::fs::remove_dir_all(&self.base_path).await?;
+                        tokio::fs::remove_dir_all(&self.storage_path).await?;
                     } else {
                         return Err(crate::error::StorageError::Io(e));
                     }
                 }
             }
-            tokio::fs::create_dir_all(&self.base_path).await?;
+            tokio::fs::create_dir_all(&self.storage_path).await?;
         }
+
+        // Instantiate storages again once persisted data has been cleared
+        let storage_path = &self.storage_path;
+
+        self.block_headers =
+            Arc::new(RwLock::new(PersistentBlockHeaderStorage::load(storage_path).await?));
+        self.filter_headers =
+            Arc::new(RwLock::new(PersistentFilterHeaderStorage::load(storage_path).await?));
+        self.filters = Arc::new(RwLock::new(PersistentFilterStorage::load(storage_path).await?));
+        self.transactions =
+            Arc::new(RwLock::new(PersistentTransactionStorage::load(storage_path).await?));
+        self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::load(storage_path).await?));
+        self.chainstate =
+            Arc::new(RwLock::new(PersistentChainStateStorage::load(storage_path).await?));
 
         // Restart the background worker for future operations
         self.start_worker().await;
@@ -224,7 +229,7 @@ impl DiskStorageManager {
     }
 
     async fn persist(&self) {
-        let storage_path = &self.base_path;
+        let storage_path = &self.storage_path;
 
         let _ = self.block_headers.write().await.persist(storage_path).await;
         let _ = self.filter_headers.write().await.persist(storage_path).await;

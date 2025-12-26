@@ -62,6 +62,18 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
         self.filter_headers.write().await.persist(&filter_headers_folder).await;
         Ok(())
     }
+
+    async fn persist_dirty(
+        &mut self,
+        storage_path: impl Into<PathBuf> + Send,
+    ) -> StorageResult<()> {
+        let filter_headers_folder = storage_path.into().join(Self::FOLDER_NAME);
+
+        tokio::fs::create_dir_all(&filter_headers_folder).await?;
+
+        self.filter_headers.write().await.persist_evicted(&filter_headers_folder).await;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -115,6 +127,18 @@ impl PersistentStorage for PersistentFilterStorage {
         tokio::fs::create_dir_all(&filters_folder).await?;
 
         self.filters.write().await.persist(&filters_folder).await;
+        Ok(())
+    }
+
+    async fn persist_dirty(
+        &mut self,
+        storage_path: impl Into<PathBuf> + Send,
+    ) -> StorageResult<()> {
+        let filters_folder = storage_path.into().join(Self::FOLDER_NAME);
+
+        tokio::fs::create_dir_all(&filters_folder).await?;
+
+        self.filters.write().await.persist_evicted(&filters_folder).await;
         Ok(())
     }
 }
