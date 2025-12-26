@@ -20,35 +20,23 @@ use dashcore_hashes::Hash;
 use crate::{error::StorageResult, storage::io::atomic_write, StorageError};
 
 pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
-    const FOLDER_NAME: &'static str;
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
 
-    fn relative_disk_path(segment_id: u32) -> PathBuf {
-        format!(
-            "{}/{}_{:04}.{}",
-            Self::FOLDER_NAME,
-            Self::SEGMENT_PREFIX,
-            segment_id,
-            Self::DATA_FILE_EXTENSION
-        )
-        .into()
+    fn segment_file_name(segment_id: u32) -> String {
+        format!("{}_{:04}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
     }
 
     fn sentinel() -> Self;
 }
 
 impl Persistable for Vec<u8> {
-    const FOLDER_NAME: &'static str = "filters";
-
     fn sentinel() -> Self {
         vec![]
     }
 }
 
 impl Persistable for BlockHeader {
-    const FOLDER_NAME: &'static str = "block_headers";
-
     fn sentinel() -> Self {
         Self {
             version: Version::from_consensus(i32::MAX), // Invalid version
@@ -62,8 +50,6 @@ impl Persistable for BlockHeader {
 }
 
 impl Persistable for FilterHeader {
-    const FOLDER_NAME: &'static str = "filter_headers";
-
     fn sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
     }
@@ -76,18 +62,14 @@ pub struct SegmentCache<I: Persistable> {
     evicted: HashMap<u32, Segment<I>>,
     tip_height: Option<u32>,
     start_height: Option<u32>,
-    base_path: PathBuf,
+    segments_dir: PathBuf,
 }
 
 impl SegmentCache<BlockHeader> {
-    pub async fn build_block_index_from_segments(
-        &mut self,
-    ) -> StorageResult<HashMap<BlockHash, u32>> {
-        let segments_dir = self.base_path.join(BlockHeader::FOLDER_NAME);
+    pub async fn build_block_index_from_segments(&self) -> StorageResult<HashMap<BlockHash, u32>> {
+        let entries = fs::read_dir(&self.segments_dir)?;
 
         let mut block_index = HashMap::new();
-
-        let entries = fs::read_dir(&segments_dir)?;
 
         for entry in entries.flatten() {
             let name = match entry.file_name().into_string() {
@@ -126,20 +108,19 @@ impl SegmentCache<BlockHeader> {
 impl<I: Persistable> SegmentCache<I> {
     const MAX_ACTIVE_SEGMENTS: usize = 10;
 
-    pub async fn load_or_new(base_path: impl Into<PathBuf>) -> StorageResult<Self> {
-        let base_path = base_path.into();
-        let items_dir = base_path.join(I::FOLDER_NAME);
+    pub async fn load_or_new(segments_dir: impl Into<PathBuf>) -> StorageResult<Self> {
+        let segments_dir = segments_dir.into();
 
         let mut cache = Self {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
             evicted: HashMap::new(),
             tip_height: None,
             start_height: None,
-            base_path,
+            segments_dir: segments_dir.clone(),
         };
 
         // Building the metadata
-        if let Ok(entries) = fs::read_dir(&items_dir) {
+        if let Ok(entries) = fs::read_dir(&segments_dir) {
             let mut max_seg_id = None;
             let mut min_seg_id = None;
 
@@ -205,11 +186,11 @@ impl<I: Persistable> SegmentCache<I> {
     pub async fn clear_all(&mut self) -> StorageResult<()> {
         self.clear_in_memory();
 
-        let persistence_dir = self.base_path.join(I::FOLDER_NAME);
-        if persistence_dir.exists() {
-            tokio::fs::remove_dir_all(&persistence_dir).await?;
+        if self.segments_dir.exists() {
+            tokio::fs::remove_dir_all(&self.segments_dir).await?;
         }
-        tokio::fs::create_dir_all(&persistence_dir).await?;
+
+        tokio::fs::create_dir_all(&self.segments_dir).await?;
 
         Ok(())
     }
@@ -249,7 +230,7 @@ impl<I: Persistable> SegmentCache<I> {
         let segment = if let Some(segment) = self.evicted.remove(segment_id) {
             segment
         } else {
-            Segment::load(&self.base_path, *segment_id).await?
+            Segment::load(&self.segments_dir, *segment_id).await?
         };
 
         let segment = self.segments.entry(*segment_id).or_insert(segment);
@@ -367,9 +348,10 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(())
     }
 
-    pub async fn persist_evicted(&mut self) {
+    pub async fn persist_evicted(&mut self, segments_dir: impl Into<PathBuf>) {
+        let segments_dir = segments_dir.into();
         for (_, segments) in self.evicted.iter_mut() {
-            if let Err(e) = segments.persist(&self.base_path).await {
+            if let Err(e) = segments.persist(&segments_dir).await {
                 tracing::error!("Failed to persist segment: {}", e);
             }
         }
@@ -377,11 +359,13 @@ impl<I: Persistable> SegmentCache<I> {
         self.evicted.clear();
     }
 
-    pub async fn persist(&mut self) {
-        self.persist_evicted().await;
+    pub async fn persist(&mut self, segments_dir: impl Into<PathBuf>) {
+        let segments_dir = segments_dir.into();
+
+        self.persist_evicted(&segments_dir).await;
 
         for (_, segments) in self.segments.iter_mut() {
-            if let Err(e) = segments.persist(&self.base_path).await {
+            if let Err(e) = segments.persist(&segments_dir).await {
                 tracing::error!("Failed to persist segment: {}", e);
             }
         }
@@ -463,7 +447,7 @@ impl<I: Persistable> Segment<I> {
 
     pub async fn load(base_path: &Path, segment_id: u32) -> StorageResult<Self> {
         // Load segment from disk
-        let segment_path = base_path.join(I::relative_disk_path(segment_id));
+        let segment_path = base_path.join(I::segment_file_name(segment_id));
 
         let (items, state) = if segment_path.exists() {
             let file = File::open(&segment_path)?;
@@ -497,12 +481,13 @@ impl<I: Persistable> Segment<I> {
         Ok(Self::new(segment_id, items, state))
     }
 
-    pub async fn persist(&mut self, base_path: &Path) -> StorageResult<()> {
+    pub async fn persist(&mut self, segments_dir: impl Into<PathBuf>) -> StorageResult<()> {
         if self.state == SegmentState::Clean {
             return Ok(());
         }
 
-        let path = base_path.join(I::relative_disk_path(self.segment_id));
+        let segments_dir = segments_dir.into();
+        let path = segments_dir.join(I::segment_file_name(self.segment_id));
 
         if let Err(e) = fs::create_dir_all(path.parent().unwrap()) {
             return Err(StorageError::WriteFailed(format!("Failed to persist segment: {}", e)));
@@ -630,7 +615,7 @@ mod tests {
 
         cache.store_items(&items).await.expect("Failed to store items");
 
-        cache.persist().await;
+        cache.persist(tmp_dir.path()).await;
 
         cache.clear_in_memory();
         assert!(cache.segments.is_empty());

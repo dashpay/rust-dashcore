@@ -56,9 +56,10 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
     async fn persist(&mut self, base_path: impl Into<PathBuf> + Send) -> StorageResult<()> {
         let filter_headers_folder = base_path.into().join(Self::FOLDER_NAME);
 
-        tokio::fs::create_dir_all(filter_headers_folder).await?;
+        tokio::fs::create_dir_all(&filter_headers_folder).await?;
 
-        self.filter_headers.persist(filter_headers_folder).await
+        self.filter_headers.persist(&filter_headers_folder).await;
+        Ok(())
     }
 }
 
@@ -110,9 +111,10 @@ impl PersistentStorage for PersistentFilterStorage {
         let storage_path = storage_path.into();
         let filters_folder = storage_path.join(Self::FOLDER_NAME);
 
-        tokio::fs::create_dir_all(filters_folder).await?;
+        tokio::fs::create_dir_all(&filters_folder).await?;
 
-        self.filters.persist(filters_folder).await
+        self.filters.persist(&filters_folder).await;
+        Ok(())
     }
 }
 
