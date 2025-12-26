@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use dashcore::block::Header as BlockHeader;
 use dashcore::BlockHash;
+use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
 use crate::storage::io::atomic_write;
@@ -47,7 +48,7 @@ pub trait BlockHeaderStorage {
 }
 
 pub struct PersistentBlockHeaderStorage {
-    block_headers: SegmentCache<BlockHeader>,
+    block_headers: RwLock<SegmentCache<BlockHeader>>,
     header_hash_index: HashMap<BlockHash, u32>,
 }
 
@@ -63,7 +64,7 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
 
         let index_path = storage_path.join(Self::FOLDER_NAME).join(Self::INDEX_FILE_NAME);
 
-        let block_headers = SegmentCache::load_or_new(storage_path).await?;
+        let mut block_headers = SegmentCache::load_or_new(storage_path).await?;
 
         let header_hash_index = match tokio::fs::read(&index_path)
             .await
@@ -76,7 +77,7 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
         };
 
         Ok(Self {
-            block_headers,
+            block_headers: RwLock::new(block_headers),
             header_hash_index,
         })
     }
@@ -87,7 +88,7 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
 
         tokio::fs::create_dir_all(&block_headers_folder).await?;
 
-        self.block_headers.persist(&block_headers_folder).await;
+        self.block_headers.write().await.persist(&block_headers_folder).await;
 
         let data = bincode::serialize(&self.header_hash_index)
             .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize index: {}", e)))?;
@@ -99,7 +100,7 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
 #[async_trait]
 impl BlockHeaderStorage for PersistentBlockHeaderStorage {
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
-        let height = self.block_headers.next_height();
+        let height = self.block_headers.read().await.next_height();
         self.store_headers_at_height(headers, height).await
     }
 
@@ -112,7 +113,7 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
 
         let hashes = headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>();
 
-        self.block_headers.store_items_at_height(headers, height).await?;
+        self.block_headers.write().await.store_items_at_height(headers, height).await?;
 
         for hash in hashes {
             self.header_hash_index.insert(hash, height);
@@ -123,7 +124,7 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
     }
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        self.block_headers.get_items(range).await
+        self.block_headers.write().await.get_items(range).await
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
@@ -147,21 +148,23 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
     }
 
     async fn get_tip_height(&self) -> Option<u32> {
-        self.block_headers.tip_height()
+        self.block_headers.read().await.tip_height()
     }
 
     async fn get_start_height(&self) -> Option<u32> {
-        self.block_headers.start_height()
+        self.block_headers.read().await.start_height()
     }
 
     async fn get_stored_headers_len(&self) -> u32 {
-        let start_height = if let Some(start_height) = self.block_headers.start_height() {
+        let block_headers = self.block_headers.read().await;
+
+        let start_height = if let Some(start_height) = block_headers.start_height() {
             start_height
         } else {
             return 0;
         };
 
-        let end_height = if let Some(end_height) = self.block_headers.tip_height() {
+        let end_height = if let Some(end_height) = block_headers.tip_height() {
             end_height
         } else {
             return 0;

@@ -2,6 +2,7 @@ use std::{ops::Range, path::PathBuf};
 
 use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
+use tokio::sync::RwLock;
 
 use crate::{
     error::StorageResult,
@@ -33,7 +34,7 @@ pub trait FilterStorage {
 }
 
 pub struct PersistentFilterHeaderStorage {
-    filter_headers: SegmentCache<FilterHeader>,
+    filter_headers: RwLock<SegmentCache<FilterHeader>>,
 }
 
 impl PersistentFilterHeaderStorage {
@@ -49,7 +50,7 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
         let filter_headers = SegmentCache::load_or_new(segments_folder).await?;
 
         Ok(Self {
-            filter_headers,
+            filter_headers: RwLock::new(filter_headers),
         })
     }
 
@@ -58,7 +59,7 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
 
         tokio::fs::create_dir_all(&filter_headers_folder).await?;
 
-        self.filter_headers.persist(&filter_headers_folder).await;
+        self.filter_headers.write().await.persist(&filter_headers_folder).await;
         Ok(())
     }
 }
@@ -67,17 +68,17 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
 impl FilterHeaderStorage for PersistentFilterHeaderStorage {
     /// Store filter headers.
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
-        self.filter_headers.store_items(headers).await
+        self.filter_headers.write().await.store_items(headers).await
     }
 
     /// Load filter headers in the given blockchain height range.
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
-        self.filter_headers.get_items(range).await
+        self.filter_headers.write().await.get_items(range).await
     }
 
     /// Get a specific filter header by blockchain height.
     async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
-        Ok(self.filter_headers.get_items(height..height + 1).await?.first().copied())
+        Ok(self.filter_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
     /// Get the current filter tip blockchain height.
@@ -87,7 +88,7 @@ impl FilterHeaderStorage for PersistentFilterHeaderStorage {
 }
 
 pub struct PersistentFilterStorage {
-    filters: SegmentCache<Vec<u8>>,
+    filters: RwLock<SegmentCache<Vec<u8>>>,
 }
 
 impl PersistentFilterStorage {
@@ -103,7 +104,7 @@ impl PersistentStorage for PersistentFilterStorage {
         let filters = SegmentCache::load_or_new(filters_folder).await?;
 
         Ok(Self {
-            filters,
+            filters: RwLock::new(filters),
         })
     }
 
@@ -113,7 +114,7 @@ impl PersistentStorage for PersistentFilterStorage {
 
         tokio::fs::create_dir_all(&filters_folder).await?;
 
-        self.filters.persist(&filters_folder).await;
+        self.filters.write().await.persist(&filters_folder).await;
         Ok(())
     }
 }
@@ -122,11 +123,11 @@ impl PersistentStorage for PersistentFilterStorage {
 impl FilterStorage for PersistentFilterStorage {
     /// Store a compact filter at a blockchain height.
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
-        self.filters.store_items_at_height(&[filter.to_vec()], height).await
+        self.filters.write().await.store_items_at_height(&[filter.to_vec()], height).await
     }
 
     /// Load compact filters in the given blockchain height range.
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
-        self.filters.get_items(range).await
+        self.filters.write().await.get_items(range).await
     }
 }
