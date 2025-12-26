@@ -95,6 +95,18 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
 
         atomic_write(&index_path, &data).await
     }
+
+    async fn persist_dirty(
+        &mut self,
+        storage_path: impl Into<PathBuf> + Send,
+    ) -> StorageResult<()> {
+        let block_headers_folder = storage_path.into().join(Self::FOLDER_NAME);
+
+        tokio::fs::create_dir_all(&block_headers_folder).await?;
+
+        self.block_headers.write().await.persist_evicted(&block_headers_folder).await;
+        Ok(())
+    }
 }
 
 #[async_trait]
