@@ -14,10 +14,10 @@ mod segments;
 mod transactions;
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
 use crate::storage::blocks::PersistentBlockHeaderStorage;
@@ -25,28 +25,33 @@ use crate::storage::chainstate::PersistentChainStateStorage;
 use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
 use crate::storage::lockfile::LockFile;
 use crate::storage::metadata::PersistentMetadataStorage;
-use crate::storage::segments::SegmentCache;
 use crate::storage::transactions::PersistentTransactionStorage;
 use crate::StorageError;
 
 pub use types::*;
 
 #[async_trait]
-pub trait PersistentStorage {
-    async fn load(&self) -> StorageResult<Self>;
-    async fn persist(&self);
+pub trait PersistentStorage: Sized {
+    async fn load(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self>;
+    async fn persist(&mut self, storage_path: impl Into<PathBuf> + Send) -> StorageResult<()>;
+
+    async fn persist_dirty(
+        &mut self,
+        storage_path: impl Into<PathBuf> + Send,
+    ) -> StorageResult<()> {
+        self.persist(storage_path).await
+    }
 }
 
 #[async_trait]
 pub trait StorageManager:
     blocks::BlockHeaderStorage
     + filters::FilterHeaderStorage
-    + FilterStorage
-    + TransactionStorage
-    + MempoolStateStorage
-    + MetadataStorage
-    + ChainStateStorage
-    + MasternodeStateStorage
+    + filters::FilterStorage
+    + transactions::TransactionStorage
+    + metadata::MetadataStorage
+    + chainstate::ChainStateStorage
+    + masternode::MasternodeStateStorage
     + Send
     + Sync
 {
@@ -56,23 +61,25 @@ pub trait StorageManager:
 pub struct DiskStorageManager {
     base_path: PathBuf,
 
-    block_headers_storage: PersistentBlockHeaderStorage,
-    filter_headers_storage: PersistentFilterHeaderStorage,
-    filter_storage: PersistentFilterStorage,
-    transactions_storage: PersistentTransactionStorage,
-    metadata_storage: PersistentMetadataStorage,
-    chainstate_storage: PersistentChainStateStorage,
+    block_headers: Arc<RwLock<PersistentBlockHeaderStorage>>,
+    filter_headers: Arc<RwLock<PersistentFilterHeaderStorage>>,
+    filters: Arc<RwLock<PersistentFilterStorage>>,
+    transactions: Arc<RwLock<PersistentTransactionStorage>>,
+    metadata: Arc<RwLock<PersistentMetadataStorage>>,
+    chainstate: Arc<RwLock<PersistentChainStateStorage>>,
 
     // Background worker
-    pub(super) worker_handle: Option<tokio::task::JoinHandle<()>>,
+    worker_handle: Option<tokio::task::JoinHandle<()>>,
 
     // Lock file to prevent concurrent access from multiple processes.
     _lock_file: LockFile,
 }
 
 impl DiskStorageManager {
-    pub async fn new(base_path: PathBuf) -> StorageResult<Self> {
+    pub async fn new(base_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
         use std::fs;
+
+        let base_path = base_path.into();
 
         // Create directories if they don't exist
         fs::create_dir_all(&base_path)
@@ -83,38 +90,28 @@ impl DiskStorageManager {
 
         let mut storage = Self {
             base_path: base_path.clone(),
+
             block_headers: Arc::new(RwLock::new(
-                SegmentCache::load_or_new(base_path.clone()).await?,
+                PersistentBlockHeaderStorage::load(&base_path).await?,
             )),
             filter_headers: Arc::new(RwLock::new(
-                SegmentCache::load_or_new(base_path.clone()).await?,
+                PersistentFilterHeaderStorage::load(&base_path).await?,
             )),
-            filters: Arc::new(RwLock::new(SegmentCache::load_or_new(base_path.clone()).await?)),
-            header_hash_index: Arc::new(RwLock::new(HashMap::new())),
-            worker_tx: None,
+            filters: Arc::new(RwLock::new(PersistentFilterStorage::load(&base_path).await?)),
+            transactions: Arc::new(RwLock::new(
+                PersistentTransactionStorage::load(&base_path).await?,
+            )),
+            metadata: Arc::new(RwLock::new(PersistentMetadataStorage::load(&base_path).await?)),
+            chainstate: Arc::new(RwLock::new(PersistentChainStateStorage::load(&base_path).await?)),
+
             worker_handle: None,
-            last_index_save_count: Arc::new(RwLock::new(0)),
-            mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
-            mempool_state: Arc::new(RwLock::new(None)),
+
             _lock_file: lock_file,
         };
 
         // Start background worker that
         // persists data when appropriate
         storage.start_worker().await;
-
-        // Rebuild index
-        let block_index = match load_block_index(&storage).await {
-            Ok(index) => index,
-            Err(e) => {
-                tracing::error!(
-                    "An unexpected IO or deserialization error didn't allow the block index to be built: {}",
-                    e
-                );
-                HashMap::new()
-            }
-        };
-        storage.header_hash_index = Arc::new(RwLock::new(block_index));
 
         Ok(storage)
     }
@@ -124,7 +121,7 @@ impl DiskStorageManager {
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new()?;
-        Self::new(temp_dir.path().into()).await
+        Self::new(temp_dir.path()).await
     }
 
     /// Start the background worker
@@ -132,6 +129,11 @@ impl DiskStorageManager {
         let block_headers = Arc::clone(&self.block_headers);
         let filter_headers = Arc::clone(&self.filter_headers);
         let filters = Arc::clone(&self.filters);
+        let transactions = Arc::clone(&self.transactions);
+        let metadata = Arc::clone(&self.metadata);
+        let chainstate = Arc::clone(&self.chainstate);
+
+        let storage_path = self.base_path.clone();
 
         let worker_handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(5));
@@ -139,9 +141,12 @@ impl DiskStorageManager {
             loop {
                 ticker.tick().await;
 
-                block_headers.write().await.persist_evicted().await;
-                filter_headers.write().await.persist_evicted().await;
-                filters.write().await.persist_evicted().await;
+                let _ = block_headers.write().await.persist_dirty(&storage_path).await;
+                let _ = filter_headers.write().await.persist_dirty(&storage_path).await;
+                let _ = filters.write().await.persist_dirty(&storage_path).await;
+                let _ = transactions.write().await.persist_dirty(&storage_path).await;
+                let _ = metadata.write().await.persist_dirty(&storage_path).await;
+                let _ = chainstate.write().await.persist_dirty(&storage_path).await;
             }
         });
 
@@ -204,11 +209,6 @@ impl DiskStorageManager {
             tokio::fs::create_dir_all(&self.base_path).await?;
         }
 
-        // Recreate expected subdirectories
-        tokio::fs::create_dir_all(self.base_path.join("headers")).await?;
-        tokio::fs::create_dir_all(self.base_path.join("filters")).await?;
-        tokio::fs::create_dir_all(self.base_path.join("state")).await?;
-
         // Restart the background worker for future operations
         self.start_worker().await;
 
@@ -220,20 +220,18 @@ impl DiskStorageManager {
         self.stop_worker();
 
         // Persist all dirty data
-        self.save_dirty().await;
+        self.persist().await;
     }
 
-    /// Save all dirty data.
-    pub(super) async fn save_dirty(&self) {
-        self.filter_headers.write().await.persist().await;
-        self.block_headers.write().await.persist().await;
-        self.filters.write().await.persist().await;
+    async fn persist(&self) {
+        let storage_path = &self.base_path;
 
-        let path = self.base_path.join("headers/index.dat");
-        let index = self.header_hash_index.read().await;
-        if let Err(e) = save_index_to_disk(&path, &index).await {
-            tracing::error!("Failed to persist header index: {}", e);
-        }
+        let _ = self.block_headers.write().await.persist(storage_path).await;
+        let _ = self.filter_headers.write().await.persist(storage_path).await;
+        let _ = self.filters.write().await.persist(storage_path).await;
+        let _ = self.transactions.write().await.persist(storage_path).await;
+        let _ = self.metadata.write().await.persist(storage_path).await;
+        let _ = self.chainstate.write().await.persist(storage_path).await;
     }
 }
 
@@ -361,7 +359,7 @@ mod tests {
         storage.store_chain_state(&chain_state).await?;
 
         // Force save to disk
-        storage.save_dirty().await;
+        storage.persist().await;
 
         drop(storage);
 
@@ -398,7 +396,7 @@ mod tests {
             let mut storage = DiskStorageManager::new(base_path.clone()).await?;
 
             storage.store_headers(&headers[..10_000]).await?;
-            storage.save_dirty().await;
+            storage.persist().await;
 
             storage.store_headers(&headers[10_000..]).await?;
             storage.shutdown().await;

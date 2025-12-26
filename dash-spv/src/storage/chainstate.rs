@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use async_trait::async_trait;
 
 use crate::{
@@ -13,23 +15,32 @@ pub trait ChainStateStorage {
     async fn load_chain_state(&self) -> StorageResult<Option<ChainState>>;
 }
 
-pub struct PersistentChainStateStorage {}
+pub struct PersistentChainStateStorage {
+    storage_path: PathBuf,
+}
+
+impl PersistentChainStateStorage {
+    const FOLDER_NAME: &str = "chainstate";
+    const FILE_NAME: &str = "chainstate.json";
+}
 
 #[async_trait]
 impl PersistentStorage for PersistentChainStateStorage {
-    async fn load(&self) -> StorageResult<Self> {
-        Ok(PersistentChainStateStorage {})
+    async fn load(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+        Ok(PersistentChainStateStorage {
+            storage_path: storage_path.into(),
+        })
     }
 
-    async fn persist(&self) {
+    async fn persist(&mut self, _storage_path: impl Into<PathBuf> + Send) -> StorageResult<()> {
         // Current implementation persists data everytime data is stored
+        Ok(())
     }
 }
 
 #[async_trait]
 impl ChainStateStorage for PersistentChainStateStorage {
     async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        // Store other state as JSON
         let state_data = serde_json::json!({
             "last_chainlock_height": state.last_chainlock_height,
             "last_chainlock_hash": state.last_chainlock_hash,
@@ -38,7 +49,11 @@ impl ChainStateStorage for PersistentChainStateStorage {
             "sync_base_height": state.sync_base_height,
         });
 
-        let path = self.base_path.join("state/chain.json");
+        let chainstate_folder = self.storage_path.join(Self::FOLDER_NAME);
+        let path = chainstate_folder.join(Self::FILE_NAME);
+
+        tokio::fs::create_dir_all(chainstate_folder).await?;
+
         let json = state_data.to_string();
         atomic_write(&path, json.as_bytes()).await?;
 
@@ -46,7 +61,7 @@ impl ChainStateStorage for PersistentChainStateStorage {
     }
 
     async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
-        let path = self.base_path.join("state/chain.json");
+        let path = self.storage_path.join(Self::FOLDER_NAME).join(Self::FILE_NAME);
         if !path.exists() {
             return Ok(None);
         }
@@ -56,7 +71,7 @@ impl ChainStateStorage for PersistentChainStateStorage {
             crate::error::StorageError::Serialization(format!("Failed to parse chain state: {}", e))
         })?;
 
-        let mut state = ChainState {
+        let state = ChainState {
             last_chainlock_height: value
                 .get("last_chainlock_height")
                 .and_then(|v| v.as_u64())
@@ -79,7 +94,6 @@ impl ChainStateStorage for PersistentChainStateStorage {
                 .and_then(|v| v.as_u64())
                 .map(|h| h as u32)
                 .unwrap_or(0),
-            ..Default::default()
         };
 
         Ok(Some(state))
