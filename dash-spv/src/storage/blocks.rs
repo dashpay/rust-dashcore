@@ -85,9 +85,9 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
         let block_headers_folder = storage_path.into().join(Self::FOLDER_NAME);
         let index_path = block_headers_folder.join(Self::INDEX_FILE_NAME);
 
-        tokio::fs::create_dir_all(block_headers_folder).await?;
+        tokio::fs::create_dir_all(&block_headers_folder).await?;
 
-        self.block_headers.persist().await;
+        self.block_headers.persist(&block_headers_folder).await;
 
         let data = bincode::serialize(&self.header_hash_index)
             .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize index: {}", e)))?;
