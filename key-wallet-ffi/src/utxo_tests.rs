@@ -100,6 +100,8 @@ mod utxo_tests {
             unsafe { managed_wallet_get_utxos(ptr::null(), &mut utxos_out, &mut count_out, error) };
         assert!(!result);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -595,7 +597,10 @@ mod utxo_tests {
         assert!(!result);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
-        unsafe { crate::managed_wallet::managed_wallet_free(ffi_managed_info) };
+        unsafe {
+            crate::managed_wallet::managed_wallet_free(ffi_managed_info);
+            (*error).free_message();
+        }
     }
 
     #[test]

@@ -40,6 +40,7 @@ mod transaction_tests {
         // Clean up
         unsafe {
             let _ = CString::from_raw(output.address as *mut c_char);
+            error.free_message();
         }
     }
 
@@ -82,6 +83,7 @@ mod transaction_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -106,6 +108,8 @@ mod transaction_tests {
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -145,6 +149,7 @@ mod transaction_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -202,6 +207,7 @@ mod transaction_tests {
         unsafe {
             let _ = CString::from_raw(output.address as *mut c_char);
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -244,6 +250,7 @@ mod transaction_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 }

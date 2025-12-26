@@ -59,6 +59,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -107,6 +108,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -155,6 +157,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -203,6 +206,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -271,6 +275,7 @@ mod tests {
             );
             wallet_manager::wallet_manager_free(manager1);
             wallet_manager::wallet_manager_free(manager2);
+            (*error).free_message();
         }
     }
 
@@ -310,6 +315,12 @@ mod tests {
         assert_ne!(unsafe { (*error).code }, FFIErrorCode::Success);
         assert!(wallet_bytes_out.is_null());
         assert_eq!(wallet_bytes_len_out, 0);
+
+        // Clean up
+        unsafe {
+            wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
+        }
     }
 
     #[test]
@@ -343,6 +354,12 @@ mod tests {
 
         assert!(!success, "Should fail with null mnemonic");
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        // Clean up
+        unsafe {
+            wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
+        }
     }
 
     #[test]
@@ -408,6 +425,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 }

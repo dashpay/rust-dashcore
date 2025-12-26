@@ -77,6 +77,8 @@ mod tests {
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -105,6 +107,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -190,6 +193,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 

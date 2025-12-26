@@ -657,6 +657,8 @@ mod tests {
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -675,6 +677,8 @@ mod tests {
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -701,6 +705,8 @@ mod tests {
         assert_eq!(count_out, 0);
         assert!(addresses_out.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -727,6 +733,8 @@ mod tests {
         assert_eq!(count_out, 0);
         assert!(addresses_out.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -797,6 +805,7 @@ mod tests {
         unsafe {
             managed_wallet_free(ffi_managed);
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -978,6 +987,7 @@ mod tests {
         unsafe {
             managed_wallet_free(ffi_managed);
             wallet::wallet_free(wallet_ptr);
+            error.free_message();
         }
     }
 
@@ -1073,6 +1083,7 @@ mod tests {
         unsafe {
             managed_wallet_free(ffi_managed_ptr);
             wallet::wallet_free(wallet_ptr);
+            error.free_message();
         }
     }
 
@@ -1114,5 +1125,7 @@ mod tests {
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 }

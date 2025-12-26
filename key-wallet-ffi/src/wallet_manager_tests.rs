@@ -32,6 +32,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -66,6 +67,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -140,9 +142,8 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
-        }
-        unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -201,9 +202,8 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
-        }
-        unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -231,6 +231,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -265,6 +266,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -297,6 +299,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -348,9 +351,8 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
-        }
-        unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -409,9 +411,8 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
-        }
-        unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -454,6 +455,8 @@ mod tests {
             )
         };
         assert!(!success);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -489,6 +492,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -608,6 +612,7 @@ mod tests {
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -767,6 +772,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -875,6 +881,7 @@ mod tests {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             // Free the manager
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -1072,6 +1079,7 @@ mod tests {
             crate::wallet_manager::wallet_manager_free(manager);
             crate::wallet_manager::wallet_manager_free(manager4);
             crate::wallet_manager::wallet_manager_free(manager5);
+            (*error).free_message();
         }
     }
 
@@ -1172,6 +1180,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             crate::wallet_manager::wallet_manager_free(manager2);
+            (*error).free_message();
         }
     }
 }

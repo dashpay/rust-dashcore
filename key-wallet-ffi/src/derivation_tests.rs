@@ -42,6 +42,7 @@ mod tests {
         // Clean up
         unsafe {
             derivation_xpriv_free(xprv);
+            error.free_message();
         }
     }
 
@@ -67,9 +68,8 @@ mod tests {
         // Clean up
         unsafe {
             derivation_xpub_free(xpub);
-        }
-        unsafe {
             derivation_xpriv_free(xprv);
+            error.free_message();
         }
     }
 
@@ -97,9 +97,8 @@ mod tests {
         // Clean up
         unsafe {
             derivation_string_free(xprv_str);
-        }
-        unsafe {
             derivation_xpriv_free(xprv);
+            error.free_message();
         }
     }
 
@@ -129,12 +128,9 @@ mod tests {
         // Clean up
         unsafe {
             derivation_string_free(xpub_str);
-        }
-        unsafe {
             derivation_xpub_free(xpub);
-        }
-        unsafe {
             derivation_xpriv_free(xprv);
+            error.free_message();
         }
     }
 
@@ -166,9 +162,8 @@ mod tests {
         // Clean up
         unsafe {
             derivation_xpub_free(xpub);
-        }
-        unsafe {
             derivation_xpriv_free(xprv);
+            error.free_message();
         }
     }
 
@@ -207,6 +202,8 @@ mod tests {
         let path_str =
             unsafe { CStr::from_ptr(payment_path.as_ptr() as *const c_char) }.to_str().unwrap();
         assert_eq!(path_str, "m/44'/1'/0'/0/0");
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -258,6 +255,8 @@ mod tests {
             &mut error,
         );
         assert!(success);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -289,6 +288,7 @@ mod tests {
         // Clean up
         unsafe {
             derivation_xpriv_free(xpriv);
+            error.free_message();
         }
     }
 
@@ -304,6 +304,8 @@ mod tests {
 
         // Note: The BIP32 implementation actually accepts seeds as small as 16 bytes
         // so we can't test for invalid seed length error here
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -329,12 +331,9 @@ mod tests {
         // Clean up
         unsafe {
             derivation_string_free(xpub_string);
-        }
-        unsafe {
             derivation_xpub_free(xpub);
-        }
-        unsafe {
             derivation_xpriv_free(master_key);
+            error.free_message();
         }
     }
 
@@ -363,9 +362,8 @@ mod tests {
         // Clean up
         unsafe {
             derivation_string_free(xpriv_string);
-        }
-        unsafe {
             derivation_xpriv_free(master_key);
+            error.free_message();
         }
     }
 
@@ -396,9 +394,8 @@ mod tests {
         // Clean up
         unsafe {
             derivation_xpub_free(xpub);
-        }
-        unsafe {
             derivation_xpriv_free(master_key);
+            error.free_message();
         }
     }
 
@@ -452,6 +449,8 @@ mod tests {
         let path_str =
             unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_str().unwrap();
         assert!(path_str.contains("m/"));
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -494,6 +493,8 @@ mod tests {
                 derivation_xpriv_free(xprv);
             }
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -524,6 +525,8 @@ mod tests {
             derivation_coinjoin_path(FFINetwork::Testnet, 0, ptr::null_mut(), 256, &mut error);
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -554,6 +557,8 @@ mod tests {
         );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -591,15 +596,10 @@ mod tests {
         // Clean up
         unsafe {
             derivation_string_free(main_str);
-        }
-        unsafe {
             derivation_string_free(test_str);
-        }
-        unsafe {
             derivation_xpriv_free(xprv_main);
-        }
-        unsafe {
             derivation_xpriv_free(xprv_test);
+            error.free_message();
         }
     }
 
@@ -611,6 +611,8 @@ mod tests {
 
         assert!(xpub.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -621,6 +623,8 @@ mod tests {
 
         assert!(xprv_str.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -631,6 +635,8 @@ mod tests {
 
         assert!(xpub_str.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -664,9 +670,8 @@ mod tests {
         // Clean up
         unsafe {
             derivation_xpub_free(xpub);
-        }
-        unsafe {
             derivation_xpriv_free(xprv);
+            error.free_message();
         }
     }
 
@@ -701,6 +706,8 @@ mod tests {
         };
         assert!(xpriv.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -729,6 +736,8 @@ mod tests {
                 derivation_xpriv_free(xpriv);
             }
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -769,6 +778,8 @@ mod tests {
         );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -810,6 +821,8 @@ mod tests {
         );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -843,6 +856,8 @@ mod tests {
         assert_eq!(path1, "m/44'/1'/0'");
         assert_eq!(path2, "m/44'/1'/5'");
         assert_ne!(path1, path2);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -880,6 +895,8 @@ mod tests {
         let path_str =
             unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_str().unwrap();
         assert_eq!(path_str, "m/44'/1'/0'/1/3");
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -957,6 +974,7 @@ mod tests {
             derivation_xpriv_free(child_xprv);
             derivation_xpub_free(master_xpub);
             derivation_xpriv_free(master_xprv);
+            error.free_message();
         }
     }
 }
