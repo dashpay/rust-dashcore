@@ -31,7 +31,25 @@ pub trait BlockHeaderStorage {
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>>;
 
     /// Get a specific header by blockchain height.
-    async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>>;
+    async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
+        if let Some(tip_height) = self.get_tip_height().await {
+            if height > tip_height {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        }
+
+        if let Some(start_height) = self.get_start_height().await {
+            if height < start_height {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        }
+
+        Ok(self.load_headers(height..height + 1).await?.first().copied())
+    }
 
     /// Get the current tip blockchain height.
     async fn get_tip_height(&self) -> Option<u32>;
@@ -137,26 +155,6 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
         self.block_headers.write().await.get_items(range).await
-    }
-
-    async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        if let Some(tip_height) = self.get_tip_height().await {
-            if height > tip_height {
-                return Ok(None);
-            }
-        } else {
-            return Ok(None);
-        }
-
-        if let Some(start_height) = self.get_start_height().await {
-            if height < start_height {
-                return Ok(None);
-            }
-        } else {
-            return Ok(None);
-        }
-
-        Ok(self.load_headers(height..height + 1).await?.first().copied())
     }
 
     async fn get_tip_height(&self) -> Option<u32> {

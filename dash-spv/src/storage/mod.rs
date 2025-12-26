@@ -242,8 +242,10 @@ impl DiskStorageManager {
 
 #[cfg(test)]
 mod tests {
+    use crate::ChainState;
+
     use super::*;
-    use dashcore::{block::Version, pow::CompactTarget};
+    use dashcore::{block::Version, pow::CompactTarget, BlockHash, Header as BlockHeader};
     use dashcore_hashes::Hash;
     use tempfile::TempDir;
 

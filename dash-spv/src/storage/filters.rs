@@ -18,7 +18,25 @@ pub trait FilterHeaderStorage {
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>>;
 
     /// Get a specific filter header by blockchain height.
-    async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>>;
+    async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
+        if let Some(tip_height) = self.get_filter_tip_height().await? {
+            if height > tip_height {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        }
+
+        if let Some(start_height) = self.get_filter_tip_height().await? {
+            if height < start_height {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        }
+
+        Ok(self.load_filter_headers(height..height + 1).await?.first().copied())
+    }
 
     /// Get the current filter tip blockchain height.
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>>;
@@ -86,11 +104,6 @@ impl FilterHeaderStorage for PersistentFilterHeaderStorage {
     /// Load filter headers in the given blockchain height range.
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
         self.filter_headers.write().await.get_items(range).await
-    }
-
-    /// Get a specific filter header by blockchain height.
-    async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
-        Ok(self.filter_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
     /// Get the current filter tip blockchain height.
