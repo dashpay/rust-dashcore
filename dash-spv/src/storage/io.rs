@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{StorageError, StorageResult};
+use tokio::io::AsyncWriteExt;
 
 /// Get the temporary file path for atomic writes.
 /// Uses process ID and a counter to ensure uniqueness even with concurrent writes.
@@ -32,10 +33,8 @@ pub(crate) async fn atomic_write(path: &Path, data: &[u8]) -> StorageResult<()> 
 
     // Write to temporary file
     let write_result = async {
-        tokio::fs::write(&temp_path, data).await?;
-
-        // Sync to disk - open the file and call sync_all
-        let file = tokio::fs::File::open(&temp_path).await?;
+        let mut file = tokio::fs::File::create(&temp_path).await?;
+        file.write_all(data).await?;
         file.sync_all().await?;
 
         Ok::<(), std::io::Error>(())
