@@ -41,7 +41,7 @@ use crate::{ChainLock, InstantLock};
 pub const MAX_INV_SIZE: usize = 50_000;
 
 /// Maximum size, in bytes, of an encoded message
-/// This by necessity should be larger tham `MAX_VEC_SIZE`
+/// This by necessity should be larger than `MAX_VEC_SIZE`
 pub const MAX_MSG_SIZE: usize = 5_000_000;
 
 /// Serializer for command string

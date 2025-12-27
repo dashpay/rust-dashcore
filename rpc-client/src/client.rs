@@ -1416,7 +1416,7 @@ pub trait RpcApi: Sized {
         self.call::<json::MasternodeDiff>("protx", handle_defaults(&mut args, &[null()]))
     }
 
-    /// Returns a full deterministic masternode list diff between two heigts
+    /// Returns a full deterministic masternode list diff between two heights
     fn get_protx_listdiff(&self, base_block: u32, block: u32) -> Result<json::MasternodeListDiff> {
         let mut args = ["listdiff".into(), into_json(base_block)?, into_json(block)?];
         self.call::<json::MasternodeListDiff>(
