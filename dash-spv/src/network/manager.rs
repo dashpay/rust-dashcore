@@ -16,12 +16,12 @@ use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
-use crate::network::persist::PeerStore;
 use crate::network::pool::PeerPool;
 use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
 use crate::network::{HandshakeManager, NetworkManager, Peer};
+use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
@@ -38,7 +38,7 @@ pub struct PeerNetworkManager {
     /// AddrV2 handler
     addrv2_handler: Arc<AddrV2Handler>,
     /// Peer persistence
-    peer_store: Arc<PeerStore>,
+    peer_store: Arc<PersistentPeerStorage>,
     /// Peer reputation manager
     reputation_manager: Arc<PeerReputationManager>,
     /// Network type
@@ -81,7 +81,7 @@ impl PeerNetworkManager {
 
         let discovery = DnsDiscovery::new().await?;
         let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
-        let peer_store = PeerStore::new(config.network, data_dir.clone());
+        let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
 
         let reputation_manager = Arc::new(PeerReputationManager::new());
 

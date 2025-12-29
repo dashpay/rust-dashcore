@@ -6,7 +6,6 @@ pub mod discovery;
 pub mod handshake;
 pub mod manager;
 pub mod peer;
-pub mod persist;
 pub mod pool;
 pub mod reputation;
 
