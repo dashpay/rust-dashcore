@@ -426,7 +426,7 @@ impl<I: Persistable> Segment<I> {
             last_accessed: Instant::now(),
         }
     }
-
+    #[cfg(debug_assertions)]
     pub fn first_valid_offset(&self) -> Option<u32> {
         let sentinel = I::sentinel();
 
