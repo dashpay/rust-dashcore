@@ -38,6 +38,13 @@ pub fn testnet_genesis_hash() -> BlockHash {
     BlockHash::from_slice(&reversed).unwrap()
 }
 
+/// Create a deterministic test block hash from a u32 identifier
+pub fn test_block_hash(id: u32) -> BlockHash {
+    let mut bytes = [0u8; 32];
+    bytes[..4].copy_from_slice(&id.to_le_bytes());
+    BlockHash::from_byte_array(bytes)
+}
+
 /// Common test transaction IDs
 pub mod txids {
     use super::*;

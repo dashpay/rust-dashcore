@@ -2,8 +2,8 @@
 mod tests {
     use super::super::*;
     use crate::{storage::DiskStorageManager, types::ChainState};
-    use dashcore::{BlockHash, ChainLock, Network};
-    use dashcore_hashes::Hash;
+    use dashcore::{ChainLock, Network};
+    use dashcore_test_utils::fixtures::test_block_hash;
 
     #[tokio::test]
     async fn test_chainlock_processing() {
@@ -16,7 +16,7 @@ mod tests {
         // Create a test ChainLock
         let chainlock = ChainLock {
             block_height: 1000,
-            block_hash: BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(&[1, 2, 3])),
+            block_hash: test_block_hash(1),
             signature: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
         };
 
@@ -49,7 +49,7 @@ mod tests {
         // Process first ChainLock at height 1000
         let chainlock1 = ChainLock {
             block_height: 1000,
-            block_hash: BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(&[1, 2, 3])),
+            block_hash: test_block_hash(1),
             signature: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
         };
         chainlock_manager
@@ -60,7 +60,7 @@ mod tests {
         // Process second ChainLock at height 2000
         let chainlock2 = ChainLock {
             block_height: 2000,
-            block_hash: BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(&[4, 5, 6])),
+            block_hash: test_block_hash(2),
             signature: dashcore::bls_sig_utils::BLSSignature::from([1; 96]),
         };
         chainlock_manager
@@ -88,9 +88,7 @@ mod tests {
         for height in [1000, 2000, 3000] {
             let chainlock = ChainLock {
                 block_height: height,
-                block_hash: BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(
-                    &height.to_le_bytes(),
-                )),
+                block_hash: test_block_hash(height),
                 signature: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
             };
             chainlock_manager
