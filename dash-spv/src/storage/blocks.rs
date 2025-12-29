@@ -17,20 +17,16 @@ use crate::StorageError;
 
 #[async_trait]
 pub trait BlockHeaderStorage {
-    /// Store block headers.
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()>;
 
-    /// Store block headers.
     async fn store_headers_at_height(
         &mut self,
         headers: &[BlockHeader],
         height: u32,
     ) -> StorageResult<()>;
 
-    /// Load block headers in the given range.
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>>;
 
-    /// Get a specific header by blockchain height.
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
         if let Some(tip_height) = self.get_tip_height().await {
             if height > tip_height {
@@ -51,14 +47,12 @@ pub trait BlockHeaderStorage {
         Ok(self.load_headers(height..height + 1).await?.first().copied())
     }
 
-    /// Get the current tip blockchain height.
     async fn get_tip_height(&self) -> Option<u32>;
 
     async fn get_start_height(&self) -> Option<u32>;
 
     async fn get_stored_headers_len(&self) -> u32;
 
-    /// Get header height by block hash (reverse lookup).
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,
@@ -77,7 +71,7 @@ impl PersistentBlockHeaderStorage {
 
 #[async_trait]
 impl PersistentStorage for PersistentBlockHeaderStorage {
-    async fn load(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+    async fn open(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
         let storage_path = storage_path.into();
         let segments_folder = storage_path.join(Self::FOLDER_NAME);
 
@@ -118,18 +112,6 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
             .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize index: {}", e)))?;
 
         atomic_write(&index_path, &data).await
-    }
-
-    async fn persist_dirty(
-        &mut self,
-        storage_path: impl Into<PathBuf> + Send,
-    ) -> StorageResult<()> {
-        let block_headers_folder = storage_path.into().join(Self::FOLDER_NAME);
-
-        tokio::fs::create_dir_all(&block_headers_folder).await?;
-
-        self.block_headers.write().await.persist_evicted(&block_headers_folder).await;
-        Ok(())
     }
 }
 
@@ -189,7 +171,6 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         end_height - start_height + 1
     }
 
-    /// Get header height by block hash (reverse lookup).
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,

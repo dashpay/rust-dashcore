@@ -46,34 +46,35 @@ pub use types::*;
 
 #[async_trait]
 pub trait PersistentStorage: Sized {
-    async fn load(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self>;
-    async fn persist(&mut self, storage_path: impl Into<PathBuf> + Send) -> StorageResult<()>;
+    /// If the storage_path contains persisted data the storage will use it, if not,
+    /// a empty storage will be created.
+    async fn open(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self>;
 
-    async fn persist_dirty(
-        &mut self,
-        storage_path: impl Into<PathBuf> + Send,
-    ) -> StorageResult<()> {
-        self.persist(storage_path).await
-    }
+    async fn persist(&mut self, storage_path: impl Into<PathBuf> + Send) -> StorageResult<()>;
 }
 
 #[async_trait]
 pub trait StorageManager:
-    blocks::BlockHeaderStorage
-    + filters::FilterHeaderStorage
-    + filters::FilterStorage
-    + transactions::TransactionStorage
-    + metadata::MetadataStorage
-    + chainstate::ChainStateStorage
-    + masternode::MasternodeStateStorage
+    BlockHeaderStorage
+    + FilterHeaderStorage
+    + FilterStorage
+    + TransactionStorage
+    + MetadataStorage
+    + ChainStateStorage
+    + MasternodeStateStorage
     + Send
     + Sync
 {
+    /// Deletes in-disk and in-memory data
     async fn clear(&mut self) -> StorageResult<()>;
+
+    /// Stops all background tasks and persists the data.
     async fn shutdown(&mut self);
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
+/// Only one instance of DiskStorageManager working on the same storage path
+/// can exist at a time.
 pub struct DiskStorageManager {
     storage_path: PathBuf,
 
@@ -88,7 +89,6 @@ pub struct DiskStorageManager {
     // Background worker
     worker_handle: Option<tokio::task::JoinHandle<()>>,
 
-    // Lock file to prevent concurrent access from multiple processes.
     _lock_file: LockFile,
 }
 
@@ -103,31 +103,29 @@ impl DiskStorageManager {
             lock_file
         };
 
-        // Create directories if they don't exist
         fs::create_dir_all(&storage_path)?;
 
-        // Acquire exclusive lock on the data directory
         let lock_file = LockFile::new(lock_file)?;
 
         let mut storage = Self {
             storage_path: storage_path.clone(),
 
             block_headers: Arc::new(RwLock::new(
-                PersistentBlockHeaderStorage::load(&storage_path).await?,
+                PersistentBlockHeaderStorage::open(&storage_path).await?,
             )),
             filter_headers: Arc::new(RwLock::new(
-                PersistentFilterHeaderStorage::load(&storage_path).await?,
+                PersistentFilterHeaderStorage::open(&storage_path).await?,
             )),
-            filters: Arc::new(RwLock::new(PersistentFilterStorage::load(&storage_path).await?)),
+            filters: Arc::new(RwLock::new(PersistentFilterStorage::open(&storage_path).await?)),
             transactions: Arc::new(RwLock::new(
-                PersistentTransactionStorage::load(&storage_path).await?,
+                PersistentTransactionStorage::open(&storage_path).await?,
             )),
-            metadata: Arc::new(RwLock::new(PersistentMetadataStorage::load(&storage_path).await?)),
+            metadata: Arc::new(RwLock::new(PersistentMetadataStorage::open(&storage_path).await?)),
             chainstate: Arc::new(RwLock::new(
-                PersistentChainStateStorage::load(&storage_path).await?,
+                PersistentChainStateStorage::open(&storage_path).await?,
             )),
             masternodestate: Arc::new(RwLock::new(
-                PersistentMasternodeStateStorage::load(&storage_path).await?,
+                PersistentMasternodeStateStorage::open(&storage_path).await?,
             )),
 
             worker_handle: None,
@@ -135,8 +133,6 @@ impl DiskStorageManager {
             _lock_file: lock_file,
         };
 
-        // Start background worker that
-        // persists data when appropriate
         storage.start_worker().await;
 
         Ok(storage)
@@ -150,8 +146,8 @@ impl DiskStorageManager {
         Self::new(temp_dir.path()).await
     }
 
-    /// Start the background worker
-    pub(super) async fn start_worker(&mut self) {
+    /// Start the background worker saving data every 5 seconds
+    async fn start_worker(&mut self) {
         let block_headers = Arc::clone(&self.block_headers);
         let filter_headers = Arc::clone(&self.filter_headers);
         let filters = Arc::clone(&self.filters);
@@ -167,12 +163,12 @@ impl DiskStorageManager {
             loop {
                 ticker.tick().await;
 
-                let _ = block_headers.write().await.persist_dirty(&storage_path).await;
-                let _ = filter_headers.write().await.persist_dirty(&storage_path).await;
-                let _ = filters.write().await.persist_dirty(&storage_path).await;
-                let _ = transactions.write().await.persist_dirty(&storage_path).await;
-                let _ = metadata.write().await.persist_dirty(&storage_path).await;
-                let _ = chainstate.write().await.persist_dirty(&storage_path).await;
+                let _ = block_headers.write().await.persist(&storage_path).await;
+                let _ = filter_headers.write().await.persist(&storage_path).await;
+                let _ = filters.write().await.persist(&storage_path).await;
+                let _ = transactions.write().await.persist(&storage_path).await;
+                let _ = metadata.write().await.persist(&storage_path).await;
+                let _ = chainstate.write().await.persist(&storage_path).await;
             }
         });
 
@@ -180,8 +176,8 @@ impl DiskStorageManager {
     }
 
     /// Stop the background worker without forcing a save.
-    pub(super) fn stop_worker(&mut self) {
-        if let Some(handle) = self.worker_handle.take() {
+    fn stop_worker(&self) {
+        if let Some(handle) = &self.worker_handle {
             handle.abort();
         }
     }
@@ -204,22 +200,19 @@ impl StorageManager for DiskStorageManager {
         // First, stop the background worker to avoid races with file deletion
         self.stop_worker();
 
-        // Remove all files and directories under base_path
+        // Remove all files and directories under storage_path
         if self.storage_path.exists() {
             // Best-effort removal; if concurrent files appear, retry once
             match tokio::fs::remove_dir_all(&self.storage_path).await {
                 Ok(_) => {}
-                Err(e) => {
-                    // Retry once after a short delay to handle transient races
+                Err(e)
                     if e.kind() == std::io::ErrorKind::Other
-                        || e.kind() == std::io::ErrorKind::DirectoryNotEmpty
-                    {
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        tokio::fs::remove_dir_all(&self.storage_path).await?;
-                    } else {
-                        return Err(crate::error::StorageError::Io(e));
-                    }
+                        || e.kind() == std::io::ErrorKind::DirectoryNotEmpty =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    tokio::fs::remove_dir_all(&self.storage_path).await?;
                 }
+                Err(e) => return Err(crate::error::StorageError::Io(e)),
             }
             tokio::fs::create_dir_all(&self.storage_path).await?;
         }
@@ -228,15 +221,15 @@ impl StorageManager for DiskStorageManager {
         let storage_path = &self.storage_path;
 
         self.block_headers =
-            Arc::new(RwLock::new(PersistentBlockHeaderStorage::load(storage_path).await?));
+            Arc::new(RwLock::new(PersistentBlockHeaderStorage::open(storage_path).await?));
         self.filter_headers =
-            Arc::new(RwLock::new(PersistentFilterHeaderStorage::load(storage_path).await?));
-        self.filters = Arc::new(RwLock::new(PersistentFilterStorage::load(storage_path).await?));
+            Arc::new(RwLock::new(PersistentFilterHeaderStorage::open(storage_path).await?));
+        self.filters = Arc::new(RwLock::new(PersistentFilterStorage::open(storage_path).await?));
         self.transactions =
-            Arc::new(RwLock::new(PersistentTransactionStorage::load(storage_path).await?));
-        self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::load(storage_path).await?));
+            Arc::new(RwLock::new(PersistentTransactionStorage::open(storage_path).await?));
+        self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
         self.chainstate =
-            Arc::new(RwLock::new(PersistentChainStateStorage::load(storage_path).await?));
+            Arc::new(RwLock::new(PersistentChainStateStorage::open(storage_path).await?));
 
         // Restart the background worker for future operations
         self.start_worker().await;
@@ -244,15 +237,10 @@ impl StorageManager for DiskStorageManager {
         Ok(())
     }
 
-<<<<<<< HEAD
     /// Shutdown the storage manager.
     pub async fn shutdown(&mut self) {
-=======
-    async fn shutdown(&mut self) {
->>>>>>> f40a2bd9 (storage manager trait implemented)
         self.stop_worker();
 
-        // Persist all dirty data
         self.persist().await;
     }
 }
@@ -287,7 +275,6 @@ impl blocks::BlockHeaderStorage for DiskStorageManager {
         self.block_headers.read().await.get_stored_headers_len().await
     }
 
-    /// Get header height by block hash (reverse lookup).
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,

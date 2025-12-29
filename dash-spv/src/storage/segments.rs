@@ -162,7 +162,6 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(cache)
     }
 
-    /// Get the segment ID for a given storage index.
     #[inline]
     fn height_to_segment_id(height: u32) -> u32 {
         height / Segment::<I>::ITEMS_PER_SEGMENT
@@ -319,6 +318,8 @@ impl<I: Persistable> SegmentCache<I> {
             height += 1;
         }
 
+        // Update cached tip height and start height
+        // if needed
         self.tip_height = match self.tip_height {
             Some(current) => Some(current.max(height - 1)),
             None => Some(height - 1),
@@ -332,25 +333,20 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(())
     }
 
-    pub async fn persist_evicted(&mut self, segments_dir: impl Into<PathBuf>) {
+    pub async fn persist(&mut self, segments_dir: impl Into<PathBuf>) {
         let segments_dir = segments_dir.into();
-        for (_, segments) in self.evicted.iter_mut() {
+
+        for (id, segments) in self.evicted.iter_mut() {
             if let Err(e) = segments.persist(&segments_dir).await {
-                tracing::error!("Failed to persist segment: {}", e);
+                tracing::error!("Failed to persist segment with id {id}: {e}");
             }
         }
 
         self.evicted.clear();
-    }
 
-    pub async fn persist(&mut self, segments_dir: impl Into<PathBuf>) {
-        let segments_dir = segments_dir.into();
-
-        self.persist_evicted(&segments_dir).await;
-
-        for (_, segments) in self.segments.iter_mut() {
+        for (id, segments) in self.segments.iter_mut() {
             if let Err(e) = segments.persist(&segments_dir).await {
-                tracing::error!("Failed to persist segment: {}", e);
+                tracing::error!("Failed to persist segment with id {id}: {e}");
             }
         }
     }
