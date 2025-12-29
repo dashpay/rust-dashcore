@@ -27,10 +27,7 @@ pub trait TransactionStorage {
     async fn get_all_mempool_transactions(
         &self,
     ) -> StorageResult<HashMap<Txid, UnconfirmedTransaction>>;
-}
 
-#[async_trait]
-pub trait MempoolStateStorage {
     async fn store_mempool_state(&mut self, state: &MempoolState) -> StorageResult<()>;
 
     async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>>;
@@ -87,10 +84,7 @@ impl TransactionStorage for PersistentTransactionStorage {
     ) -> StorageResult<HashMap<Txid, UnconfirmedTransaction>> {
         Ok(self.mempool_transactions.clone())
     }
-}
 
-#[async_trait]
-impl MempoolStateStorage for PersistentTransactionStorage {
     async fn store_mempool_state(&mut self, state: &MempoolState) -> StorageResult<()> {
         self.mempool_state = Some(state.clone());
         Ok(())

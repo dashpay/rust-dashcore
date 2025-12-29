@@ -1,6 +1,6 @@
 //! Simple test without background saving.
 
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager};
 use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;

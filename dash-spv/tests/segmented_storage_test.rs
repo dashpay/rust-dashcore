@@ -1,6 +1,9 @@
 //! Tests for segmented disk storage implementation.
 
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{
+    BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage, FilterStorage, MetadataStorage,
+    StorageManager,
+};
 use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::hash_types::FilterHeader;
 use dashcore::pow::CompactTarget;

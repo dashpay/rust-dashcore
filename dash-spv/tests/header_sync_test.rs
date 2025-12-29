@@ -5,7 +5,7 @@ use std::time::Duration;
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::{DiskStorageManager, StorageManager},
+    storage::{BlockHeaderStorage, ChainStateStorage, DiskStorageManager},
     sync::{HeaderSyncManager, ReorgConfig},
     types::{ChainState, ValidationMode},
 };
@@ -25,7 +25,7 @@ async fn test_basic_header_sync_from_genesis() {
 
     // Create fresh storage starting from empty state
     let mut storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 
@@ -48,7 +48,7 @@ async fn test_header_sync_continuation() {
     let _ = env_logger::try_init();
 
     let mut storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 
@@ -83,7 +83,7 @@ async fn test_header_batch_processing() {
     let _ = env_logger::try_init();
 
     let mut storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 
@@ -133,7 +133,7 @@ async fn test_header_sync_edge_cases() {
     let _ = env_logger::try_init();
 
     let mut storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 
@@ -171,7 +171,7 @@ async fn test_header_chain_validation() {
     let _ = env_logger::try_init();
 
     let mut storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 
@@ -209,7 +209,7 @@ async fn test_header_sync_performance() {
     let _ = env_logger::try_init();
 
     let mut storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 
@@ -273,7 +273,7 @@ async fn test_header_sync_with_client_integration() {
 
     // Create storage manager
     let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 
@@ -329,7 +329,7 @@ async fn test_header_storage_consistency() {
     let _ = env_logger::try_init();
 
     let mut storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 
@@ -365,9 +365,8 @@ async fn test_header_storage_consistency() {
 #[tokio::test]
 async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
-        .await
-        .expect("Failed to create storage");
+    let mut storage =
+        DiskStorageManager::new(temp_dir.path()).await.expect("Failed to create storage");
 
     let headers = create_test_header_chain(header_count);
     let expected_tip_hash = headers.last().unwrap().block_hash();

@@ -3,7 +3,7 @@
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::{DiskStorageManager, StorageManager},
+    storage::{BlockHeaderStorage, DiskStorageManager},
     types::ValidationMode,
 };
 use dashcore::Network;
@@ -51,10 +51,9 @@ async fn test_simple_header_sync() {
     config.peers.push(peer_addr);
 
     // Create fresh storage
-    let storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await
-            .expect("Failed to create tmp storage");
+    let storage = DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
+        .await
+        .expect("Failed to create tmp storage");
 
     // Verify starting from empty state
     assert_eq!(storage.get_tip_height().await, None);

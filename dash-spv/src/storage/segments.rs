@@ -179,24 +179,6 @@ impl<I: Persistable> SegmentCache<I> {
         height % Segment::<I>::ITEMS_PER_SEGMENT
     }
 
-    pub fn clear_in_memory(&mut self) {
-        self.segments.clear();
-        self.evicted.clear();
-        self.tip_height = None;
-    }
-
-    pub async fn clear_all(&mut self) -> StorageResult<()> {
-        self.clear_in_memory();
-
-        if self.segments_dir.exists() {
-            tokio::fs::remove_dir_all(&self.segments_dir).await?;
-        }
-
-        tokio::fs::create_dir_all(&self.segments_dir).await?;
-
-        Ok(())
-    }
-
     async fn get_segment(&mut self, segment_id: &u32) -> StorageResult<&Segment<I>> {
         let segment = self.get_segment_mut(segment_id).await?;
         Ok(&*segment)
@@ -620,23 +602,16 @@ mod tests {
 
         cache.persist(tmp_dir.path()).await;
 
-        cache.clear_in_memory();
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
+            .await
+            .expect("Failed to load new segment_cache");
         assert!(cache.segments.is_empty());
         assert!(cache.evicted.is_empty());
 
         assert_eq!(
-            cache.get_items(10..20).await.expect("Failed to retrieve get irems from segment cache"),
+            cache.get_items(10..20).await.expect("Failed to get items from segment cache"),
             items
         );
-
-        cache.clear_all().await.expect("Failed to clean on-memory and on-disk data");
-        assert!(cache.segments.is_empty());
-
-        let segment = cache.get_segment(&0).await.expect("Failed to create a new segment");
-
-        assert!(segment.first_valid_offset().is_none());
-        assert!(segment.last_valid_offset().is_none());
-        assert_eq!(segment.state, SegmentState::Dirty);
     }
 
     #[tokio::test]

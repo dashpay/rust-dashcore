@@ -1,7 +1,7 @@
 //! Integration tests for storage layer functionality.
 
 use dash_spv::error::StorageError;
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager, StorageManager};
 use dashcore::{block::Header as BlockHeader, block::Version};
 use dashcore_hashes::Hash;
 use tempfile::TempDir;

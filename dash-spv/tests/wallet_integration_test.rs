@@ -22,7 +22,7 @@ async fn create_test_client(
 
     // Create storage manager
     let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 

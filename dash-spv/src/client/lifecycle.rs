@@ -225,7 +225,7 @@ impl<
         // Shutdown storage to ensure all data is persisted
         {
             let mut storage = self.storage.lock().await;
-            storage.shutdown().await.map_err(SpvError::Storage)?;
+            storage.shutdown().await;
             tracing::info!("Storage shutdown completed - all data persisted");
         }
 
