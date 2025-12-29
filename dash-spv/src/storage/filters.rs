@@ -96,17 +96,14 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
 
 #[async_trait]
 impl FilterHeaderStorage for PersistentFilterHeaderStorage {
-    /// Store filter headers.
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
         self.filter_headers.write().await.store_items(headers).await
     }
 
-    /// Load filter headers in the given blockchain height range.
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
         self.filter_headers.write().await.get_items(range).await
     }
 
-    /// Get the current filter tip blockchain height.
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
         Ok(self.filter_headers.read().await.tip_height())
     }
@@ -158,12 +155,10 @@ impl PersistentStorage for PersistentFilterStorage {
 
 #[async_trait]
 impl FilterStorage for PersistentFilterStorage {
-    /// Store a compact filter at a blockchain height.
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         self.filters.write().await.store_items_at_height(&[filter.to_vec()], height).await
     }
 
-    /// Load compact filters in the given blockchain height range.
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
         self.filters.write().await.get_items(range).await
     }

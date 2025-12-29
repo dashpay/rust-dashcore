@@ -4,7 +4,7 @@
 mod tests {
     use crate::client::block_processor::{BlockProcessingTask, BlockProcessor};
 
-    use crate::storage::DiskStorageManager;
+    use crate::storage::{BlockHeaderStorage, DiskStorageManager};
     use crate::types::{SpvEvent, SpvStats};
     use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
 

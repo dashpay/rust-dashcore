@@ -1,6 +1,6 @@
 //! Debug test for segmented storage.
 
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager, StorageManager};
 use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;

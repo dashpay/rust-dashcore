@@ -14,6 +14,10 @@ mod segments;
 mod transactions;
 
 use async_trait::async_trait;
+use dashcore::hash_types::FilterHeader;
+use dashcore::{Header as BlockHeader, Txid};
+use std::collections::HashMap;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,8 +28,19 @@ use crate::storage::blocks::PersistentBlockHeaderStorage;
 use crate::storage::chainstate::PersistentChainStateStorage;
 use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
 use crate::storage::lockfile::LockFile;
+use crate::storage::masternode::PersistentMasternodeStateStorage;
 use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
+use crate::types::{MempoolState, UnconfirmedTransaction};
+use crate::ChainState;
+
+pub use crate::storage::blocks::BlockHeaderStorage;
+pub use crate::storage::chainstate::ChainStateStorage;
+pub use crate::storage::filters::FilterHeaderStorage;
+pub use crate::storage::filters::FilterStorage;
+pub use crate::storage::masternode::MasternodeStateStorage;
+pub use crate::storage::metadata::MetadataStorage;
+pub use crate::storage::transactions::TransactionStorage;
 
 pub use types::*;
 
@@ -54,6 +69,8 @@ pub trait StorageManager:
     + Send
     + Sync
 {
+    async fn clear(&mut self) -> StorageResult<()>;
+    async fn shutdown(&mut self);
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -66,6 +83,7 @@ pub struct DiskStorageManager {
     transactions: Arc<RwLock<PersistentTransactionStorage>>,
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
     chainstate: Arc<RwLock<PersistentChainStateStorage>>,
+    masternodestate: Arc<RwLock<PersistentMasternodeStateStorage>>,
 
     // Background worker
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -102,6 +120,9 @@ impl DiskStorageManager {
             metadata: Arc::new(RwLock::new(PersistentMetadataStorage::load(&storage_path).await?)),
             chainstate: Arc::new(RwLock::new(
                 PersistentChainStateStorage::load(&storage_path).await?,
+            )),
+            masternodestate: Arc::new(RwLock::new(
+                PersistentMasternodeStateStorage::load(&storage_path).await?,
             )),
 
             worker_handle: None,
@@ -160,23 +181,21 @@ impl DiskStorageManager {
         }
     }
 
-    /// Clear all filter headers and compact filters.
-    pub(super) async fn clear_filters(&mut self) -> StorageResult<()> {
-        // Stop worker to prevent concurrent writes to filter directories
-        self.stop_worker().await;
+    async fn persist(&self) {
+        let storage_path = &self.storage_path;
 
-        // Clear in-memory and on-disk filter headers segments
-        self.filter_headers.write().await.clear_all().await?;
-        self.filters.write().await.clear_all().await?;
-
-        // Restart background worker for future operations
-        self.start_worker().await;
-
-        Ok(())
+        let _ = self.block_headers.write().await.persist(storage_path).await;
+        let _ = self.filter_headers.write().await.persist(storage_path).await;
+        let _ = self.filters.write().await.persist(storage_path).await;
+        let _ = self.transactions.write().await.persist(storage_path).await;
+        let _ = self.metadata.write().await.persist(storage_path).await;
+        let _ = self.chainstate.write().await.persist(storage_path).await;
     }
-    
-    /// Clear all storage.
-    pub async fn clear(&mut self) -> StorageResult<()> {
+}
+
+#[async_trait]
+impl StorageManager for DiskStorageManager {
+    async fn clear(&mut self) -> StorageResult<()> {
         // First, stop the background worker to avoid races with file deletion
         self.stop_worker();
 
@@ -220,23 +239,150 @@ impl DiskStorageManager {
         Ok(())
     }
 
+<<<<<<< HEAD
     /// Shutdown the storage manager.
     pub async fn shutdown(&mut self) {
+=======
+    async fn shutdown(&mut self) {
+>>>>>>> f40a2bd9 (storage manager trait implemented)
         self.stop_worker();
 
         // Persist all dirty data
         self.persist().await;
     }
+}
 
-    async fn persist(&self) {
-        let storage_path = &self.storage_path;
+#[async_trait]
+impl blocks::BlockHeaderStorage for DiskStorageManager {
+    async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
+        self.block_headers.write().await.store_headers(headers).await
+    }
 
-        let _ = self.block_headers.write().await.persist(storage_path).await;
-        let _ = self.filter_headers.write().await.persist(storage_path).await;
-        let _ = self.filters.write().await.persist(storage_path).await;
-        let _ = self.transactions.write().await.persist(storage_path).await;
-        let _ = self.metadata.write().await.persist(storage_path).await;
-        let _ = self.chainstate.write().await.persist(storage_path).await;
+    async fn store_headers_at_height(
+        &mut self,
+        headers: &[BlockHeader],
+        height: u32,
+    ) -> StorageResult<()> {
+        self.block_headers.write().await.store_headers_at_height(headers, height).await
+    }
+
+    async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
+        self.block_headers.write().await.load_headers(range).await
+    }
+
+    async fn get_tip_height(&self) -> Option<u32> {
+        self.block_headers.read().await.get_tip_height().await
+    }
+
+    async fn get_start_height(&self) -> Option<u32> {
+        self.block_headers.read().await.get_start_height().await
+    }
+
+    async fn get_stored_headers_len(&self) -> u32 {
+        self.block_headers.read().await.get_stored_headers_len().await
+    }
+
+    /// Get header height by block hash (reverse lookup).
+    async fn get_header_height_by_hash(
+        &self,
+        hash: &dashcore::BlockHash,
+    ) -> StorageResult<Option<u32>> {
+        self.block_headers.read().await.get_header_height_by_hash(hash).await
+    }
+}
+
+#[async_trait]
+impl filters::FilterHeaderStorage for DiskStorageManager {
+    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
+        self.filter_headers.write().await.store_filter_headers(headers).await
+    }
+
+    async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
+        self.filter_headers.write().await.load_filter_headers(range).await
+    }
+
+    async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
+        self.filter_headers.read().await.get_filter_tip_height().await
+    }
+}
+
+#[async_trait]
+impl filters::FilterStorage for DiskStorageManager {
+    async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
+        self.filters.write().await.store_filter(height, filter).await
+    }
+
+    async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
+        self.filters.write().await.load_filters(range).await
+    }
+}
+
+#[async_trait]
+impl transactions::TransactionStorage for DiskStorageManager {
+    async fn store_mempool_transaction(
+        &mut self,
+        txid: &Txid,
+        tx: &UnconfirmedTransaction,
+    ) -> StorageResult<()> {
+        self.transactions.write().await.store_mempool_transaction(txid, tx).await
+    }
+
+    async fn remove_mempool_transaction(&mut self, txid: &Txid) -> StorageResult<()> {
+        self.transactions.write().await.remove_mempool_transaction(txid).await
+    }
+
+    async fn get_mempool_transaction(
+        &self,
+        txid: &Txid,
+    ) -> StorageResult<Option<UnconfirmedTransaction>> {
+        self.transactions.read().await.get_mempool_transaction(txid).await
+    }
+
+    async fn get_all_mempool_transactions(
+        &self,
+    ) -> StorageResult<HashMap<Txid, UnconfirmedTransaction>> {
+        self.transactions.read().await.get_all_mempool_transactions().await
+    }
+
+    async fn store_mempool_state(&mut self, state: &MempoolState) -> StorageResult<()> {
+        self.transactions.write().await.store_mempool_state(state).await
+    }
+
+    async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>> {
+        self.transactions.read().await.load_mempool_state().await
+    }
+}
+
+#[async_trait]
+impl metadata::MetadataStorage for DiskStorageManager {
+    async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
+        self.metadata.write().await.store_metadata(key, value).await
+    }
+
+    async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
+        self.metadata.read().await.load_metadata(key).await
+    }
+}
+
+#[async_trait]
+impl chainstate::ChainStateStorage for DiskStorageManager {
+    async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
+        self.chainstate.write().await.store_chain_state(state).await
+    }
+
+    async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
+        self.chainstate.read().await.load_chain_state().await
+    }
+}
+
+#[async_trait]
+impl masternode::MasternodeStateStorage for DiskStorageManager {
+    async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
+        self.masternodestate.write().await.store_masternode_state(state).await
+    }
+
+    async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
+        self.masternodestate.read().await.load_masternode_state().await
     }
 }
 

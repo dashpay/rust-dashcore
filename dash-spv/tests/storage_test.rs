@@ -1,9 +1,14 @@
 //! Integration tests for storage layer functionality.
 
+<<<<<<< HEAD
 use dash_spv::{
     storage::{DiskStorageManager, StorageManager},
     StorageError,
 };
+=======
+use dash_spv::error::StorageError;
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager, StorageManager};
+>>>>>>> f40a2bd9 (storage manager trait implemented)
 use dashcore::{block::Header as BlockHeader, block::Version};
 use dashcore_hashes::Hash;
 use tempfile::TempDir;
