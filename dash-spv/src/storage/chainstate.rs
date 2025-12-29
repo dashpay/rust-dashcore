@@ -26,7 +26,7 @@ impl PersistentChainStateStorage {
 
 #[async_trait]
 impl PersistentStorage for PersistentChainStateStorage {
-    async fn load(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+    async fn open(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
         Ok(PersistentChainStateStorage {
             storage_path: storage_path.into(),
         })

@@ -40,7 +40,7 @@ pub struct PersistentTransactionStorage {
 
 #[async_trait]
 impl PersistentStorage for PersistentTransactionStorage {
-    async fn load(_storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+    async fn open(_storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
         let mempool_transactions = HashMap::new();
         let mempool_state = None;
 

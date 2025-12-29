@@ -24,7 +24,7 @@ impl PersistentMetadataStorage {
 
 #[async_trait]
 impl PersistentStorage for PersistentMetadataStorage {
-    async fn load(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+    async fn open(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
         Ok(PersistentMetadataStorage {
             storage_path: storage_path.into(),
         })

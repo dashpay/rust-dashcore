@@ -25,7 +25,7 @@ impl PersistentMasternodeStateStorage {
 
 #[async_trait]
 impl PersistentStorage for PersistentMasternodeStateStorage {
-    async fn load(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+    async fn open(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
         Ok(PersistentMasternodeStateStorage {
             storage_path: storage_path.into(),
         })
