@@ -79,19 +79,25 @@ impl PersistentBlockHeaderStorage {
 impl PersistentStorage for PersistentBlockHeaderStorage {
     async fn load(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
         let storage_path = storage_path.into();
+        let segments_folder = storage_path.join(Self::FOLDER_NAME);
 
-        let index_path = storage_path.join(Self::FOLDER_NAME).join(Self::INDEX_FILE_NAME);
+        let index_path = segments_folder.join(Self::INDEX_FILE_NAME);
 
-        let mut block_headers = SegmentCache::load_or_new(storage_path).await?;
+        let mut block_headers = SegmentCache::load_or_new(&segments_folder).await?;
 
         let header_hash_index = match tokio::fs::read(&index_path)
             .await
             .ok()
-            .map(|content| bincode::deserialize(&content).ok())
-            .flatten()
+            .and_then(|content| bincode::deserialize(&content).ok())
         {
             Some(index) => index,
-            _ => block_headers.build_block_index_from_segments().await?,
+            _ => {
+                if segments_folder.exists() {
+                    block_headers.build_block_index_from_segments().await?
+                } else {
+                    HashMap::new()
+                }
+            }
         };
 
         Ok(Self {
