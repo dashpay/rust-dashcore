@@ -93,12 +93,19 @@ async fn test_disk_storage_concurrent_access_blocked() {
 async fn test_disk_storage_lock_file_lifecycle() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let path = temp_dir.path().to_path_buf();
-    let lock_path = path.join(".lock");
+    let lock_path = {
+        let mut lock_file = path.clone();
+        lock_file.set_extension("lock");
+        lock_file
+    };
 
     // Lock file created when storage opens
     {
-        let _storage = DiskStorageManager::new(path.clone()).await.unwrap();
+        let mut storage = DiskStorageManager::new(path.clone()).await.unwrap();
         assert!(lock_path.exists(), "Lock file should exist while storage is open");
+
+        storage.clear().await.expect("Failed to clear the storage");
+        assert!(lock_path.exists(), "Lock file should exist after storage is cleared");
     }
 
     // Lock file removed when storage drops

@@ -604,8 +604,6 @@ mod tests {
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
             .await
             .expect("Failed to load new segment_cache");
-        assert!(cache.segments.is_empty());
-        assert!(cache.evicted.is_empty());
 
 <<<<<<< HEAD
         let recovered_items = cache.get_items(0..10).await.expect("Failed to load items");

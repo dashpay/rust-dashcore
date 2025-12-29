@@ -27,7 +27,7 @@ pub trait FilterHeaderStorage {
             return Ok(None);
         }
 
-        if let Some(start_height) = self.get_filter_tip_height().await? {
+        if let Some(start_height) = self.get_filter_start_height().await {
             if height < start_height {
                 return Ok(None);
             }
@@ -40,6 +40,8 @@ pub trait FilterHeaderStorage {
 
     /// Get the current filter tip blockchain height.
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>>;
+
+    async fn get_filter_start_height(&self) -> Option<u32>;
 }
 
 #[async_trait]
@@ -106,6 +108,10 @@ impl FilterHeaderStorage for PersistentFilterHeaderStorage {
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
         Ok(self.filter_headers.read().await.tip_height())
+    }
+
+    async fn get_filter_start_height(&self) -> Option<u32> {
+        self.filter_headers.read().await.start_height()
     }
 }
 

@@ -97,12 +97,17 @@ impl DiskStorageManager {
         use std::fs;
 
         let storage_path = storage_path.into();
+        let lock_file = {
+            let mut lock_file = storage_path.clone();
+            lock_file.set_extension("lock");
+            lock_file
+        };
 
         // Create directories if they don't exist
         fs::create_dir_all(&storage_path)?;
 
         // Acquire exclusive lock on the data directory
-        let lock_file = LockFile::new(storage_path.with_added_extension(".lock"))?;
+        let lock_file = LockFile::new(lock_file)?;
 
         let mut storage = Self {
             storage_path: storage_path.clone(),
@@ -303,6 +308,10 @@ impl filters::FilterHeaderStorage for DiskStorageManager {
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
         self.filter_headers.read().await.get_filter_tip_height().await
+    }
+
+    async fn get_filter_start_height(&self) -> Option<u32> {
+        self.filter_headers.read().await.get_filter_start_height().await
     }
 }
 
