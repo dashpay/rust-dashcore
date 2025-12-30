@@ -110,36 +110,36 @@ where
 pub struct PeerReputation {
     /// Current misbehavior score
     #[serde(deserialize_with = "clamp_peer_score")]
-    pub score: i32,
+    score: i32,
 
     /// Number of times this peer has been banned
     #[serde(deserialize_with = "clamp_peer_ban_count")]
-    pub ban_count: u32,
+    ban_count: u32,
 
     /// Time when the peer was banned (if currently banned)
     #[serde(skip)]
-    pub banned_until: Option<Instant>,
+    banned_until: Option<Instant>,
 
     /// Last time the reputation was updated
     #[serde(skip, default = "default_instant")]
-    pub last_update: Instant,
+    last_update: Instant,
 
     /// Total number of positive actions
-    pub positive_actions: u64,
+    positive_actions: u64,
 
     /// Total number of negative actions
-    pub negative_actions: u64,
+    negative_actions: u64,
 
     /// Connection count
     #[serde(deserialize_with = "clamp_peer_connection_attempts")]
-    pub connection_attempts: u64,
+    connection_attempts: u64,
 
     /// Successful connection count
-    pub successful_connections: u64,
+    successful_connections: u64,
 
     /// Last connection time
     #[serde(skip)]
-    pub last_connection: Option<Instant>,
+    last_connection: Option<Instant>,
 }
 
 impl Default for PeerReputation {
@@ -159,13 +159,11 @@ impl Default for PeerReputation {
 }
 
 impl PeerReputation {
-    /// Check if the peer is currently banned
-    pub fn is_banned(&self) -> bool {
+    fn is_banned(&self) -> bool {
         self.banned_until.is_some_and(|until| Instant::now() < until)
     }
 
-    /// Get remaining ban time
-    pub fn ban_time_remaining(&self) -> Option<Duration> {
+    fn ban_time_remaining(&self) -> Option<Duration> {
         self.banned_until.and_then(|until| {
             let now = Instant::now();
             if now < until {
@@ -177,7 +175,7 @@ impl PeerReputation {
     }
 
     /// Apply reputation decay
-    pub fn apply_decay(&mut self) {
+    fn apply_decay(&mut self) {
         let now = Instant::now();
         let elapsed = now - self.last_update;
 
@@ -199,26 +197,12 @@ impl PeerReputation {
     }
 }
 
-/// Peer reputation manager
+#[derive(Default)]
 pub struct PeerReputationManager {
-    /// Reputation data for each peer
     reputations: HashMap<SocketAddr, PeerReputation>,
 }
 
-impl Default for PeerReputationManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl PeerReputationManager {
-    /// Create a new reputation manager
-    pub fn new() -> Self {
-        Self {
-            reputations: HashMap::new(),
-        }
-    }
-
     /// Update peer reputation
     pub async fn update_reputation(
         &mut self,
@@ -326,6 +310,34 @@ impl PeerReputationManager {
         }
     }
 
+    pub async fn select_best_peers(
+        &mut self,
+        available_peers: Vec<SocketAddr>,
+        count: usize,
+    ) -> Vec<SocketAddr> {
+        let mut peer_scores = Vec::new();
+        let reputations = &mut self.reputations;
+
+        for peer in available_peers {
+            let reputation = reputations.entry(peer).or_default();
+            reputation.apply_decay();
+
+            if !reputation.is_banned() {
+                peer_scores.push((peer, reputation.score));
+            }
+        }
+
+        // Sort by score (lower is better)
+        peer_scores.sort_by_key(|(_, score)| *score);
+
+        // Return the best peers
+        peer_scores.into_iter().take(count).map(|(peer, _)| peer).collect()
+    }
+
+    pub async fn should_connect_to_peer(&mut self, peer: &SocketAddr) -> bool {
+        !self.is_banned(peer).await
+    }
+
     /// Save reputation data to persistent storage
     pub async fn save_to_storage(
         &mut self,
@@ -377,52 +389,6 @@ impl PeerReputationManager {
     }
 }
 
-/// Helper trait for reputation-aware peer selection
-pub trait ReputationAware {
-    /// Select best peers based on reputation
-    fn select_best_peers(
-        &mut self,
-        available_peers: Vec<SocketAddr>,
-        count: usize,
-    ) -> impl std::future::Future<Output = Vec<SocketAddr>> + Send;
-
-    /// Check if we should connect to a peer based on reputation
-    fn should_connect_to_peer(
-        &mut self,
-        peer: &SocketAddr,
-    ) -> impl std::future::Future<Output = bool> + Send;
-}
-
-impl ReputationAware for PeerReputationManager {
-    async fn select_best_peers(
-        &mut self,
-        available_peers: Vec<SocketAddr>,
-        count: usize,
-    ) -> Vec<SocketAddr> {
-        let mut peer_scores = Vec::new();
-        let reputations = &mut self.reputations;
-
-        for peer in available_peers {
-            let reputation = reputations.entry(peer).or_default();
-            reputation.apply_decay();
-
-            if !reputation.is_banned() {
-                peer_scores.push((peer, reputation.score));
-            }
-        }
-
-        // Sort by score (lower is better)
-        peer_scores.sort_by_key(|(_, score)| *score);
-
-        // Return the best peers
-        peer_scores.into_iter().take(count).map(|(peer, _)| peer).collect()
-    }
-
-    async fn should_connect_to_peer(&mut self, peer: &SocketAddr) -> bool {
-        !self.is_banned(peer).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::storage::PersistentStorage;
@@ -432,7 +398,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_reputation_operations() {
-        let mut manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::default();
         let peer: SocketAddr = "127.0.0.1:8333".parse().unwrap();
 
         // Initial score should be 0
@@ -447,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_banning_mechanism() {
-        let mut manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::default();
         let peer: SocketAddr = "192.168.1.1:8333".parse().unwrap();
 
         // Accumulate misbehavior
@@ -473,7 +439,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reputation_persistence() {
-        let mut manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::default();
         let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
         let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
 
@@ -488,7 +454,7 @@ mod tests {
             .expect("Failed to open PersistentPeerStorage");
         manager.save_to_storage(&peer_storage).await.unwrap();
 
-        let mut new_manager = PeerReputationManager::new();
+        let mut new_manager = PeerReputationManager::default();
         new_manager.load_from_storage(&peer_storage).await.unwrap();
 
         // Verify scores were preserved
@@ -498,7 +464,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_selection() {
-        let mut manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::default();
 
         let good_peer: SocketAddr = "1.1.1.1:8333".parse().unwrap();
         let neutral_peer: SocketAddr = "2.2.2.2:8333".parse().unwrap();

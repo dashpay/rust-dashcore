@@ -23,9 +23,7 @@ use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
 use crate::network::pool::PeerPool;
-use crate::network::reputation::{
-    misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
-};
+use crate::network::reputation::{misbehavior_scores, positive_scores, PeerReputationManager};
 use crate::network::{HandshakeManager, NetworkManager, Peer};
 use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use crate::types::PeerInfo;
@@ -83,7 +81,7 @@ impl PeerNetworkManager {
 
         let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
 
-        let mut reputation_manager = PeerReputationManager::new();
+        let mut reputation_manager = PeerReputationManager::default();
 
         if let Err(e) = reputation_manager.load_from_storage(&peer_store).await {
             log::warn!("Failed to load peer reputation data: {}", e);
