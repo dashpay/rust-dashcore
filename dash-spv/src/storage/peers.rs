@@ -1,6 +1,8 @@
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::BufReader,
+    net::SocketAddr,
     path::PathBuf,
 };
 
@@ -12,6 +14,7 @@ use dashcore::{
 
 use crate::{
     error::StorageResult,
+    network::reputation::PeerReputation,
     storage::{io::atomic_write, PersistentStorage},
     StorageError,
 };
@@ -23,7 +26,14 @@ pub trait PeerStorage {
         peers: &[dashcore::network::address::AddrV2Message],
     ) -> StorageResult<()>;
 
-    async fn load_peers(&self) -> StorageResult<Vec<std::net::SocketAddr>>;
+    async fn load_peers(&self) -> StorageResult<Vec<SocketAddr>>;
+
+    async fn save_peers_reputation(
+        &self,
+        reputations: &HashMap<SocketAddr, PeerReputation>,
+    ) -> StorageResult<()>;
+
+    async fn load_peers_reputation(&self) -> StorageResult<Vec<(SocketAddr, PeerReputation)>>;
 }
 
 pub struct PersistentPeerStorage {
@@ -72,7 +82,7 @@ impl PeerStorage for PersistentPeerStorage {
         Ok(())
     }
 
-    async fn load_peers(&self) -> StorageResult<Vec<std::net::SocketAddr>> {
+    async fn load_peers(&self) -> StorageResult<Vec<SocketAddr>> {
         let peers_file = self.storage_path.join("peers.dat");
 
         let peers = if peers_file.exists() {
@@ -102,6 +112,36 @@ impl PeerStorage for PersistentPeerStorage {
         let peers = peers.into_iter().filter_map(|p| p.socket_addr().ok()).collect();
 
         Ok(peers)
+    }
+
+    async fn save_peers_reputation(
+        &self,
+        reputations: &HashMap<SocketAddr, PeerReputation>,
+    ) -> StorageResult<()> {
+        let reputation_file = self.storage_path.join("reputations.json");
+
+        tokio::fs::create_dir_all(&self.storage_path).await?;
+
+        let data: Vec<(SocketAddr, PeerReputation)> =
+            reputations.iter().map(|(addr, rep)| (*addr, rep.clone())).collect();
+
+        let json = serde_json::to_string_pretty(&data).map_err(|e| {
+            StorageError::Serialization(format!("Failed to serialize peers reputations: {e}"))
+        })?;
+        atomic_write(&reputation_file, json.as_bytes()).await
+    }
+
+    async fn load_peers_reputation(&self) -> StorageResult<Vec<(SocketAddr, PeerReputation)>> {
+        let reputation_file = self.storage_path.join("reputations.json");
+
+        if !reputation_file.exists() {
+            return Ok(Vec::new());
+        }
+
+        let json = tokio::fs::read_to_string(reputation_file).await?;
+        serde_json::from_str(&json).map_err(|e| {
+            StorageError::ReadFailed(format!("Failed to deserialize peers reputations: {e}"))
+        })
     }
 }
 
