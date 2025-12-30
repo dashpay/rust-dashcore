@@ -89,7 +89,7 @@ impl PeerStorage for PersistentPeerStorage {
 
         let peers_file_parent = peers_file
             .parent()
-            .ok_or(StorageError::NotFound(format!("peers_file doesn't have a parent")))?;
+            .ok_or(StorageError::NotFound("peers_file doesn't have a parent".to_string()))?;
 
         tokio::fs::create_dir_all(peers_file_parent).await?;
 
@@ -138,7 +138,7 @@ impl PeerStorage for PersistentPeerStorage {
 
         let reputation_file_parent = reputation_file
             .parent()
-            .ok_or(StorageError::NotFound(format!("reputation_file doesn't have a parent")))?;
+            .ok_or(StorageError::NotFound("reputation_file doesn't have a parent".to_string()))?;
 
         tokio::fs::create_dir_all(reputation_file_parent).await?;
 
