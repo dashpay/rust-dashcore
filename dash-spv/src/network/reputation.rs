@@ -225,25 +225,10 @@ impl PeerReputation {
     }
 }
 
-/// Reputation change event
-#[derive(Debug, Clone)]
-pub struct ReputationEvent {
-    pub peer: SocketAddr,
-    pub change: i32,
-    pub reason: String,
-    pub timestamp: Instant,
-}
-
 /// Peer reputation manager
 pub struct PeerReputationManager {
     /// Reputation data for each peer
     reputations: HashMap<SocketAddr, PeerReputation>,
-
-    /// Recent reputation events for monitoring
-    recent_events: Vec<ReputationEvent>,
-
-    /// Maximum number of events to keep
-    max_events: usize,
 }
 
 impl Default for PeerReputationManager {
@@ -257,8 +242,6 @@ impl PeerReputationManager {
     pub fn new() -> Self {
         Self {
             reputations: HashMap::new(),
-            recent_events: Vec::new(),
-            max_events: 1000,
         }
     }
 
@@ -312,29 +295,7 @@ impl PeerReputationManager {
             );
         }
 
-        // Record event
-        let event = ReputationEvent {
-            peer,
-            change: score_change,
-            reason: reason.to_string(),
-            timestamp: Instant::now(),
-        };
-
-        self.record_event(event).await;
-
         should_ban
-    }
-
-    /// Record a reputation event
-    async fn record_event(&mut self, event: ReputationEvent) {
-        let events = &mut self.recent_events;
-        events.push(event);
-
-        // Keep only recent events
-        if events.len() > self.max_events {
-            let drain_count = events.len() - self.max_events;
-            events.drain(0..drain_count);
-        }
     }
 
     /// Check if a peer is banned
@@ -402,11 +363,6 @@ impl PeerReputationManager {
         }
 
         reputations.clone()
-    }
-
-    /// Get recent reputation events
-    pub async fn get_recent_events(&self) -> Vec<ReputationEvent> {
-        self.recent_events.clone()
     }
 
     /// Clear banned status for a peer (admin function)
