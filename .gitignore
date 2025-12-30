@@ -45,5 +45,3 @@ cobertura.xml
 
 # Build scripts artifacts
 *.log
-/dash-spv-ffi/peer_reputation.json
-/dash-spv/peer_reputation.json
