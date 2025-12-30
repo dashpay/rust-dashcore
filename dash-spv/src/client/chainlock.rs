@@ -43,8 +43,7 @@ impl<
                 .await
             {
                 // Penalize the peer that relayed the invalid ChainLock
-                let reason = format!("Invalid ChainLock: {}", e);
-                let _ = self.network.penalize_last_message_peer_invalid_chainlock(&reason).await;
+                let _ = self.network.penalize_last_message_peer_invalid_chainlock().await;
                 return Err(SpvError::Validation(e));
             }
         }
@@ -111,7 +110,7 @@ impl<
             tracing::warn!("{}", reason);
 
             // Ban the peer using the reputation system
-            let _ = self.network.penalize_last_message_peer_invalid_instantlock(&reason).await;
+            let _ = self.network.penalize_last_message_peer_invalid_instantlock().await;
 
             return Err(SpvError::Validation(e));
         }

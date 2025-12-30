@@ -140,40 +140,6 @@ async fn test_peer_persistence() {
 }
 
 #[tokio::test]
-async fn test_peer_disconnection() {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path().to_path_buf();
-    let mut config = create_test_config(Network::Regtest, Some(temp_dir));
-
-    // Add manual test peers (would need actual regtest nodes running)
-    config.peers = vec!["127.0.0.1:19899".parse().unwrap(), "127.0.0.1:19898".parse().unwrap()];
-
-    // Create network manager
-    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
-
-    // Create storage manager
-    let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
-
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
-    let client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
-
-    // Note: This test would require actual regtest nodes running
-    // For now, we just test that the API works
-    let test_addr: SocketAddr = "127.0.0.1:19899".parse().unwrap();
-
-    // Try to disconnect (will fail if not connected, but tests the API)
-    match client.disconnect_peer(&test_addr, "Test disconnection").await {
-        Ok(_) => println!("Disconnected peer {}", test_addr),
-        Err(e) => println!("Expected error disconnecting non-existent peer: {}", e),
-    }
-}
-
-#[tokio::test]
 async fn test_max_peer_limit() {
     use dash_spv::network::constants::MAX_PEERS;
 

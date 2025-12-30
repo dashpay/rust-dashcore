@@ -14,7 +14,7 @@ use dashcore::{
 
 use crate::{
     error::StorageResult,
-    network::reputation::PeerReputation,
+    network::PeerReputation,
     storage::{io::atomic_write, PersistentStorage},
     StorageError,
 };
