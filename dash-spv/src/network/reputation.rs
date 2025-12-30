@@ -146,12 +146,6 @@ pub struct PeerReputation {
     #[serde(skip, default = "default_instant")]
     last_update: Instant,
 
-    /// Total number of positive actions
-    positive_actions: u64,
-
-    /// Total number of negative actions
-    negative_actions: u64,
-
     /// Connection count
     #[serde(deserialize_with = "clamp_peer_connection_attempts")]
     connection_attempts: u64,
@@ -171,8 +165,6 @@ impl Default for PeerReputation {
             ban_count: 0,
             banned_until: None,
             last_update: default_instant(),
-            positive_actions: 0,
-            negative_actions: 0,
             connection_attempts: 0,
             successful_connections: 0,
             last_connection: None,
@@ -240,13 +232,6 @@ impl PeerReputationManager {
         let old_score = reputation.score;
         reputation.score =
             (reputation.score + reason.score()).clamp(MIN_MISBEHAVIOR_SCORE, MAX_MISBEHAVIOR_SCORE);
-
-        // Track positive/negative actions
-        if reason.score() > 0 {
-            reputation.negative_actions += 1;
-        } else if reason.score() < 0 {
-            reputation.positive_actions += 1;
-        }
 
         // Check if peer should be banned
         let should_ban = reputation.score >= MAX_MISBEHAVIOR_SCORE && !reputation.is_banned();
@@ -372,24 +357,14 @@ impl PeerReputationManager {
         storage: &PersistentPeerStorage,
     ) -> std::io::Result<()> {
         let data = storage.load_peers_reputation().await.map_err(std::io::Error::other)?;
+        log::info!("Loaded reputation data for {} peers", data.len());
 
         let reputations = &mut self.reputations;
-        let mut loaded_count = 0;
-        let mut skipped_count = 0;
 
         for (addr, mut reputation) in data {
             // Validate successful connections don't exceed attempts
             reputation.successful_connections =
                 reputation.successful_connections.min(reputation.connection_attempts);
-
-            // Skip entry if data appears corrupted
-            if reputation.positive_actions > MAX_ACTION_COUNT
-                || reputation.negative_actions > MAX_ACTION_COUNT
-            {
-                log::warn!("Skipping peer {} with potentially corrupted action counts", addr);
-                skipped_count += 1;
-                continue;
-            }
 
             // Apply initial decay based on ban count
             if reputation.ban_count > 0 {
@@ -397,14 +372,8 @@ impl PeerReputationManager {
             }
 
             reputations.insert(addr, reputation);
-            loaded_count += 1;
         }
 
-        log::info!(
-            "Loaded reputation data for {} peers (skipped {} corrupted entries)",
-            loaded_count,
-            skipped_count
-        );
         Ok(())
     }
 }
