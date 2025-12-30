@@ -925,6 +925,11 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         Ok(())
     }
 
+    /// Get the network this manager is configured for
+    pub fn network(&self) -> Network {
+        self.network
+    }
+
     /// Get current block height for a specific network
     pub fn current_height(&self) -> u32 {
         self.current_height
