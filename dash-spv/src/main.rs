@@ -6,12 +6,11 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Arg, Command};
-use tokio::signal;
-
 use dash_spv::terminal::TerminalGuard;
-use dash_spv::{ClientConfig, DashSpvClient, Network};
+use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() {
@@ -68,10 +67,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             Arg::new("log-level")
                 .short('l')
                 .long("log-level")
+                .env("RUST_LOG")
+                .default_value("info")
                 .value_name("LEVEL")
-                .help("Log level")
-                .value_parser(["error", "warn", "info", "debug", "trace"])
-                .default_value("info"),
+                .help("Log level (CLI overrides RUST_LOG env var)")
+                .value_parser(["error", "warn", "info", "debug", "trace"]),
         )
         .arg(
             Arg::new("no-filters")
@@ -83,6 +83,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             Arg::new("no-masternodes")
                 .long("no-masternodes")
                 .help("Disable masternode list synchronization")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("no-mempool")
+                .long("no-mempool")
+                .help("Disable mempool transaction tracking")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -120,10 +126,46 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .help("Start syncing from a specific block height using the nearest checkpoint. Use 'now' for the latest checkpoint")
                 .value_name("HEIGHT"),
         )
+        .arg(
+            Arg::new("no-log-file")
+                .long("no-log-file")
+                .help("Disable log file output (enables console logging as fallback)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("print-to-console")
+                .long("print-to-console")
+                .help("Print logs to the console")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("log-dir")
+                .long("log-dir")
+                .value_name("DIR")
+                .help("Directory for log files (default: <data-dir>/logs)"),
+        )
+        .arg(
+            Arg::new("max-log-files")
+                .long("max-log-files")
+                .help("Maximum number of archived log files to keep")
+                .value_name("COUNT")
+                .default_value("20")
+                .value_parser(clap::value_parser!(usize)),
+        )
+        .arg(
+            Arg::new("mnemonic-file")
+                .long("mnemonic-file")
+                .value_name("PATH")
+                .help("Path to file containing BIP39 mnemonic phrase")
+                .required(true),
+        )
         .get_matches();
 
-    // Get log level (will be used after we know if terminal UI is enabled)
-    let log_level = matches.get_one::<String>("log-level").ok_or("Missing log-level argument")?;
+    let log_level: LevelFilter = matches
+        .get_one::<String>("log-level")
+        .expect("log-level has default value")
+        .parse()
+        .expect("log-level value_parser ensures valid level");
 
     // Parse network
     let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
@@ -133,6 +175,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "regtest" => Network::Regtest,
         n => return Err(format!("Invalid network: {}", n).into()),
     };
+
+    let mnemonic_path =
+        matches.get_one::<String>("mnemonic-file").ok_or("Missing mnemonic-file argument")?;
+    let mnemonic_phrase = std::fs::read_to_string(mnemonic_path)
+        .map_err(|e| format!("Failed to read mnemonic file '{}': {}", mnemonic_path, e))?
+        .trim()
+        .to_string();
 
     // Parse validation mode
     let validation_str =
@@ -157,10 +206,52 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let dir_name = format!("dash-spv-{}-{}", timestamp, pid);
         std::env::temp_dir().join(dir_name)
     };
+
+    // Parse logging flags and initialize logging early
+    let no_log_file = matches.get_flag("no-log-file");
+    let print_to_console = matches.get_flag("print-to-console");
+    let enable_terminal_ui = matches.get_flag("terminal-ui");
+    let max_log_files = *matches.get_one::<usize>("max-log-files").unwrap();
+    let log_dir = matches
+        .get_one::<String>("log-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data_dir.join("logs"));
+
+    // When terminal UI is enabled, force file logging and disable console to avoid mixing
+    let file_config = if !no_log_file || enable_terminal_ui {
+        Some(dash_spv::LogFileConfig {
+            log_dir,
+            max_files: max_log_files,
+        })
+    } else {
+        None
+    };
+
+    // Disable console logging when terminal UI is enabled
+    let console_enabled = if enable_terminal_ui {
+        false
+    } else {
+        no_log_file || print_to_console
+    };
+
+    let logging_config = dash_spv::LoggingConfig {
+        level: Some(log_level),
+        console: console_enabled,
+        file: file_config,
+    };
+
+    // Initialize logging, keep guard alive for the duration of run()
+    let _logging_guard = dash_spv::init_logging(logging_config)?;
+
+    tracing::info!("Starting Dash SPV client");
+    tracing::info!("Network: {:?}", network);
+    tracing::info!("Data directory: {}", data_dir.display());
+    tracing::info!("Validation mode: {:?}", validation_mode);
+
+    // Create configuration
     let mut config = ClientConfig::new(network)
         .with_storage_path(data_dir.clone())
-        .with_validation_mode(validation_mode)
-        .with_log_level(log_level);
+        .with_validation_mode(validation_mode);
 
     // Add custom peers if specified
     if let Some(peers) = matches.get_many::<String>("peer") {
@@ -169,7 +260,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             match peer.parse() {
                 Ok(addr) => config.add_peer(addr),
                 Err(e) => {
-                    eprintln!("Invalid peer address '{}': {}", peer, e);
+                    tracing::error!("Invalid peer address '{}': {}", peer, e);
                     process::exit(1);
                 }
             };
@@ -182,6 +273,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches.get_flag("no-masternodes") {
         config = config.without_masternodes();
+    }
+    if matches.get_flag("no-mempool") {
+        config.enable_mempool_tracking = false;
     }
 
     // Set start height if specified
@@ -201,114 +295,61 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Validate configuration
     if let Err(e) = config.validate() {
-        eprintln!("Configuration error: {}", e);
+        tracing::error!("Configuration error: {}", e);
         process::exit(1);
     }
 
-    tracing::info!("Starting Dash SPV client");
-    tracing::info!("Network: {:?}", network);
-    if let Some(path) = config.storage_path.as_ref() {
-        tracing::info!("Data directory: {}", path.display());
-    }
-    tracing::info!("Validation mode: {:?}", validation_mode);
     tracing::info!("Sync strategy: Sequential");
 
-    // Check if terminal UI should be enabled
-    let enable_terminal_ui = matches.get_flag("terminal-ui");
-
-    // Initialize logging first (without terminal UI)
-    dash_spv::init_logging(log_level)?;
-
-    // Log the data directory being used
-    tracing::info!("Using data directory: {}", data_dir.display());
-
     // Create the wallet manager
-    let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
     let wallet_id = wallet_manager.create_wallet_from_mnemonic(
-        "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside",
+        mnemonic_phrase.as_str(),
         "",
-        &[network],
-        None,
+        0,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
 
     // Create network manager
-    let network_manager =
-        match dash_spv::network::multi_peer::MultiPeerNetworkManager::new(&config).await {
-            Ok(nm) => nm,
-            Err(e) => {
-                eprintln!("Failed to create network manager: {}", e);
-                process::exit(1);
-            }
-        };
-
-    // Create and start the client based on storage type
-    if config.enable_persistence {
-        if let Some(path) = &config.storage_path {
-            let storage_manager =
-                match dash_spv::storage::DiskStorageManager::new(path.clone()).await {
-                    Ok(sm) => sm,
-                    Err(e) => {
-                        eprintln!("Failed to create disk storage manager: {}", e);
-                        process::exit(1);
-                    }
-                };
-            run_client(
-                config,
-                network_manager,
-                storage_manager,
-                wallet,
-                enable_terminal_ui,
-                &matches,
-                wallet_id,
-            )
-            .await?;
-        } else {
-            let storage_manager = match dash_spv::storage::MemoryStorageManager::new().await {
-                Ok(sm) => sm,
-                Err(e) => {
-                    eprintln!("Failed to create memory storage manager: {}", e);
-                    process::exit(1);
-                }
-            };
-            run_client(
-                config,
-                network_manager,
-                storage_manager,
-                wallet,
-                enable_terminal_ui,
-                &matches,
-                wallet_id,
-            )
-            .await?;
+    let network_manager = match dash_spv::network::manager::PeerNetworkManager::new(&config).await {
+        Ok(nm) => nm,
+        Err(e) => {
+            eprintln!("Failed to create network manager: {}", e);
+            process::exit(1);
         }
+    };
+
+    let path = if let Some(path) = &config.storage_path {
+        path.clone()
     } else {
-        let storage_manager = match dash_spv::storage::MemoryStorageManager::new().await {
-            Ok(sm) => sm,
-            Err(e) => {
-                eprintln!("Failed to create memory storage manager: {}", e);
-                process::exit(1);
-            }
-        };
-        run_client(
-            config,
-            network_manager,
-            storage_manager,
-            wallet,
-            enable_terminal_ui,
-            &matches,
-            wallet_id,
-        )
-        .await?;
-    }
+        "./.tmp/main-exec-storage".into()
+    };
+
+    let storage_manager = match dash_spv::storage::DiskStorageManager::new(path.clone()).await {
+        Ok(sm) => sm,
+        Err(e) => {
+            eprintln!("Failed to create disk storage manager: {}", e);
+            process::exit(1);
+        }
+    };
+    run_client(
+        config,
+        network_manager,
+        storage_manager,
+        wallet,
+        enable_terminal_ui,
+        &matches,
+        wallet_id,
+    )
+    .await?;
 
     Ok(())
 }
 
 async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static>(
     config: ClientConfig,
-    network_manager: dash_spv::network::multi_peer::MultiPeerNetworkManager,
+    network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
     enable_terminal_ui: bool,
@@ -319,7 +360,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     let mut client =
         match DashSpvClient::<
             WalletManager<ManagedWalletInfo>,
-            dash_spv::network::multi_peer::MultiPeerNetworkManager,
+            dash_spv::network::manager::PeerNetworkManager,
             S,
         >::new(config.clone(), network_manager, storage_manager, wallet.clone())
         .await
@@ -373,7 +414,6 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     // Take the client's event receiver and spawn a logger task
     if let Some(mut event_rx) = client.take_event_receiver() {
         let wallet_for_logger = wallet.clone();
-        let network_for_logger = config.network;
         let wallet_id_for_logger = wallet_id;
         tokio::spawn(async move {
             use dash_spv::types::SpvEvent;
@@ -411,16 +451,11 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                     _ = tokio::time::sleep(snapshot_interval) => {
                         // Log snapshot if interval has elapsed
                         if last_snapshot.elapsed() >= snapshot_interval {
-                            let (tx_count, wallet_affecting_tx_count, confirmed, unconfirmed, locked, total, derived_incoming) = {
+                            let (tx_count, confirmed, unconfirmed, locked, total) = {
                                 let mgr = wallet_for_logger.read().await;
-                                // Count transactions via network state for the selected network
-                                let txs = mgr
-                                    .get_network_state(network_for_logger)
-                                    .map(|ns| ns.transactions.len())
-                                    .unwrap_or(0);
 
                                 // Count wallet-affecting transactions from wallet transaction history
-                                let wallet_affecting = mgr
+                                let tx_count = mgr
                                     .wallet_transaction_history(&wallet_id_for_logger)
                                     .map(|v| v.len())
                                     .unwrap_or(0);
@@ -429,36 +464,17 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                                 let wb = mgr.get_wallet_balance(&wallet_id_for_logger).ok();
                                 let (c, u, l, t) = wb.map(|b| (b.confirmed, b.unconfirmed, b.locked, b.total)).unwrap_or((0, 0, 0, 0));
 
-                                // Derive a conservative incoming total by summing tx outputs to our addresses.
-                                let incoming_sum = if let Some(ns) = mgr.get_network_state(network_for_logger) {
-                                    let addrs = mgr.monitored_addresses(network_for_logger);
-                                    let addr_set: std::collections::HashSet<_> = addrs.into_iter().collect();
-                                    let mut sum_incoming: u64 = 0;
-                                    for rec in ns.transactions.values() {
-                                        for out in &rec.transaction.output {
-                                            if let Ok(out_addr) = dashcore::Address::from_script(&out.script_pubkey, network_for_logger) {
-                                                if addr_set.contains(&out_addr) {
-                                                    sum_incoming = sum_incoming.saturating_add(out.value);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    sum_incoming
-                                } else { 0 };
-
-                                (txs, wallet_affecting, c, u, l, t, incoming_sum)
+                                (tx_count, c, u, l, t)
                             };
                             tracing::info!(
-                                "Wallet tx summary: detected={} (blocks={} + mempool={}), affecting_wallet={}, balances: confirmed={} unconfirmed={} locked={} total={}, derived_incoming_total={} (approx)",
+                                "Wallet tx summary: tx_count={} (blocks={} + mempool={}), balances: confirmed={} unconfirmed={} locked={} total={}",
                                 tx_count,
                                 total_detected_block_txs,
                                 total_detected_mempool_txs,
-                                wallet_affecting_tx_count,
                                 confirmed,
                                 unconfirmed,
                                 locked,
                                 total,
-                                derived_incoming
                             );
                             last_snapshot = std::time::Instant::now();
                         }
@@ -551,7 +567,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     // Display current wallet addresses
     {
         let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.monitored_addresses(config.network);
+        let monitored = wallet_lock.monitored_addresses();
         if !monitored.is_empty() {
             tracing::info!("Wallet monitoring {} addresses:", monitored.len());
             for (i, addr) in monitored.iter().take(10).enumerate() {
@@ -593,7 +609,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     // Check filters for matches if wallet has addresses before starting monitoring
     let should_check_filters = {
         let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.monitored_addresses(config.network);
+        let monitored = wallet_lock.monitored_addresses();
         !monitored.is_empty() && !matches.get_flag("no-filters")
     };
 
@@ -623,32 +639,10 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
         tracing::info!("You can manually trigger filter sync later if needed");
     }
 
-    tokio::select! {
-        result = client.monitor_network() => {
-            if let Err(e) = result {
-                tracing::error!("Network monitoring failed: {}", e);
-            }
-        }
-        _ = signal::ctrl_c() => {
-            tracing::info!("Received shutdown signal (Ctrl-C)");
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
 
-            // Stop the client immediately
-            tracing::info!("Stopping SPV client...");
-            if let Err(e) = client.stop().await {
-                tracing::error!("Error stopping client: {}", e);
-            } else {
-                tracing::info!("SPV client stopped successfully");
-            }
-            return Ok(());
-        }
-    }
+    client.run(command_receiver, shutdown_token).await?;
 
-    // Stop the client (if monitor_network exited normally)
-    tracing::info!("Stopping SPV client...");
-    if let Err(e) = client.stop().await {
-        tracing::error!("Error stopping client: {}", e);
-    }
-
-    tracing::info!("SPV client stopped");
     Ok(())
 }

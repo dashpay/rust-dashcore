@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Advanced BIP38 Test Runner Script
-# 
+#
 # This script provides more control over running BIP38 tests with various options.
 #
-# Usage: 
+# Usage:
 #   ./test_bip38_advanced.sh              # Run all BIP38 tests
 #   ./test_bip38_advanced.sh --quick      # Run only quick BIP38 tests (skip performance)
 #   ./test_bip38_advanced.sh --single <test_name>  # Run a specific test
@@ -132,21 +132,21 @@ run_test() {
     local test_pattern=$1
     local description=$2
     local start_time=$(date +%s)
-    
+
     echo -e "${YELLOW}Running: $description${NC}"
-    
+
     # Build the test command
     local cmd="cargo test $CONFIG --lib $test_pattern -- --ignored"
-    
+
     if [ "$VERBOSE" = true ]; then
         cmd="$cmd --nocapture"
     fi
-    
+
     # Execute the test
     if eval $cmd 2>&1; then
         local end_time=$(date +%s)
         local duration=$((end_time - start_time))
-        
+
         if [ "$SHOW_TIMING" = true ]; then
             echo -e "${GREEN}✓ $description passed${NC} ($(format_duration $duration))"
         else
@@ -199,12 +199,12 @@ else
         ["bip38_tests::tests::test_bip38_round_trip"]="Round-trip encryption/decryption"
         ["bip38_tests::tests::test_bip38_invalid_prefix"]="Invalid prefix handling"
     )
-    
+
     # Add performance test if not in quick mode
     if [ "$QUICK_MODE" = false ]; then
         TEST_MODULES["bip38_tests::tests::test_bip38_performance"]="Performance benchmark"
     fi
-    
+
     # Run each test module
     for test in "${!TEST_MODULES[@]}"; do
         TOTAL_TESTS=$((TOTAL_TESTS + 1))

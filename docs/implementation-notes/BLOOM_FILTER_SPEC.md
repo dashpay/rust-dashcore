@@ -396,7 +396,7 @@ impl MempoolFilter {
 }
 ```
 
-### 5. Network Integration (`dash-spv/src/network/peer.rs` modifications)
+### 5. Network Integration (`dash-spv/src/network/manager.rs` modifications)
 
 ```rust
 // Add to Peer struct
@@ -700,7 +700,7 @@ peer.send_filter_add(new_address.to_script_pubkey().as_bytes()).await?;
 - Filter creation: < 1ms for 1000 elements
 - Insert operation: O(k) where k = number of hash functions
 - Contains check: O(k) 
-- Memory usage: ~4.5KB for 0.1% FPR with 1000 elements
+- Memory usage: ~4.5KB for 0.1% false positive rate with 1000 elements
 
 ### Bandwidth Savings
 - Full blocks: ~1-2MB per block

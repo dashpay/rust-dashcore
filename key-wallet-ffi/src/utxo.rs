@@ -6,7 +6,6 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::FFIManagedWalletInfo;
-use crate::types::{FFINetwork, FFINetworks};
 
 /// UTXO structure for FFI
 #[repr(C)]
@@ -88,7 +87,6 @@ impl FFIUTXO {
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_utxos(
     managed_info: *const FFIManagedWalletInfo,
-    network: FFINetwork,
     utxos_out: *mut *mut FFIUTXO,
     count_out: *mut usize,
     error: *mut FFIError,
@@ -99,10 +97,9 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
     }
 
     let managed_info = &*managed_info;
-    let network_rust: key_wallet::Network = network.into();
 
     // Get UTXOs from the managed wallet info
-    let utxos = managed_info.inner().get_utxos(network_rust);
+    let utxos = managed_info.inner().get_utxos();
 
     if utxos.is_empty() {
         *count_out = 0;
@@ -163,7 +160,6 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
 #[deprecated(note = "Use managed_wallet_get_utxos with ManagedWalletInfo instead")]
 pub unsafe extern "C" fn wallet_get_utxos(
     _wallet: *const crate::types::FFIWallet,
-    _network: FFINetworks,
     utxos_out: *mut *mut FFIUTXO,
     count_out: *mut usize,
     error: *mut FFIError,

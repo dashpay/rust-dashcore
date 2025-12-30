@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 236
+**Total Functions**: 242
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ Functions: 2
 | Function | Description | Module |
 |----------|-------------|--------|
 | `key_wallet_ffi_initialize` | Initialize the library | lib |
-| `key_wallet_ffi_version` | Get library version  Returns a static string that should NOT be freed by the ... | lib |
+| `key_wallet_ffi_version` | Get library version  Returns a static string that should NOT be freed by the... | lib |
 
 ### Error Handling
 
@@ -36,9 +36,9 @@ Functions: 3
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `account_result_free_error` | Free an account result's error message (if any) Note: This does NOT free the ... | account |
-| `error_message_free` | Free an error message  # Safety  - `message` must be a valid pointer to a C s... | error |
-| `managed_account_result_free_error` | Free a managed account result's error message (if any) Note: This does NOT fr... | managed_account |
+| `account_result_free_error` | Free an account result's error message (if any) Note: This does NOT free the... | account |
+| `error_message_free` | Free an error message  # Safety  - `message` must be a valid pointer to a C... | error |
+| `managed_account_result_free_error` | Free a managed account result's error message (if any) Note: This does NOT... | managed_account |
 
 ### Wallet Manager
 
@@ -46,89 +46,94 @@ Functions: 19
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `wallet_manager_add_wallet_from_mnemonic` | Add a wallet from mnemonic to the manager (backward compatibility)  # Safety ... | wallet_manager |
+| `wallet_manager_add_wallet_from_mnemonic` | Add a wallet from mnemonic to the manager (backward compatibility)  # Safety... | wallet_manager |
 | `wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes` | No description | wallet_manager |
-| `wallet_manager_add_wallet_from_mnemonic_with_options` | Add a wallet from mnemonic to the manager with options  # Safety  - `manager`... | wallet_manager |
+| `wallet_manager_add_wallet_from_mnemonic_with_options` | Add a wallet from mnemonic to the manager with options  # Safety  -... | wallet_manager |
 | `wallet_manager_create` | Create a new wallet manager | wallet_manager |
-| `wallet_manager_current_height` | Get current height for a network  # Safety  - `manager` must be a valid point... | wallet_manager |
-| `wallet_manager_describe` | Describe the wallet manager for a given network and return a newly allocated ... | wallet_manager |
-| `wallet_manager_free` | Free wallet manager  # Safety  - `manager` must be a valid pointer to an FFIW... | wallet_manager |
-| `wallet_manager_free_addresses` | Free address array  # Safety  - `addresses` must be a valid pointer to an arr... | wallet_manager |
+| `wallet_manager_current_height` | Get current height for a network  # Safety  - `manager` must be a valid... | wallet_manager |
+| `wallet_manager_describe` | Describe the wallet manager for a given network and return a newly allocated... | wallet_manager |
+| `wallet_manager_free` | Free wallet manager  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
+| `wallet_manager_free_addresses` | Free address array  # Safety  - `addresses` must be a valid pointer to an... | wallet_manager |
 | `wallet_manager_free_string` | Free a string previously returned by wallet manager APIs | wallet_manager |
 | `wallet_manager_free_wallet_bytes` | No description | wallet_manager |
-| `wallet_manager_free_wallet_ids` | Free wallet IDs buffer  # Safety  - `wallet_ids` must be a valid pointer to a... | wallet_manager |
-| `wallet_manager_get_managed_wallet_info` | Get managed wallet info from the manager  Returns a reference to the managed ... | wallet_manager |
-| `wallet_manager_get_wallet` | Get a wallet from the manager  Returns a reference to the wallet if found  # ... | wallet_manager |
-| `wallet_manager_get_wallet_balance` | Get wallet balance  Returns the confirmed and unconfirmed balance for a speci... | wallet_manager |
-| `wallet_manager_get_wallet_ids` | Get wallet IDs  # Safety  - `manager` must be a valid pointer to an FFIWallet... | wallet_manager |
+| `wallet_manager_free_wallet_ids` | Free wallet IDs buffer  # Safety  - `wallet_ids` must be a valid pointer to... | wallet_manager |
+| `wallet_manager_get_managed_wallet_info` | Get managed wallet info from the manager  Returns a reference to the managed... | wallet_manager |
+| `wallet_manager_get_wallet` | Get a wallet from the manager  Returns a reference to the wallet if found  #... | wallet_manager |
+| `wallet_manager_get_wallet_balance` | Get wallet balance  Returns the confirmed and unconfirmed balance for a... | wallet_manager |
+| `wallet_manager_get_wallet_ids` | Get wallet IDs  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
 | `wallet_manager_import_wallet_from_bytes` | No description | wallet_manager |
-| `wallet_manager_process_transaction` | Process a transaction through all wallets  Checks a transaction against all w... | wallet_manager |
-| `wallet_manager_update_height` | Update block height for a network  # Safety  - `manager` must be a valid poin... | wallet_manager |
-| `wallet_manager_wallet_count` | Get wallet count  # Safety  - `manager` must be a valid pointer to an FFIWall... | wallet_manager |
+| `wallet_manager_process_transaction` | Process a transaction through all wallets  Checks a transaction against all... | wallet_manager |
+| `wallet_manager_update_height` | Update block height for a network  # Safety  - `manager` must be a valid... | wallet_manager |
+| `wallet_manager_wallet_count` | Get wallet count  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
 
 ### Wallet Operations
 
-Functions: 57
+Functions: 62
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `account_get_parent_wallet_id` | Get the parent wallet ID of an account  # Safety  - `account` must be a valid... | account |
+| `account_get_parent_wallet_id` | Get the parent wallet ID of an account  # Safety  - `account` must be a... | account |
 | `bls_account_get_parent_wallet_id` | No description | account |
 | `eddsa_account_get_parent_wallet_id` | No description | account |
-| `ffi_managed_wallet_free` | Free a managed wallet (FFIManagedWalletInfo type)  # Safety  - `managed_walle... | transaction_checking |
-| `key_wallet_derive_address_from_key` | Derive an address from a private key  # Safety - `private_key` must be a vali... | derivation |
-| `key_wallet_derive_address_from_seed` | Derive an address from a seed at a specific derivation path  # Safety - `seed... | derivation |
-| `key_wallet_derive_private_key_from_seed` | Derive a private key from a seed at a specific derivation path  # Safety - `s... | derivation |
-| `managed_account_get_parent_wallet_id` | Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't s... | managed_account |
-| `managed_wallet_check_transaction` | Check if a transaction belongs to the wallet  This function checks a transact... | transaction_checking |
-| `managed_wallet_free` | Free managed wallet info  # Safety  - `managed_wallet` must be a valid pointe... | managed_wallet |
-| `managed_wallet_generate_addresses_to_index` | Generate addresses up to a specific index in a pool  This ensures that addres... | address_pool |
-| `managed_wallet_get_account` | Get a managed account from a managed wallet  This function gets a ManagedAcco... | managed_account |
-| `managed_wallet_get_account_collection` | Get managed account collection for a specific network from wallet manager  # ... | managed_account_collection |
-| `managed_wallet_get_account_count` | Get number of accounts in a managed wallet  # Safety  - `manager` must be a v... | managed_account |
-| `managed_wallet_get_address_pool_info` | Get address pool information for an account  # Safety  - `managed_wallet` mus... | address_pool |
-| `managed_wallet_get_balance` | Get wallet balance from managed wallet info  Returns the balance breakdown in... | managed_wallet |
-| `managed_wallet_get_bip_44_external_address_range` | Get BIP44 external (receive) addresses in the specified range  Returns extern... | managed_wallet |
-| `managed_wallet_get_bip_44_internal_address_range` | Get BIP44 internal (change) addresses in the specified range  Returns interna... | managed_wallet |
-| `managed_wallet_get_next_bip44_change_address` | Get the next unused change address  Generates the next unused change address ... | managed_wallet |
-| `managed_wallet_get_next_bip44_receive_address` | Get the next unused receive address  Generates the next unused receive addres... | managed_wallet |
-| `managed_wallet_get_top_up_account_with_registration_index` | Get a managed IdentityTopUp account with a specific registration index  This ... | managed_account |
-| `managed_wallet_get_utxos` | Get all UTXOs from managed wallet info  # Safety  - `managed_info` must be a ... | utxo |
-| `managed_wallet_info_free` | Free managed wallet info returned by wallet_manager_get_managed_wallet_info  ... | managed_wallet |
-| `managed_wallet_mark_address_used` | Mark an address as used in the pool  This updates the pool's tracking of whic... | address_pool |
-| `managed_wallet_set_gap_limit` | Set the gap limit for an address pool  The gap limit determines how many unus... | address_pool |
-| `wallet_add_account` | Add an account to the wallet without xpub  # Safety  This function dereferenc... | wallet |
-| `wallet_add_account_with_string_xpub` | Add an account to the wallet with xpub as string  # Safety  This function der... | wallet |
-| `wallet_add_account_with_xpub_bytes` | Add an account to the wallet with xpub as byte array  # Safety  This function... | wallet |
-| `wallet_build_transaction` | Build a transaction  # Safety  - `wallet` must be a valid pointer to an FFIWa... | transaction |
-| `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  # Safet... | transaction |
-| `wallet_create_from_mnemonic` | Create a new wallet from mnemonic (backward compatibility - single network)  ... | wallet |
-| `wallet_create_from_mnemonic_with_options` | Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must b... | wallet |
-| `wallet_create_from_seed` | Create a new wallet from seed (backward compatibility)  # Safety  - `seed` mu... | wallet |
-| `wallet_create_from_seed_with_options` | Create a new wallet from seed with options  # Safety  - `seed` must be a vali... | wallet |
-| `wallet_create_managed_wallet` | Create a managed wallet from a regular wallet  This creates a ManagedWalletIn... | transaction_checking |
-| `wallet_create_random` | Create a new random wallet (backward compatibility)  # Safety  - `error` must... | wallet |
-| `wallet_create_random_with_options` | Create a new random wallet with options  # Safety  - `account_options` must b... | wallet |
-| `wallet_derive_extended_private_key` | Derive extended private key at a specific path Returns an opaque FFIExtendedP... | keys |
-| `wallet_derive_extended_public_key` | Derive extended public key at a specific path Returns an opaque FFIExtendedPu... | keys |
-| `wallet_derive_private_key` | Derive private key at a specific path Returns an opaque FFIPrivateKey pointer... | keys |
-| `wallet_derive_private_key_as_wif` | Derive private key at a specific path and return as WIF string  # Safety  - `... | keys |
-| `wallet_derive_public_key` | Derive public key at a specific path Returns an opaque FFIPublicKey pointer t... | keys |
-| `wallet_derive_public_key_as_hex` | Derive public key at a specific path and return as hex string  # Safety  - `w... | keys |
-| `wallet_free` | Free a wallet  # Safety  - `wallet` must be a valid pointer to an FFIWallet t... | wallet |
-| `wallet_free_const` | Free a const wallet handle  This is a const-safe wrapper for wallet_free() th... | wallet |
-| `wallet_get_account` | Get an account handle for a specific account type Returns a result containing... | account |
-| `wallet_get_account_collection` | Get account collection for a specific network from wallet  # Safety  - `walle... | account_collection |
-| `wallet_get_account_count` | Get number of accounts  # Safety  - `wallet` must be a valid pointer to an FF... | account |
-| `wallet_get_account_xpriv` | Get extended private key for account  # Safety  - `wallet` must be a valid po... | keys |
-| `wallet_get_account_xpub` | Get extended public key for account  # Safety  - `wallet` must be a valid poi... | keys |
-| `wallet_get_id` | Get wallet ID (32-byte hash)  # Safety  - `wallet` must be a valid pointer to... | wallet |
-| `wallet_get_top_up_account_with_registration_index` | Get an IdentityTopUp account handle with a specific registration index This i... | account |
-| `wallet_get_utxos` | Get all UTXOs (deprecated - use managed_wallet_get_utxos instead)  # Safety  ... | utxo |
-| `wallet_get_xpub` | Get extended public key for account  # Safety  - `wallet` must be a valid poi... | wallet |
-| `wallet_has_mnemonic` | Check if wallet has mnemonic  # Safety  - `wallet` must be a valid pointer to... | wallet |
-| `wallet_is_watch_only` | Check if wallet is watch-only  # Safety  - `wallet` must be a valid pointer t... | wallet |
-| `wallet_sign_transaction` | Sign a transaction  # Safety  - `wallet` must be a valid pointer to an FFIWal... | transaction |
+| `ffi_managed_wallet_free` | Free a managed wallet (FFIManagedWalletInfo type)  # Safety  -... | transaction_checking |
+| `key_wallet_derive_address_from_key` | Derive an address from a private key  # Safety - `private_key` must be a... | derivation |
+| `key_wallet_derive_address_from_seed` | Derive an address from a seed at a specific derivation path  # Safety -... | derivation |
+| `key_wallet_derive_private_key_from_seed` | Derive a private key from a seed at a specific derivation path  # Safety -... | derivation |
+| `managed_account_get_parent_wallet_id` | Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't... | managed_account |
+| `managed_wallet_check_transaction` | Check if a transaction belongs to the wallet  This function checks a... | transaction_checking |
+| `managed_wallet_free` | Free managed wallet info  # Safety  - `managed_wallet` must be a valid... | managed_wallet |
+| `managed_wallet_generate_addresses_to_index` | Generate addresses up to a specific index in a pool  This ensures that... | address_pool |
+| `managed_wallet_get_account` | Get a managed account from a managed wallet  This function gets a... | managed_account |
+| `managed_wallet_get_account_collection` | Get managed account collection for a specific network from wallet manager  #... | managed_account_collection |
+| `managed_wallet_get_account_count` | Get number of accounts in a managed wallet  # Safety  - `manager` must be a... | managed_account |
+| `managed_wallet_get_address_pool_info` | Get address pool information for an account  # Safety  - `managed_wallet`... | address_pool |
+| `managed_wallet_get_balance` | Get wallet balance from managed wallet info  Returns the balance breakdown... | managed_wallet |
+| `managed_wallet_get_bip_44_external_address_range` | Get BIP44 external (receive) addresses in the specified range  Returns... | managed_wallet |
+| `managed_wallet_get_bip_44_internal_address_range` | Get BIP44 internal (change) addresses in the specified range  Returns... | managed_wallet |
+| `managed_wallet_get_dashpay_external_account` | Get a managed DashPay external account by composite key  # Safety - Pointers... | managed_account |
+| `managed_wallet_get_dashpay_receiving_account` | Get a managed DashPay receiving funds account by composite key  # Safety -... | managed_account |
+| `managed_wallet_get_next_bip44_change_address` | Get the next unused change address  Generates the next unused change address... | managed_wallet |
+| `managed_wallet_get_next_bip44_receive_address` | Get the next unused receive address  Generates the next unused receive... | managed_wallet |
+| `managed_wallet_get_top_up_account_with_registration_index` | Get a managed IdentityTopUp account with a specific registration index  This... | managed_account |
+| `managed_wallet_get_utxos` | Get all UTXOs from managed wallet info  # Safety  - `managed_info` must be a... | utxo |
+| `managed_wallet_info_free` | Free managed wallet info returned by wallet_manager_get_managed_wallet_info ... | managed_wallet |
+| `managed_wallet_mark_address_used` | Mark an address as used in the pool  This updates the pool's tracking of... | address_pool |
+| `managed_wallet_set_gap_limit` | Set the gap limit for an address pool  The gap limit determines how many... | address_pool |
+| `wallet_add_account` | Add an account to the wallet without xpub  # Safety  This function... | wallet |
+| `wallet_add_account_with_string_xpub` | Add an account to the wallet with xpub as string  # Safety  This function... | wallet |
+| `wallet_add_account_with_xpub_bytes` | Add an account to the wallet with xpub as byte array  # Safety  This... | wallet |
+| `wallet_add_dashpay_external_account_with_xpub_bytes` | Add a DashPay external (watch-only) account with xpub bytes  # Safety -... | wallet |
+| `wallet_add_dashpay_receiving_account` | Add a DashPay receiving funds account  # Safety - `wallet` must be a valid... | wallet |
+| `wallet_build_and_sign_transaction` | Build and sign a transaction using the wallet's managed info  This is the... | transaction |
+| `wallet_build_transaction` | Build a transaction (unsigned)  This creates an unsigned transaction | transaction |
+| `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  #... | transaction |
+| `wallet_create_from_mnemonic` | Create a new wallet from mnemonic (backward compatibility - single network) ... | wallet |
+| `wallet_create_from_mnemonic_with_options` | Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must... | wallet |
+| `wallet_create_from_seed` | Create a new wallet from seed (backward compatibility)  # Safety  - `seed`... | wallet |
+| `wallet_create_from_seed_with_options` | Create a new wallet from seed with options  # Safety  - `seed` must be a... | wallet |
+| `wallet_create_managed_wallet` | Create a managed wallet from a regular wallet  This creates a... | transaction_checking |
+| `wallet_create_random` | Create a new random wallet (backward compatibility)  # Safety  - `error`... | wallet |
+| `wallet_create_random_with_options` | Create a new random wallet with options  # Safety  - `account_options` must... | wallet |
+| `wallet_derive_extended_private_key` | Derive extended private key at a specific path Returns an opaque... | keys |
+| `wallet_derive_extended_public_key` | Derive extended public key at a specific path Returns an opaque... | keys |
+| `wallet_derive_private_key` | Derive private key at a specific path Returns an opaque FFIPrivateKey... | keys |
+| `wallet_derive_private_key_as_wif` | Derive private key at a specific path and return as WIF string  # Safety  -... | keys |
+| `wallet_derive_public_key` | Derive public key at a specific path Returns an opaque FFIPublicKey pointer... | keys |
+| `wallet_derive_public_key_as_hex` | Derive public key at a specific path and return as hex string  # Safety  -... | keys |
+| `wallet_free` | Free a wallet  # Safety  - `wallet` must be a valid pointer to an FFIWallet... | wallet |
+| `wallet_free_const` | Free a const wallet handle  This is a const-safe wrapper for wallet_free()... | wallet |
+| `wallet_get_account` | Get an account handle for a specific account type Returns a result... | account |
+| `wallet_get_account_collection` | Get account collection for a specific network from wallet  # Safety  -... | account_collection |
+| `wallet_get_account_count` | Get number of accounts  # Safety  - `wallet` must be a valid pointer to an... | account |
+| `wallet_get_account_xpriv` | Get extended private key for account  # Safety  - `wallet` must be a valid... | keys |
+| `wallet_get_account_xpub` | Get extended public key for account  # Safety  - `wallet` must be a valid... | keys |
+| `wallet_get_id` | Get wallet ID (32-byte hash)  # Safety  - `wallet` must be a valid pointer... | wallet |
+| `wallet_get_top_up_account_with_registration_index` | Get an IdentityTopUp account handle with a specific registration index This... | account |
+| `wallet_get_utxos` | Get all UTXOs (deprecated - use managed_wallet_get_utxos instead)  # Safety ... | utxo |
+| `wallet_get_xpub` | Get extended public key for account  # Safety  - `wallet` must be a valid... | wallet |
+| `wallet_has_mnemonic` | Check if wallet has mnemonic  # Safety  - `wallet` must be a valid pointer... | wallet |
+| `wallet_is_watch_only` | Check if wallet is watch-only  # Safety  - `wallet` must be a valid pointer... | wallet |
+| `wallet_sign_transaction` | Sign a transaction  # Safety  - `wallet` must be a valid pointer to an... | transaction |
 
 ### Account Management
 
@@ -136,45 +141,45 @@ Functions: 94
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `account_collection_count` | Get the total number of accounts in the collection  # Safety  - `collection` ... | account_collection |
-| `account_collection_free` | Free an account collection handle  # Safety  - `collection` must be a valid p... | account_collection |
-| `account_collection_get_bip32_account` | Get a BIP32 account by index from the collection  # Safety  - `collection` mu... | account_collection |
-| `account_collection_get_bip32_indices` | Get all BIP32 account indices  # Safety  - `collection` must be a valid point... | account_collection |
-| `account_collection_get_bip44_account` | Get a BIP44 account by index from the collection  # Safety  - `collection` mu... | account_collection |
-| `account_collection_get_bip44_indices` | Get all BIP44 account indices  # Safety  - `collection` must be a valid point... | account_collection |
-| `account_collection_get_coinjoin_account` | Get a CoinJoin account by index from the collection  # Safety  - `collection`... | account_collection |
-| `account_collection_get_coinjoin_indices` | Get all CoinJoin account indices  # Safety  - `collection` must be a valid po... | account_collection |
-| `account_collection_get_identity_invitation` | Get the identity invitation account if it exists  # Safety  - `collection` mu... | account_collection |
-| `account_collection_get_identity_registration` | Get the identity registration account if it exists  # Safety  - `collection` ... | account_collection |
-| `account_collection_get_identity_topup` | Get an identity topup account by registration index  # Safety  - `collection`... | account_collection |
-| `account_collection_get_identity_topup_indices` | Get all identity topup registration indices  # Safety  - `collection` must be... | account_collection |
-| `account_collection_get_identity_topup_not_bound` | Get the identity topup not bound account if it exists  # Safety  - `collectio... | account_collection |
-| `account_collection_get_provider_operator_keys` | Get the provider operator keys account if it exists Note: Returns null if the... | account_collection |
-| `account_collection_get_provider_owner_keys` | Get the provider owner keys account if it exists  # Safety  - `collection` mu... | account_collection |
-| `account_collection_get_provider_platform_keys` | Get the provider platform keys account if it exists Note: Returns null if the... | account_collection |
-| `account_collection_get_provider_voting_keys` | Get the provider voting keys account if it exists  # Safety  - `collection` m... | account_collection |
-| `account_collection_has_identity_invitation` | Check if identity invitation account exists  # Safety  - `collection` must be... | account_collection |
-| `account_collection_has_identity_registration` | Check if identity registration account exists  # Safety  - `collection` must ... | account_collection |
-| `account_collection_has_identity_topup_not_bound` | Check if identity topup not bound account exists  # Safety  - `collection` mu... | account_collection |
-| `account_collection_has_provider_operator_keys` | Check if provider operator keys account exists  # Safety  - `collection` must... | account_collection |
-| `account_collection_has_provider_owner_keys` | Check if provider owner keys account exists  # Safety  - `collection` must be... | account_collection |
-| `account_collection_has_provider_platform_keys` | Check if provider platform keys account exists  # Safety  - `collection` must... | account_collection |
-| `account_collection_has_provider_voting_keys` | Check if provider voting keys account exists  # Safety  - `collection` must b... | account_collection |
-| `account_collection_summary` | Get a human-readable summary of all accounts in the collection  Returns a for... | account_collection |
-| `account_collection_summary_data` | Get structured account collection summary data  Returns a struct containing a... | account_collection |
-| `account_collection_summary_free` | Free an account collection summary and all its allocated memory  # Safety  - ... | account_collection |
-| `account_derive_extended_private_key_at` | Derive an extended private key from an account at a given index, using the pr... | account_derivation |
-| `account_derive_extended_private_key_from_mnemonic` | Derive an extended private key from a mnemonic + optional passphrase at the g... | account_derivation |
+| `account_collection_count` | Get the total number of accounts in the collection  # Safety  - `collection`... | account_collection |
+| `account_collection_free` | Free an account collection handle  # Safety  - `collection` must be a valid... | account_collection |
+| `account_collection_get_bip32_account` | Get a BIP32 account by index from the collection  # Safety  - `collection`... | account_collection |
+| `account_collection_get_bip32_indices` | Get all BIP32 account indices  # Safety  - `collection` must be a valid... | account_collection |
+| `account_collection_get_bip44_account` | Get a BIP44 account by index from the collection  # Safety  - `collection`... | account_collection |
+| `account_collection_get_bip44_indices` | Get all BIP44 account indices  # Safety  - `collection` must be a valid... | account_collection |
+| `account_collection_get_coinjoin_account` | Get a CoinJoin account by index from the collection  # Safety  -... | account_collection |
+| `account_collection_get_coinjoin_indices` | Get all CoinJoin account indices  # Safety  - `collection` must be a valid... | account_collection |
+| `account_collection_get_identity_invitation` | Get the identity invitation account if it exists  # Safety  - `collection`... | account_collection |
+| `account_collection_get_identity_registration` | Get the identity registration account if it exists  # Safety  - `collection`... | account_collection |
+| `account_collection_get_identity_topup` | Get an identity topup account by registration index  # Safety  -... | account_collection |
+| `account_collection_get_identity_topup_indices` | Get all identity topup registration indices  # Safety  - `collection` must... | account_collection |
+| `account_collection_get_identity_topup_not_bound` | Get the identity topup not bound account if it exists  # Safety  -... | account_collection |
+| `account_collection_get_provider_operator_keys` | Get the provider operator keys account if it exists Note: Returns null if... | account_collection |
+| `account_collection_get_provider_owner_keys` | Get the provider owner keys account if it exists  # Safety  - `collection`... | account_collection |
+| `account_collection_get_provider_platform_keys` | Get the provider platform keys account if it exists Note: Returns null if... | account_collection |
+| `account_collection_get_provider_voting_keys` | Get the provider voting keys account if it exists  # Safety  - `collection`... | account_collection |
+| `account_collection_has_identity_invitation` | Check if identity invitation account exists  # Safety  - `collection` must... | account_collection |
+| `account_collection_has_identity_registration` | Check if identity registration account exists  # Safety  - `collection` must... | account_collection |
+| `account_collection_has_identity_topup_not_bound` | Check if identity topup not bound account exists  # Safety  - `collection`... | account_collection |
+| `account_collection_has_provider_operator_keys` | Check if provider operator keys account exists  # Safety  - `collection`... | account_collection |
+| `account_collection_has_provider_owner_keys` | Check if provider owner keys account exists  # Safety  - `collection` must... | account_collection |
+| `account_collection_has_provider_platform_keys` | Check if provider platform keys account exists  # Safety  - `collection`... | account_collection |
+| `account_collection_has_provider_voting_keys` | Check if provider voting keys account exists  # Safety  - `collection` must... | account_collection |
+| `account_collection_summary` | Get a human-readable summary of all accounts in the collection  Returns a... | account_collection |
+| `account_collection_summary_data` | Get structured account collection summary data  Returns a struct containing... | account_collection |
+| `account_collection_summary_free` | Free an account collection summary and all its allocated memory  # Safety  -... | account_collection |
+| `account_derive_extended_private_key_at` | Derive an extended private key from an account at a given index, using the... | account_derivation |
+| `account_derive_extended_private_key_from_mnemonic` | Derive an extended private key from a mnemonic + optional passphrase at the... | account_derivation |
 | `account_derive_extended_private_key_from_seed` | Derive an extended private key from a raw seed buffer at the given index | account_derivation |
-| `account_derive_private_key_as_wif_at` | Derive a private key from an account at a given chain/index and return as WIF... | account_derivation |
-| `account_derive_private_key_at` | Derive a private key (secp256k1) from an account at a given chain/index, usin... | account_derivation |
+| `account_derive_private_key_as_wif_at` | Derive a private key from an account at a given chain/index and return as... | account_derivation |
+| `account_derive_private_key_at` | Derive a private key (secp256k1) from an account at a given chain/index,... | account_derivation |
 | `account_derive_private_key_from_mnemonic` | Derive a private key from a mnemonic + optional passphrase at the given index | account_derivation |
 | `account_derive_private_key_from_seed` | Derive a private key from a raw seed buffer at the given index | account_derivation |
-| `account_free` | Free an account handle  # Safety  - `account` must be a valid pointer to an F... | account |
-| `account_get_account_type` | Get the account type of an account  # Safety  - `account` must be a valid poi... | account |
-| `account_get_extended_public_key_as_string` | Get the extended public key of an account as a string  # Safety  - `account` ... | account |
-| `account_get_is_watch_only` | Check if an account is watch-only  # Safety  - `account` must be a valid poin... | account |
-| `account_get_network` | Get the network of an account  # Safety  - `account` must be a valid pointer ... | account |
+| `account_free` | Free an account handle  # Safety  - `account` must be a valid pointer to an... | account |
+| `account_get_account_type` | Get the account type of an account  # Safety  - `account` must be a valid... | account |
+| `account_get_extended_public_key_as_string` | Get the extended public key of an account as a string  # Safety  - `account`... | account |
+| `account_get_is_watch_only` | Check if an account is watch-only  # Safety  - `account` must be a valid... | account |
+| `account_get_network` | Get the network of an account  # Safety  - `account` must be a valid pointer... | account |
 | `bls_account_derive_private_key_from_mnemonic` | No description | account_derivation |
 | `bls_account_derive_private_key_from_seed` | No description | account_derivation |
 | `bls_account_free` | No description | account |
@@ -190,46 +195,46 @@ Functions: 94
 | `eddsa_account_get_extended_public_key_as_string` | No description | account |
 | `eddsa_account_get_is_watch_only` | No description | account |
 | `eddsa_account_get_network` | No description | account |
-| `managed_account_collection_count` | Get the total number of accounts in the managed collection  # Safety  - `coll... | managed_account_collection |
-| `managed_account_collection_free` | Free a managed account collection handle  # Safety  - `collection` must be a ... | managed_account_collection |
-| `managed_account_collection_get_bip32_account` | Get a BIP32 account by index from the managed collection  # Safety  - `collec... | managed_account_collection |
-| `managed_account_collection_get_bip32_indices` | Get all BIP32 account indices from managed collection  # Safety  - `collectio... | managed_account_collection |
-| `managed_account_collection_get_bip44_account` | Get a BIP44 account by index from the managed collection  # Safety  - `collec... | managed_account_collection |
-| `managed_account_collection_get_bip44_indices` | Get all BIP44 account indices from managed collection  # Safety  - `collectio... | managed_account_collection |
-| `managed_account_collection_get_coinjoin_account` | Get a CoinJoin account by index from the managed collection  # Safety  - `col... | managed_account_collection |
-| `managed_account_collection_get_coinjoin_indices` | Get all CoinJoin account indices from managed collection  # Safety  - `collec... | managed_account_collection |
-| `managed_account_collection_get_identity_invitation` | Get the identity invitation account if it exists in managed collection  # Saf... | managed_account_collection |
-| `managed_account_collection_get_identity_registration` | Get the identity registration account if it exists in managed collection  # S... | managed_account_collection |
-| `managed_account_collection_get_identity_topup` | Get an identity topup account by registration index from managed collection  ... | managed_account_collection |
-| `managed_account_collection_get_identity_topup_indices` | Get all identity topup registration indices from managed collection  # Safety... | managed_account_collection |
-| `managed_account_collection_get_identity_topup_not_bound` | Get the identity topup not bound account if it exists in managed collection  ... | managed_account_collection |
-| `managed_account_collection_get_provider_operator_keys` | Get the provider operator keys account if it exists in managed collection Not... | managed_account_collection |
-| `managed_account_collection_get_provider_owner_keys` | Get the provider owner keys account if it exists in managed collection  # Saf... | managed_account_collection |
-| `managed_account_collection_get_provider_platform_keys` | Get the provider platform keys account if it exists in managed collection Not... | managed_account_collection |
-| `managed_account_collection_get_provider_voting_keys` | Get the provider voting keys account if it exists in managed collection  # Sa... | managed_account_collection |
-| `managed_account_collection_has_identity_invitation` | Check if identity invitation account exists in managed collection  # Safety  ... | managed_account_collection |
-| `managed_account_collection_has_identity_registration` | Check if identity registration account exists in managed collection  # Safety... | managed_account_collection |
-| `managed_account_collection_has_identity_topup_not_bound` | Check if identity topup not bound account exists in managed collection  # Saf... | managed_account_collection |
-| `managed_account_collection_has_provider_operator_keys` | Check if provider operator keys account exists in managed collection  # Safet... | managed_account_collection |
-| `managed_account_collection_has_provider_owner_keys` | Check if provider owner keys account exists in managed collection  # Safety  ... | managed_account_collection |
-| `managed_account_collection_has_provider_platform_keys` | Check if provider platform keys account exists in managed collection  # Safet... | managed_account_collection |
-| `managed_account_collection_has_provider_voting_keys` | Check if provider voting keys account exists in managed collection  # Safety ... | managed_account_collection |
-| `managed_account_collection_summary` | Get a human-readable summary of all accounts in the managed collection  Retur... | managed_account_collection |
-| `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection  Return... | managed_account_collection |
-| `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  # Saf... | managed_account_collection |
-| `managed_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer ... | managed_account |
-| `managed_account_free_transactions` | Free transactions array returned by managed_account_get_transactions  # Safet... | managed_account |
-| `managed_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a va... | managed_account |
-| `managed_account_get_address_pool` | Get an address pool from a managed account by type  This function returns the... | managed_account |
-| `managed_account_get_balance` | Get the balance of a managed account  # Safety  - `account` must be a valid p... | managed_account |
-| `managed_account_get_external_address_pool` | Get the external address pool from a managed account  This function returns t... | managed_account |
-| `managed_account_get_index` | Get the account index from a managed account  Returns the primary account ind... | managed_account |
-| `managed_account_get_internal_address_pool` | Get the internal address pool from a managed account  This function returns t... | managed_account |
-| `managed_account_get_is_watch_only` | Check if a managed account is watch-only  # Safety  - `account` must be a val... | managed_account |
-| `managed_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid p... | managed_account |
-| `managed_account_get_transaction_count` | Get the number of transactions in a managed account  # Safety  - `account` mu... | managed_account |
-| `managed_account_get_transactions` | Get all transactions from a managed account  Returns an array of FFITransacti... | managed_account |
-| `managed_account_get_utxo_count` | Get the number of UTXOs in a managed account  # Safety  - `account` must be a... | managed_account |
+| `managed_account_collection_count` | Get the total number of accounts in the managed collection  # Safety  -... | managed_account_collection |
+| `managed_account_collection_free` | Free a managed account collection handle  # Safety  - `collection` must be a... | managed_account_collection |
+| `managed_account_collection_get_bip32_account` | Get a BIP32 account by index from the managed collection  # Safety  -... | managed_account_collection |
+| `managed_account_collection_get_bip32_indices` | Get all BIP32 account indices from managed collection  # Safety  -... | managed_account_collection |
+| `managed_account_collection_get_bip44_account` | Get a BIP44 account by index from the managed collection  # Safety  -... | managed_account_collection |
+| `managed_account_collection_get_bip44_indices` | Get all BIP44 account indices from managed collection  # Safety  -... | managed_account_collection |
+| `managed_account_collection_get_coinjoin_account` | Get a CoinJoin account by index from the managed collection  # Safety  -... | managed_account_collection |
+| `managed_account_collection_get_coinjoin_indices` | Get all CoinJoin account indices from managed collection  # Safety  -... | managed_account_collection |
+| `managed_account_collection_get_identity_invitation` | Get the identity invitation account if it exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_get_identity_registration` | Get the identity registration account if it exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_get_identity_topup` | Get an identity topup account by registration index from managed collection ... | managed_account_collection |
+| `managed_account_collection_get_identity_topup_indices` | Get all identity topup registration indices from managed collection  #... | managed_account_collection |
+| `managed_account_collection_get_identity_topup_not_bound` | Get the identity topup not bound account if it exists in managed collection ... | managed_account_collection |
+| `managed_account_collection_get_provider_operator_keys` | Get the provider operator keys account if it exists in managed collection... | managed_account_collection |
+| `managed_account_collection_get_provider_owner_keys` | Get the provider owner keys account if it exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_get_provider_platform_keys` | Get the provider platform keys account if it exists in managed collection... | managed_account_collection |
+| `managed_account_collection_get_provider_voting_keys` | Get the provider voting keys account if it exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_has_identity_invitation` | Check if identity invitation account exists in managed collection  # Safety ... | managed_account_collection |
+| `managed_account_collection_has_identity_registration` | Check if identity registration account exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_has_identity_topup_not_bound` | Check if identity topup not bound account exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_has_provider_operator_keys` | Check if provider operator keys account exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_has_provider_owner_keys` | Check if provider owner keys account exists in managed collection  # Safety ... | managed_account_collection |
+| `managed_account_collection_has_provider_platform_keys` | Check if provider platform keys account exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_has_provider_voting_keys` | Check if provider voting keys account exists in managed collection  # Safety... | managed_account_collection |
+| `managed_account_collection_summary` | Get a human-readable summary of all accounts in the managed collection ... | managed_account_collection |
+| `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection ... | managed_account_collection |
+| `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  #... | managed_account_collection |
+| `managed_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer... | managed_account |
+| `managed_account_free_transactions` | Free transactions array returned by managed_account_get_transactions  #... | managed_account |
+| `managed_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a... | managed_account |
+| `managed_account_get_address_pool` | Get an address pool from a managed account by type  This function returns... | managed_account |
+| `managed_account_get_balance` | Get the balance of a managed account  # Safety  - `account` must be a valid... | managed_account |
+| `managed_account_get_external_address_pool` | Get the external address pool from a managed account  This function returns... | managed_account |
+| `managed_account_get_index` | Get the account index from a managed account  Returns the primary account... | managed_account |
+| `managed_account_get_internal_address_pool` | Get the internal address pool from a managed account  This function returns... | managed_account |
+| `managed_account_get_is_watch_only` | Check if a managed account is watch-only  # Safety  - `account` must be a... | managed_account |
+| `managed_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid... | managed_account |
+| `managed_account_get_transaction_count` | Get the number of transactions in a managed account  # Safety  - `account`... | managed_account |
+| `managed_account_get_transactions` | Get all transactions from a managed account  Returns an array of... | managed_account |
+| `managed_account_get_utxo_count` | Get the number of UTXOs in a managed account  # Safety  - `account` must be... | managed_account |
 
 ### Address Management
 
@@ -237,36 +242,37 @@ Functions: 10
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `address_array_free` | Free address array  # Safety  - `addresses` must be a valid pointer to an arr... | address |
-| `address_free` | Free address string  # Safety  - `address` must be a valid pointer created by... | address |
-| `address_get_type` | Get address type  Returns: - 0: P2PKH address - 1: P2SH address - 2: Other ad... | address |
-| `address_info_array_free` | Free an array of FFIAddressInfo structures  # Safety  - `infos` must be a val... | address_pool |
-| `address_info_free` | Free a single FFIAddressInfo structure  # Safety  - `info` must be a valid po... | address_pool |
-| `address_pool_free` | Free an address pool handle  # Safety  - `pool` must be a valid pointer to an... | address_pool |
-| `address_pool_get_address_at_index` | Get a single address info at a specific index from the pool  Returns detailed... | address_pool |
-| `address_pool_get_addresses_in_range` | Get a range of addresses from the pool  Returns an array of FFIAddressInfo st... | address_pool |
-| `address_to_pubkey_hash` | Extract public key hash from P2PKH address  # Safety - `address` must be a va... | transaction |
-| `address_validate` | Validate an address  # Safety  - `address` must be a valid null-terminated C ... | address |
+| `address_array_free` | Free address array  # Safety  - `addresses` must be a valid pointer to an... | address |
+| `address_free` | Free address string  # Safety  - `address` must be a valid pointer created... | address |
+| `address_get_type` | Get address type  Returns: - 0: P2PKH address - 1: P2SH address - 2: Other... | address |
+| `address_info_array_free` | Free an array of FFIAddressInfo structures  # Safety  - `infos` must be a... | address_pool |
+| `address_info_free` | Free a single FFIAddressInfo structure  # Safety  - `info` must be a valid... | address_pool |
+| `address_pool_free` | Free an address pool handle  # Safety  - `pool` must be a valid pointer to... | address_pool |
+| `address_pool_get_address_at_index` | Get a single address info at a specific index from the pool  Returns... | address_pool |
+| `address_pool_get_addresses_in_range` | Get a range of addresses from the pool  Returns an array of FFIAddressInfo... | address_pool |
+| `address_to_pubkey_hash` | Extract public key hash from P2PKH address  # Safety - `address` must be a... | transaction |
+| `address_validate` | Validate an address  # Safety  - `address` must be a valid null-terminated C... | address |
 
 ### Transaction Management
 
-Functions: 13
+Functions: 14
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `transaction_add_input` | Add an input to a transaction  # Safety - `tx` must be a valid pointer to an ... | transaction |
-| `transaction_add_output` | Add an output to a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
-| `transaction_bytes_free` | Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer create... | transaction |
-| `transaction_check_result_free` | Free a transaction check result  # Safety  - `result` must be a valid pointer... | transaction_checking |
-| `transaction_classify` | Get the transaction classification for routing  Returns a string describing t... | transaction_checking |
-| `transaction_create` | Create a new empty transaction  # Returns - Pointer to FFITransaction on succ... | transaction |
-| `transaction_deserialize` | Deserialize a transaction  # Safety - `data` must be a valid pointer to seria... | transaction |
-| `transaction_destroy` | Destroy a transaction  # Safety - `tx` must be a valid pointer to an FFITrans... | transaction |
-| `transaction_get_txid` | Get the transaction ID  # Safety - `tx` must be a valid pointer to an FFITran... | transaction |
-| `transaction_serialize` | Serialize a transaction  # Safety - `tx` must be a valid pointer to an FFITra... | transaction |
-| `transaction_sighash` | Calculate signature hash for an input  # Safety - `tx` must be a valid pointe... | transaction |
-| `transaction_sign_input` | Sign a transaction input  # Safety - `tx` must be a valid pointer to an FFITr... | transaction |
-| `utxo_array_free` | Free UTXO array  # Safety  - `utxos` must be a valid pointer to an array of F... | utxo |
+| `transaction_add_input` | Add an input to a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
+| `transaction_add_output` | Add an output to a transaction  # Safety - `tx` must be a valid pointer to... | transaction |
+| `transaction_bytes_free` | Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer... | transaction |
+| `transaction_check_result_free` | Free a transaction check result  # Safety  - `result` must be a valid... | transaction_checking |
+| `transaction_classify` | Get the transaction classification for routing  Returns a string describing... | transaction_checking |
+| `transaction_create` | Create a new empty transaction  # Returns - Pointer to FFITransaction on... | transaction |
+| `transaction_deserialize` | Deserialize a transaction  # Safety - `data` must be a valid pointer to... | transaction |
+| `transaction_destroy` | Destroy a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
+| `transaction_get_txid` | Get the transaction ID  # Safety - `tx` must be a valid pointer to an... | transaction |
+| `transaction_get_txid_from_bytes` | Get transaction ID from raw transaction bytes  # Safety - `tx_bytes` must be... | transaction |
+| `transaction_serialize` | Serialize a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
+| `transaction_sighash` | Calculate signature hash for an input  # Safety - `tx` must be a valid... | transaction |
+| `transaction_sign_input` | Sign a transaction input  # Safety - `tx` must be a valid pointer to an... | transaction |
+| `utxo_array_free` | Free UTXO array  # Safety  - `utxos` must be a valid pointer to an array of... | utxo |
 
 ### Key Management
 
@@ -274,20 +280,20 @@ Functions: 14
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `bip38_decrypt_private_key` | Decrypt a BIP38 encrypted private key  # Safety  This function is unsafe beca... | bip38 |
-| `bip38_encrypt_private_key` | Encrypt a private key with BIP38  # Safety  This function is unsafe because i... | bip38 |
-| `derivation_derive_private_key_from_seed` | Derive private key for a specific path from seed  # Safety  - `seed` must be ... | derivation |
-| `derivation_new_master_key` | Create a new master extended private key from seed  # Safety  - `seed` must b... | derivation |
-| `extended_private_key_free` | Free an extended private key  # Safety  - `key` must be a valid pointer creat... | keys |
-| `extended_private_key_get_private_key` | Get the private key from an extended private key  Extracts the non-extended p... | keys |
-| `extended_private_key_to_string` | Get extended private key as string (xprv format)  Returns the extended privat... | keys |
-| `extended_public_key_free` | Free an extended public key  # Safety  - `key` must be a valid pointer create... | keys |
-| `extended_public_key_get_public_key` | Get the public key from an extended public key  Extracts the non-extended pub... | keys |
-| `extended_public_key_to_string` | Get extended public key as string (xpub format)  Returns the extended public ... | keys |
-| `private_key_free` | Free a private key  # Safety  - `key` must be a valid pointer created by priv... | keys |
-| `private_key_to_wif` | Get private key as WIF string from FFIPrivateKey  # Safety  - `key` must be a... | keys |
-| `public_key_free` | Free a public key  # Safety  - `key` must be a valid pointer created by publi... | keys |
-| `public_key_to_hex` | Get public key as hex string from FFIPublicKey  # Safety  - `key` must be a v... | keys |
+| `bip38_decrypt_private_key` | Decrypt a BIP38 encrypted private key  # Safety  This function is unsafe... | bip38 |
+| `bip38_encrypt_private_key` | Encrypt a private key with BIP38  # Safety  This function is unsafe because... | bip38 |
+| `derivation_derive_private_key_from_seed` | Derive private key for a specific path from seed  # Safety  - `seed` must be... | derivation |
+| `derivation_new_master_key` | Create a new master extended private key from seed  # Safety  - `seed` must... | derivation |
+| `extended_private_key_free` | Free an extended private key  # Safety  - `key` must be a valid pointer... | keys |
+| `extended_private_key_get_private_key` | Get the private key from an extended private key  Extracts the non-extended... | keys |
+| `extended_private_key_to_string` | Get extended private key as string (xprv format)  Returns the extended... | keys |
+| `extended_public_key_free` | Free an extended public key  # Safety  - `key` must be a valid pointer... | keys |
+| `extended_public_key_get_public_key` | Get the public key from an extended public key  Extracts the non-extended... | keys |
+| `extended_public_key_to_string` | Get extended public key as string (xpub format)  Returns the extended public... | keys |
+| `private_key_free` | Free a private key  # Safety  - `key` must be a valid pointer created by... | keys |
+| `private_key_to_wif` | Get private key as WIF string from FFIPrivateKey  # Safety  - `key` must be... | keys |
+| `public_key_free` | Free a public key  # Safety  - `key` must be a valid pointer created by... | keys |
+| `public_key_to_hex` | Get public key as hex string from FFIPublicKey  # Safety  - `key` must be a... | keys |
 
 ### Mnemonic Operations
 
@@ -295,12 +301,12 @@ Functions: 6
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `mnemonic_free` | Free a mnemonic string  # Safety  - `mnemonic` must be a valid pointer create... | mnemonic |
+| `mnemonic_free` | Free a mnemonic string  # Safety  - `mnemonic` must be a valid pointer... | mnemonic |
 | `mnemonic_generate` | Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24) | mnemonic |
 | `mnemonic_generate_with_language` | Generate a new mnemonic with specified language and word count | mnemonic |
-| `mnemonic_to_seed` | Convert mnemonic to seed with optional passphrase  # Safety  - `mnemonic` mus... | mnemonic |
-| `mnemonic_validate` | Validate a mnemonic phrase  # Safety  - `mnemonic` must be a valid null-termi... | mnemonic |
-| `mnemonic_word_count` | Get word count from mnemonic  # Safety  - `mnemonic` must be a valid null-ter... | mnemonic |
+| `mnemonic_to_seed` | Convert mnemonic to seed with optional passphrase  # Safety  - `mnemonic`... | mnemonic |
+| `mnemonic_validate` | Validate a mnemonic phrase  # Safety  - `mnemonic` must be a valid... | mnemonic |
+| `mnemonic_word_count` | Get word count from mnemonic  # Safety  - `mnemonic` must be a valid... | mnemonic |
 
 ### Utility Functions
 
@@ -313,19 +319,19 @@ Functions: 18
 | `derivation_identity_authentication_path` | Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index') | derivation |
 | `derivation_identity_registration_path` | Derive identity registration path (m/9'/5'/5'/1'/index') | derivation |
 | `derivation_identity_topup_path` | Derive identity top-up path (m/9'/5'/5'/2'/identity_index'/top_up_index') | derivation |
-| `derivation_path_free` | Free derivation path arrays Note: This function expects the count to properly... | keys |
-| `derivation_path_parse` | Convert derivation path string to indices  # Safety  - `path` must be a valid... | keys |
-| `derivation_string_free` | Free derivation path string  # Safety  - `s` must be a valid pointer to a C s... | derivation |
-| `derivation_xpriv_free` | Free extended private key  # Safety  - `xpriv` must be a valid pointer to an ... | derivation |
-| `derivation_xpriv_to_string` | Get extended private key as string  # Safety  - `xpriv` must be a valid point... | derivation |
-| `derivation_xpriv_to_xpub` | Derive public key from extended private key  # Safety  - `xpriv` must be a va... | derivation |
-| `derivation_xpub_fingerprint` | Get fingerprint from extended public key (4 bytes)  # Safety  - `xpub` must b... | derivation |
-| `derivation_xpub_free` | Free extended public key  # Safety  - `xpub` must be a valid pointer to an FF... | derivation |
-| `derivation_xpub_to_string` | Get extended public key as string  # Safety  - `xpub` must be a valid pointer... | derivation |
+| `derivation_path_free` | Free derivation path arrays Note: This function expects the count to... | keys |
+| `derivation_path_parse` | Convert derivation path string to indices  # Safety  - `path` must be a... | keys |
+| `derivation_string_free` | Free derivation path string  # Safety  - `s` must be a valid pointer to a C... | derivation |
+| `derivation_xpriv_free` | Free extended private key  # Safety  - `xpriv` must be a valid pointer to an... | derivation |
+| `derivation_xpriv_to_string` | Get extended private key as string  # Safety  - `xpriv` must be a valid... | derivation |
+| `derivation_xpriv_to_xpub` | Derive public key from extended private key  # Safety  - `xpriv` must be a... | derivation |
+| `derivation_xpub_fingerprint` | Get fingerprint from extended public key (4 bytes)  # Safety  - `xpub` must... | derivation |
+| `derivation_xpub_free` | Free extended public key  # Safety  - `xpub` must be a valid pointer to an... | derivation |
+| `derivation_xpub_to_string` | Get extended public key as string  # Safety  - `xpub` must be a valid... | derivation |
 | `ffi_network_get_name` | No description | types |
-| `free_u32_array` | Free a u32 array allocated by this library  # Safety  - `array` must be a val... | account_collection |
-| `script_p2pkh` | Create a P2PKH script pubkey  # Safety - `pubkey_hash` must be a valid pointe... | transaction |
-| `string_free` | Free a string  # Safety  - `s` must be a valid pointer created by C string cr... | utils |
+| `free_u32_array` | Free a u32 array allocated by this library  # Safety  - `array` must be a... | account_collection |
+| `script_p2pkh` | Create a P2PKH script pubkey  # Safety - `pubkey_hash` must be a valid... | transaction |
+| `string_free` | Free a string  # Safety  - `s` must be a valid pointer created by C string... | utils |
 
 ## Detailed Function Documentation
 
@@ -412,7 +418,7 @@ Free a managed account result's error message (if any) Note: This does NOT free 
 #### `wallet_manager_add_wallet_from_mnemonic`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, network: FFINetworks, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -428,7 +434,7 @@ Add a wallet from mnemonic to the manager (backward compatibility)  # Safety  - 
 #### `wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, network: FFINetworks, birth_height: c_uint, account_options: *const crate::types::FFIWalletAccountCreationOptions, downgrade_to_pubkey_wallet: bool, allow_external_signing: bool, wallet_bytes_out: *mut *mut u8, wallet_bytes_len_out: *mut usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, birth_height: c_uint, account_options: *const crate::types::FFIWalletAccountCreationOptions, downgrade_to_pubkey_wallet: bool, allow_external_signing: bool, wallet_bytes_out: *mut *mut u8, wallet_bytes_len_out: *mut usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
 ```
 
 **Module:** `wallet_manager`
@@ -438,7 +444,7 @@ wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FF
 #### `wallet_manager_add_wallet_from_mnemonic_with_options`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic_with_options(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, network: FFINetworks, account_options: *const crate::types::FFIWalletAccountCreationOptions, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic_with_options(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, account_options: *const crate::types::FFIWalletAccountCreationOptions, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -454,7 +460,7 @@ Add a wallet from mnemonic to the manager with options  # Safety  - `manager` mu
 #### `wallet_manager_create`
 
 ```c
-wallet_manager_create(error: *mut FFIError) -> *mut FFIWalletManager
+wallet_manager_create(network: FFINetwork, error: *mut FFIError,) -> *mut FFIWalletManager
 ```
 
 **Description:**
@@ -467,7 +473,7 @@ Create a new wallet manager
 #### `wallet_manager_current_height`
 
 ```c
-wallet_manager_current_height(manager: *const FFIWalletManager, network: FFINetwork, error: *mut FFIError,) -> c_uint
+wallet_manager_current_height(manager: *const FFIWalletManager, error: *mut FFIError,) -> c_uint
 ```
 
 **Description:**
@@ -483,7 +489,7 @@ Get current height for a network  # Safety  - `manager` must be a valid pointer 
 #### `wallet_manager_describe`
 
 ```c
-wallet_manager_describe(manager: *const FFIWalletManager, network: crate::FFINetwork, error: *mut FFIError,) -> *mut c_char
+wallet_manager_describe(manager: *const FFIWalletManager, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -647,14 +653,14 @@ wallet_manager_import_wallet_from_bytes(manager: *mut FFIWalletManager, wallet_b
 #### `wallet_manager_process_transaction`
 
 ```c
-wallet_manager_process_transaction(manager: *mut FFIWalletManager, tx_bytes: *const u8, tx_len: usize, network: FFINetwork, context: *const crate::types::FFITransactionContextDetails, update_state_if_found: bool, error: *mut FFIError,) -> bool
+wallet_manager_process_transaction(manager: *mut FFIWalletManager, tx_bytes: *const u8, tx_len: usize, context: *const crate::types::FFITransactionContextDetails, update_state_if_found: bool, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Process a transaction through all wallets  Checks a transaction against all wallets and updates their states if relevant. Returns true if the transaction was relevant to at least one wallet.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `network` is the network type - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Process a transaction through all wallets  Checks a transaction against all wallets and updates their states if relevant. Returns true if the transaction was relevant to at least one wallet.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `network` is the network type - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -663,7 +669,7 @@ Process a transaction through all wallets  Checks a transaction against all wall
 #### `wallet_manager_update_height`
 
 ```c
-wallet_manager_update_height(manager: *mut FFIWalletManager, network: FFINetwork, height: c_uint, error: *mut FFIError,) -> bool
+wallet_manager_update_height(manager: *mut FFIWalletManager, height: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -813,14 +819,14 @@ Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't stor
 #### `managed_wallet_check_transaction`
 
 ```c
-managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
+managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Check if a transaction belongs to the wallet  This function checks a transaction against all relevant account types in the wallet and returns detailed information about which accounts are affected.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
+Check if a transaction belongs to the wallet  This function checks a transaction against all relevant account types in the wallet and returns detailed information about which accounts are affected.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation and DashPay queries) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation and DashPay queries) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
 
 **Module:** `transaction_checking`
 
@@ -845,7 +851,7 @@ Free managed wallet info  # Safety  - `managed_wallet` must be a valid pointer t
 #### `managed_wallet_generate_addresses_to_index`
 
 ```c
-managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, target_index: c_uint, error: *mut FFIError,) -> bool
+managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, target_index: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -861,14 +867,14 @@ Generate addresses up to a specific index in a pool  This ensures that addresses
 #### `managed_wallet_get_account`
 
 ```c
-managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedAccountResult
+managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedAccountResult
 ```
 
 **Description:**
-Get a managed account from a managed wallet  This function gets a ManagedAccount from the wallet manager's managed wallet info, returning a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+Get a managed account from a managed wallet  This function gets a ManagedAccount from the wallet manager's managed wallet info, returning a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
 
 **Module:** `managed_account`
 
@@ -877,7 +883,7 @@ Get a managed account from a managed wallet  This function gets a ManagedAccount
 #### `managed_wallet_get_account_collection`
 
 ```c
-managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, error: *mut FFIError,) -> *mut FFIManagedAccountCollection
+managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_id: *const u8, error: *mut FFIError,) -> *mut FFIManagedAccountCollection
 ```
 
 **Description:**
@@ -893,14 +899,14 @@ Get managed account collection for a specific network from wallet manager  # Saf
 #### `managed_wallet_get_account_count`
 
 ```c
-managed_wallet_get_account_count(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, error: *mut FFIError,) -> c_uint
+managed_wallet_get_account_count(manager: *const FFIWalletManager, wallet_id: *const u8, error: *mut FFIError,) -> c_uint
 ```
 
 **Description:**
-Get number of accounts in a managed wallet  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get number of accounts in a managed wallet  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `managed_account`
 
@@ -909,7 +915,7 @@ Get number of accounts in a managed wallet  # Safety  - `manager` must be a vali
 #### `managed_wallet_get_address_pool_info`
 
 ```c
-managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWalletInfo, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, info_out: *mut FFIAddressPoolInfo, error: *mut FFIError,) -> bool
+managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWalletInfo, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, info_out: *mut FFIAddressPoolInfo, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -941,7 +947,7 @@ Get wallet balance from managed wallet info  Returns the balance breakdown inclu
 #### `managed_wallet_get_bip_44_external_address_range`
 
 ```c
-managed_wallet_get_bip_44_external_address_range(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: std::os::raw::c_uint, start_index: std::os::raw::c_uint, end_index: std::os::raw::c_uint, addresses_out: *mut *mut *mut c_char, count_out: *mut usize, error: *mut FFIError,) -> bool
+managed_wallet_get_bip_44_external_address_range(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: std::os::raw::c_uint, start_index: std::os::raw::c_uint, end_index: std::os::raw::c_uint, addresses_out: *mut *mut *mut c_char, count_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -957,7 +963,7 @@ Get BIP44 external (receive) addresses in the specified range  Returns external 
 #### `managed_wallet_get_bip_44_internal_address_range`
 
 ```c
-managed_wallet_get_bip_44_internal_address_range(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: std::os::raw::c_uint, start_index: std::os::raw::c_uint, end_index: std::os::raw::c_uint, addresses_out: *mut *mut *mut c_char, count_out: *mut usize, error: *mut FFIError,) -> bool
+managed_wallet_get_bip_44_internal_address_range(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: std::os::raw::c_uint, start_index: std::os::raw::c_uint, end_index: std::os::raw::c_uint, addresses_out: *mut *mut *mut c_char, count_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -970,10 +976,42 @@ Get BIP44 internal (change) addresses in the specified range  Returns internal a
 
 ---
 
+#### `managed_wallet_get_dashpay_external_account`
+
+```c
+managed_wallet_get_dashpay_external_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
+```
+
+**Description:**
+Get a managed DashPay external account by composite key  # Safety - Pointers must be valid
+
+**Safety:**
+- Pointers must be valid
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_wallet_get_dashpay_receiving_account`
+
+```c
+managed_wallet_get_dashpay_receiving_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
+```
+
+**Description:**
+Get a managed DashPay receiving funds account by composite key  # Safety - `manager`, `wallet_id` must be valid - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Safety:**
+- `manager`, `wallet_id` must be valid - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Module:** `managed_account`
+
+---
+
 #### `managed_wallet_get_next_bip44_change_address`
 
 ```c
-managed_wallet_get_next_bip44_change_address(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: std::os::raw::c_uint, error: *mut FFIError,) -> *mut c_char
+managed_wallet_get_next_bip44_change_address(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: std::os::raw::c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -989,7 +1027,7 @@ Get the next unused change address  Generates the next unused change address for
 #### `managed_wallet_get_next_bip44_receive_address`
 
 ```c
-managed_wallet_get_next_bip44_receive_address(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, network: FFINetwork, account_index: std::os::raw::c_uint, error: *mut FFIError,) -> *mut c_char
+managed_wallet_get_next_bip44_receive_address(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: std::os::raw::c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1005,14 +1043,14 @@ Get the next unused receive address  Generates the next unused receive address f
 #### `managed_wallet_get_top_up_account_with_registration_index`
 
 ```c
-managed_wallet_get_top_up_account_with_registration_index(manager: *const FFIWalletManager, wallet_id: *const u8, network: FFINetwork, registration_index: c_uint,) -> FFIManagedAccountResult
+managed_wallet_get_top_up_account_with_registration_index(manager: *const FFIWalletManager, wallet_id: *const u8, registration_index: c_uint,) -> FFIManagedAccountResult
 ```
 
 **Description:**
-Get a managed IdentityTopUp account with a specific registration index  This is used for top-up accounts that are bound to a specific identity. Returns a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+Get a managed IdentityTopUp account with a specific registration index  This is used for top-up accounts that are bound to a specific identity. Returns a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `network` must specify exactly one network - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
 
 **Module:** `managed_account`
 
@@ -1021,7 +1059,7 @@ Get a managed IdentityTopUp account with a specific registration index  This is 
 #### `managed_wallet_get_utxos`
 
 ```c
-managed_wallet_get_utxos(managed_info: *const FFIManagedWalletInfo, network: FFINetwork, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
+managed_wallet_get_utxos(managed_info: *const FFIManagedWalletInfo, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1053,7 +1091,7 @@ Free managed wallet info returned by wallet_manager_get_managed_wallet_info  # S
 #### `managed_wallet_mark_address_used`
 
 ```c
-managed_wallet_mark_address_used(managed_wallet: *mut FFIManagedWalletInfo, network: FFINetwork, address: *const c_char, error: *mut FFIError,) -> bool
+managed_wallet_mark_address_used(managed_wallet: *mut FFIManagedWalletInfo, address: *const c_char, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1069,7 +1107,7 @@ Mark an address as used in the pool  This updates the pool's tracking of which a
 #### `managed_wallet_set_gap_limit`
 
 ```c
-managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWalletInfo, network: FFINetwork, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, gap_limit: c_uint, error: *mut FFIError,) -> bool
+managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWalletInfo, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, gap_limit: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1085,7 +1123,7 @@ Set the gap limit for an address pool  The gap limit determines how many unused 
 #### `wallet_add_account`
 
 ```c
-wallet_add_account(wallet: *mut FFIWallet, network: FFINetwork, account_type: crate::types::FFIAccountType, account_index: c_uint,) -> crate::types::FFIAccountResult
+wallet_add_account(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1101,7 +1139,7 @@ This function dereferences a raw pointer to FFIWallet. The caller must ensure th
 #### `wallet_add_account_with_string_xpub`
 
 ```c
-wallet_add_account_with_string_xpub(wallet: *mut FFIWallet, network: FFINetwork, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_string: *const c_char,) -> crate::types::FFIAccountResult
+wallet_add_account_with_string_xpub(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_string: *const c_char,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1117,7 +1155,7 @@ This function dereferences raw pointers. The caller must ensure that: - The wall
 #### `wallet_add_account_with_xpub_bytes`
 
 ```c
-wallet_add_account_with_xpub_bytes(wallet: *mut FFIWallet, network: FFINetwork, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_bytes: *const u8, xpub_len: usize,) -> crate::types::FFIAccountResult
+wallet_add_account_with_xpub_bytes(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_bytes: *const u8, xpub_len: usize,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1130,14 +1168,62 @@ This function dereferences raw pointers. The caller must ensure that: - The wall
 
 ---
 
-#### `wallet_build_transaction`
+#### `wallet_add_dashpay_external_account_with_xpub_bytes`
 
 ```c
-wallet_build_transaction(wallet: *mut FFIWallet, _network: FFINetworks, account_index: c_uint, outputs: *const FFITxOutput, outputs_count: usize, fee_per_kb: u64, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, error: *mut FFIError,) -> bool
+wallet_add_dashpay_external_account_with_xpub_bytes(wallet: *mut FFIWallet, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8, xpub_bytes: *const u8, xpub_len: usize,) -> FFIAccountResult
 ```
 
 **Description:**
-Build a transaction  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+Add a DashPay external (watch-only) account with xpub bytes  # Safety - `wallet` must be valid, `xpub_bytes` must point to `xpub_len` bytes - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Safety:**
+- `wallet` must be valid, `xpub_bytes` must point to `xpub_len` bytes - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Module:** `wallet`
+
+---
+
+#### `wallet_add_dashpay_receiving_account`
+
+```c
+wallet_add_dashpay_receiving_account(wallet: *mut FFIWallet, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIAccountResult
+```
+
+**Description:**
+Add a DashPay receiving funds account  # Safety - `wallet` must be a valid pointer - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Safety:**
+- `wallet` must be a valid pointer - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Module:** `wallet`
+
+---
+
+#### `wallet_build_and_sign_transaction`
+
+```c
+wallet_build_and_sign_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: c_uint, outputs: *const FFITxOutput, outputs_count: usize, fee_per_kb: u64, current_height: u32, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Build and sign a transaction using the wallet's managed info  This is the recommended way to build transactions. It handles: - UTXO selection using coin selection algorithms - Fee calculation - Change address generation - Transaction signing  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+
+**Safety:**
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+
+**Module:** `transaction`
+
+---
+
+#### `wallet_build_transaction`
+
+```c
+wallet_build_transaction(wallet: *mut FFIWallet, account_index: c_uint, outputs: *const FFITxOutput, outputs_count: usize, fee_per_kb: u64, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Build a transaction (unsigned)  This creates an unsigned transaction. Use wallet_sign_transaction to sign it afterward. For a combined build+sign operation, use wallet_build_and_sign_transaction.  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
 
 **Safety:**
 - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
@@ -1149,7 +1235,7 @@ Build a transaction  # Safety  - `wallet` must be a valid pointer to an FFIWalle
 #### `wallet_check_transaction`
 
 ```c
-wallet_check_transaction(wallet: *mut FFIWallet, network: FFINetwork, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: u32, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
+wallet_check_transaction(wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: u32, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1165,7 +1251,7 @@ Check if a transaction belongs to the wallet using ManagedWalletInfo  # Safety  
 #### `wallet_create_from_mnemonic`
 
 ```c
-wallet_create_from_mnemonic(mnemonic: *const c_char, passphrase: *const c_char, network: FFINetworks, error: *mut FFIError,) -> *mut FFIWallet
+wallet_create_from_mnemonic(mnemonic: *const c_char, passphrase: *const c_char, network: FFINetwork, error: *mut FFIError,) -> *mut FFIWallet
 ```
 
 **Description:**
@@ -1181,7 +1267,7 @@ Create a new wallet from mnemonic (backward compatibility - single network)  # S
 #### `wallet_create_from_mnemonic_with_options`
 
 ```c
-wallet_create_from_mnemonic_with_options(mnemonic: *const c_char, passphrase: *const c_char, networks: FFINetworks, account_options: *const FFIWalletAccountCreationOptions, error: *mut FFIError,) -> *mut FFIWallet
+wallet_create_from_mnemonic_with_options(mnemonic: *const c_char, passphrase: *const c_char, network: FFINetwork, account_options: *const FFIWalletAccountCreationOptions, error: *mut FFIError,) -> *mut FFIWallet
 ```
 
 **Description:**
@@ -1197,7 +1283,7 @@ Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must be a
 #### `wallet_create_from_seed`
 
 ```c
-wallet_create_from_seed(seed: *const u8, seed_len: usize, network: FFINetworks, error: *mut FFIError,) -> *mut FFIWallet
+wallet_create_from_seed(seed: *const u8, seed_len: usize, network: FFINetwork, error: *mut FFIError,) -> *mut FFIWallet
 ```
 
 **Description:**
@@ -1213,7 +1299,7 @@ Create a new wallet from seed (backward compatibility)  # Safety  - `seed` must 
 #### `wallet_create_from_seed_with_options`
 
 ```c
-wallet_create_from_seed_with_options(seed: *const u8, seed_len: usize, networks: FFINetworks, account_options: *const FFIWalletAccountCreationOptions, error: *mut FFIError,) -> *mut FFIWallet
+wallet_create_from_seed_with_options(seed: *const u8, seed_len: usize, network: FFINetwork, account_options: *const FFIWalletAccountCreationOptions, error: *mut FFIError,) -> *mut FFIWallet
 ```
 
 **Description:**
@@ -1245,7 +1331,7 @@ Create a managed wallet from a regular wallet  This creates a ManagedWalletInfo 
 #### `wallet_create_random`
 
 ```c
-wallet_create_random(network: FFINetworks, error: *mut FFIError,) -> *mut FFIWallet
+wallet_create_random(network: FFINetwork, error: *mut FFIError,) -> *mut FFIWallet
 ```
 
 **Description:**
@@ -1261,7 +1347,7 @@ Create a new random wallet (backward compatibility)  # Safety  - `error` must be
 #### `wallet_create_random_with_options`
 
 ```c
-wallet_create_random_with_options(networks: FFINetworks, account_options: *const FFIWalletAccountCreationOptions, error: *mut FFIError,) -> *mut FFIWallet
+wallet_create_random_with_options(network: FFINetwork, account_options: *const FFIWalletAccountCreationOptions, error: *mut FFIError,) -> *mut FFIWallet
 ```
 
 **Description:**
@@ -1277,7 +1363,7 @@ Create a new random wallet with options  # Safety  - `account_options` must be a
 #### `wallet_derive_extended_private_key`
 
 ```c
-wallet_derive_extended_private_key(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+wallet_derive_extended_private_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
 ```
 
 **Description:**
@@ -1293,7 +1379,7 @@ Derive extended private key at a specific path Returns an opaque FFIExtendedPriv
 #### `wallet_derive_extended_public_key`
 
 ```c
-wallet_derive_extended_public_key(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPublicKey
+wallet_derive_extended_public_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPublicKey
 ```
 
 **Description:**
@@ -1309,7 +1395,7 @@ Derive extended public key at a specific path Returns an opaque FFIExtendedPubli
 #### `wallet_derive_private_key`
 
 ```c
-wallet_derive_private_key(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIPrivateKey
+wallet_derive_private_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIPrivateKey
 ```
 
 **Description:**
@@ -1325,7 +1411,7 @@ Derive private key at a specific path Returns an opaque FFIPrivateKey pointer th
 #### `wallet_derive_private_key_as_wif`
 
 ```c
-wallet_derive_private_key_as_wif(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut c_char
+wallet_derive_private_key_as_wif(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1341,7 +1427,7 @@ Derive private key at a specific path and return as WIF string  # Safety  - `wal
 #### `wallet_derive_public_key`
 
 ```c
-wallet_derive_public_key(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIPublicKey
+wallet_derive_public_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIPublicKey
 ```
 
 **Description:**
@@ -1357,7 +1443,7 @@ Derive public key at a specific path Returns an opaque FFIPublicKey pointer that
 #### `wallet_derive_public_key_as_hex`
 
 ```c
-wallet_derive_public_key_as_hex(wallet: *const FFIWallet, network: FFINetwork, derivation_path: *const c_char, error: *mut FFIError,) -> *mut c_char
+wallet_derive_public_key_as_hex(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1405,7 +1491,7 @@ Free a const wallet handle  This is a const-safe wrapper for wallet_free() that 
 #### `wallet_get_account`
 
 ```c
-wallet_get_account(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, account_type: FFIAccountType,) -> FFIAccountResult
+wallet_get_account(wallet: *const FFIWallet, account_index: c_uint, account_type: FFIAccountType,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -1421,7 +1507,7 @@ Get an account handle for a specific account type Returns a result containing ei
 #### `wallet_get_account_collection`
 
 ```c
-wallet_get_account_collection(wallet: *const FFIWallet, network: FFINetwork, error: *mut FFIError,) -> *mut FFIAccountCollection
+wallet_get_account_collection(wallet: *const FFIWallet, error: *mut FFIError,) -> *mut FFIAccountCollection
 ```
 
 **Description:**
@@ -1437,7 +1523,7 @@ Get account collection for a specific network from wallet  # Safety  - `wallet` 
 #### `wallet_get_account_count`
 
 ```c
-wallet_get_account_count(wallet: *const FFIWallet, network: FFINetwork, error: *mut FFIError,) -> c_uint
+wallet_get_account_count(wallet: *const FFIWallet, error: *mut FFIError,) -> c_uint
 ```
 
 **Description:**
@@ -1453,7 +1539,7 @@ Get number of accounts  # Safety  - `wallet` must be a valid pointer to an FFIWa
 #### `wallet_get_account_xpriv`
 
 ```c
-wallet_get_account_xpriv(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
+wallet_get_account_xpriv(wallet: *const FFIWallet, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1469,7 +1555,7 @@ Get extended private key for account  # Safety  - `wallet` must be a valid point
 #### `wallet_get_account_xpub`
 
 ```c
-wallet_get_account_xpub(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
+wallet_get_account_xpub(wallet: *const FFIWallet, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1501,7 +1587,7 @@ Get wallet ID (32-byte hash)  # Safety  - `wallet` must be a valid pointer to an
 #### `wallet_get_top_up_account_with_registration_index`
 
 ```c
-wallet_get_top_up_account_with_registration_index(wallet: *const FFIWallet, network: FFINetwork, registration_index: c_uint,) -> FFIAccountResult
+wallet_get_top_up_account_with_registration_index(wallet: *const FFIWallet, registration_index: c_uint,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -1517,7 +1603,7 @@ Get an IdentityTopUp account handle with a specific registration index This is u
 #### `wallet_get_utxos`
 
 ```c
-wallet_get_utxos(_wallet: *const crate::types::FFIWallet, _network: FFINetworks, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
+wallet_get_utxos(_wallet: *const crate::types::FFIWallet, utxos_out: *mut *mut FFIUTXO, count_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1533,7 +1619,7 @@ This function is deprecated and returns an empty list. Use `managed_wallet_get_u
 #### `wallet_get_xpub`
 
 ```c
-wallet_get_xpub(wallet: *const FFIWallet, network: FFINetwork, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
+wallet_get_xpub(wallet: *const FFIWallet, account_index: c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -1581,7 +1667,7 @@ Check if wallet is watch-only  # Safety  - `wallet` must be a valid pointer to a
 #### `wallet_sign_transaction`
 
 ```c
-wallet_sign_transaction(wallet: *const FFIWallet, _network: FFINetworks, tx_bytes: *const u8, tx_len: usize, signed_tx_out: *mut *mut u8, signed_len_out: *mut usize, error: *mut FFIError,) -> bool
+wallet_sign_transaction(wallet: *const FFIWallet, tx_bytes: *const u8, tx_len: usize, signed_tx_out: *mut *mut u8, signed_len_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -2207,14 +2293,14 @@ Check if an account is watch-only  # Safety  - `account` must be a valid pointer
 #### `account_get_network`
 
 ```c
-account_get_network(account: *const FFIAccount) -> FFINetworks
+account_get_network(account: *const FFIAccount) -> FFINetwork
 ```
 
 **Description:**
-Get the network of an account  # Safety  - `account` must be a valid pointer to an FFIAccount instance - Returns FFINetwork::NoNetworks if the account is null
+Get the network of an account  # Safety  - `account` must be a valid pointer to an FFIAccount instance - Returns `FFINetwork::Dash` if the account is null
 
 **Safety:**
-- `account` must be a valid pointer to an FFIAccount instance - Returns FFINetwork::NoNetworks if the account is null
+- `account` must be a valid pointer to an FFIAccount instance - Returns `FFINetwork::Dash` if the account is null
 
 **Module:** `account`
 
@@ -2283,7 +2369,7 @@ bls_account_get_is_watch_only(account: *const FFIBLSAccount) -> bool
 #### `bls_account_get_network`
 
 ```c
-bls_account_get_network(account: *const FFIBLSAccount) -> FFINetworks
+bls_account_get_network(account: *const FFIBLSAccount) -> FFINetwork
 ```
 
 **Module:** `account`
@@ -2366,7 +2452,7 @@ eddsa_account_get_is_watch_only(account: *const FFIEdDSAAccount) -> bool
 #### `eddsa_account_get_network`
 
 ```c
-eddsa_account_get_network(account: *const FFIEdDSAAccount) -> FFINetworks
+eddsa_account_get_network(account: *const FFIEdDSAAccount) -> FFINetwork
 ```
 
 **Module:** `account`
@@ -2956,10 +3042,10 @@ managed_account_get_network(account: *const FFIManagedAccount,) -> FFINetwork
 ```
 
 **Description:**
-Get the network of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance
+Get the network of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance - Returns `FFINetwork::Dash` if the account is null
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance
+- `account` must be a valid pointer to an FFIManagedAccount instance - Returns `FFINetwork::Dash` if the account is null
 
 **Module:** `managed_account`
 
@@ -3318,6 +3404,22 @@ Get the transaction ID  # Safety - `tx` must be a valid pointer to an FFITransac
 
 ---
 
+#### `transaction_get_txid_from_bytes`
+
+```c
+transaction_get_txid_from_bytes(tx_bytes: *const u8, tx_len: usize, error: *mut FFIError,) -> *mut c_char
+```
+
+**Description:**
+Get transaction ID from raw transaction bytes  # Safety - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the correct length of the transaction - `error` must be a valid pointer to an FFIError  # Returns - Pointer to null-terminated hex string of TXID (must be freed with string_free) - NULL on error
+
+**Safety:**
+- `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the correct length of the transaction - `error` must be a valid pointer to an FFIError
+
+**Module:** `transaction`
+
+---
+
 #### `transaction_serialize`
 
 ```c
@@ -3403,7 +3505,7 @@ This function is unsafe because it dereferences raw pointers: - `encrypted_key` 
 #### `bip38_encrypt_private_key`
 
 ```c
-bip38_encrypt_private_key(private_key: *const c_char, passphrase: *const c_char, _network: FFINetworks, error: *mut FFIError,) -> *mut c_char
+bip38_encrypt_private_key(private_key: *const c_char, passphrase: *const c_char, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -3978,7 +4080,7 @@ Free a string  # Safety  - `s` must be a valid pointer created by C string creat
 - `FFIWalletManager` - Wallet manager handle
 - `FFIBalance` - Balance information
 - `FFIUTXO` - Unspent transaction output
-- `FFINetworks` - Network enumeration
+- `FFINetwork` - Network enumeration
 
 ## Memory Management
 

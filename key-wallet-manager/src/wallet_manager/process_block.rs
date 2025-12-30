@@ -1,5 +1,5 @@
 use crate::wallet_interface::WalletInterface;
-use crate::{Network, WalletManager};
+use crate::WalletManager;
 use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
@@ -13,12 +13,7 @@ use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoIn
 
 #[async_trait]
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletManager<T> {
-    async fn process_block(
-        &mut self,
-        block: &Block,
-        height: CoreBlockHeight,
-        network: Network,
-    ) -> Vec<Txid> {
+    async fn process_block(&mut self, block: &Block, height: CoreBlockHeight) -> Vec<Txid> {
         let mut relevant_txids = Vec::new();
         let block_hash = Some(block.block_hash());
         let timestamp = block.header.time;
@@ -31,75 +26,39 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 timestamp: Some(timestamp),
             };
 
-            let affected_wallets = self.check_transaction_in_all_wallets(
-                tx, network, context, true, // update state
-            );
+            let affected_wallets = self
+                .check_transaction_in_all_wallets(
+                    tx, context, true, // update state
+                )
+                .await;
 
             if !affected_wallets.is_empty() {
                 relevant_txids.push(tx.txid());
             }
         }
 
-        // Update network state height
-        if let Some(state) = self.network_states.get_mut(&network) {
-            state.current_height = height;
-        }
+        self.current_height = height;
 
         relevant_txids
     }
 
-    async fn process_mempool_transaction(&mut self, tx: &Transaction, network: Network) {
+    async fn process_mempool_transaction(&mut self, tx: &Transaction) {
         let context = TransactionContext::Mempool;
 
         // Check transaction against all wallets
         self.check_transaction_in_all_wallets(
-            tx, network, context, true, // update state
-        );
+            tx, context, true, // update state
+        )
+        .await;
     }
 
-    async fn handle_reorg(
-        &mut self,
-        from_height: CoreBlockHeight,
-        to_height: CoreBlockHeight,
-        network: Network,
-    ) {
-        if let Some(state) = self.network_states.get_mut(&network) {
-            // Roll back to the reorg point
-            if state.current_height >= from_height {
-                // Remove transactions above the reorg height
-                state.transactions.retain(|_, record| {
-                    if let Some(height) = record.height {
-                        height < from_height
-                    } else {
-                        true // Keep mempool transactions
-                    }
-                });
-
-                // Update current height
-                state.current_height = to_height;
-            }
-        }
-    }
-
-    async fn check_compact_filter(
-        &mut self,
-        filter: &BlockFilter,
-        block_hash: &BlockHash,
-        network: Network,
-    ) -> bool {
-        // Check if we've already evaluated this filter
-        if let Some(network_cache) = self.filter_matches.get(&network) {
-            if let Some(&matched) = network_cache.get(block_hash) {
-                return matched;
-            }
-        }
-
+    async fn check_compact_filter(&mut self, filter: &BlockFilter, block_hash: &BlockHash) -> bool {
         // Collect all scripts we're watching
         let mut script_bytes = Vec::new();
 
         // Get all wallet addresses for this network
         for info in self.wallet_infos.values() {
-            let monitored = info.monitored_addresses(network);
+            let monitored = info.monitored_addresses();
             for address in monitored {
                 script_bytes.push(address.script_pubkey().as_bytes().to_vec());
             }
@@ -116,17 +75,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 .unwrap_or(false)
         };
 
-        // Cache the result
-        self.filter_matches.entry(network).or_default().insert(*block_hash, hit);
-
         hit
     }
 
-    async fn transaction_effect(
-        &self,
-        tx: &Transaction,
-        network: Network,
-    ) -> Option<(i64, Vec<String>)> {
+    async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
         // Aggregate across all managed wallets. If any wallet considers it relevant,
         // compute net = total_received - total_sent and collect involved addresses.
         let mut total_received: u64 = 0;
@@ -135,23 +87,21 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         let mut is_relevant_any = false;
         for info in self.wallet_infos.values() {
-            // Only consider wallets tracking this network
-            if let Some(collection) = info.accounts(network) {
-                // Reuse the same routing/check logic used in normal processing
-                let tx_type = TransactionRouter::classify_transaction(tx);
-                let account_types = TransactionRouter::get_relevant_account_types(&tx_type);
-                let result = collection.check_transaction(tx, &account_types);
+            let collection = info.accounts();
+            // Reuse the same routing/check logic used in normal processing
+            let tx_type = TransactionRouter::classify_transaction(tx);
+            let account_types = TransactionRouter::get_relevant_account_types(&tx_type);
+            let result = collection.check_transaction(tx, &account_types);
 
-                if result.is_relevant {
-                    is_relevant_any = true;
-                    total_received = total_received.saturating_add(result.total_received);
-                    total_sent = total_sent.saturating_add(result.total_sent);
+            if result.is_relevant {
+                is_relevant_any = true;
+                total_received = total_received.saturating_add(result.total_received);
+                total_sent = total_sent.saturating_add(result.total_sent);
 
-                    // Collect involved addresses from affected accounts
-                    for account_match in result.affected_accounts {
-                        for addr_info in account_match.account_type_match.all_involved_addresses() {
-                            addresses.push(addr_info.address.to_string());
-                        }
+                // Collect involved addresses from affected accounts
+                for account_match in result.affected_accounts {
+                    for addr_info in account_match.account_type_match.all_involved_addresses() {
+                        addresses.push(addr_info.address.to_string());
                     }
                 }
             }
@@ -168,29 +118,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
     }
 
-    async fn earliest_required_height(&self, network: Network) -> Option<CoreBlockHeight> {
-        let mut earliest: Option<CoreBlockHeight> = None;
-
-        for info in self.wallet_infos.values() {
-            // Only consider wallets that actually track this network AND have a known birth height
-            if info.accounts(network).is_some() {
-                if let Some(birth_height) = info.birth_height() {
-                    earliest = Some(match earliest {
-                        Some(current) => current.min(birth_height),
-                        None => birth_height,
-                    });
-                }
-            }
-        }
-
-        // Return None if no wallets with known birth heights were found for this network
-        earliest
+    async fn earliest_required_height(&self) -> CoreBlockHeight {
+        self.wallet_infos.values().map(|info| info.birth_height()).min().unwrap_or(0)
     }
 
-    async fn describe(&self, network: Network) -> String {
+    async fn describe(&self) -> String {
         let wallet_count = self.wallet_infos.len();
         if wallet_count == 0 {
-            return format!("WalletManager: 0 wallets (network {})", network);
+            return format!("WalletManager: 0 wallets (network {})", self.network);
         }
 
         let mut details = Vec::with_capacity(wallet_count);
@@ -202,12 +137,17 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 let _ = write!(&mut wallet_id_hex, "{:02x}", byte);
             }
 
-            let script_count = info.monitored_addresses(network).len();
+            let script_count = info.monitored_addresses().len();
             let summary = format!("{} scripts", script_count);
 
             details.push(format!("{} ({}): {}", name, wallet_id_hex, summary));
         }
 
-        format!("WalletManager: {} wallet(s) on {}\n{}", wallet_count, network, details.join("\n"))
+        format!(
+            "WalletManager: {} wallet(s) on {}\n{}",
+            wallet_count,
+            self.network,
+            details.join("\n")
+        )
     }
 }

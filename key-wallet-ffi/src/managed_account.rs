@@ -2,7 +2,7 @@
 //!
 //! This module provides FFI-compatible managed account functionality that wraps
 //! ManagedAccount instances from the key-wallet crate. FFIManagedAccount is a
-//! simple wrapper around Arc<ManagedAccount> without additional fields.
+//! simple wrapper around `Arc<ManagedAccount>` without additional fields.
 
 use std::os::raw::c_uint;
 use std::sync::Arc;
@@ -11,8 +11,10 @@ use dashcore::hashes::Hash;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountType, FFINetwork};
+use crate::types::FFIAccountType;
 use crate::wallet_manager::FFIWalletManager;
+use crate::FFINetwork;
+use key_wallet::account::account_collection::DashpayAccountKey;
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::ManagedAccount;
 use key_wallet::AccountType;
@@ -81,14 +83,12 @@ impl FFIManagedAccountResult {
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `network` must specify exactly one network
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned account must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_account(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
     account_index: c_uint,
     account_type: FFIAccountType,
 ) -> FFIManagedAccountResult {
@@ -105,12 +105,6 @@ pub unsafe extern "C" fn managed_wallet_get_account(
             "Wallet ID is null".to_string(),
         );
     }
-
-    // Convert wallet_id to array
-    let mut wallet_id_array = [0u8; 32];
-    std::ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
-
-    let network_rust: key_wallet::Network = network.into();
 
     // Get the managed wallet info from the manager
     let mut error = FFIError::success();
@@ -133,65 +127,58 @@ pub unsafe extern "C" fn managed_wallet_get_account(
     let managed_wallet = &*managed_wallet_ptr;
     let account_type_rust = account_type.to_account_type(account_index);
 
-    // Get the managed account from the managed wallet info
-    let result = match managed_wallet.inner().accounts.get(&network_rust) {
-        Some(managed_collection) => {
-            use key_wallet::account::StandardAccountType;
+    let result = {
+        use key_wallet::account::StandardAccountType;
 
-            let managed_account = match account_type_rust {
-                AccountType::Standard {
-                    index,
-                    standard_account_type,
-                } => match standard_account_type {
-                    StandardAccountType::BIP44Account => {
-                        managed_collection.standard_bip44_accounts.get(&index)
-                    }
-                    StandardAccountType::BIP32Account => {
-                        managed_collection.standard_bip32_accounts.get(&index)
-                    }
-                },
-                AccountType::CoinJoin {
-                    index,
-                } => managed_collection.coinjoin_accounts.get(&index),
-                AccountType::IdentityRegistration => {
-                    managed_collection.identity_registration.as_ref()
+        let managed_collection = &managed_wallet.inner().accounts;
+        let managed_account = match account_type_rust {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => {
+                    managed_collection.standard_bip44_accounts.get(&index)
                 }
-                AccountType::IdentityTopUp {
-                    registration_index,
-                } => managed_collection.identity_topup.get(&registration_index),
-                AccountType::IdentityTopUpNotBoundToIdentity => {
-                    managed_collection.identity_topup_not_bound.as_ref()
+                StandardAccountType::BIP32Account => {
+                    managed_collection.standard_bip32_accounts.get(&index)
                 }
-                AccountType::IdentityInvitation => managed_collection.identity_invitation.as_ref(),
-                AccountType::ProviderVotingKeys => managed_collection.provider_voting_keys.as_ref(),
-                AccountType::ProviderOwnerKeys => managed_collection.provider_owner_keys.as_ref(),
-                AccountType::ProviderOperatorKeys => {
-                    managed_collection.provider_operator_keys.as_ref()
-                }
-                AccountType::ProviderPlatformKeys => {
-                    managed_collection.provider_platform_keys.as_ref()
-                }
-            };
-
-            match managed_account {
-                Some(account) => {
-                    let ffi_account = FFIManagedAccount::new(account);
-                    FFIManagedAccountResult::success(Box::into_raw(Box::new(ffi_account)))
-                }
-                None => FFIManagedAccountResult::error(
-                    FFIErrorCode::NotFound,
-                    "Account not found".to_string(),
-                ),
+            },
+            AccountType::CoinJoin {
+                index,
+            } => managed_collection.coinjoin_accounts.get(&index),
+            AccountType::IdentityRegistration => managed_collection.identity_registration.as_ref(),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => managed_collection.identity_topup.get(&registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => {
+                managed_collection.identity_topup_not_bound.as_ref()
             }
-        }
-        None => FFIManagedAccountResult::error(
-            FFIErrorCode::NotFound,
-            format!(
-                "No accounts found for network {:?}, wallet has networks {:?}",
-                network_rust,
-                managed_wallet.inner().networks_supported()
+            AccountType::IdentityInvitation => managed_collection.identity_invitation.as_ref(),
+            AccountType::ProviderVotingKeys => managed_collection.provider_voting_keys.as_ref(),
+            AccountType::ProviderOwnerKeys => managed_collection.provider_owner_keys.as_ref(),
+            AccountType::ProviderOperatorKeys => managed_collection.provider_operator_keys.as_ref(),
+            AccountType::ProviderPlatformKeys => managed_collection.provider_platform_keys.as_ref(),
+            AccountType::DashpayReceivingFunds {
+                ..
+            } => None,
+            AccountType::DashpayExternalAccount {
+                ..
+            } => None,
+            AccountType::PlatformPayment {
+                ..
+            } => None,
+        };
+
+        match managed_account {
+            Some(account) => {
+                let ffi_account = FFIManagedAccount::new(account);
+                FFIManagedAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+            }
+            None => FFIManagedAccountResult::error(
+                FFIErrorCode::NotFound,
+                "Account not found".to_string(),
             ),
-        ),
+        }
     };
 
     // Clean up the managed wallet pointer
@@ -209,14 +196,12 @@ pub unsafe extern "C" fn managed_wallet_get_account(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `network` must specify exactly one network
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned account must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_index(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
     registration_index: c_uint,
 ) -> FFIManagedAccountResult {
     if manager.is_null() {
@@ -232,12 +217,6 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
             "Wallet ID is null".to_string(),
         );
     }
-
-    // Convert wallet_id to array
-    let mut wallet_id_array = [0u8; 32];
-    std::ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
-
-    let network_rust: key_wallet::Network = network.into();
 
     // Get the managed wallet info from the manager
     let mut error = FFIError::success();
@@ -259,29 +238,16 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
 
     let managed_wallet = &*managed_wallet_ptr;
 
-    // Get the IdentityTopUp account from the managed collection
-    let result = match managed_wallet.inner().accounts.get(&network_rust) {
-        Some(managed_collection) => {
-            match managed_collection.identity_topup.get(&registration_index) {
-                Some(account) => {
-                    let ffi_account = FFIManagedAccount::new(account);
-                    FFIManagedAccountResult::success(Box::into_raw(Box::new(ffi_account)))
-                }
-                None => FFIManagedAccountResult::error(
-                    FFIErrorCode::NotFound,
-                    format!(
-                        "IdentityTopUp account for registration index {} not found",
-                        registration_index
-                    ),
-                ),
-            }
+    let result = match managed_wallet.inner().accounts.identity_topup.get(&registration_index) {
+        Some(account) => {
+            let ffi_account = FFIManagedAccount::new(account);
+            FFIManagedAccountResult::success(Box::into_raw(Box::new(ffi_account)))
         }
         None => FFIManagedAccountResult::error(
             FFIErrorCode::NotFound,
             format!(
-                "No accounts found for network {:?}, wallet has networks {:?}",
-                network_rust,
-                managed_wallet.inner().networks_supported()
+                "IdentityTopUp account for registration index {} not found",
+                registration_index
             ),
         ),
     };
@@ -292,11 +258,133 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
     result
 }
 
+/// Get a managed DashPay receiving funds account by composite key
+///
+/// # Safety
+/// - `manager`, `wallet_id` must be valid
+/// - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+#[no_mangle]
+pub unsafe extern "C" fn managed_wallet_get_dashpay_receiving_account(
+    manager: *const FFIWalletManager,
+    wallet_id: *const u8,
+    account_index: c_uint,
+    user_identity_id: *const u8,
+    friend_identity_id: *const u8,
+) -> FFIManagedAccountResult {
+    if manager.is_null()
+        || wallet_id.is_null()
+        || user_identity_id.is_null()
+        || friend_identity_id.is_null()
+    {
+        return FFIManagedAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Null pointer provided".to_string(),
+        );
+    }
+    let mut user_id = [0u8; 32];
+    let mut friend_id = [0u8; 32];
+    core::ptr::copy_nonoverlapping(user_identity_id, user_id.as_mut_ptr(), 32);
+    core::ptr::copy_nonoverlapping(friend_identity_id, friend_id.as_mut_ptr(), 32);
+    let key = DashpayAccountKey {
+        index: account_index,
+        user_identity_id: user_id,
+        friend_identity_id: friend_id,
+    };
+
+    let mut error = FFIError::success();
+    let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
+        manager, wallet_id, &mut error,
+    );
+    if managed_wallet_ptr.is_null() {
+        return FFIManagedAccountResult::error(
+            error.code,
+            if error.message.is_null() {
+                "Failed to get managed wallet info".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(error.message).to_string_lossy().to_string()
+            },
+        );
+    }
+    let managed_wallet = &*managed_wallet_ptr;
+
+    let result = match managed_wallet.inner().accounts.dashpay_receival_accounts.get(&key) {
+        Some(account) => FFIManagedAccountResult::success(Box::into_raw(Box::new(
+            FFIManagedAccount::new(account),
+        ))),
+        None => {
+            FFIManagedAccountResult::error(FFIErrorCode::NotFound, "Account not found".to_string())
+        }
+    };
+    crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
+    result
+}
+
+/// Get a managed DashPay external account by composite key
+///
+/// # Safety
+/// - Pointers must be valid
+#[no_mangle]
+pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
+    manager: *const FFIWalletManager,
+    wallet_id: *const u8,
+    account_index: c_uint,
+    user_identity_id: *const u8,
+    friend_identity_id: *const u8,
+) -> FFIManagedAccountResult {
+    if manager.is_null()
+        || wallet_id.is_null()
+        || user_identity_id.is_null()
+        || friend_identity_id.is_null()
+    {
+        return FFIManagedAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Null pointer provided".to_string(),
+        );
+    }
+    let mut user_id = [0u8; 32];
+    let mut friend_id = [0u8; 32];
+    core::ptr::copy_nonoverlapping(user_identity_id, user_id.as_mut_ptr(), 32);
+    core::ptr::copy_nonoverlapping(friend_identity_id, friend_id.as_mut_ptr(), 32);
+    let key = DashpayAccountKey {
+        index: account_index,
+        user_identity_id: user_id,
+        friend_identity_id: friend_id,
+    };
+
+    let mut error = FFIError::success();
+    let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
+        manager, wallet_id, &mut error,
+    );
+    if managed_wallet_ptr.is_null() {
+        return FFIManagedAccountResult::error(
+            error.code,
+            if error.message.is_null() {
+                "Failed to get managed wallet info".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(error.message).to_string_lossy().to_string()
+            },
+        );
+    }
+    let managed_wallet = &*managed_wallet_ptr;
+
+    let result = match managed_wallet.inner().accounts.dashpay_external_accounts.get(&key) {
+        Some(account) => FFIManagedAccountResult::success(Box::into_raw(Box::new(
+            FFIManagedAccount::new(account),
+        ))),
+        None => {
+            FFIManagedAccountResult::error(FFIErrorCode::NotFound, "Account not found".to_string())
+        }
+    };
+    crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
+    result
+}
+
 /// Get the network of a managed account
 ///
 /// # Safety
 ///
 /// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - Returns `FFINetwork::Dash` if the account is null
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_get_network(
     account: *const FFIManagedAccount,
@@ -377,6 +465,15 @@ pub unsafe extern "C" fn managed_account_get_account_type(
         AccountType::ProviderOwnerKeys => FFIAccountType::ProviderOwnerKeys,
         AccountType::ProviderOperatorKeys => FFIAccountType::ProviderOperatorKeys,
         AccountType::ProviderPlatformKeys => FFIAccountType::ProviderPlatformKeys,
+        AccountType::DashpayReceivingFunds {
+            ..
+        } => FFIAccountType::DashpayReceivingFunds,
+        AccountType::DashpayExternalAccount {
+            ..
+        } => FFIAccountType::DashpayExternalAccount,
+        AccountType::PlatformPayment {
+            ..
+        } => FFIAccountType::PlatformPayment,
     }
 }
 
@@ -614,22 +711,18 @@ pub unsafe extern "C" fn managed_account_result_free_error(result: *mut FFIManag
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `network` must specify exactly one network
 /// - `error` must be a valid pointer to an FFIError structure or null
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_account_count(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    network: FFINetwork,
     error: *mut FFIError,
 ) -> c_uint {
     if manager.is_null() || wallet_id.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return 0;
     }
-
-    let network_rust: key_wallet::Network = network.into();
 
     // Get the wallet from the manager
     let wallet_ptr = crate::wallet_manager::wallet_manager_get_wallet(manager, wallet_id, error);
@@ -640,26 +733,19 @@ pub unsafe extern "C" fn managed_wallet_get_account_count(
     }
 
     let wallet = &*wallet_ptr;
-    let count = match wallet.inner().accounts.get(&network_rust) {
-        Some(accounts) => {
-            FFIError::set_success(error);
-            let count = accounts.standard_bip44_accounts.len()
-                + accounts.standard_bip32_accounts.len()
-                + accounts.coinjoin_accounts.len()
-                + accounts.identity_registration.is_some() as usize
-                + accounts.identity_topup.len();
-            count as c_uint
-        }
-        None => {
-            FFIError::set_success(error);
-            0
-        }
-    };
+
+    FFIError::set_success(error);
+    let accounts = &wallet.inner().accounts;
+    let count = accounts.standard_bip44_accounts.len()
+        + accounts.standard_bip32_accounts.len()
+        + accounts.coinjoin_accounts.len()
+        + accounts.identity_registration.is_some() as usize
+        + accounts.identity_topup.len();
 
     // Clean up the wallet pointer
     crate::wallet::wallet_free_const(wallet_ptr);
 
-    count
+    count as c_uint
 }
 
 // Note: BLS and EdDSA accounts are handled through regular FFIManagedAccount
@@ -852,6 +938,18 @@ pub unsafe extern "C" fn managed_account_get_address_pool(
                 ManagedAccountType::ProviderPlatformKeys {
                     addresses,
                 } => addresses,
+                ManagedAccountType::DashpayReceivingFunds {
+                    addresses,
+                    ..
+                } => addresses,
+                ManagedAccountType::DashpayExternalAccount {
+                    addresses,
+                    ..
+                } => addresses,
+                ManagedAccountType::PlatformPayment {
+                    addresses,
+                    ..
+                } => addresses,
             };
 
             let ffi_pool = FFIAddressPool {
@@ -872,7 +970,7 @@ mod tests {
         wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
         wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
     };
-    use crate::FFINetworks;
+    use crate::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 
@@ -884,7 +982,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -896,7 +994,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
                 ptr::null(),
                 &mut error,
             );
@@ -921,7 +1018,6 @@ mod tests {
             let result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -948,7 +1044,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
             // Add a wallet with minimal accounts
@@ -965,7 +1061,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
                 &options,
                 &mut error,
             );
@@ -985,13 +1080,8 @@ mod tests {
             assert_eq!(count_out, 1);
 
             // Try to get a non-existent CoinJoin account
-            let mut result = managed_wallet_get_account(
-                manager,
-                wallet_ids_out,
-                FFINetwork::Testnet,
-                0,
-                FFIAccountType::CoinJoin,
-            );
+            let mut result =
+                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountType::CoinJoin);
 
             assert!(result.account.is_null());
             assert_ne!(result.error_code, 0);
@@ -1020,7 +1110,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
             // Add a wallet with multiple accounts
@@ -1045,7 +1135,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
                 &options,
                 &mut error,
             );
@@ -1064,12 +1153,7 @@ mod tests {
             assert!(success);
 
             // Get account count
-            let count = managed_wallet_get_account_count(
-                manager,
-                wallet_ids_out,
-                FFINetwork::Testnet,
-                &mut error,
-            );
+            let count = managed_wallet_get_account_count(manager, wallet_ids_out, &mut error);
 
             // Should have at least the accounts we created
             assert!(count >= 5); // 3 BIP44 + 1 BIP32 + 1 CoinJoin
@@ -1087,7 +1171,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -1099,7 +1183,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
                 ptr::null(),
                 &mut error,
             );
@@ -1124,7 +1207,6 @@ mod tests {
             let result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1186,7 +1268,7 @@ mod tests {
     #[test]
     fn test_managed_account_getter_edge_cases() {
         unsafe {
-            // Test null account
+            // Test null account for get_network
             let network = managed_account_get_network(ptr::null());
             assert_eq!(network, FFINetwork::Dash);
 
@@ -1209,7 +1291,7 @@ mod tests {
 
             // Test null balance_out
             let mut error = FFIError::success();
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
             // Add a wallet
@@ -1220,7 +1302,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
                 ptr::null(),
                 &mut error,
             );
@@ -1242,7 +1323,6 @@ mod tests {
             let result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1265,7 +1345,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let mut manager = wallet_manager_create(&mut error);
+            let mut manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -1277,7 +1357,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
                 ptr::null(),
                 &mut error,
             );
@@ -1302,7 +1381,6 @@ mod tests {
             let result = managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1356,7 +1434,7 @@ mod tests {
             wallet_manager_free(manager);
 
             // Create a new manager
-            manager = wallet_manager_create(&mut error);
+            manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
             // Create wallet with CoinJoin account
@@ -1372,7 +1450,6 @@ mod tests {
                 manager,
                 mnemonic2.as_ptr(),
                 passphrase2.as_ptr(),
-                FFINetworks::TestnetFlag,
                 &options,
                 &mut error,
             );
@@ -1389,13 +1466,8 @@ mod tests {
             assert_eq!(count_out, 1);
 
             // Get CoinJoin account
-            let cj_result = managed_wallet_get_account(
-                manager,
-                wallet_ids_out,
-                FFINetwork::Testnet,
-                0,
-                FFIAccountType::CoinJoin,
-            );
+            let cj_result =
+                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountType::CoinJoin);
             assert!(!cj_result.account.is_null());
 
             let cj_account = cj_result.account;

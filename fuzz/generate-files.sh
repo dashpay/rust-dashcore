@@ -97,4 +97,3 @@ $(for name in $(listTargetNames); do echo "$name,"; done)
       - run: find executed_* -type f -exec cat {} + | sort > executed
       - run: source ./fuzz/fuzz-util.sh && listTargetNames | sort | diff - executed
 EOF
-

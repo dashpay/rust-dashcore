@@ -125,7 +125,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
 
 /// Adds a peer address to the configuration
 ///
-/// Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999")
+/// Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`)
 /// or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only
 /// string is given, the default P2P port for the configured network is used.
 ///
@@ -503,13 +503,13 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
 ///
 /// # Safety
 /// - `config` must be a valid pointer to an FFIClientConfig or null
-/// - If null, returns FFIMempoolStrategy::Selective as default
+/// - If null, returns FFIMempoolStrategy::FetchAll as default
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
     config: *const FFIClientConfig,
 ) -> FFIMempoolStrategy {
     if config.is_null() {
-        return FFIMempoolStrategy::Selective;
+        return FFIMempoolStrategy::FetchAll;
     }
 
     let config = unsafe { &*((*config).inner as *const ClientConfig) };

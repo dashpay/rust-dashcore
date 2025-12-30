@@ -21,8 +21,6 @@
 /// - [`bincode::Encode`]: Encodes the value by serializing its internal byte array.
 /// - [`bincode::Decode`]: Decodes a `[u8; N]` array and reconstructs the type using `from_byte_array`.
 /// - [`bincode::BorrowDecode`]: Borrow-decodes a byte slice, checks its length, and uses `from_byte_array`.
-///
-/// ```
 #[macro_export]
 #[cfg(feature = "bincode")]
 macro_rules! bincode_impl {

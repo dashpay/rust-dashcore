@@ -9,7 +9,6 @@
 //
 
 use crate::dashcore;
-use serde_json;
 
 use crate::client::Result;
 use crate::client::RpcApi;

@@ -27,6 +27,7 @@ pub enum DerivationPathReference {
     BlockchainIdentityCreditInvitationFunding = 13,
     ProviderPlatformNodeKeys = 14,
     CoinJoin = 15,
+    PlatformPayment = 16,
     Root = 255,
 }
 
@@ -131,6 +132,8 @@ pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION: u32 = 1;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP: u32 = 2;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS: u32 = 3;
 pub const FEATURE_PURPOSE_DASHPAY: u32 = 15;
+/// DIP-17: Platform Payment Addresses feature index
+pub const FEATURE_PURPOSE_PLATFORM_PAYMENT: u32 = 17;
 pub const DASH_BIP44_PATH_MAINNET: IndexConstPath<2> = IndexConstPath {
     indexes: [
         ChildNumber::Hardened {
@@ -154,6 +157,39 @@ pub const DASH_BIP44_PATH_TESTNET: IndexConstPath<2> = IndexConstPath {
         },
     ],
     reference: DerivationPathReference::BIP44,
+    path_type: DerivationPathType::CLEAR_FUNDS,
+};
+
+// DashPay Root Paths
+pub const DASHPAY_ROOT_PATH_MAINNET: IndexConstPath<3> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_DASHPAY,
+        },
+    ],
+    reference: DerivationPathReference::ContactBasedFunds,
+    path_type: DerivationPathType::CLEAR_FUNDS,
+};
+
+pub const DASHPAY_ROOT_PATH_TESTNET: IndexConstPath<3> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_DASHPAY,
+        },
+    ],
+    reference: DerivationPathReference::ContactBasedFunds,
     path_type: DerivationPathType::CLEAR_FUNDS,
 };
 // CoinJoin Paths
@@ -342,4 +378,42 @@ pub const IDENTITY_AUTHENTICATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPa
     ],
     reference: DerivationPathReference::BlockchainIdentities,
     path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
+};
+
+// DIP-17: Platform Payment Address Paths
+// Path: m/9'/coin_type'/17'/account'/key_class'/index
+// Note: The full path includes account'/key_class'/index which is appended during derivation
+
+/// Platform Payment root path for mainnet: m/9'/5'/17'
+pub const PLATFORM_PAYMENT_ROOT_PATH_MAINNET: IndexConstPath<3> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_PLATFORM_PAYMENT,
+        },
+    ],
+    reference: DerivationPathReference::PlatformPayment,
+    path_type: DerivationPathType::CLEAR_FUNDS,
+};
+
+/// Platform Payment root path for testnet: m/9'/1'/17'
+pub const PLATFORM_PAYMENT_ROOT_PATH_TESTNET: IndexConstPath<3> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_PLATFORM_PAYMENT,
+        },
+    ],
+    reference: DerivationPathReference::PlatformPayment,
+    path_type: DerivationPathType::CLEAR_FUNDS,
 };

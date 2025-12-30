@@ -22,22 +22,19 @@ mod tests {
         assert_eq!(config.connection_timeout, Duration::from_secs(30));
         assert_eq!(config.message_timeout, Duration::from_secs(60));
         assert_eq!(config.sync_timeout, Duration::from_secs(300));
-        assert_eq!(config.read_timeout, Duration::from_millis(100));
         assert!(config.enable_filters);
         assert!(config.enable_masternodes);
         assert_eq!(config.max_peers, 8);
         assert!(config.enable_persistence);
         assert_eq!(config.log_level, "info");
         assert_eq!(config.max_concurrent_filter_requests, 16);
-        assert!(config.enable_filter_flow_control);
         assert_eq!(config.filter_request_delay_ms, 0);
 
         // Mempool defaults
-        assert!(!config.enable_mempool_tracking);
-        assert_eq!(config.mempool_strategy, MempoolStrategy::Selective);
+        assert!(config.enable_mempool_tracking);
+        assert_eq!(config.mempool_strategy, MempoolStrategy::FetchAll);
         assert_eq!(config.max_mempool_transactions, 1000);
         assert_eq!(config.mempool_timeout_secs, 3600);
-        assert_eq!(config.recent_send_window_secs, 300);
         assert!(config.fetch_mempool_transactions);
         assert!(!config.persist_mempool);
     }
@@ -66,15 +63,12 @@ mod tests {
             .with_storage_path(path.clone())
             .with_validation_mode(ValidationMode::Basic)
             .with_connection_timeout(Duration::from_secs(10))
-            .with_read_timeout(Duration::from_secs(5))
             .with_log_level("debug")
             .with_max_concurrent_filter_requests(32)
-            .with_filter_flow_control(false)
             .with_filter_request_delay(100)
             .with_mempool_tracking(MempoolStrategy::BloomFilter)
             .with_max_mempool_transactions(500)
             .with_mempool_timeout(7200)
-            .with_recent_send_window(600)
             .with_mempool_persistence(true)
             .with_start_height(100000);
 
@@ -82,10 +76,8 @@ mod tests {
         assert!(config.enable_persistence);
         assert_eq!(config.validation_mode, ValidationMode::Basic);
         assert_eq!(config.connection_timeout, Duration::from_secs(10));
-        assert_eq!(config.read_timeout, Duration::from_secs(5));
         assert_eq!(config.log_level, "debug");
         assert_eq!(config.max_concurrent_filter_requests, 32);
-        assert!(!config.enable_filter_flow_control);
         assert_eq!(config.filter_request_delay_ms, 100);
 
         // Mempool settings
@@ -93,7 +85,6 @@ mod tests {
         assert_eq!(config.mempool_strategy, MempoolStrategy::BloomFilter);
         assert_eq!(config.max_mempool_transactions, 500);
         assert_eq!(config.mempool_timeout_secs, 7200);
-        assert_eq!(config.recent_send_window_secs, 600);
         assert!(config.persist_mempool);
         assert_eq!(config.start_from_height, Some(100000));
     }
@@ -200,44 +191,7 @@ mod tests {
         assert_eq!(result.unwrap_err(), "mempool_timeout_secs must be > 0");
     }
 
-    #[test]
-    fn test_validation_invalid_selective_strategy() {
-        let config = ClientConfig {
-            enable_mempool_tracking: true,
-            mempool_strategy: MempoolStrategy::Selective,
-            recent_send_window_secs: 0,
-            ..Default::default()
-        };
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "recent_send_window_secs must be > 0 for Selective strategy"
-        );
-    }
-
-    #[test]
-    fn test_cfheader_gap_settings() {
-        let config = ClientConfig::default();
-
-        assert!(config.enable_cfheader_gap_restart);
-        assert_eq!(config.cfheader_gap_check_interval_secs, 15);
-        assert_eq!(config.cfheader_gap_restart_cooldown_secs, 30);
-        assert_eq!(config.max_cfheader_gap_restart_attempts, 5);
-    }
-
-    #[test]
-    fn test_filter_gap_settings() {
-        let config = ClientConfig::default();
-
-        assert!(config.enable_filter_gap_restart);
-        assert_eq!(config.filter_gap_check_interval_secs, 20);
-        assert_eq!(config.min_filter_gap_size, 10);
-        assert_eq!(config.filter_gap_restart_cooldown_secs, 30);
-        assert_eq!(config.max_filter_gap_restart_attempts, 5);
-        assert_eq!(config.max_filter_gap_sync_size, 50000);
-    }
+    // Removed selective strategy validation test; Selective variant no longer exists
 
     #[test]
     fn test_request_control_defaults() {

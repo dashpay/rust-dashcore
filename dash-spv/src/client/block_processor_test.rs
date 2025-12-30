@@ -4,8 +4,7 @@
 mod tests {
     use crate::client::block_processor::{BlockProcessingTask, BlockProcessor};
 
-    use crate::storage::memory::MemoryStorageManager;
-    use crate::storage::StorageManager;
+    use crate::storage::DiskStorageManager;
     use crate::types::{SpvEvent, SpvStats};
     use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
 
@@ -41,12 +40,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl key_wallet_manager::wallet_interface::WalletInterface for MockWallet {
-        async fn process_block(
-            &mut self,
-            block: &Block,
-            height: u32,
-            _network: Network,
-        ) -> Vec<dashcore::Txid> {
+        async fn process_block(&mut self, block: &Block, height: u32) -> Vec<dashcore::Txid> {
             let mut processed = self.processed_blocks.lock().await;
             processed.push((block.block_hash(), height));
 
@@ -54,34 +48,25 @@ mod tests {
             block.txdata.iter().map(|tx| tx.txid()).collect()
         }
 
-        async fn process_mempool_transaction(&mut self, tx: &Transaction, _network: Network) {
+        async fn process_mempool_transaction(&mut self, tx: &Transaction) {
             let mut processed = self.processed_transactions.lock().await;
             processed.push(tx.txid());
-        }
-
-        async fn handle_reorg(&mut self, _from_height: u32, _to_height: u32, _network: Network) {
-            // Not tested here
         }
 
         async fn check_compact_filter(
             &mut self,
             _filter: &dashcore::bip158::BlockFilter,
             _block_hash: &dashcore::BlockHash,
-            _network: Network,
         ) -> bool {
             // Return true for all filters in test
             true
         }
 
-        async fn describe(&self, _network: Network) -> String {
+        async fn describe(&self) -> String {
             "MockWallet (test implementation)".to_string()
         }
 
-        async fn transaction_effect(
-            &self,
-            tx: &Transaction,
-            _network: Network,
-        ) -> Option<(i64, Vec<String>)> {
+        async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
             let map = self.effects.lock().await;
             map.get(&tx.txid()).cloned()
         }
@@ -92,25 +77,21 @@ mod tests {
     }
 
     async fn setup_processor() -> (
-        BlockProcessor<MockWallet, MemoryStorageManager>,
+        BlockProcessor<MockWallet, DiskStorageManager>,
         mpsc::UnboundedSender<BlockProcessingTask>,
         mpsc::UnboundedReceiver<SpvEvent>,
         Arc<RwLock<MockWallet>>,
-        Arc<Mutex<MemoryStorageManager>>,
+        Arc<Mutex<DiskStorageManager>>,
     ) {
         let (task_tx, task_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
-        let processor = BlockProcessor::new(
-            task_rx,
-            wallet.clone(),
-            storage.clone(),
-            stats,
-            event_tx,
-            Network::Dash,
-        );
+        let storage = Arc::new(Mutex::new(
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage"),
+        ));
+        let processor =
+            BlockProcessor::new(task_rx, wallet.clone(), storage.clone(), stats, event_tx);
 
         (processor, task_tx, event_rx, wallet, storage)
     }
@@ -267,36 +248,22 @@ mod tests {
 
         #[async_trait::async_trait]
         impl key_wallet_manager::wallet_interface::WalletInterface for NonMatchingWallet {
-            async fn process_block(
-                &mut self,
-                _block: &Block,
-                _height: u32,
-                _network: Network,
-            ) -> Vec<dashcore::Txid> {
+            async fn process_block(&mut self, _block: &Block, _height: u32) -> Vec<dashcore::Txid> {
                 Vec::new()
             }
 
-            async fn process_mempool_transaction(&mut self, _tx: &Transaction, _network: Network) {}
-
-            async fn handle_reorg(
-                &mut self,
-                _from_height: u32,
-                _to_height: u32,
-                _network: Network,
-            ) {
-            }
+            async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}
 
             async fn check_compact_filter(
                 &mut self,
                 _filter: &dashcore::bip158::BlockFilter,
                 _block_hash: &dashcore::BlockHash,
-                _network: Network,
             ) -> bool {
                 // Always return false - filter doesn't match
                 false
             }
 
-            async fn describe(&self, _network: Network) -> String {
+            async fn describe(&self) -> String {
                 "NonMatchingWallet (test implementation)".to_string()
             }
         }
@@ -305,10 +272,11 @@ mod tests {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let wallet = Arc::new(RwLock::new(NonMatchingWallet {}));
-        let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
+        let storage = Arc::new(Mutex::new(
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage"),
+        ));
 
-        let processor =
-            BlockProcessor::new(task_rx, wallet, storage, stats, event_tx, Network::Dash);
+        let processor = BlockProcessor::new(task_rx, wallet, storage, stats, event_tx);
 
         let block_hash = create_test_block(Network::Dash).block_hash();
         let filter_data = vec![1, 2, 3, 4, 5];

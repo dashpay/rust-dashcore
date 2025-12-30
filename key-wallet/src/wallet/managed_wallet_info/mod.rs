@@ -20,8 +20,8 @@ use super::immature_transaction::ImmatureTransactionCollection;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::Network;
-use alloc::collections::BTreeMap;
 use alloc::string::String;
+use dashcore::prelude::CoreBlockHeight;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -33,67 +33,63 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ManagedWalletInfo {
+    /// Network this wallet info is associated with
+    pub network: Network,
     /// Unique wallet ID (SHA256 hash of root public key) - should match the Wallet's wallet_id
     pub wallet_id: [u8; 32],
     /// Wallet name
     pub name: Option<String>,
-    /// Wallet description  
+    /// Wallet description
     pub description: Option<String>,
     /// Wallet metadata
     pub metadata: WalletMetadata,
-    /// All managed accounts organized by network
-    pub accounts: BTreeMap<Network, ManagedAccountCollection>,
-    /// Immature transactions organized by network
-    pub immature_transactions: BTreeMap<Network, ImmatureTransactionCollection>,
+    /// All managed accounts
+    pub accounts: ManagedAccountCollection,
+    /// Immature transactions
+    pub immature_transactions: ImmatureTransactionCollection,
     /// Cached wallet balance - should be updated when accounts change
     pub balance: WalletBalance,
 }
 
 impl ManagedWalletInfo {
-    /// Create new managed wallet info with wallet ID
-    pub fn new(wallet_id: [u8; 32]) -> Self {
+    /// Create new managed wallet info with network and wallet ID
+    pub fn new(network: Network, wallet_id: [u8; 32]) -> Self {
         Self {
+            network,
             wallet_id,
             name: None,
             description: None,
             metadata: WalletMetadata::default(),
-            accounts: BTreeMap::new(),
-            immature_transactions: BTreeMap::new(),
+            accounts: ManagedAccountCollection::new(),
+            immature_transactions: ImmatureTransactionCollection::new(),
             balance: WalletBalance::default(),
         }
     }
 
-    /// Create managed wallet info with wallet ID and name
-    pub fn with_name(wallet_id: [u8; 32], name: String) -> Self {
+    /// Create managed wallet info with network, wallet ID and name
+    pub fn with_name(network: Network, wallet_id: [u8; 32], name: String) -> Self {
         Self {
+            network,
             wallet_id,
             name: Some(name),
             description: None,
             metadata: WalletMetadata::default(),
-            accounts: BTreeMap::new(),
-            immature_transactions: BTreeMap::new(),
+            accounts: ManagedAccountCollection::new(),
+            immature_transactions: ImmatureTransactionCollection::new(),
             balance: WalletBalance::default(),
         }
     }
 
     /// Create managed wallet info from a Wallet
     pub fn from_wallet(wallet: &super::super::Wallet) -> Self {
-        let mut managed_accounts = BTreeMap::new();
-
-        // Initialize ManagedAccountCollection for each network that has accounts
-        for (network, account_collection) in &wallet.accounts {
-            let managed_collection =
-                ManagedAccountCollection::from_account_collection(account_collection);
-            managed_accounts.insert(*network, managed_collection);
-        }
-
         Self {
+            network: wallet.network,
             wallet_id: wallet.wallet_id,
             name: None,
             description: None,
             metadata: WalletMetadata::default(),
-            accounts: managed_accounts,
-            immature_transactions: BTreeMap::new(),
+            accounts: ManagedAccountCollection::from_account_collection(&wallet.accounts),
+            immature_transactions: ImmatureTransactionCollection::new(),
             balance: WalletBalance::default(),
         }
     }
@@ -106,10 +102,19 @@ impl ManagedWalletInfo {
     }
 
     /// Create managed wallet info with birth height
-    pub fn with_birth_height(wallet_id: [u8; 32], birth_height: Option<u32>) -> Self {
-        let mut info = Self::new(wallet_id);
+    pub fn with_birth_height(
+        network: Network,
+        wallet_id: [u8; 32],
+        birth_height: CoreBlockHeight,
+    ) -> Self {
+        let mut info = Self::new(network, wallet_id);
         info.metadata.birth_height = birth_height;
         info
+    }
+
+    /// Get the network for this wallet info
+    pub fn network(&self) -> Network {
+        self.network
     }
 
     /// Increment the transaction count
@@ -124,17 +129,15 @@ impl ManagedWalletInfo {
         let mut locked = 0u64;
 
         // Sum balances from all accounts across all networks
-        for collection in self.accounts.values() {
-            for account in collection.all_accounts() {
-                for utxo in account.utxos.values() {
-                    let value = utxo.txout.value;
-                    if utxo.is_locked {
-                        locked += value;
-                    } else if utxo.is_confirmed {
-                        confirmed += value;
-                    } else {
-                        unconfirmed += value;
-                    }
+        for account in self.accounts.all_accounts() {
+            for utxo in account.utxos.values() {
+                let value = utxo.txout.value;
+                if utxo.is_locked {
+                    locked += value;
+                } else if utxo.is_confirmed {
+                    confirmed += value;
+                } else {
+                    unconfirmed += value;
                 }
             }
         }

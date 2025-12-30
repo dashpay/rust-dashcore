@@ -145,7 +145,7 @@ impl Decodable for QRInfo {
 /// Fields:
 /// - `mn_skip_list_mode`: A 4-byte signed integer representing the mode of the skip list.
 /// - `active_quorum_members_count`: A compact-size unsigned integer representing the number of active quorum members.
-/// - `active_quorum_members`: A bitset of active_quorum_members_count bits (Vec<bool>),
+/// - `active_quorum_members`: A bitset of active_quorum_members_count bits (`Vec<bool>`),
 ///   serialized via write_fixed_bitset/read_fixed_bitset.
 /// - `mn_skip_list_size`: A compact-size unsigned integer representing the number of skip list entries.
 /// - `mn_skip_list`: An array of 4-byte signed integers, one per skip list entry.

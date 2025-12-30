@@ -1,19 +1,20 @@
 //! BIP157 filter synchronization example.
 
-use dash_spv::network::MultiPeerNetworkManager;
-use dash_spv::storage::MemoryStorageManager;
-use dash_spv::{init_logging, ClientConfig, DashSpvClient};
+use dash_spv::network::PeerNetworkManager;
+use dash_spv::storage::DiskStorageManager;
+use dash_spv::{init_console_logging, ClientConfig, DashSpvClient, LevelFilter};
 use dashcore::Address;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    init_logging("info")?;
+    let _logging_guard = init_console_logging(LevelFilter::INFO)?;
 
     // Parse a Dash address to watch
     let watch_address = Address::<dashcore::address::NetworkUnchecked>::from_str(
@@ -24,13 +25,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ClientConfig::mainnet().without_masternodes(); // Skip masternode sync for this example
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
-    let storage_manager = MemoryStorageManager::new().await?;
+    let storage_manager =
+        DiskStorageManager::new("./.tmp/filter-sync-example-storage".into()).await?;
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the client
     let mut client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
@@ -42,21 +44,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Watching address: {:?}", watch_address);
 
     // Full sync including filters
-    let progress = client.sync_to_tip().await?;
+    client.sync_to_tip().await?;
 
-    println!("Synchronization completed!");
-    println!("Headers synced: {}", progress.header_height);
-    println!("Filter headers synced: {}", progress.filter_header_height);
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
 
-    // Get statistics
-    let stats = client.stats().await?;
-    println!("Filter headers downloaded: {}", stats.filter_headers_downloaded);
-    println!("Filters downloaded: {}", stats.filters_downloaded);
-    println!("Filter matches found: {}", stats.filters_matched);
-    println!("Blocks requested: {}", stats.blocks_requested);
-
-    // Stop the client
-    client.stop().await?;
+    client.run(command_receiver, shutdown_token).await?;
 
     println!("Done!");
     Ok(())

@@ -6,7 +6,7 @@ use std::str::FromStr;
 /// Transaction 62364518eeb41d01f71f7aff9d1046f188dd6c1b311e84908298b2f82c0b7a1b
 ///
 /// This transaction shows wrong net amount calculation where:
-/// - Expected: -0.00020527 BTC (fee + small transfer)  
+/// - Expected: -0.00020527 BTC (fee + small transfer)
 /// - Actual log showed: +13.88979473 BTC (incorrect)
 ///
 /// The bug appears to be in the balance change calculation logic where

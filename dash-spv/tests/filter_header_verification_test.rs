@@ -19,7 +19,7 @@ use dash_spv::{
     client::ClientConfig,
     error::{NetworkError, NetworkResult, SyncError},
     network::NetworkManager,
-    storage::{MemoryStorageManager, StorageManager},
+    storage::{DiskStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
     types::PeerInfo,
 };
@@ -33,6 +33,7 @@ use dashcore::{
 use dashcore_hashes::{sha256d, Hash};
 use std::collections::HashSet;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 /// Mock network manager for testing filter sync
@@ -85,29 +86,6 @@ impl NetworkManager for MockNetworkManager {
         vec![]
     }
 
-    fn should_ping(&self) -> bool {
-        false
-    }
-
-    async fn send_ping(&mut self) -> Result<u64, NetworkError> {
-        Ok(0)
-    }
-
-    fn cleanup_old_pings(&mut self) {}
-
-    async fn handle_ping(&mut self, _nonce: u64) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    fn handle_pong(&mut self, _nonce: u64) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    fn get_message_sender(&self) -> tokio::sync::mpsc::Sender<NetworkMessage> {
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        tx
-    }
-
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -121,13 +99,6 @@ impl NetworkManager for MockNetworkManager {
         _service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool {
         true
-    }
-
-    async fn get_peers_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> Vec<dash_spv::types::PeerInfo> {
-        vec![]
     }
 
     async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {
@@ -211,12 +182,14 @@ async fn test_filter_header_verification_failure_reproduction() {
     println!("=== Testing Filter Header Chain Verification Failure ===");
 
     // Create storage and sync manager
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
     // Step 1: Store initial headers to simulate having a synced header chain
@@ -373,12 +346,14 @@ async fn test_overlapping_batches_from_different_peers() {
     // The system should handle this gracefully, but currently it crashes.
     // This test will FAIL until we implement the fix.
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
     // Step 1: Set up headers for the full range we'll need
@@ -547,12 +522,14 @@ async fn test_filter_header_verification_overlapping_batches() {
     // This test simulates what happens when we receive overlapping filter header batches
     // due to recovery/retry mechanisms or multiple peers
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
     // Set up initial headers - start from 1 for proper sync
@@ -643,12 +620,14 @@ async fn test_filter_header_verification_race_condition_simulation() {
     // This test simulates the race condition that might occur when multiple
     // filter header requests are in flight simultaneously
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
+        .await
+        .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
     // Set up headers - need enough for batch B (up to height 3000)

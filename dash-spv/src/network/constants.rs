@@ -1,4 +1,4 @@
-//! Network constants for multi-peer support
+//! Network constants for peer support
 
 use std::time::Duration;
 

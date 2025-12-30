@@ -19,10 +19,11 @@ key-wallet-manager = { path = "../key-wallet-manager" }
 blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900" }
 
 # CLI
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.0", features = ["derive", "env"] }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
 async-trait = "0.1"
 
 # Error handling
@@ -36,15 +37,20 @@ bincode = "1.3"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+tracing-appender = "0.2"
+chrono = "0.4.20"
 
 # Utilities
 rand = "0.8"
 hex = "0.4"
 indexmap = "2.0"
 
-# Terminal UI
-crossterm = "0.27"
+# Parallelization
+rayon = "1.11"
+
+# Terminal UI (optional)
+crossterm = { version = "0.27", optional = true }
 
 # DNS (trust-dns-resolver was renamed to hickory_resolver)
 hickory-resolver = "0.25"
@@ -53,14 +59,21 @@ hickory-resolver = "0.25"
 log = "0.4"
 
 [dev-dependencies]
+criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
 tokio-test = "0.4"
 env_logger = "0.10"
 hex = "0.4"
+test-case = "3.3"
+
+[[bench]]
+name = "storage"
+harness = false
 
 [[bin]]
 name = "dash-spv"
 path = "src/main.rs"
+required-features = ["terminal-ui"]
 
 [lib]
 name = "dash_spv"
@@ -69,3 +82,6 @@ path = "src/lib.rs"
 [features]
 # Gate incomplete mock-dependent tests to avoid "unexpected cfg" warnings.
 skip_mock_implementation_incomplete = []
+
+# Terminal UI feature (off by default, for use by binary only)
+terminal-ui = ["dep:crossterm"]

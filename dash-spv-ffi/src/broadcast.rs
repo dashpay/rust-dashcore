@@ -2,6 +2,13 @@ use crate::{null_check, set_last_error, FFIDashSpvClient, FFIErrorCode};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+/// Broadcasts a transaction to the Dash network via connected peers.
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient
+/// - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string
+///   containing a hex-encoded serialized transaction
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
     client: *mut FFIDashSpvClient,
@@ -26,7 +33,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
         }
     };
 
-    let _tx = match dashcore::consensus::deserialize::<dashcore::Transaction>(&tx_bytes) {
+    let tx = match dashcore::consensus::deserialize::<dashcore::Transaction>(&tx_bytes) {
         Ok(t) => t,
         Err(e) => {
             set_last_error(&format!("Invalid transaction: {}", e));
@@ -38,15 +45,26 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
     let inner = client.inner.clone();
 
     let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref _spv_client) = *guard {
-            // TODO: broadcast_transaction not yet implemented in dash-spv
-            Err(dash_spv::SpvError::Config("Not implemented".to_string()))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
+        // Take the client out to avoid holding the lock across await
+        let spv_client = {
+            let mut guard = inner.lock().unwrap();
+            match guard.take() {
+                Some(client) => client,
+                None => {
+                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                        "Client not initialized".to_string(),
+                    )))
+                }
+            }
+        };
+
+        // Broadcast the transaction over P2P
+        let res = spv_client.broadcast_transaction(&tx).await;
+
+        // Put the client back
+        let mut guard = inner.lock().unwrap();
+        *guard = Some(spv_client);
+        res
     });
 
     match result {

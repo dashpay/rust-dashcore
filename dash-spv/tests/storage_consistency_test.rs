@@ -8,6 +8,7 @@ use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
+use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 
@@ -50,7 +51,7 @@ async fn test_tip_height_header_consistency_basic() {
         }
     }
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
     println!("✅ Basic consistency test passed");
 }
 
@@ -79,7 +80,7 @@ async fn test_tip_height_header_consistency_after_save() {
             assert!(header.is_some(), "Header should exist at tip height {} in phase 1", height);
         }
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Phase 2: Reload and check consistency
@@ -132,7 +133,7 @@ async fn test_tip_height_header_consistency_large_dataset() {
         if let Some(height) = tip_height {
             let header = storage.get_header(height).await.unwrap();
             if header.is_none() {
-                panic!("❌ CONSISTENCY BUG DETECTED: tip_height={} but get_header({}) returned None after batch ending at {}", 
+                panic!("❌ CONSISTENCY BUG DETECTED: tip_height={} but get_header({}) returned None after batch ending at {}",
                        height, height, batch_end - 1);
             }
 
@@ -177,7 +178,7 @@ async fn test_tip_height_header_consistency_large_dataset() {
         }
     }
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
     println!("✅ Large dataset consistency test passed");
 }
 
@@ -193,17 +194,16 @@ async fn test_concurrent_tip_header_access() {
         let mut storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
         let headers: Vec<BlockHeader> = (0..100_000).map(create_test_header).collect();
         storage.store_headers(&headers).await.unwrap();
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
-    // Test concurrent access from multiple storage instances
+    // Reopen storage and share via Arc for concurrent reads
+    let storage = Arc::new(DiskStorageManager::new(storage_path).await.unwrap());
     let mut handles = vec![];
 
     for i in 0..5 {
-        let path = storage_path.clone();
+        let storage = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
-            let storage = DiskStorageManager::new(path).await.unwrap();
-
             // Repeatedly check consistency
             for iteration in 0..100 {
                 let tip_height = storage.get_tip_height().await.unwrap();
@@ -211,7 +211,7 @@ async fn test_concurrent_tip_header_access() {
                 if let Some(height) = tip_height {
                     let header = storage.get_header(height).await.unwrap();
                     if header.is_none() {
-                        panic!("❌ CONCURRENCY BUG DETECTED in task {}, iteration {}: tip_height={} but get_header({}) returned None", 
+                        panic!("❌ CONCURRENCY BUG DETECTED in task {}, iteration {}: tip_height={} but get_header({}) returned None",
                                i, iteration, height, height);
                     }
 
@@ -220,7 +220,7 @@ async fn test_concurrent_tip_header_access() {
                         let test_height = height.saturating_sub(offset);
                         let test_header = storage.get_header(test_height).await.unwrap();
                         if test_header.is_none() {
-                            panic!("❌ CONCURRENCY BUG: Header missing at height {} (tip is {}) in task {}", 
+                            panic!("❌ CONCURRENCY BUG: Header missing at height {} (tip is {}) in task {}",
                                    test_height, height, i);
                         }
                     }
@@ -287,7 +287,7 @@ async fn test_reproduce_filter_sync_bug() {
         println!("Header at tip height {}: {:?}", tip_height, tip_header.is_some());
 
         if tip_header.is_none() {
-            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None", 
+            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None",
                      tip_height, tip_height);
         }
 
@@ -307,14 +307,14 @@ async fn test_reproduce_filter_sync_bug() {
             );
 
             if tip_header.is_none() {
-                println!("🔥 EXACT BUG REPRODUCED: Fallback to tip {} also failed - this is the exact error from the logs!", 
+                println!("🔥 EXACT BUG REPRODUCED: Fallback to tip {} also failed - this is the exact error from the logs!",
                          tip_height);
                 panic!("Reproduced the exact filter sync bug scenario");
             }
         }
     }
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
     println!("Bug reproduction test completed");
 }
 
@@ -355,7 +355,7 @@ async fn test_reproduce_filter_sync_bug_small() {
         println!("Header at tip height {}: {:?}", tip_height, tip_header.is_some());
 
         if tip_header.is_none() {
-            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None", 
+            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None",
                      tip_height, tip_height);
         }
 
@@ -381,7 +381,7 @@ async fn test_reproduce_filter_sync_bug_small() {
         }
     }
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
     println!("✅ Small dataset bug test completed");
 }
 
@@ -421,7 +421,7 @@ async fn test_segment_boundary_consistency() {
     let tip_header = storage.get_header(tip_height).await.unwrap();
     assert!(tip_header.is_some(), "Header should exist at tip height {}", tip_height);
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
     println!("✅ Segment boundary consistency test passed");
 }
 
@@ -505,7 +505,7 @@ async fn test_reproduce_tip_height_segment_eviction_race() {
     println!("Race condition test completed without reproducing the bug");
     println!("This might indicate the race condition requires specific timing or conditions");
 
-    storage.shutdown().await.unwrap();
+    storage.shutdown().await;
 }
 
 #[tokio::test]
@@ -528,18 +528,17 @@ async fn test_concurrent_tip_height_access_with_eviction() {
             storage.store_headers(chunk).await.unwrap();
         }
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
-    // Test concurrent access with reduced scale
+    // Reopen storage and share via Arc for concurrent reads
+    let storage = Arc::new(DiskStorageManager::new(storage_path).await.unwrap());
     let mut handles = vec![];
 
     // Reduced from 10 to 5 concurrent tasks
     for task_id in 0..5 {
-        let path = storage_path.clone();
+        let storage = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
-            let storage = DiskStorageManager::new(path).await.unwrap();
-
             // Reduced from 50 to 20 iterations
             for iteration in 0..20 {
                 // Get tip height
@@ -550,7 +549,7 @@ async fn test_concurrent_tip_height_access_with_eviction() {
                     let header_result = storage.get_header(height).await.unwrap();
 
                     if header_result.is_none() {
-                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None", 
+                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None",
                                task_id, iteration, height, height);
                     }
 
@@ -595,17 +594,16 @@ async fn test_concurrent_tip_height_access_with_eviction_heavy() {
             storage.store_headers(chunk).await.unwrap();
         }
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
-    // Now test concurrent access that might trigger the race condition
+    // Reopen storage and share via Arc for concurrent reads
+    let storage = Arc::new(DiskStorageManager::new(storage_path).await.unwrap());
     let mut handles = vec![];
 
     for task_id in 0..10 {
-        let path = storage_path.clone();
+        let storage = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
-            let storage = DiskStorageManager::new(path).await.unwrap();
-
             for iteration in 0..50 {
                 // Get tip height
                 let tip_height = storage.get_tip_height().await.unwrap();
@@ -615,7 +613,7 @@ async fn test_concurrent_tip_height_access_with_eviction_heavy() {
                     let header_result = storage.get_header(height).await.unwrap();
 
                     if header_result.is_none() {
-                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None", 
+                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None",
                                task_id, iteration, height, height);
                     }
 
@@ -664,7 +662,7 @@ async fn test_tip_height_segment_boundary_race() {
         let tip_height = storage.get_tip_height().await.unwrap();
         assert_eq!(tip_height, Some(segment_size - 1));
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     // Now force segment eviction and check consistency
@@ -684,7 +682,7 @@ async fn test_tip_height_segment_boundary_race() {
             if let Some(tip) = reported_tip {
                 let header = storage.get_header(tip).await.unwrap();
                 if header.is_none() {
-                    panic!("🎯 SEGMENT BOUNDARY RACE DETECTED: After storing segment {}, tip_height={} but header is None", 
+                    panic!("🎯 SEGMENT BOUNDARY RACE DETECTED: After storing segment {}, tip_height={} but header is None",
                            i, tip);
                 }
             }
@@ -706,7 +704,7 @@ async fn test_tip_height_segment_boundary_race() {
             assert!(header.is_some(), "Current tip header must always be accessible");
         }
 
-        storage.shutdown().await.unwrap();
+        storage.shutdown().await;
     }
 
     println!("✅ Segment boundary race test completed");

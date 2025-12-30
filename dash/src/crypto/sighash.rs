@@ -1737,7 +1737,7 @@ mod tests {
             "SIGHASH_SINGLE| SIGHASH_ANYONECANPAY",
             "SIGHASH_ALL SIGHASH_ANYONECANPAY",
             "SIGHASH_NONE |",
-            "SIGHASH_SIGNLE",
+            "SIGHASH_SIGNLE", // spellchecker:disable-line (intentional typo for test)
             "DEFAULT",
             "ALL",
             "sighash_none",

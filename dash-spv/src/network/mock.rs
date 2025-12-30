@@ -9,7 +9,6 @@ use dashcore::{
     network::message::NetworkMessage, network::message_blockdata::GetHeadersMessage, BlockHash,
 };
 use dashcore_hashes::Hash;
-use tokio::sync::mpsc;
 
 use crate::error::{NetworkError, NetworkResult};
 use crate::types::PeerInfo;
@@ -21,21 +20,15 @@ pub struct MockNetworkManager {
     connected: bool,
     messages: VecDeque<NetworkMessage>,
     headers_chain: Vec<BlockHeader>,
-    message_sender: mpsc::Sender<NetworkMessage>,
-    message_receiver: mpsc::Receiver<NetworkMessage>,
 }
 
 impl MockNetworkManager {
     /// Create a new mock network manager
     pub fn new() -> Self {
-        let (message_sender, message_receiver) = mpsc::channel(1000);
-
         Self {
             connected: false,
             messages: VecDeque::new(),
             headers_chain: Vec::new(),
-            message_sender,
-            message_receiver,
         }
     }
 
@@ -139,11 +132,6 @@ impl NetworkManager for MockNetworkManager {
             return Err(NetworkError::NotConnected);
         }
 
-        // Check for messages in the receiver channel first
-        if let Ok(msg) = self.message_receiver.try_recv() {
-            return Ok(Some(msg));
-        }
-
         // Then check our internal queue
         Ok(self.messages.pop_front())
     }
@@ -178,38 +166,12 @@ impl NetworkManager for MockNetworkManager {
         }
     }
 
-    async fn send_ping(&mut self) -> NetworkResult<u64> {
-        Ok(1234567890)
-    }
-
-    async fn handle_ping(&mut self, _nonce: u64) -> NetworkResult<()> {
-        Ok(())
-    }
-
-    fn handle_pong(&mut self, _nonce: u64) -> NetworkResult<()> {
-        Ok(())
-    }
-
-    fn should_ping(&self) -> bool {
-        false
-    }
-
-    fn cleanup_old_pings(&mut self) {}
-
-    fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage> {
-        self.message_sender.clone()
-    }
-
     async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
         Ok(Some(self.headers_chain.len() as u32))
     }
 
     async fn has_peer_with_service(&self, _service_flags: ServiceFlags) -> bool {
         self.connected
-    }
-
-    async fn get_peers_with_service(&self, _service_flags: ServiceFlags) -> Vec<PeerInfo> {
-        self.peer_info()
     }
 
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {

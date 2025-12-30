@@ -41,4 +41,3 @@ if [ "$DO_ASAN" = true ]; then
     RUSTFLAGS='-Zsanitizer=memory -Zsanitizer-memory-track-origins -Cforce-frame-pointers=yes'   \
     cargo test --lib --no-default-features --features="$FEATURES" -Zbuild-std --target x86_64-unknown-linux-gnu
 fi
-

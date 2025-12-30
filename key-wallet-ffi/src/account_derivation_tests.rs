@@ -7,8 +7,10 @@ mod tests {
     use crate::derivation::*;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::keys::{extended_private_key_free, private_key_free};
-    use crate::types::{FFIAccountType, FFINetworks};
+    use crate::types::FFIAccountType;
     use crate::wallet;
+    use std::ffi::CString;
+    use std::os::raw::c_char;
 
     const MNEMONIC: &str =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -18,7 +20,7 @@ mod tests {
         let mut error = FFIError::success();
 
         // Create wallet on testnet with default accounts
-        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetworks::TestnetFlag, &mut error) };
+        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetwork::Testnet, &mut error) };
         assert!(!wallet.is_null());
         assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::Success);
 
@@ -102,7 +104,7 @@ mod tests {
         let mut error = FFIError::success();
 
         // Create wallet on testnet with default accounts
-        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetworks::TestnetFlag, &mut error) };
+        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetwork::Testnet, &mut error) };
         assert!(!wallet.is_null());
 
         // Get account 0 (BIP44)
@@ -140,7 +142,7 @@ mod tests {
         let mut error = FFIError::success();
 
         // Create wallet and get account 0
-        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetworks::TestnetFlag, &mut error) };
+        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetwork::Testnet, &mut error) };
         assert!(!wallet.is_null());
         let account = unsafe {
             crate::account::wallet_get_account(wallet, crate::FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
@@ -215,7 +217,7 @@ mod tests {
     }
 
     // Helper to make C string pointers
-    fn c_str(s: &str) -> *const i8 {
+    fn c_str(s: &str) -> *const c_char {
         std::ffi::CString::new(s).unwrap().as_ptr()
     }
 }

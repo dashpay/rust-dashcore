@@ -2,7 +2,6 @@
 //! These tests demonstrate current issues with passphrase handling in the FFI layer
 
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
-use key_wallet_ffi::types::FFINetworks;
 use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 
@@ -21,7 +20,7 @@ fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
@@ -58,7 +57,7 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     let error = &mut error as *mut FFIError;
 
     // Create wallet manager
-    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
+    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
     assert!(!manager.is_null());
 
     let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
@@ -70,7 +69,6 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag, // account_count (ignored)
             error,
         )
     };
@@ -119,7 +117,7 @@ fn test_ffi_wallet_with_passphrase_ideal_workflow() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
@@ -158,7 +156,7 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             mnemonic.as_ptr(),
             empty_passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
@@ -169,28 +167,18 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             mnemonic.as_ptr(),
             actual_passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
+            FFINetwork::Testnet,
             error,
         )
     };
     assert!(!wallet_with_pass.is_null());
 
     // Try to get account count for both wallets
-    let count_no_pass = unsafe {
-        key_wallet_ffi::account::wallet_get_account_count(
-            wallet_no_pass,
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let count_no_pass =
+        unsafe { key_wallet_ffi::account::wallet_get_account_count(wallet_no_pass, error) };
 
-    let count_with_pass = unsafe {
-        key_wallet_ffi::account::wallet_get_account_count(
-            wallet_with_pass,
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let count_with_pass =
+        unsafe { key_wallet_ffi::account::wallet_get_account_count(wallet_with_pass, error) };
 
     println!("Account count without passphrase: {}", count_no_pass);
     println!("Account count with passphrase: {}", count_with_pass);

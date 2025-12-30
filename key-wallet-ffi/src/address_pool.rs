@@ -10,7 +10,6 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::FFIManagedWalletInfo;
 use crate::types::{FFIAccountType, FFIWallet};
 use crate::utils::rust_string_to_c;
-use crate::FFINetwork;
 use key_wallet::account::ManagedAccountCollection;
 use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
@@ -50,6 +49,21 @@ fn get_managed_account_by_type<'a>(
         AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_ref(),
         AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_ref(),
         AccountType::ProviderPlatformKeys => collection.provider_platform_keys.as_ref(),
+        AccountType::DashpayReceivingFunds {
+            ..
+        }
+        | AccountType::DashpayExternalAccount {
+            ..
+        } => {
+            // DashPay managed accounts are not currently persisted in ManagedAccountCollection
+            None
+        }
+        AccountType::PlatformPayment {
+            ..
+        } => {
+            // Platform Payment accounts are not currently persisted in ManagedAccountCollection
+            None
+        }
     }
 }
 
@@ -84,6 +98,21 @@ fn get_managed_account_by_type_mut<'a>(
         AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_mut(),
         AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_mut(),
         AccountType::ProviderPlatformKeys => collection.provider_platform_keys.as_mut(),
+        AccountType::DashpayReceivingFunds {
+            ..
+        }
+        | AccountType::DashpayExternalAccount {
+            ..
+        } => {
+            // DashPay managed accounts are not currently persisted in ManagedAccountCollection
+            None
+        }
+        AccountType::PlatformPayment {
+            ..
+        } => {
+            // Platform Payment accounts are not currently persisted in ManagedAccountCollection
+            None
+        }
     }
 }
 
@@ -247,7 +276,6 @@ pub struct FFIAddressPoolInfo {
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     managed_wallet: *const FFIManagedWalletInfo,
-    network: FFINetwork,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -261,31 +289,18 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
 
     let wrapper = &*managed_wallet;
     let managed_wallet = wrapper.inner();
-    let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
-    // Get the account collection
-    let collection = match managed_wallet.accounts.get(&network_rust) {
-        Some(collection) => collection,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                "No accounts for network".to_string(),
-            );
-            return false;
-        }
-    };
-
     // Get the specific managed account
-    let managed_account = match get_managed_account_by_type(collection, &account_type_rust) {
-        Some(account) => account,
-        None => {
-            FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-            return false;
-        }
-    };
+    let managed_account =
+        match get_managed_account_by_type(&managed_wallet.accounts, &account_type_rust) {
+            Some(account) => account,
+            None => {
+                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
+                return false;
+            }
+        };
 
     // Get the appropriate address pool
     let pool = match pool_type {
@@ -368,7 +383,6 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     managed_wallet: *mut FFIManagedWalletInfo,
-    network: FFINetwork,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -381,31 +395,18 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     }
 
     let managed_wallet = (&mut *managed_wallet).inner_mut();
-    let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
-    // Get the account collection
-    let collection = match managed_wallet.accounts.get_mut(&network_rust) {
-        Some(collection) => collection,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                "No accounts for network".to_string(),
-            );
-            return false;
-        }
-    };
-
     // Get the specific managed account
-    let managed_account = match get_managed_account_by_type_mut(collection, &account_type_rust) {
-        Some(account) => account,
-        None => {
-            FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-            return false;
-        }
-    };
+    let managed_account =
+        match get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust) {
+            Some(account) => account,
+            None => {
+                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
+                return false;
+            }
+        };
 
     // Get the appropriate address pool
     let pool = match pool_type {
@@ -478,7 +479,6 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
 pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    network: FFINetwork,
     account_type: FFIAccountType,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -492,17 +492,14 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 
     let managed_wallet = (&mut *managed_wallet).inner_mut();
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
     let account_type_to_check = account_type_rust.into();
 
-    let xpub_opt = wallet.inner().extended_public_key_for_account_type(
-        &account_type_to_check,
-        Some(account_index),
-        network_rust,
-    );
+    let xpub_opt = wallet
+        .inner()
+        .extended_public_key_for_account_type(&account_type_to_check, Some(account_index));
 
     let xpub = match xpub_opt {
         Some(xpub) => xpub,
@@ -518,27 +515,15 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 
     let key_source = KeySource::Public(xpub);
 
-    // Get the account collection
-    let collection = match managed_wallet.accounts.get_mut(&network_rust) {
-        Some(collection) => collection,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                "No accounts for network".to_string(),
-            );
-            return false;
-        }
-    };
-
     // Get the specific managed account
-    let managed_account = match get_managed_account_by_type_mut(collection, &account_type_rust) {
-        Some(account) => account,
-        None => {
-            FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-            return false;
-        }
-    };
+    let managed_account =
+        match get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust) {
+            Some(account) => account,
+            None => {
+                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
+                return false;
+            }
+        };
 
     // Get the appropriate address pool and generate addresses
     let result = match pool_type {
@@ -643,7 +628,6 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_mark_address_used(
     managed_wallet: *mut FFIManagedWalletInfo,
-    network: FFINetwork,
     address: *const c_char,
     error: *mut FFIError,
 ) -> bool {
@@ -653,7 +637,6 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
     }
 
     let managed_wallet = (&mut *managed_wallet).inner_mut();
-    let network_rust: key_wallet::Network = network.into();
 
     // Parse the address string
     let address_str = match std::ffi::CStr::from_ptr(address).to_str() {
@@ -688,17 +671,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
     let address = unchecked_addr.assume_checked();
 
     // Get the account collection
-    let collection = match managed_wallet.accounts.get_mut(&network_rust) {
-        Some(collection) => collection,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                "No accounts for network".to_string(),
-            );
-            return false;
-        }
-    };
+    let collection = &mut managed_wallet.accounts;
 
     // Try to mark the address as used in any account that contains it
     let marked = {
@@ -780,6 +753,22 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
             if let Some(account) = &mut collection.provider_platform_keys {
                 if account.mark_address_used(&address) {
                     found = true;
+                }
+            }
+        }
+        if !found {
+            for account in collection.dashpay_receival_accounts.values_mut() {
+                if account.mark_address_used(&address) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            for account in collection.dashpay_external_accounts.values_mut() {
+                if account.mark_address_used(&address) {
+                    found = true;
+                    break;
                 }
             }
         }
@@ -941,14 +930,16 @@ pub unsafe extern "C" fn address_info_free(info: *mut FFIAddressInfo) {
 
         // Free the byte arrays
         if !info.script_pubkey.is_null() && info.script_pubkey_len > 0 {
-            let _ = Box::from_raw(std::slice::from_raw_parts_mut(
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
                 info.script_pubkey,
                 info.script_pubkey_len,
             ));
         }
         if !info.public_key.is_null() && info.public_key_len > 0 {
-            let _ =
-                Box::from_raw(std::slice::from_raw_parts_mut(info.public_key, info.public_key_len));
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                info.public_key,
+                info.public_key_len,
+            ));
         }
     }
 }
@@ -963,7 +954,7 @@ pub unsafe extern "C" fn address_info_free(info: *mut FFIAddressInfo) {
 #[no_mangle]
 pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo, count: usize) {
     if !infos.is_null() && count > 0 {
-        let array = Box::from_raw(std::slice::from_raw_parts_mut(infos, count));
+        let array = Box::from_raw(std::ptr::slice_from_raw_parts_mut(infos, count));
         for info_ptr in array.iter() {
             address_info_free(*info_ptr);
         }
@@ -973,7 +964,7 @@ pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FFINetwork, FFINetworks};
+    use crate::FFINetwork;
 
     #[test]
     fn test_address_pool_type_values() {
@@ -1066,7 +1057,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -1078,7 +1069,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
                 ptr::null(),
                 &mut error,
             );
@@ -1103,7 +1093,6 @@ mod tests {
             let result = crate::managed_account::managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );
@@ -1167,7 +1156,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -1179,7 +1168,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
                 ptr::null(),
                 &mut error,
             );
@@ -1204,7 +1192,6 @@ mod tests {
             let result = crate::managed_account::managed_wallet_get_account(
                 manager,
                 wallet_ids_out,
-                FFINetwork::Testnet,
                 0,
                 FFIAccountType::StandardBIP44,
             );

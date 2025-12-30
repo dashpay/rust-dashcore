@@ -11,15 +11,16 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{BlockHash, Txid};
+use dashcore::prelude::CoreBlockHeight;
+use key_wallet::account::AccountCollection;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
 use key_wallet::wallet::WalletType;
+use key_wallet::Utxo;
 use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletBalance};
-use key_wallet::{Utxo, UtxoSet};
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use zeroize::Zeroize;
@@ -48,68 +49,30 @@ pub struct AddressGenerationResult {
     pub account_type_used: Option<AccountTypeUsed>,
 }
 
-/// Network-specific state for the wallet manager
-#[derive(Debug)]
-pub struct NetworkState {
-    /// UTXO set for this network
-    pub utxo_set: UtxoSet,
-    /// Transaction history for this network
-    pub transactions: BTreeMap<Txid, TransactionRecord>,
-    /// Current block height for this network
-    pub current_height: u32,
-}
-
-impl Default for NetworkState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl NetworkState {
-    /// Create a new network state
-    pub fn new() -> Self {
-        Self {
-            utxo_set: UtxoSet::new(),
-            transactions: BTreeMap::new(),
-            current_height: 0,
-        }
-    }
-}
-
 /// High-level wallet manager that manages multiple wallets
 ///
 /// Each wallet can contain multiple accounts following BIP44 standard.
 /// This is the main entry point for wallet operations.
 #[derive(Debug)]
 pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
+    /// Network the managed wallets are used for
+    network: Network,
+    /// Current block height for this network
+    current_height: CoreBlockHeight,
     /// Immutable wallets indexed by wallet ID
-    pub(crate) wallets: BTreeMap<WalletId, Wallet>,
+    wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
-    pub(crate) wallet_infos: BTreeMap<WalletId, T>,
-    /// Network-specific state (UTXO sets, transactions, heights)
-    network_states: BTreeMap<Network, NetworkState>,
-    /// Filter match cache (per network) - caches whether a filter matched
-    /// This is used for SPV operations to avoid rechecking filters
-    filter_matches: BTreeMap<Network, BTreeMap<BlockHash, bool>>,
-}
-
-impl<T: WalletInfoInterface> Default for WalletManager<T>
-where
-    T: Default,
-{
-    fn default() -> Self {
-        Self::new()
-    }
+    wallet_infos: BTreeMap<WalletId, T>,
 }
 
 impl<T: WalletInfoInterface> WalletManager<T> {
     /// Create a new wallet manager
-    pub fn new() -> Self {
+    pub fn new(network: Network) -> Self {
         Self {
+            network,
+            current_height: 0,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
-            network_states: BTreeMap::new(),
-            filter_matches: BTreeMap::new(),
         }
     }
 
@@ -119,8 +82,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         &mut self,
         mnemonic: &str,
         passphrase: &str,
-        networks: &[Network],
-        birth_height: Option<u32>,
+        birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
         let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
@@ -128,14 +90,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Use appropriate wallet creation method based on whether a passphrase is provided
         let wallet = if passphrase.is_empty() {
-            Wallet::from_mnemonic(mnemonic_obj, networks, account_creation_options)
+            Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         } else {
             // For wallets with passphrase, use the provided options
             Wallet::from_mnemonic_with_passphrase(
                 mnemonic_obj,
                 passphrase.to_string(),
-                networks,
+                self.network,
                 account_creation_options,
             )
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?
@@ -176,8 +138,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// # Arguments
     /// * `mnemonic` - The mnemonic phrase
     /// * `passphrase` - Optional BIP39 passphrase (empty string for no passphrase)
-    /// * `networks` - The networks for the wallet
-    /// * `birth_height` - Optional birth height for wallet scanning
+    /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `account_creation_options` - Which accounts to create initially
     /// * `downgrade_to_pubkey_wallet` - If true, creates a wallet without private keys
     /// * `allow_external_signing` - If true and downgraded, creates an externally signable wallet (e.g., for hardware wallets)
@@ -196,8 +157,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         &mut self,
         mnemonic: &str,
         passphrase: &str,
-        networks: &[Network],
-        birth_height: Option<u32>,
+        birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
         downgrade_to_pubkey_wallet: bool,
         allow_external_signing: bool,
@@ -207,13 +167,13 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create the initial wallet from mnemonic
         let mut wallet = if passphrase.is_empty() {
-            Wallet::from_mnemonic(mnemonic_obj, networks, account_creation_options)
+            Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         } else {
             Wallet::from_mnemonic_with_passphrase(
                 mnemonic_obj,
                 passphrase.to_string(),
-                networks,
+                self.network,
                 account_creation_options,
             )
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?
@@ -234,6 +194,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             };
             // Create a new wallet with only public keys
             let pubkey_wallet = Wallet {
+                network: wallet.network,
                 wallet_id: wallet.wallet_id,
                 wallet_type,
                 accounts,
@@ -278,7 +239,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn create_wallet_with_random_mnemonic(
         &mut self,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
-        network: Network,
     ) -> Result<WalletId, WalletError> {
         // Generate a random mnemonic (24 words for maximum security)
         let mnemonic =
@@ -286,7 +246,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 WalletError::WalletCreation(format!("Failed to generate mnemonic: {}", e))
             })?;
 
-        let wallet = Wallet::from_mnemonic(mnemonic, &[network], account_creation_options)
+        let wallet = Wallet::from_mnemonic(mnemonic, self.network, account_creation_options)
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Compute wallet ID from the wallet's root public key
@@ -299,8 +259,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        let network_state = self.get_or_create_network_state(network);
-        managed_info.set_birth_height(Some(network_state.current_height));
+        managed_info.set_birth_height(self.current_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -364,7 +323,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     ///
     /// # Arguments
     /// * `xprv` - The extended private key string (base58check encoded)
-    /// * `network` - Network for the wallet
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     ///
     /// # Returns
@@ -373,7 +331,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn import_wallet_from_extended_priv_key(
         &mut self,
         xprv: &str,
-        network: Network,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
         // Parse the extended private key
@@ -381,9 +338,8 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             .map_err(|e| WalletError::InvalidParameter(format!("Invalid xprv: {}", e)))?;
 
         // Create wallet from extended private key
-        let wallet =
-            Wallet::from_extended_key(extended_priv_key, &[network], account_creation_options)
-                .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
+        let wallet = Wallet::from_extended_key(extended_priv_key, account_creation_options)
+            .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Compute wallet ID from the wallet's root public key
         let wallet_id = wallet.compute_wallet_id();
@@ -395,8 +351,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info
-            .set_birth_height(Some(self.get_or_create_network_state(network).current_height));
+        managed_info.set_birth_height(self.current_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -411,7 +366,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     ///
     /// # Arguments
     /// * `xpub` - The extended public key string (base58check encoded)
-    /// * `network` - Network for the wallet
     /// * `can_sign_externally` - If true, creates an externally signable wallet (e.g., for hardware wallets).
     ///   If false, creates a pure watch-only wallet.
     ///
@@ -421,7 +375,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn import_wallet_from_xpub(
         &mut self,
         xpub: &str,
-        network: Network,
         can_sign_externally: bool,
     ) -> Result<WalletId, WalletError> {
         // Parse the extended public key
@@ -429,7 +382,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             .map_err(|e| WalletError::InvalidParameter(format!("Invalid xpub: {}", e)))?;
 
         // Create an empty account collection for the watch-only wallet
-        let accounts = alloc::collections::BTreeMap::from([(network, Default::default())]);
+        let accounts = AccountCollection::default();
 
         // Create watch-only or externally signable wallet from extended public key
         let wallet = Wallet::from_xpub(extended_pub_key, accounts, can_sign_externally)
@@ -445,8 +398,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info
-            .set_birth_height(Some(self.get_or_create_network_state(network).current_height));
+        managed_info.set_birth_height(self.current_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -489,11 +441,8 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         // Create managed wallet info from the imported wallet
         let mut managed_info = T::from_wallet(&wallet);
 
-        // Use the current network's height as the birth height since we don't know when it was originally created
-        if let Some(network) = wallet.accounts.keys().next() {
-            let network_state = self.get_or_create_network_state(*network);
-            managed_info.set_birth_height(Some(network_state.current_height));
-        }
+        // Use the current height as the birth height since we don't know when it was originally created
+        managed_info.set_birth_height(self.current_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -502,10 +451,9 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Check a transaction against all wallets and update their states if relevant
-    pub fn check_transaction_in_all_wallets(
+    pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,
-        network: Network,
         context: TransactionContext,
         update_state_if_found: bool,
     ) -> Vec<WalletId> {
@@ -515,55 +463,21 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         let wallet_ids: Vec<WalletId> = self.wallets.keys().cloned().collect();
 
         for wallet_id in wallet_ids {
-            // Check the transaction for this wallet
-            if let Some(wallet_info) = self.wallet_infos.get_mut(&wallet_id) {
-                let result = wallet_info.check_transaction(
-                    tx,
-                    network,
-                    context,
-                    self.wallets.get(&wallet_id),
-                );
+            // Get mutable references to both wallet and wallet_info
+            // We need to use split borrowing to get around Rust's borrow checker
+            let wallet_opt = self.wallets.get_mut(&wallet_id);
+            let wallet_info_opt = self.wallet_infos.get_mut(&wallet_id);
+
+            if let (Some(wallet), Some(wallet_info)) = (wallet_opt, wallet_info_opt) {
+                let result =
+                    wallet_info.check_transaction(tx, context, wallet, update_state_if_found).await;
 
                 // If the transaction is relevant
                 if result.is_relevant {
                     relevant_wallets.push(wallet_id);
-                    // Note: balance update is already handled in check_transaction when update_state_if_found is true
+                    // Note: balance update is already handled in check_transaction
                 }
             }
-        }
-
-        // If any wallet found the transaction relevant, and we're updating state,
-        // add it to the network's transaction history
-        if !relevant_wallets.is_empty() && update_state_if_found {
-            let txid = tx.txid();
-
-            // Determine the height and confirmation status based on context
-            let (height, _is_chain_locked) = match context {
-                TransactionContext::Mempool => (None, false),
-                TransactionContext::InBlock {
-                    height,
-                    ..
-                } => (Some(height), false),
-                TransactionContext::InChainLockedBlock {
-                    height,
-                    ..
-                } => (Some(height), true),
-            };
-
-            let record = TransactionRecord {
-                transaction: tx.clone(),
-                txid,
-                height,
-                block_hash: None, // Could be added as a parameter if needed
-                timestamp: current_timestamp(),
-                net_amount: 0, // This would need to be calculated per wallet
-                fee: None,
-                label: None,
-                is_ours: true,
-            };
-
-            let network_state = self.get_or_create_network_state(network);
-            network_state.transactions.insert(txid, record);
         }
 
         relevant_wallets
@@ -575,14 +489,13 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         &mut self,
         wallet_id: &WalletId,
         account_type: AccountType,
-        network: Network,
         account_xpub: Option<ExtendedPubKey>,
     ) -> Result<(), WalletError> {
         let wallet =
             self.wallets.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         wallet
-            .add_account(account_type, network, account_xpub)
+            .add_account(account_type, account_xpub)
             .map_err(|e| WalletError::AccountCreation(e.to_string()))
     }
 
@@ -601,20 +514,13 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     ) -> Result<Option<&Account>, WalletError> {
         let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
-        // Try to find the account in any network
-        for network in wallet.accounts.keys() {
-            if let Some(account) = wallet.get_bip44_account(*network, index) {
-                return Ok(Some(account));
-            }
-        }
-        Ok(None)
+        Ok(wallet.get_bip44_account(index))
     }
 
     /// Get receive address from a specific wallet and account
     pub fn get_receive_address(
         &mut self,
         wallet_id: &WalletId,
-        network: Network,
         account_index: u32,
         account_type_pref: AccountTypePreference,
         mark_as_used: bool,
@@ -626,14 +532,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get the account collection for the network
-        let collection = managed_info.accounts_mut(network).ok_or(WalletError::InvalidNetwork)?;
+        let collection = managed_info.accounts_mut();
 
         // Try to get address based on preference
         let (address_opt, account_type_used) = match account_type_pref {
             AccountTypePreference::BIP44 => {
                 if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(network, account_index),
+                    wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
                         .next_receive_address(Some(&wallet_account.account_xpub), true)
@@ -648,7 +554,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             AccountTypePreference::BIP32 => {
                 if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(network, account_index),
+                    wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
                         .next_receive_address(Some(&wallet_account.account_xpub), true)
@@ -664,7 +570,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 // Try BIP44 first
                 if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(network, account_index),
+                    wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
                         .next_receive_address(Some(&wallet_account.account_xpub), true)
@@ -674,7 +580,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                             // Fallback to BIP32
                             if let (Some(managed_account), Some(wallet_account)) = (
                                 collection.standard_bip32_accounts.get_mut(&account_index),
-                                wallet.get_bip32_account(network, account_index),
+                                wallet.get_bip32_account(account_index),
                             ) {
                                 match managed_account
                                     .next_receive_address(Some(&wallet_account.account_xpub), true)
@@ -689,7 +595,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     }
                 } else if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(network, account_index),
+                    wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
                         .next_receive_address(Some(&wallet_account.account_xpub), true)
@@ -705,7 +611,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 // Try BIP32 first
                 if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(network, account_index),
+                    wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
                         .next_receive_address(Some(&wallet_account.account_xpub), true)
@@ -715,7 +621,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                             // Fallback to BIP44
                             if let (Some(managed_account), Some(wallet_account)) = (
                                 collection.standard_bip44_accounts.get_mut(&account_index),
-                                wallet.get_bip44_account(network, account_index),
+                                wallet.get_bip44_account(account_index),
                             ) {
                                 match managed_account
                                     .next_receive_address(Some(&wallet_account.account_xpub), true)
@@ -730,7 +636,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     }
                 } else if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(network, account_index),
+                    wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
                         .next_receive_address(Some(&wallet_account.account_xpub), true)
@@ -748,25 +654,24 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         if let Some(ref address) = address_opt {
             if mark_as_used {
                 // Get the account collection again for marking
-                if let Some(collection) = managed_info.accounts_mut(network) {
-                    // Mark address as used in the appropriate account type
-                    match account_type_used {
-                        Some(AccountTypeUsed::BIP44) => {
-                            if let Some(account) =
-                                collection.standard_bip44_accounts.get_mut(&account_index)
-                            {
-                                account.mark_address_used(address);
-                            }
+                let collection = managed_info.accounts_mut();
+                // Mark address as used in the appropriate account type
+                match account_type_used {
+                    Some(AccountTypeUsed::BIP44) => {
+                        if let Some(account) =
+                            collection.standard_bip44_accounts.get_mut(&account_index)
+                        {
+                            account.mark_address_used(address);
                         }
-                        Some(AccountTypeUsed::BIP32) => {
-                            if let Some(account) =
-                                collection.standard_bip32_accounts.get_mut(&account_index)
-                            {
-                                account.mark_address_used(address);
-                            }
-                        }
-                        None => {}
                     }
+                    Some(AccountTypeUsed::BIP32) => {
+                        if let Some(account) =
+                            collection.standard_bip32_accounts.get_mut(&account_index)
+                        {
+                            account.mark_address_used(address);
+                        }
+                    }
+                    None => {}
                 }
             }
         }
@@ -781,7 +686,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn get_change_address(
         &mut self,
         wallet_id: &WalletId,
-        network: Network,
         account_index: u32,
         account_type_pref: AccountTypePreference,
         mark_as_used: bool,
@@ -792,14 +696,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get the account collection for the network
-        let collection = managed_info.accounts_mut(network).ok_or(WalletError::InvalidNetwork)?;
+        let collection = managed_info.accounts_mut();
 
         // Try to get address based on preference
         let (address_opt, account_type_used) = match account_type_pref {
             AccountTypePreference::BIP44 => {
                 if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(network, account_index),
+                    wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
                         .next_change_address(Some(&wallet_account.account_xpub), true)
@@ -814,7 +718,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             AccountTypePreference::BIP32 => {
                 if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(network, account_index),
+                    wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
                         .next_change_address(Some(&wallet_account.account_xpub), true)
@@ -830,7 +734,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 // Try BIP44 first
                 if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(network, account_index),
+                    wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
                         .next_change_address(Some(&wallet_account.account_xpub), true)
@@ -840,7 +744,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                             // Fallback to BIP32
                             if let (Some(managed_account), Some(wallet_account)) = (
                                 collection.standard_bip32_accounts.get_mut(&account_index),
-                                wallet.get_bip32_account(network, account_index),
+                                wallet.get_bip32_account(account_index),
                             ) {
                                 match managed_account
                                     .next_change_address(Some(&wallet_account.account_xpub), true)
@@ -855,7 +759,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     }
                 } else if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(network, account_index),
+                    wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
                         .next_change_address(Some(&wallet_account.account_xpub), true)
@@ -871,7 +775,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 // Try BIP32 first
                 if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(network, account_index),
+                    wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
                         .next_change_address(Some(&wallet_account.account_xpub), true)
@@ -881,7 +785,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                             // Fallback to BIP44
                             if let (Some(managed_account), Some(wallet_account)) = (
                                 collection.standard_bip44_accounts.get_mut(&account_index),
-                                wallet.get_bip44_account(network, account_index),
+                                wallet.get_bip44_account(account_index),
                             ) {
                                 match managed_account
                                     .next_change_address(Some(&wallet_account.account_xpub), true)
@@ -896,7 +800,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     }
                 } else if let (Some(managed_account), Some(wallet_account)) = (
                     collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(network, account_index),
+                    wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
                         .next_change_address(Some(&wallet_account.account_xpub), true)
@@ -914,25 +818,24 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         if let Some(ref address) = address_opt {
             if mark_as_used {
                 // Get the account collection again for marking
-                if let Some(collection) = managed_info.accounts_mut(network) {
-                    // Mark address as used in the appropriate account type
-                    match account_type_used {
-                        Some(AccountTypeUsed::BIP44) => {
-                            if let Some(account) =
-                                collection.standard_bip44_accounts.get_mut(&account_index)
-                            {
-                                account.mark_address_used(address);
-                            }
+                let collection = managed_info.accounts_mut();
+                // Mark address as used in the appropriate account type
+                match account_type_used {
+                    Some(AccountTypeUsed::BIP44) => {
+                        if let Some(account) =
+                            collection.standard_bip44_accounts.get_mut(&account_index)
+                        {
+                            account.mark_address_used(address);
                         }
-                        Some(AccountTypeUsed::BIP32) => {
-                            if let Some(account) =
-                                collection.standard_bip32_accounts.get_mut(&account_index)
-                            {
-                                account.mark_address_used(address);
-                            }
-                        }
-                        None => {}
                     }
+                    Some(AccountTypeUsed::BIP32) => {
+                        if let Some(account) =
+                            collection.standard_bip32_accounts.get_mut(&account_index)
+                        {
+                            account.mark_address_used(address);
+                        }
+                    }
+                    None => {}
                 }
             }
         }
@@ -941,15 +844,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             address: address_opt,
             account_type_used,
         })
-    }
-
-    /// Get transaction history for all wallets across all networks
-    pub fn transaction_history(&self) -> Vec<&TransactionRecord> {
-        let mut all_txs = Vec::new();
-        for network_state in self.network_states.values() {
-            all_txs.extend(network_state.transactions.values());
-        }
-        all_txs
     }
 
     /// Get transaction history for a specific wallet
@@ -966,8 +860,8 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// Get UTXOs for all wallets across all networks
     pub fn get_all_utxos(&self) -> Vec<&Utxo> {
         let mut all_utxos = Vec::new();
-        for network_state in self.network_states.values() {
-            all_utxos.extend(network_state.utxo_set.all());
+        for info in self.wallet_infos.values() {
+            all_utxos.extend(info.utxos().iter());
         }
         all_utxos
     }
@@ -986,7 +880,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
     /// Get total balance across all wallets and networks
     pub fn get_total_balance(&self) -> u64 {
-        self.network_states.values().map(|state| state.utxo_set.total_balance()).sum()
+        self.wallet_infos.values().map(|info| info.balance().total).sum()
     }
 
     /// Get balance for a specific wallet
@@ -1031,37 +925,26 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         Ok(())
     }
 
+    /// Get the network this manager is configured for
+    pub fn network(&self) -> Network {
+        self.network
+    }
+
     /// Get current block height for a specific network
-    pub fn current_height(&self, network: Network) -> u32 {
-        self.network_states.get(&network).map(|state| state.current_height).unwrap_or(0)
+    pub fn current_height(&self) -> u32 {
+        self.current_height
     }
 
     /// Update current block height for a specific network
-    pub fn update_height(&mut self, network: Network, height: u32) {
-        let state = self.get_or_create_network_state(network);
-        state.current_height = height;
-    }
-
-    /// Get or create network state for a specific network
-    pub(crate) fn get_or_create_network_state(&mut self, network: Network) -> &mut NetworkState {
-        self.network_states.entry(network).or_default()
-    }
-
-    /// Get network state for a specific network (public for SPVWalletManager)
-    pub fn get_network_state(&self, network: Network) -> Option<&NetworkState> {
-        self.network_states.get(&network)
-    }
-
-    /// Get mutable network state for a specific network (public for SPVWalletManager)
-    pub fn get_network_state_mut(&mut self, network: Network) -> Option<&mut NetworkState> {
-        self.network_states.get_mut(&network)
+    pub fn update_height(&mut self, height: u32) {
+        self.current_height = height
     }
 
     /// Get monitored addresses for all wallets for a specific network
-    pub fn monitored_addresses(&self, network: Network) -> Vec<Address> {
+    pub fn monitored_addresses(&self) -> Vec<Address> {
         let mut addresses = Vec::new();
         for info in self.wallet_infos.values() {
-            addresses.extend(info.monitored_addresses(network));
+            addresses.extend(info.monitored_addresses());
         }
         addresses
     }

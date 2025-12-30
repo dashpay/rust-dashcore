@@ -52,6 +52,7 @@ pub extern "C" fn dash_spv_ffi_clear_error() {
 impl From<SpvError> for FFIErrorCode {
     fn from(err: SpvError) -> Self {
         match err {
+            SpvError::ChannelFailure(_, _) => FFIErrorCode::RuntimeError,
             SpvError::Network(_) => FFIErrorCode::NetworkError,
             SpvError::Storage(_) => FFIErrorCode::StorageError,
             SpvError::Validation(_) => FFIErrorCode::ValidationError,
@@ -59,7 +60,9 @@ impl From<SpvError> for FFIErrorCode {
             SpvError::Io(_) => FFIErrorCode::RuntimeError,
             SpvError::Config(_) => FFIErrorCode::ConfigError,
             SpvError::Parse(_) => FFIErrorCode::ValidationError,
+            SpvError::Logging(_) => FFIErrorCode::RuntimeError,
             SpvError::Wallet(_) => FFIErrorCode::WalletError,
+            SpvError::QuorumLookupError(_) => FFIErrorCode::ValidationError,
             SpvError::General(_) => FFIErrorCode::Unknown,
         }
     }

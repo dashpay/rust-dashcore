@@ -214,7 +214,7 @@ impl ChainLockManager {
                             let required_height = chain_lock
                                 .block_height
                                 .saturating_sub(CHAINLOCK_VALIDATION_MASTERNODE_OFFSET);
-                            warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
+                            warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation",
                                 chain_lock.block_height, required_height);
                             self.queue_pending_chainlock(chain_lock.clone()).map_err(|e| {
                                 ValidationError::InvalidChainLock(format!(
@@ -443,59 +443,8 @@ impl ChainLockManager {
                 }
             }
         }
-
         Ok(chain_locks)
     }
-
-    /// Get chain lock statistics
-    pub fn get_stats(&self) -> ChainLockStats {
-        let by_height = match self.chain_locks_by_height.read() {
-            Ok(guard) => guard,
-            Err(_) => {
-                return ChainLockStats {
-                    total_chain_locks: 0,
-                    cached_by_height: 0,
-                    cached_by_hash: 0,
-                    highest_locked_height: None,
-                    lowest_locked_height: None,
-                    enforce_chain_locks: self.enforce_chain_locks,
-                }
-            }
-        };
-        let by_hash = match self.chain_locks_by_hash.read() {
-            Ok(guard) => guard,
-            Err(_) => {
-                return ChainLockStats {
-                    total_chain_locks: 0,
-                    cached_by_height: 0,
-                    cached_by_hash: 0,
-                    highest_locked_height: None,
-                    lowest_locked_height: None,
-                    enforce_chain_locks: self.enforce_chain_locks,
-                }
-            }
-        };
-
-        ChainLockStats {
-            total_chain_locks: by_height.len(),
-            cached_by_height: by_height.len(),
-            cached_by_hash: by_hash.len(),
-            highest_locked_height: by_height.keys().max().cloned(),
-            lowest_locked_height: by_height.keys().min().cloned(),
-            enforce_chain_locks: self.enforce_chain_locks,
-        }
-    }
-}
-
-/// Chain lock statistics
-#[derive(Debug, Clone)]
-pub struct ChainLockStats {
-    pub total_chain_locks: usize,
-    pub cached_by_height: usize,
-    pub cached_by_hash: usize,
-    pub highest_locked_height: Option<u32>,
-    pub lowest_locked_height: Option<u32>,
-    pub enforce_chain_locks: bool,
 }
 
 #[cfg(test)]

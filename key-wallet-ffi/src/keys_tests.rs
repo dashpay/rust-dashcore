@@ -5,7 +5,7 @@
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::keys::*;
-    use crate::types::{FFINetwork, FFINetworks};
+    use crate::types::FFINetwork;
     use crate::wallet;
     use std::ffi::{CStr, CString};
     use std::ptr;
@@ -21,7 +21,7 @@ mod tests {
             let wallet = wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             );
             assert!(!wallet.is_null());
@@ -29,12 +29,7 @@ mod tests {
 
             // Derive an extended private key
             let path = CString::new("m/44'/1'/0'").unwrap();
-            let ext_priv = wallet_derive_extended_private_key(
-                wallet,
-                FFINetwork::Testnet,
-                path.as_ptr(),
-                &mut error,
-            );
+            let ext_priv = wallet_derive_extended_private_key(wallet, path.as_ptr(), &mut error);
             assert!(!ext_priv.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -68,12 +63,7 @@ mod tests {
             extended_private_key_free(ext_priv);
 
             // Now test extended public key
-            let ext_pub = wallet_derive_extended_public_key(
-                wallet,
-                FFINetwork::Testnet,
-                path.as_ptr(),
-                &mut error,
-            );
+            let ext_pub = wallet_derive_extended_public_key(wallet, path.as_ptr(), &mut error);
             assert!(!ext_pub.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -121,15 +111,14 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
         assert!(!wallet.is_null());
 
         // Try to get account xpriv - should fail
-        let xpriv_str =
-            unsafe { wallet_get_account_xpriv(wallet, FFINetwork::Testnet, 0, &mut error) };
+        let xpriv_str = unsafe { wallet_get_account_xpriv(wallet, 0, &mut error) };
 
         // Should return null (not implemented for security)
         assert!(xpriv_str.is_null());
@@ -153,15 +142,14 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
         assert!(!wallet.is_null());
 
         // Get account xpub
-        let xpub_str =
-            unsafe { wallet_get_account_xpub(wallet, FFINetwork::Testnet, 0, &mut error) };
+        let xpub_str = unsafe { wallet_get_account_xpub(wallet, 0, &mut error) };
 
         assert!(!xpub_str.is_null());
 
@@ -189,16 +177,14 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
 
         // Try to derive private key - should now succeed (44'/1'/0'/0/0 for Dash)
         let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-        let privkey_ptr = unsafe {
-            wallet_derive_private_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
-        };
+        let privkey_ptr = unsafe { wallet_derive_private_key(wallet, path.as_ptr(), &mut error) };
 
         // Should succeed and return a valid pointer
         assert!(!privkey_ptr.is_null());
@@ -239,7 +225,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -250,9 +236,7 @@ mod tests {
 
         // Derive public key using derivation path (44'/1'/0'/0/0 for Dash)
         let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-        let pubkey_ptr = unsafe {
-            wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
-        };
+        let pubkey_ptr = unsafe { wallet_derive_public_key(wallet, path.as_ptr(), &mut error) };
 
         if pubkey_ptr.is_null() {
             panic!("pubkey_ptr is null, error: {:?}", error);
@@ -295,7 +279,7 @@ mod tests {
             let wallet = wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             );
             assert!(!wallet.is_null());
@@ -303,12 +287,7 @@ mod tests {
 
             // Derive public key as hex directly
             let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-            let hex_str = wallet_derive_public_key_as_hex(
-                wallet,
-                FFINetwork::Testnet,
-                path.as_ptr(),
-                &mut error,
-            );
+            let hex_str = wallet_derive_public_key_as_hex(wallet, path.as_ptr(), &mut error);
             assert!(!hex_str.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -405,8 +384,7 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test with null wallet
-        let xpriv =
-            unsafe { wallet_get_account_xpriv(ptr::null(), FFINetwork::Testnet, 0, &mut error) };
+        let xpriv = unsafe { wallet_get_account_xpriv(ptr::null(), 0, &mut error) };
         assert!(xpriv.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
@@ -435,9 +413,8 @@ mod tests {
 
         // Test with null wallet (44'/1'/0'/0/0 for Dash)
         let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-        let pubkey_ptr = unsafe {
-            wallet_derive_public_key(ptr::null(), FFINetwork::Testnet, path.as_ptr(), &mut error)
-        };
+        let pubkey_ptr =
+            unsafe { wallet_derive_public_key(ptr::null(), path.as_ptr(), &mut error) };
 
         assert!(pubkey_ptr.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -450,15 +427,13 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
 
         // Test with null path
-        let pubkey_ptr = unsafe {
-            wallet_derive_public_key(wallet, FFINetwork::Testnet, ptr::null(), &mut error)
-        };
+        let pubkey_ptr = unsafe { wallet_derive_public_key(wallet, ptr::null(), &mut error) };
 
         assert!(pubkey_ptr.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -586,7 +561,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -594,9 +569,7 @@ mod tests {
 
         // Test different account indices
         for account_index in 0..3 {
-            let xpub_str = unsafe {
-                wallet_get_account_xpub(wallet, FFINetwork::Testnet, account_index, &mut error)
-            };
+            let xpub_str = unsafe { wallet_get_account_xpub(wallet, account_index, &mut error) };
 
             if !xpub_str.is_null() {
                 let xpub = unsafe { CStr::from_ptr(xpub_str).to_str().unwrap() };
@@ -610,8 +583,7 @@ mod tests {
         }
 
         // Test with null wallet
-        let xpub_str =
-            unsafe { wallet_get_account_xpub(ptr::null(), FFINetwork::Testnet, 0, &mut error) };
+        let xpub_str = unsafe { wallet_get_account_xpub(ptr::null(), 0, &mut error) };
 
         assert!(xpub_str.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -634,7 +606,7 @@ mod tests {
             wallet::wallet_create_from_mnemonic(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetworks::TestnetFlag,
+                FFINetwork::Testnet,
                 &mut error,
             )
         };
@@ -650,9 +622,7 @@ mod tests {
         for path_str in test_paths.iter() {
             let path = CString::new(*path_str).unwrap();
 
-            let pubkey_ptr = unsafe {
-                wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
-            };
+            let pubkey_ptr = unsafe { wallet_derive_public_key(wallet, path.as_ptr(), &mut error) };
 
             if !pubkey_ptr.is_null() {
                 // Get hex representation to verify

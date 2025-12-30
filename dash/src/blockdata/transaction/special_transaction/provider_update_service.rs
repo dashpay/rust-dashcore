@@ -318,7 +318,7 @@ mod tests {
         let block_data_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
-            .join("protx_update_v2_block.data");
+            .join("dash/contrib/protx_update_v2_block.data");
 
         println!("🔍 Testing ProTx Update Service v2 (BasicBLS) block parsing");
 
@@ -430,7 +430,7 @@ mod tests {
         let block_data_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
-            .join("block_with_pro_reg_tx.data");
+            .join("dash/contrib/block_with_pro_reg_tx.data");
 
         println!("🔍 Testing ProTx block parsing with ProRegTx transactions");
 

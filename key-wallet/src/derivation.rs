@@ -99,7 +99,9 @@ impl HDWallet {
     pub fn bip44_account(&self, account: u32) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
             crate::Network::Dash => crate::dip9::DASH_BIP44_PATH_MAINNET,
-            crate::Network::Testnet => crate::dip9::DASH_BIP44_PATH_TESTNET,
+            Network::Testnet | Network::Devnet | Network::Regtest => {
+                crate::dip9::DASH_BIP44_PATH_TESTNET
+            }
             _ => return Err(Error::InvalidNetwork),
         };
 
@@ -116,7 +118,9 @@ impl HDWallet {
     pub fn coinjoin_account(&self, account: u32) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
             crate::Network::Dash => crate::dip9::COINJOIN_PATH_MAINNET,
-            crate::Network::Testnet => crate::dip9::COINJOIN_PATH_TESTNET,
+            Network::Testnet | Network::Devnet | Network::Regtest => {
+                crate::dip9::COINJOIN_PATH_TESTNET
+            }
             _ => return Err(Error::InvalidNetwork),
         };
 
@@ -137,7 +141,9 @@ impl HDWallet {
     ) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
             crate::Network::Dash => crate::dip9::IDENTITY_AUTHENTICATION_PATH_MAINNET,
-            crate::Network::Testnet => crate::dip9::IDENTITY_AUTHENTICATION_PATH_TESTNET,
+            Network::Testnet | Network::Devnet | Network::Regtest => {
+                crate::dip9::IDENTITY_AUTHENTICATION_PATH_TESTNET
+            }
             _ => return Err(Error::InvalidNetwork),
         };
 
@@ -357,8 +363,6 @@ pub struct DerivationStrategy {
     base_path: DerivationPath,
     /// Gap limit for address discovery
     gap_limit: u32,
-    /// Lookahead window
-    lookahead: u32,
 }
 
 impl DerivationStrategy {
@@ -367,19 +371,12 @@ impl DerivationStrategy {
         Self {
             base_path,
             gap_limit: 20,
-            lookahead: 20,
         }
     }
 
     /// Set the gap limit
     pub fn with_gap_limit(mut self, limit: u32) -> Self {
         self.gap_limit = limit;
-        self
-    }
-
-    /// Set the lookahead window
-    pub fn with_lookahead(mut self, lookahead: u32) -> Self {
-        self.lookahead = lookahead;
         self
     }
 
@@ -594,7 +591,7 @@ mod tests {
     #[test]
     fn test_special_derivation_paths() {
         let mnemonic = Mnemonic::from_phrase(
-            "upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow", 
+            "upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow",
             crate::mnemonic::Language::English
         ).unwrap();
 

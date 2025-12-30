@@ -42,7 +42,7 @@ pub enum AccountType {
     },
     /// Identity registration funding
     IdentityRegistration,
-    /// Identity top-up funding  
+    /// Identity top-up funding
     IdentityTopUp {
         /// Registration index (which identity this is topping up)
         registration_index: u32,
@@ -52,17 +52,46 @@ pub enum AccountType {
     /// Identity invitation funding
     IdentityInvitation,
     /// Provider voting keys (DIP-3)
-    /// Path: m/9'/5'/3'/1'/[key_index]
+    /// Path: `m/9'/5'/3'/1'/[key_index]`
     ProviderVotingKeys,
     /// Provider owner keys (DIP-3)
-    /// Path: m/9'/5'/3'/2'/[key_index]
+    /// Path: `m/9'/5'/3'/2'/[key_index]`
     ProviderOwnerKeys,
     /// Provider operator keys (DIP-3)
-    /// Path: m/9'/5'/3'/3'/[key_index]
+    /// Path: `m/9'/5'/3'/3'/[key_index]`
     ProviderOperatorKeys,
     /// Provider platform P2P keys (DIP-3, ED25519)
-    /// Path: m/9'/5'/3'/4'/[key_index]
+    /// Path: `m/9'/5'/3'/4'/[key_index]`
     ProviderPlatformKeys,
+    /// Incoming DashPay funds account using 256-bit derivation
+    /// The derivation path used is user_identity_id/friend_identity_id
+    DashpayReceivingFunds {
+        /// Account index (account-level selection)
+        index: u32,
+        /// Our identity id (32 bytes)
+        user_identity_id: [u8; 32],
+        /// Our contact's identity id (32 bytes)
+        friend_identity_id: [u8; 32],
+    },
+    /// DashPay external (watch-only) account using 256-bit derivation
+    /// The derivation path used is friend_identity_id/user_identity_id
+    DashpayExternalAccount {
+        /// Account index (account-level selection)
+        index: u32,
+        /// Our identity id (32 bytes)
+        user_identity_id: [u8; 32],
+        /// Our contact's identity id (32 bytes)
+        friend_identity_id: [u8; 32],
+    },
+    /// Platform Payment account (DIP-17)
+    /// Path: m/9'/coin_type'/17'/account'/key_class'/index
+    /// Address encoding (DIP-18 bech32m) is handled by the Platform repo.
+    PlatformPayment {
+        /// Account index (hardened) - default 0'
+        account: u32,
+        /// Key class (hardened) - default 0', 1' reserved for change-like segregation
+        key_class: u32,
+    },
 }
 
 impl From<AccountType> for AccountTypeToCheck {
@@ -90,6 +119,15 @@ impl From<AccountType> for AccountTypeToCheck {
             AccountType::ProviderOwnerKeys => AccountTypeToCheck::ProviderOwnerKeys,
             AccountType::ProviderOperatorKeys => AccountTypeToCheck::ProviderOperatorKeys,
             AccountType::ProviderPlatformKeys => AccountTypeToCheck::ProviderPlatformKeys,
+            AccountType::DashpayReceivingFunds {
+                ..
+            } => AccountTypeToCheck::DashpayReceivingFunds,
+            AccountType::DashpayExternalAccount {
+                ..
+            } => AccountTypeToCheck::DashpayExternalAccount,
+            AccountType::PlatformPayment {
+                ..
+            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }
@@ -105,7 +143,19 @@ impl AccountType {
             }
             | Self::CoinJoin {
                 index,
+            }
+            | Self::DashpayReceivingFunds {
+                index,
+                ..
+            }
+            | Self::DashpayExternalAccount {
+                index,
+                ..
             } => Some(*index),
+            Self::PlatformPayment {
+                account,
+                ..
+            } => Some(*account),
             // Identity and provider types don't have account indices
             Self::IdentityRegistration
             | Self::IdentityTopUp {
@@ -168,6 +218,15 @@ impl AccountType {
             Self::ProviderPlatformKeys {
                 ..
             } => DerivationPathReference::ProviderPlatformNodeKeys,
+            Self::DashpayReceivingFunds {
+                ..
+            } => DerivationPathReference::ContactBasedFunds,
+            Self::DashpayExternalAccount {
+                ..
+            } => DerivationPathReference::ContactBasedFundsExternal,
+            Self::PlatformPayment {
+                ..
+            } => DerivationPathReference::PlatformPayment,
         }
     }
 
@@ -220,7 +279,7 @@ impl AccountType {
                     Network::Dash => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_MAINNET))
                     }
-                    Network::Testnet => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_TESTNET))
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
@@ -232,7 +291,9 @@ impl AccountType {
                 // Base path with registration index - actual key index added when deriving
                 let base_path = match network {
                     Network::Dash => crate::dip9::IDENTITY_TOPUP_PATH_MAINNET,
-                    Network::Testnet => crate::dip9::IDENTITY_TOPUP_PATH_TESTNET,
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        crate::dip9::IDENTITY_TOPUP_PATH_TESTNET
+                    }
                     _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 let mut path = DerivationPath::from(base_path);
@@ -248,7 +309,7 @@ impl AccountType {
                     Network::Dash => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_MAINNET))
                     }
-                    Network::Testnet => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_TESTNET))
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
@@ -260,7 +321,7 @@ impl AccountType {
                     Network::Dash => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_MAINNET))
                     }
-                    Network::Testnet => {
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_TESTNET))
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
@@ -305,6 +366,74 @@ impl AccountType {
                     ChildNumber::from_hardened_idx(3).map_err(crate::error::Error::Bip32)?,
                     ChildNumber::from_hardened_idx(4).map_err(crate::error::Error::Bip32)?,
                 ]))
+            }
+            Self::DashpayReceivingFunds {
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => {
+                // Base DashPay root + account 0' + user_id/friend_id (non-hardened per DIP-14/DIP-15)
+                let mut path = match network {
+                    Network::Dash => DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET),
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
+                    }
+                    _ => return Err(crate::error::Error::InvalidNetwork),
+                };
+                path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
+                path.push(ChildNumber::Normal256 {
+                    index: *user_identity_id,
+                });
+                path.push(ChildNumber::Normal256 {
+                    index: *friend_identity_id,
+                });
+                Ok(path)
+            }
+            Self::DashpayExternalAccount {
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => {
+                // Base DashPay root + account 0' + friend_id/user_id (non-hardened per DIP-14/DIP-15)
+                let mut path = match network {
+                    Network::Dash => DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET),
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
+                    }
+                    _ => return Err(crate::error::Error::InvalidNetwork),
+                };
+                path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
+                path.push(ChildNumber::Normal256 {
+                    index: *friend_identity_id,
+                });
+                path.push(ChildNumber::Normal256 {
+                    index: *user_identity_id,
+                });
+                Ok(path)
+            }
+            Self::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                // DIP-17: m/9'/coin_type'/17'/account'/key_class'
+                // The leaf index is non-hardened and appended during address generation
+                let mut path = match network {
+                    Network::Dash => {
+                        DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_MAINNET)
+                    }
+                    Network::Testnet => {
+                        DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_TESTNET)
+                    }
+                    _ => return Err(crate::error::Error::InvalidNetwork),
+                };
+                path.push(
+                    ChildNumber::from_hardened_idx(*account).map_err(crate::error::Error::Bip32)?,
+                );
+                path.push(
+                    ChildNumber::from_hardened_idx(*key_class)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
+                Ok(path)
             }
         }
     }

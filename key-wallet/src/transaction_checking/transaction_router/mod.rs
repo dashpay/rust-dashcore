@@ -72,7 +72,12 @@ impl TransactionRouter {
     pub fn get_relevant_account_types(tx_type: &TransactionType) -> Vec<AccountTypeToCheck> {
         match tx_type {
             TransactionType::Standard => {
-                vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
+                vec![
+                    AccountTypeToCheck::StandardBIP44,
+                    AccountTypeToCheck::StandardBIP32,
+                    AccountTypeToCheck::DashpayReceivingFunds,
+                    AccountTypeToCheck::DashpayExternalAccount,
+                ]
             }
             TransactionType::CoinJoin => vec![AccountTypeToCheck::CoinJoin],
             TransactionType::ProviderRegistration => vec![
@@ -171,6 +176,11 @@ pub enum AccountTypeToCheck {
     ProviderOwnerKeys,
     ProviderOperatorKeys,
     ProviderPlatformKeys,
+    DashpayReceivingFunds,
+    DashpayExternalAccount,
+    /// Platform Payment accounts (DIP-17).
+    /// Note: These are NOT checked for Core chain transactions as they operate on Dash Platform.
+    PlatformPayment,
 }
 
 impl From<ManagedAccountType> for AccountTypeToCheck {
@@ -214,6 +224,15 @@ impl From<ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::ProviderPlatformKeys {
                 ..
             } => AccountTypeToCheck::ProviderPlatformKeys,
+            ManagedAccountType::DashpayReceivingFunds {
+                ..
+            } => AccountTypeToCheck::DashpayReceivingFunds,
+            ManagedAccountType::DashpayExternalAccount {
+                ..
+            } => AccountTypeToCheck::DashpayExternalAccount,
+            ManagedAccountType::PlatformPayment {
+                ..
+            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }
@@ -259,6 +278,15 @@ impl From<&ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::ProviderPlatformKeys {
                 ..
             } => AccountTypeToCheck::ProviderPlatformKeys,
+            ManagedAccountType::DashpayReceivingFunds {
+                ..
+            } => AccountTypeToCheck::DashpayReceivingFunds,
+            ManagedAccountType::DashpayExternalAccount {
+                ..
+            } => AccountTypeToCheck::DashpayExternalAccount,
+            ManagedAccountType::PlatformPayment {
+                ..
+            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }

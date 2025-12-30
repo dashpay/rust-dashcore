@@ -1,7 +1,7 @@
 //! Simple integration test for ChainLock validation flow
 
 use dash_spv::client::{ClientConfig, DashSpvClient};
-use dash_spv::network::MultiPeerNetworkManager;
+use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
 use dashcore::Network;
@@ -44,14 +44,14 @@ async fn test_chainlock_validation_flow() {
     };
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
     let storage_manager =
         DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client =
@@ -94,14 +94,14 @@ async fn test_chainlock_manager_initialization() {
     };
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
     let storage_manager =
         DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client =

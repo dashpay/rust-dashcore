@@ -12,12 +12,10 @@ use crate::types::ValidationMode;
 /// Strategy for handling mempool (unconfirmed) transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MempoolStrategy {
-    /// Fetch all announced transactions (poor privacy, high bandwidth).
+    /// Fetch all announced transactions (high bandwidth, sees all transactions).
     FetchAll,
     /// Use BIP37 bloom filters (moderate privacy, good efficiency).
     BloomFilter,
-    /// Only fetch when recently sent or from known addresses (good privacy, default).
-    Selective,
 }
 
 /// Configuration for the Dash SPV client.
@@ -58,9 +56,6 @@ pub struct ClientConfig {
     /// Sync timeout.
     pub sync_timeout: Duration,
 
-    /// Read timeout for TCP socket operations.
-    pub read_timeout: Duration,
-
     /// Whether to enable filter syncing.
     pub enable_filters: bool,
 
@@ -83,41 +78,8 @@ pub struct ClientConfig {
     /// Maximum concurrent filter requests (default: 8).
     pub max_concurrent_filter_requests: usize,
 
-    /// Enable flow control for filter requests (default: true).
-    pub enable_filter_flow_control: bool,
-
     /// Delay between filter requests in milliseconds (default: 50).
     pub filter_request_delay_ms: u64,
-
-    /// Enable automatic CFHeader gap detection and restart
-    pub enable_cfheader_gap_restart: bool,
-
-    /// Interval for checking CFHeader gaps (seconds)
-    pub cfheader_gap_check_interval_secs: u64,
-
-    /// Cooldown between CFHeader restart attempts (seconds)  
-    pub cfheader_gap_restart_cooldown_secs: u64,
-
-    /// Maximum CFHeader gap restart attempts
-    pub max_cfheader_gap_restart_attempts: u32,
-
-    /// Enable automatic filter gap detection and restart
-    pub enable_filter_gap_restart: bool,
-
-    /// Interval for checking filter gaps (seconds)
-    pub filter_gap_check_interval_secs: u64,
-
-    /// Minimum filter gap size to trigger restart (blocks)
-    pub min_filter_gap_size: u32,
-
-    /// Cooldown between filter restart attempts (seconds)
-    pub filter_gap_restart_cooldown_secs: u64,
-
-    /// Maximum filter gap restart attempts
-    pub max_filter_gap_restart_attempts: u32,
-
-    /// Maximum number of filters to sync in a single gap sync batch
-    pub max_filter_gap_sync_size: u32,
 
     // Mempool configuration
     /// Enable tracking of unconfirmed (mempool) transactions.
@@ -131,9 +93,6 @@ pub struct ClientConfig {
 
     /// Time after which unconfirmed transactions are pruned (seconds).
     pub mempool_timeout_secs: u64,
-
-    /// Time window for recent sends in selective mode (seconds).
-    pub recent_send_window_secs: u64,
 
     /// Whether to fetch transactions from INV messages immediately.
     pub fetch_mempool_transactions: bool,
@@ -166,9 +125,6 @@ pub struct ClientConfig {
     // CFHeaders flow control configuration
     /// Maximum concurrent CFHeaders requests for parallel sync (default: 50).
     pub max_concurrent_cfheaders_requests_parallel: usize,
-
-    /// Enable flow control for CFHeaders requests (default: true).
-    pub enable_cfheaders_flow_control: bool,
 
     /// Timeout for CFHeaders requests in seconds (default: 30).
     pub cfheaders_request_timeout_secs: u64,
@@ -211,7 +167,6 @@ impl Default for ClientConfig {
             connection_timeout: Duration::from_secs(30),
             message_timeout: Duration::from_secs(60),
             sync_timeout: Duration::from_secs(300),
-            read_timeout: Duration::from_millis(100),
             enable_filters: true,
             enable_masternodes: true,
             max_peers: 8,
@@ -219,24 +174,12 @@ impl Default for ClientConfig {
             log_level: "info".to_string(),
             user_agent: None,
             max_concurrent_filter_requests: 16,
-            enable_filter_flow_control: true,
             filter_request_delay_ms: 0,
-            enable_cfheader_gap_restart: true,
-            cfheader_gap_check_interval_secs: 15,
-            cfheader_gap_restart_cooldown_secs: 30,
-            max_cfheader_gap_restart_attempts: 5,
-            enable_filter_gap_restart: true,
-            filter_gap_check_interval_secs: 20,
-            min_filter_gap_size: 10,
-            filter_gap_restart_cooldown_secs: 30,
-            max_filter_gap_restart_attempts: 5,
-            max_filter_gap_sync_size: 50000,
             // Mempool defaults
-            enable_mempool_tracking: false,
-            mempool_strategy: MempoolStrategy::Selective,
+            enable_mempool_tracking: true,
+            mempool_strategy: MempoolStrategy::FetchAll,
             max_mempool_transactions: 1000,
-            mempool_timeout_secs: 3600,   // 1 hour
-            recent_send_window_secs: 300, // 5 minutes
+            mempool_timeout_secs: 3600, // 1 hour
             fetch_mempool_transactions: true,
             persist_mempool: false,
             // Request control defaults
@@ -253,7 +196,6 @@ impl Default for ClientConfig {
             wallet_creation_time: None,
             // CFHeaders flow control defaults
             max_concurrent_cfheaders_requests_parallel: 50,
-            enable_cfheaders_flow_control: true,
             cfheaders_request_timeout_secs: 30,
             max_cfheaders_retries: 3,
             // QRInfo defaults (simplified per plan)
@@ -332,12 +274,6 @@ impl ClientConfig {
         self
     }
 
-    /// Set read timeout for TCP socket operations.
-    pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
-        self.read_timeout = timeout;
-        self
-    }
-
     /// Set log level.
     pub fn with_log_level(mut self, level: &str) -> Self {
         self.log_level = level.to_string();
@@ -354,12 +290,6 @@ impl ClientConfig {
     /// Set maximum concurrent filter requests.
     pub fn with_max_concurrent_filter_requests(mut self, max_requests: usize) -> Self {
         self.max_concurrent_filter_requests = max_requests;
-        self
-    }
-
-    /// Enable or disable filter flow control.
-    pub fn with_filter_flow_control(mut self, enabled: bool) -> Self {
-        self.enable_filter_flow_control = enabled;
         self
     }
 
@@ -385,12 +315,6 @@ impl ClientConfig {
     /// Set mempool transaction timeout.
     pub fn with_mempool_timeout(mut self, timeout_secs: u64) -> Self {
         self.mempool_timeout_secs = timeout_secs;
-        self
-    }
-
-    /// Set recent send window for selective strategy.
-    pub fn with_recent_send_window(mut self, window_secs: u64) -> Self {
-        self.recent_send_window_secs = window_secs;
         self
     }
 
@@ -448,13 +372,6 @@ impl ClientConfig {
             }
             if self.mempool_timeout_secs == 0 {
                 return Err("mempool_timeout_secs must be > 0".to_string());
-            }
-            if self.mempool_strategy == MempoolStrategy::Selective
-                && self.recent_send_window_secs == 0
-            {
-                return Err(
-                    "recent_send_window_secs must be > 0 for Selective strategy".to_string()
-                );
             }
         }
 

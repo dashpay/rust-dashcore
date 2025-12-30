@@ -115,6 +115,7 @@ fn btc<F: Into<f64>>(btc: F) -> Amount {
 }
 
 /// Quickly create a signed BTC amount.
+#[allow(dead_code)]
 fn sbtc<F: Into<f64>>(btc: F) -> SignedAmount {
     SignedAmount::from_btc(btc.into()).unwrap()
 }
@@ -422,6 +423,7 @@ fn test_dump_private_key(cl: &Client) {
     assert_eq!(addr.to_string(), Address::p2pkh(&sk.public_key(&SECP), *NET).to_string());
 }
 
+#[allow(dead_code)]
 fn test_get_balance_generate_to_address(cl: &Client) {
     let initial = cl.get_balance(None, None).unwrap();
 
@@ -464,6 +466,7 @@ fn test_get_block_hash(cl: &Client) {
     assert_eq!(cl.get_block_hash(h).unwrap(), cl.get_best_block_hash().unwrap());
 }
 
+#[allow(dead_code)]
 fn test_get_block(cl: &Client) {
     let tip = cl.get_best_block_hash().unwrap();
     let block = cl.get_block(&tip).unwrap();
@@ -515,7 +518,7 @@ fn test_get_address_info(cl: &Client) {
 fn test_set_label(cl: &Client) {
     let addr = cl.get_new_address(Some("label")).unwrap().require_network(*NET).unwrap();
     let info = cl.get_address_info(&addr).unwrap();
-    if wallet_node_version() >= 0_20_00_00 {
+    if wallet_node_version() >= 20_00_00 {
         assert!(info.label.is_none());
         assert_eq!(info.labels[0], json::GetAddressInfoResultLabel::Simple("label".into()));
     } else {
@@ -531,7 +534,7 @@ fn test_set_label(cl: &Client) {
 
     cl.set_label(&addr, "other").unwrap();
     let info = cl.get_address_info(&addr).unwrap();
-    if wallet_node_version() >= 0_20_00_00 {
+    if wallet_node_version() >= 20_00_00 {
         assert!(info.label.is_none());
         assert_eq!(info.labels[0], json::GetAddressInfoResultLabel::Simple("other".into()));
     } else {
@@ -677,6 +680,7 @@ fn test_get_tx_out(cl: &Client) {
     let _ = cl.get_tx_out(&txid, 0, None).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_tx_out_proof(cl: &Client) {
     let txid1 = cl
         .send_to_address(&RANDOM_ADDRESS, btc(1), None, None, None, None, None, None, None, None)
@@ -713,6 +717,7 @@ fn test_lock_unspent_unlock_unspent(cl: &Client) {
     assert!(cl.unlock_unspent_all().unwrap());
 }
 
+#[allow(dead_code)]
 fn test_get_block_filter(cl: &Client) {
     let addr = &cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
     let blocks = cl.generate_to_address(7, addr).unwrap();
@@ -1340,6 +1345,7 @@ fn test_getblocktemplate(cl: &Client) {
     cl.generate_to_address(2, &RANDOM_ADDRESS).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_stop(cl: &Client) {
     println!("Stopping: '{}'", cl.stop().unwrap());
 }
@@ -1357,6 +1363,7 @@ fn test_get_masternode_list(cl: &Client) {
     let _masternode_list = cl.get_masternode_list(Some("json"), None).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_masternode_outputs(cl: &Client) {
     let _masternode_outputs = cl.get_masternode_outputs().unwrap();
 }
@@ -1425,6 +1432,7 @@ fn test_get_quorum_sign(cl: &Client, _wallet_client: &Client) {
         .unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_quorum_getrecsig(cl: &Client) {
     let list = cl.get_quorum_list(Some(1)).unwrap();
     let quorum_type = list.quorums_by_type.keys().next().unwrap().to_owned();
@@ -1458,6 +1466,7 @@ fn test_get_quorum_isconflicting(cl: &Client) {
         .unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_quorum_memberof(cl: &Client) {
     let pro_tx_hash =
         ProTxHash::from_str("39c07d2c9c6d0ead56f52726b63c15e295cb5c3ecf7fe1fefcfb23b2e3cfed1f")
@@ -1466,6 +1475,7 @@ fn test_get_quorum_memberof(cl: &Client) {
     assert!(quorum_memberof.0[0].height > 0);
 }
 
+#[allow(dead_code)]
 fn test_get_quorum_rotationinfo(cl: &Client) {
     let block_hash =
         BlockHash::from_str("0000012197b7ca6360af3756c6a49c217dbbdf8b595fd55e0fcef7ffcd546044")
@@ -1482,6 +1492,7 @@ fn test_get_quorum_selectquorum(cl: &Client) {
         .unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_quorum_verify(cl: &Client) {
     let _quorum_verify = cl.get_quorum_verify(
         LlmqTest,
@@ -1513,6 +1524,7 @@ fn test_get_protx_diff(cl: &Client) {
     let _protx_diff = cl.get_protx_diff(1000, 1000).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_protx_info(cl: &Client) {
     let pro_tx_hash =
         ProTxHash::from_str("000000000c9eddd5d2a707281b7e30d5aac974dac600ff10f01937e1ca36066f")
@@ -1538,6 +1550,7 @@ fn test_get_protx_list(cl: &Client) {
         cl.get_protx_list(Some(ProTxListType::Valid), Some(true), Some(1000)).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_protx_register(cl: &Client) {
     let _protx_register = cl.get_protx_register(
         "8b2eab3413abb6e04d17d1defe2b71039ba6b6f72ea1e5dab29bb10e7b745948",
@@ -1553,11 +1566,13 @@ fn test_get_protx_register(cl: &Client) {
     ).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_protx_register_fund(cl: &Client) {
     let _protx_register_fund = cl.get_protx_register_fund("yakx4mMRptKhgfjedNzX5FGQq7kSSBF2e7", "3.4.5.6:3456", "yURczr3qY31xkQZfFu8eZvKz19eAEPQxsd", "0e02146e9c34cfbcb3f3037574a1abb35525e2ca0c3c6901dbf82ac591e30218d1711223b7ca956edf39f3d984d06d51", "yURczr3qY31xkQZfFu8eZvKz19eAEPQxsd",
                                                           5.0, "yUYTxqjpCfAAK4vgxXtBPywRBtZqsxN7Vy", Some("yRMFHxcJ2aS2vfo5whhE2Gg73dfQVm8LAF"), Some(false)).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_protx_register_prepare(cl: &Client) {
     let owner_address = Address::<NetworkUnchecked>::from_str("yemjhGQ99V5ayJMjoyGGPtxteahii6G1Jz")
         .unwrap()
@@ -1589,6 +1604,7 @@ fn test_get_protx_register_prepare(cl: &Client) {
     ).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_protx_register_submit(cl: &Client) {
     let _protx_register_submit = cl.get_protx_register_submit(
         "03000100012d988526d5d1efd32320023c92eff09c2963dcb021b0de9761",
@@ -1596,6 +1612,7 @@ fn test_get_protx_register_submit(cl: &Client) {
     ).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_protx_revoke(cl: &Client) {
     let _protx_revoke = cl
         .get_protx_revoke(
@@ -1607,6 +1624,7 @@ fn test_get_protx_revoke(cl: &Client) {
         .unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_protx_update_registrar(cl: &Client) {
     let voting_address =
         Address::<NetworkUnchecked>::from_str("yX2cDS4kcJ4LK4uq9Hd4TG7kURV3sGLZrw")
@@ -1623,6 +1641,7 @@ fn test_get_protx_update_registrar(cl: &Client) {
     ).unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_protx_update_service(cl: &Client) {
     let _protx_update_service = cl
         .get_protx_update_service(
@@ -1635,6 +1654,7 @@ fn test_get_protx_update_service(cl: &Client) {
         .unwrap();
 }
 
+#[allow(dead_code)]
 fn test_get_verifychainlock(cl: &Client) {
     let _verifychainlock = cl.get_verifychainlock("00000036d5c520be6e9a32d3829efc983a7b5e88052bf138f80a2b3988689a24", "97ec34efd1615b84af62495e54024880752f57790cf450ae974b80002440963592d96826e24f109e6c149411b70bb9a0035443752368590adae60365cf4251464e0423c1263e9c56a33eae9be9e9c79a117151b2173bcee93497008cace8d793", None).unwrap();
 }
@@ -1645,6 +1665,7 @@ fn test_get_asset_unlock_statuses(cl: &Client) {
     let _statuses = cl.get_asset_unlock_statuses(&indices, height);
 }
 
+#[allow(dead_code)]
 fn test_get_verifyislock(cl: &Client) {
     let _verifychainlock = cl.get_verifyislock("d0b1a9c70fdfff6bf7f6cbe3d1fe33a4ca44ceb17059b6381a4ac25d9c9b6495", "8b5174d0e95b5642ebec23c3fe8f0bbf8f6993502f4210322871bba0e818ff3b", "97ec34efd1615b84af62495e54024880752f57790cf450ae974b80002440963592d96826e24f109e6c149411b70bb9a0035443752368590adae60365cf4251464e0423c1263e9c56a33eae9be9e9c79a117151b2173bcee93497008cace8d793", None).unwrap();
 }

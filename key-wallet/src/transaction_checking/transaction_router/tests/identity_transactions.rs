@@ -53,30 +53,30 @@ fn test_identity_registration() {
     assert!(accounts.contains(&AccountTypeToCheck::IdentityTopUp));
 }
 
-#[test]
-fn test_identity_registration_account_routing() {
+#[tokio::test]
+async fn test_identity_registration_account_routing() {
     let network = Network::Testnet;
 
-    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     // Add identity registration account
     let account_type = AccountType::IdentityRegistration;
-    wallet.add_account(account_type, network, None).expect("Failed to add account to wallet");
+    wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
     // Get the identity registration account
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-    let account = account_collection
+    let account = wallet
+        .accounts
         .identity_registration
         .as_ref()
         .expect("Expected identity registration account to exist");
     let xpub = account.account_xpub;
 
     let managed_account = managed_wallet_info
-        .identity_registration_managed_account_mut(network)
+        .identity_registration_managed_account_mut()
         .expect("Failed to get identity registration managed account");
 
     // Use the new next_address method for identity registration account
@@ -144,7 +144,7 @@ fn test_identity_registration_account_routing() {
     };
 
     // First check without updating state
-    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     println!(
         "Identity registration transaction result: is_relevant={}, received={}, credit_conversion={}",
@@ -174,24 +174,24 @@ fn test_identity_registration_account_routing() {
     );
 }
 
-#[test]
-fn test_normal_payment_to_identity_address_not_detected() {
+#[tokio::test]
+async fn test_normal_payment_to_identity_address_not_detected() {
     let network = Network::Testnet;
 
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-    let account = account_collection
+    let account = wallet
+        .accounts
         .identity_registration
         .as_ref()
         .expect("Expected identity registration account to exist");
     let xpub = account.account_xpub;
 
     let managed_account = managed_wallet_info
-        .identity_registration_managed_account_mut(network)
+        .identity_registration_managed_account_mut()
         .expect("Failed to get identity registration managed account");
 
     // Get an identity registration address
@@ -219,12 +219,14 @@ fn test_normal_payment_to_identity_address_not_detected() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(
-        &normal_tx,
-        network,
-        context,
-        Some(&wallet), // update state
-    );
+    let result = managed_wallet_info
+        .check_transaction(
+            &normal_tx,
+            context,
+            &mut wallet,
+            true, // update state
+        )
+        .await;
 
     // A normal transaction to an identity registration address should NOT be detected
     // Identity addresses are only for special transactions (AssetLock)

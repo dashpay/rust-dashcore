@@ -36,7 +36,7 @@ extern "C" fn on_detailed_progress(progress: *const FFIDetailedSyncProgress, _ud
             "height {}/{} {:.2}% peers {} hps {:.1}",
             p.overview.header_height,
             p.total_height,
-            p.percentage * 100.0,
+            p.percentage,
             p.overview.peer_count,
             p.headers_per_second
         );
@@ -121,7 +121,7 @@ fn main() {
         // Initialize tracing/logging via FFI so `tracing::info!` emits output
         let level = matches.get_one::<String>("log-level").map(String::as_str).unwrap_or("info");
         let level_c = CString::new(level).unwrap();
-        let _ = dash_spv_ffi_init_logging(level_c.as_ptr());
+        let _ = dash_spv_ffi_init_logging(level_c.as_ptr(), true, std::ptr::null(), 0);
 
         // Build config
         let cfg = dash_spv_ffi_config_new(network);

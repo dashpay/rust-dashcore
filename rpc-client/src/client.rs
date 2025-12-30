@@ -16,8 +16,6 @@ use std::str::FromStr;
 use std::{fmt, result};
 
 use crate::dashcore;
-use jsonrpc;
-use serde;
 use serde_json::{self, Value};
 
 use crate::Error::UnexpectedStructure;
@@ -56,11 +54,11 @@ impl From<OutPoint> for JsonOutPoint {
     }
 }
 
-impl Into<OutPoint> for JsonOutPoint {
-    fn into(self) -> OutPoint {
+impl From<JsonOutPoint> for OutPoint {
+    fn from(val: JsonOutPoint) -> Self {
         OutPoint {
-            txid: self.txid,
-            vout: self.vout,
+            txid: val.txid,
+            vout: val.vout,
         }
     }
 }
@@ -107,7 +105,7 @@ fn empty_obj() -> Value {
 ///
 /// Note, that `defaults` corresponds to the last elements of `args`.
 ///
-/// ```norust
+/// ```text
 /// arg1 arg2 arg3 arg4
 ///           def1 def2
 /// ```
@@ -673,7 +671,7 @@ pub trait RpcApi: Sized {
         self.call("listunspent", handle_defaults(&mut args, &defaults))
     }
 
-    /// To unlock, use [unlock_unspent].
+    /// To unlock, use [`Self::unlock_unspent`].
     fn lock_unspent(&self, outputs: &[OutPoint]) -> Result<bool> {
         let outputs: Vec<_> =
             outputs.iter().map(|o| serde_json::to_value(JsonOutPoint::from(*o)).unwrap()).collect();
@@ -843,6 +841,7 @@ pub trait RpcApi: Sized {
         self.call("getchaintips", &[])
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_to_address(
         &self,
         address: &Address,
@@ -997,7 +996,7 @@ pub trait RpcApi: Sized {
     /// # Arguments
     ///
     /// 1. `timeout`: Time in milliseconds to wait for a response. 0
-    /// indicates no timeout.
+    ///    indicates no timeout.
     fn wait_for_new_block(&self, timeout: u64) -> Result<json::BlockRef> {
         self.call("waitfornewblock", &[into_json(timeout)?])
     }
@@ -1009,7 +1008,7 @@ pub trait RpcApi: Sized {
     ///
     /// 1. `blockhash`: Block hash to wait for.
     /// 2. `timeout`: Time in milliseconds to wait for a response. 0
-    /// indicates no timeout.
+    ///    indicates no timeout.
     fn wait_for_block(
         &self,
         blockhash: &dashcore::BlockHash,
@@ -1454,6 +1453,7 @@ pub trait RpcApi: Sized {
     }
 
     /// Creates a ProRegTx referencing an existing collateral and and sends it to the network
+    #[allow(clippy::too_many_arguments)]
     fn get_protx_register(
         &self,
         collateral_hash: &str,
@@ -1484,6 +1484,7 @@ pub trait RpcApi: Sized {
     }
 
     /// Creates and funds a ProRegTx with the 1,000 DASH necessary for a masternode and then sends it to the network
+    #[allow(clippy::too_many_arguments)]
     fn get_protx_register_fund(
         &self,
         collateral_address: &str,
@@ -1512,6 +1513,7 @@ pub trait RpcApi: Sized {
     }
 
     /// Creates an unsigned ProTx and a message that must be signed externally
+    #[allow(clippy::too_many_arguments)]
     fn get_protx_register_prepare(
         &self,
         collateral_hash: &str,
@@ -1732,7 +1734,6 @@ fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json;
 
     #[test]
     fn test_raw_tx() {

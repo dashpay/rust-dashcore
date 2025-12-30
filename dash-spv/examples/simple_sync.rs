@@ -1,18 +1,19 @@
 //! Simple header synchronization example.
 
-use dash_spv::network::MultiPeerNetworkManager;
-use dash_spv::storage::MemoryStorageManager;
-use dash_spv::{init_logging, ClientConfig, DashSpvClient};
+use dash_spv::network::PeerNetworkManager;
+use dash_spv::storage::DiskStorageManager;
+use dash_spv::{init_console_logging, ClientConfig, DashSpvClient, LevelFilter};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    init_logging("info")?;
+    let _logging_guard = init_console_logging(LevelFilter::INFO)?;
 
     // Create a simple configuration
     let config = ClientConfig::mainnet()
@@ -20,13 +21,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .without_masternodes(); // Skip masternode sync for this example
 
     // Create network manager
-    let network_manager = MultiPeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
-    let storage_manager = MemoryStorageManager::new().await?;
+    let storage_manager =
+        DiskStorageManager::new("./.tmp/simple-sync-example-storage".into()).await?;
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the client
     let mut client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
@@ -47,8 +49,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Headers downloaded: {}", stats.headers_downloaded);
     println!("Bytes received: {}", stats.bytes_received);
 
-    // Stop the client
-    client.stop().await?;
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
+
+    client.run(command_receiver, shutdown_token).await?;
 
     println!("Done!");
     Ok(())

@@ -12,7 +12,7 @@ use dashcore::Network;
 
 use crate::client::config::MempoolStrategy;
 use crate::error::{NetworkError, NetworkResult};
-use crate::network::connection::TcpConnection;
+use crate::network::peer::Peer;
 
 /// Handshake state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +65,7 @@ impl HandshakeManager {
     }
 
     /// Perform the handshake with a peer.
-    pub async fn perform_handshake(&mut self, connection: &mut TcpConnection) -> NetworkResult<()> {
+    pub async fn perform_handshake(&mut self, connection: &mut Peer) -> NetworkResult<()> {
         use tokio::time::{timeout, Duration};
 
         // Send version message
@@ -145,7 +145,7 @@ impl HandshakeManager {
     /// Handle a handshake message.
     async fn handle_handshake_message(
         &mut self,
-        connection: &mut TcpConnection,
+        connection: &mut Peer,
         message: NetworkMessage,
     ) -> NetworkResult<Option<HandshakeState>> {
         match message {
@@ -238,7 +238,7 @@ impl HandshakeManager {
     }
 
     /// Send version message.
-    async fn send_version(&mut self, connection: &mut TcpConnection) -> NetworkResult<()> {
+    async fn send_version(&mut self, connection: &mut Peer) -> NetworkResult<()> {
         let version_message = self.build_version_message(connection.peer_info().address)?;
         connection.send_message(NetworkMessage::Version(version_message)).await?;
         tracing::debug!("Sent version message");
@@ -252,8 +252,8 @@ impl HandshakeManager {
             .unwrap_or(Duration::from_secs(0))
             .as_secs() as i64;
 
-        // SPV client doesn't advertise any special services since headers2 is disabled
-        let services = ServiceFlags::NONE;
+        // Advertise headers2 support (NODE_HEADERS_COMPRESSED)
+        let services = ServiceFlags::NONE | NODE_HEADERS_COMPRESSED;
 
         // Parse the local address safely
         let local_addr = "127.0.0.1:0"
@@ -309,11 +309,14 @@ impl HandshakeManager {
     }
 
     /// Negotiate headers2 support with the peer after handshake completion.
-    async fn negotiate_headers2(&self, connection: &mut TcpConnection) -> NetworkResult<()> {
-        // Headers2 is currently disabled due to protocol compatibility issues
-        // Always send SendHeaders regardless of peer support
-        tracing::info!("Headers2 is disabled - sending SendHeaders only");
-        connection.send_message(NetworkMessage::SendHeaders).await?;
+    async fn negotiate_headers2(&self, connection: &mut Peer) -> NetworkResult<()> {
+        if self.peer_supports_headers2() {
+            tracing::info!("Peer supports headers2 - sending SendHeaders2");
+            connection.send_message(NetworkMessage::SendHeaders2).await?;
+        } else {
+            tracing::info!("Peer does not support headers2 - sending SendHeaders");
+            connection.send_message(NetworkMessage::SendHeaders).await?;
+        }
         Ok(())
     }
 }

@@ -6,6 +6,9 @@ use thiserror::Error;
 /// Main error type for the Dash SPV client.
 #[derive(Debug, Error)]
 pub enum SpvError {
+    #[error("Channel failure for: {0} - Failure: {1}")]
+    ChannelFailure(String, String),
+
     #[error("Network error: {0}")]
     Network(#[from] NetworkError),
 
@@ -30,8 +33,14 @@ pub enum SpvError {
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),
 
+    #[error("Logging error: {0}")]
+    Logging(#[from] LoggingError),
+
     #[error("Wallet error: {0}")]
     Wallet(#[from] WalletError),
+
+    #[error("Quorum lookup error: {0}")]
+    QuorumLookupError(String),
 }
 
 /// Parse-related errors.
@@ -48,6 +57,19 @@ pub enum ParseError {
 
     #[error("Invalid argument value for {0}: {1}")]
     InvalidArgument(String, String),
+}
+
+/// Logging-related errors.
+#[derive(Debug, Error)]
+pub enum LoggingError {
+    #[error("Failed to create log directory: {0}")]
+    DirectoryCreation(#[from] std::io::Error),
+
+    #[error("Subscriber initialization failed: {0}")]
+    SubscriberInit(String),
+
+    #[error("Log rotation failed: {0}")]
+    RotationFailed(String),
 }
 
 /// Network-related errors.
@@ -110,6 +132,9 @@ pub enum StorageError {
 
     #[error("Lock poisoned: {0}")]
     LockPoisoned(String),
+
+    #[error("Data directory locked: {0}")]
+    DirectoryLocked(String),
 }
 
 impl Clone for StorageError {
@@ -123,6 +148,7 @@ impl Clone for StorageError {
             StorageError::Serialization(s) => StorageError::Serialization(s.clone()),
             StorageError::InconsistentState(s) => StorageError::InconsistentState(s.clone()),
             StorageError::LockPoisoned(s) => StorageError::LockPoisoned(s.clone()),
+            StorageError::DirectoryLocked(s) => StorageError::DirectoryLocked(s.clone()),
         }
     }
 }
@@ -141,6 +167,9 @@ pub enum ValidationError {
 
     #[error("Invalid InstantLock: {0}")]
     InvalidInstantLock(String),
+
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
 
     #[error("Invalid filter header chain: {0}")]
     InvalidFilterHeaderChain(String),
@@ -231,6 +260,9 @@ pub type ValidationResult<T> = std::result::Result<T, ValidationError>;
 
 /// Type alias for sync operation results.
 pub type SyncResult<T> = std::result::Result<T, SyncError>;
+
+/// Type alias for logging operation results.
+pub type LoggingResult<T> = std::result::Result<T, LoggingError>;
 
 /// Wallet-related errors.
 #[derive(Debug, Error)]

@@ -20,7 +20,6 @@ fn test_single_input_two_outputs_payment() {
     assert_eq!(tx_type, TransactionType::Standard);
 
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
-    assert_eq!(accounts.len(), 2);
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
 }
@@ -83,7 +82,6 @@ fn test_payment_to_multiple_recipients() {
     assert_eq!(tx_type, TransactionType::Standard);
 
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
-    assert_eq!(accounts.len(), 2);
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
 }

@@ -67,25 +67,24 @@ fn test_asset_unlock_classification() {
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
 }
 
-#[test]
-fn test_asset_unlock_transaction_routing() {
-    let network = Network::Testnet;
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+#[tokio::test]
+async fn test_asset_unlock_transaction_routing() {
+    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
     // Get the BIP44 account
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-    let account = account_collection
+    let account = wallet
+        .accounts
         .standard_bip44_accounts
         .get(&0)
         .expect("Expected BIP44 account at index 0 to exist");
     let xpub = account.account_xpub;
 
     let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut(network)
+        .first_bip44_managed_account_mut()
         .expect("Failed to get first BIP44 managed account");
 
     // Get an address from standard account (where unlocked funds go)
@@ -134,7 +133,7 @@ fn test_asset_unlock_transaction_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction should be recognized as relevant");
@@ -155,13 +154,12 @@ fn test_asset_unlock_transaction_routing() {
     );
 }
 
-#[test]
-fn test_asset_unlock_routing_to_bip32_account() {
+#[tokio::test]
+async fn test_asset_unlock_routing_to_bip32_account() {
     // Test AssetUnlock routing to BIP32 accounts
-    let network = Network::Testnet;
 
     // Create wallet with default options (includes both BIP44 and BIP32)
-    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
     let mut managed_wallet_info =
@@ -169,15 +167,12 @@ fn test_asset_unlock_routing_to_bip32_account() {
 
     // Get address from BIP44 account (we'll use BIP44 to test the routing)
     let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut(network)
+        .first_bip44_managed_account_mut()
         .expect("Failed to get first BIP44 managed account");
 
     // Get the account's xpub from wallet
-    let account_collection = wallet.accounts.get(&network).expect("Failed to get network accounts");
-    let account = account_collection
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Expected BIP44 account at index 0");
+    let account =
+        wallet.accounts.standard_bip44_accounts.get(&0).expect("Expected BIP44 account at index 0");
     let xpub = account.account_xpub;
 
     let address = managed_account
@@ -214,7 +209,7 @@ fn test_asset_unlock_routing_to_bip32_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
+    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
 
     // Should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction to BIP32 account should be relevant");

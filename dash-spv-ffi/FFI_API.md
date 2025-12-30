@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 71
+**Total Functions**: 70
 
 ## Table of Contents
 
@@ -39,46 +39,45 @@ Functions: 27
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_update_config` | Update the running client's configuration | client |
-| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts either a full socket addres... | config |
-| `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must be... | config |
-| `dash_spv_ffi_config_get_data_dir` | Gets the data directory path from the configuration  # Safety - `config` must... | config |
-| `dash_spv_ffi_config_get_mempool_strategy` | Gets the mempool synchronization strategy  # Safety - `config` must be a vali... | config |
-| `dash_spv_ffi_config_get_mempool_tracking` | Gets whether mempool tracking is enabled  # Safety - `config` must be a valid... | config |
-| `dash_spv_ffi_config_get_network` | Gets the network type from the configuration  # Safety - `config` must be a v... | config |
+| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts either a full socket... | config |
+| `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must... | config |
+| `dash_spv_ffi_config_get_data_dir` | Gets the data directory path from the configuration  # Safety - `config`... | config |
+| `dash_spv_ffi_config_get_mempool_strategy` | Gets the mempool synchronization strategy  # Safety - `config` must be a... | config |
+| `dash_spv_ffi_config_get_mempool_tracking` | Gets whether mempool tracking is enabled  # Safety - `config` must be a... | config |
+| `dash_spv_ffi_config_get_network` | Gets the network type from the configuration  # Safety - `config` must be a... | config |
 | `dash_spv_ffi_config_mainnet` | No description | config |
 | `dash_spv_ffi_config_new` | No description | config |
-| `dash_spv_ffi_config_set_data_dir` | Sets the data directory for storing blockchain data  # Safety - `config` must... | config |
-| `dash_spv_ffi_config_set_fetch_mempool_transactions` | Sets whether to fetch full mempool transaction data  # Safety - `config` must... | config |
-| `dash_spv_ffi_config_set_filter_load` | Sets whether to load bloom filters  # Safety - `config` must be a valid point... | config |
-| `dash_spv_ffi_config_set_masternode_sync_enabled` | Enables or disables masternode synchronization  # Safety - `config` must be a... | config |
-| `dash_spv_ffi_config_set_max_mempool_transactions` | Sets the maximum number of mempool transactions to track  # Safety - `config`... | config |
-| `dash_spv_ffi_config_set_max_peers` | Sets the maximum number of peers to connect to  # Safety - `config` must be a... | config |
-| `dash_spv_ffi_config_set_mempool_strategy` | Sets the mempool synchronization strategy  # Safety - `config` must be a vali... | config |
-| `dash_spv_ffi_config_set_mempool_timeout` | Sets the mempool transaction timeout in seconds  # Safety - `config` must be ... | config |
-| `dash_spv_ffi_config_set_mempool_tracking` | Enables or disables mempool tracking  # Safety - `config` must be a valid poi... | config |
-| `dash_spv_ffi_config_set_persist_mempool` | Sets whether to persist mempool state to disk  # Safety - `config` must be a ... | config |
-| `dash_spv_ffi_config_set_relay_transactions` | Sets whether to relay transactions (currently a no-op)  # Safety - `config` m... | config |
-| `dash_spv_ffi_config_set_restrict_to_configured_peers` | Restrict connections strictly to configured peers (disable DNS discovery and ... | config |
-| `dash_spv_ffi_config_set_start_from_height` | Sets the starting block height for synchronization  # Safety - `config` must ... | config |
-| `dash_spv_ffi_config_set_user_agent` | Sets the user agent string to advertise in the P2P handshake  # Safety - `con... | config |
-| `dash_spv_ffi_config_set_validation_mode` | Sets the validation mode for the SPV client  # Safety - `config` must be a va... | config |
-| `dash_spv_ffi_config_set_wallet_creation_time` | Sets the wallet creation timestamp for synchronization optimization  # Safety... | config |
-| `dash_spv_ffi_config_set_worker_threads` | Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  # Saf... | config |
+| `dash_spv_ffi_config_set_data_dir` | Sets the data directory for storing blockchain data  # Safety - `config`... | config |
+| `dash_spv_ffi_config_set_fetch_mempool_transactions` | Sets whether to fetch full mempool transaction data  # Safety - `config`... | config |
+| `dash_spv_ffi_config_set_filter_load` | Sets whether to load bloom filters  # Safety - `config` must be a valid... | config |
+| `dash_spv_ffi_config_set_masternode_sync_enabled` | Enables or disables masternode synchronization  # Safety - `config` must be... | config |
+| `dash_spv_ffi_config_set_max_mempool_transactions` | Sets the maximum number of mempool transactions to track  # Safety -... | config |
+| `dash_spv_ffi_config_set_max_peers` | Sets the maximum number of peers to connect to  # Safety - `config` must be... | config |
+| `dash_spv_ffi_config_set_mempool_strategy` | Sets the mempool synchronization strategy  # Safety - `config` must be a... | config |
+| `dash_spv_ffi_config_set_mempool_timeout` | Sets the mempool transaction timeout in seconds  # Safety - `config` must be... | config |
+| `dash_spv_ffi_config_set_mempool_tracking` | Enables or disables mempool tracking  # Safety - `config` must be a valid... | config |
+| `dash_spv_ffi_config_set_persist_mempool` | Sets whether to persist mempool state to disk  # Safety - `config` must be a... | config |
+| `dash_spv_ffi_config_set_relay_transactions` | Sets whether to relay transactions (currently a no-op)  # Safety - `config`... | config |
+| `dash_spv_ffi_config_set_restrict_to_configured_peers` | Restrict connections strictly to configured peers (disable DNS discovery and... | config |
+| `dash_spv_ffi_config_set_start_from_height` | Sets the starting block height for synchronization  # Safety - `config` must... | config |
+| `dash_spv_ffi_config_set_user_agent` | Sets the user agent string to advertise in the P2P handshake  # Safety -... | config |
+| `dash_spv_ffi_config_set_validation_mode` | Sets the validation mode for the SPV client  # Safety - `config` must be a... | config |
+| `dash_spv_ffi_config_set_wallet_creation_time` | Sets the wallet creation timestamp for synchronization optimization  #... | config |
+| `dash_spv_ffi_config_set_worker_threads` | Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  #... | config |
 | `dash_spv_ffi_config_testnet` | No description | config |
 
 ### Synchronization
 
-Functions: 8
+Functions: 7
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_cancel_sync` | Cancels the sync operation | client |
-| `dash_spv_ffi_client_clear_sync_state` | Clear only the persisted sync-state snapshot | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
 | `dash_spv_ffi_client_is_filter_sync_available` | Check if compact filter sync is currently available | client |
 | `dash_spv_ffi_client_sync_to_tip` | Sync the SPV client to the chain tip | client |
 | `dash_spv_ffi_client_sync_to_tip_with_progress` | Sync the SPV client to the chain tip with detailed progress updates | client |
-| `dash_spv_ffi_client_test_sync` | Performs a test synchronization of the SPV client  # Parameters - `client`: P... | client |
+| `dash_spv_ffi_client_test_sync` | Performs a test synchronization of the SPV client  # Parameters - `client`:... | client |
 | `dash_spv_ffi_sync_progress_destroy` | Destroy a `FFISyncProgress` object returned by this crate | client |
 
 ### Address Monitoring
@@ -87,7 +86,7 @@ Functions: 1
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_unconfirmed_transaction_destroy_addresses` | Destroys the addresses array allocated for an FFIUnconfirmedTransaction  # Sa... | types |
+| `dash_spv_ffi_unconfirmed_transaction_destroy_addresses` | Destroys the addresses array allocated for an FFIUnconfirmedTransaction  #... | types |
 
 ### Transaction Management
 
@@ -95,8 +94,8 @@ Functions: 3
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_broadcast_transaction` | No description | broadcast |
-| `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  # Saf... | types |
+| `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | broadcast |
+| `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  #... | types |
 | `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx` | Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction... | types |
 
 ### Mempool Operations
@@ -113,10 +112,10 @@ Functions: 4
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `ffi_dash_spv_get_core_handle` | Creates a CoreSDKHandle from an FFIDashSpvClient  # Safety  This function is ... | platform_integration |
-| `ffi_dash_spv_get_platform_activation_height` | Gets the platform activation height from the Core chain  # Safety  This funct... | platform_integration |
-| `ffi_dash_spv_get_quorum_public_key` | Gets a quorum public key from the Core chain  # Safety  This function is unsa... | platform_integration |
-| `ffi_dash_spv_release_core_handle` | Releases a CoreSDKHandle  # Safety  This function is unsafe because: - The ca... | platform_integration |
+| `ffi_dash_spv_get_core_handle` | Creates a CoreSDKHandle from an FFIDashSpvClient  # Safety  This function is... | platform_integration |
+| `ffi_dash_spv_get_platform_activation_height` | Gets the platform activation height from the Core chain  # Safety  This... | platform_integration |
+| `ffi_dash_spv_get_quorum_public_key` | Gets a quorum public key from the Core chain  # Safety  This function is... | platform_integration |
+| `ffi_dash_spv_release_core_handle` | Releases a CoreSDKHandle  # Safety  This function is unsafe because: - The... | platform_integration |
 
 ### Event Callbacks
 
@@ -151,7 +150,7 @@ Functions: 19
 | `dash_spv_ffi_client_get_stats` | Get current runtime statistics for the SPV client | client |
 | `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
 | `dash_spv_ffi_client_get_tip_height` | Get the current chain tip height (absolute) | client |
-| `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an `FFIWalle... | client |
+| `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an... | client |
 | `dash_spv_ffi_client_record_send` | Record that we attempted to send a transaction by its txid | client |
 | `dash_spv_ffi_client_rescan_blockchain` | Request a rescan of the blockchain from a given height (not yet implemented) | client |
 | `dash_spv_ffi_enable_test_mode` | No description | utils |
@@ -255,7 +254,7 @@ dash_spv_ffi_config_add_peer(config: *mut FFIClientConfig, addr: *const c_char,)
 ```
 
 **Description:**
-Adds a peer address to the configuration  Accepts either a full socket address (e.g., "192.168.1.1:9999" or "[::1]:19999") or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
+Adds a peer address to the configuration  Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`) or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
@@ -303,10 +302,10 @@ dash_spv_ffi_config_get_mempool_strategy(config: *const FFIClientConfig,) -> FFI
 ```
 
 **Description:**
-Gets the mempool synchronization strategy  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::Selective as default
+Gets the mempool synchronization strategy  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::FetchAll as default
 
 **Safety:**
-- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::Selective as default
+- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::FetchAll as default
 
 **Module:** `config`
 
@@ -664,22 +663,6 @@ The client pointer must be valid and non-null.
 
 ---
 
-#### `dash_spv_ffi_client_clear_sync_state`
-
-```c
-dash_spv_ffi_client_clear_sync_state(client: *mut FFIDashSpvClient,) -> i32
-```
-
-**Description:**
-Clear only the persisted sync-state snapshot.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_client_get_sync_progress`
 
 ```c
@@ -801,6 +784,12 @@ Destroys the addresses array allocated for an FFIUnconfirmedTransaction  # Safet
 ```c
 dash_spv_ffi_client_broadcast_transaction(client: *mut FFIDashSpvClient, tx_hex: *const c_char,) -> i32
 ```
+
+**Description:**
+Broadcasts a transaction to the Dash network via connected peers.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string containing a hex-encoded serialized transaction
+
+**Safety:**
+- `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string containing a hex-encoded serialized transaction
 
 **Module:** `broadcast`
 
@@ -1176,14 +1165,14 @@ dash_spv_ffi_enable_test_mode() -> ()
 #### `dash_spv_ffi_init_logging`
 
 ```c
-dash_spv_ffi_init_logging(level: *const c_char) -> i32
+dash_spv_ffi_init_logging(level: *const c_char, enable_console: bool, log_dir: *const c_char, max_files: usize,) -> i32
 ```
 
 **Description:**
-Initialize logging for the SPV library.  # Safety - `level` may be null or point to a valid, NUL-terminated C string. - If non-null, the pointer must remain valid for the duration of this call.
+Initialize logging for the SPV library.  # Arguments - `level`: Log level string (null uses RUST_LOG env var or defaults to INFO). Valid values: "error", "warn", "info", "debug", "trace" - `enable_console`: Whether to output logs to console (stderr) - `log_dir`: Directory for log files (null to disable file logging) - `max_files`: Maximum archived log files to retain (ignored if log_dir is null)  # Safety - `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
 
 **Safety:**
-- `level` may be null or point to a valid, NUL-terminated C string. - If non-null, the pointer must remain valid for the duration of this call.
+- `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
 
 **Module:** `utils`
 

@@ -3,10 +3,11 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
+use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::account::account_type::AccountType;
 use crate::gap_limit::{
     DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
-    DEFAULT_SPECIAL_GAP_LIMIT,
+    DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
 };
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
@@ -44,6 +45,12 @@ pub struct ManagedAccountCollection {
     pub provider_operator_keys: Option<ManagedAccount>,
     /// Provider platform keys (optional)
     pub provider_platform_keys: Option<ManagedAccount>,
+    /// DashPay receiving funds accounts keyed by (index, user_id, friend_id)
+    pub dashpay_receival_accounts: BTreeMap<DashpayAccountKey, ManagedAccount>,
+    /// DashPay external accounts keyed by (index, user_id, friend_id)
+    pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, ManagedAccount>,
+    /// Platform Payment accounts (DIP-17)
+    pub platform_payment_accounts: BTreeMap<PlatformPaymentAccountKey, ManagedAccount>,
 }
 
 impl ManagedAccountCollection {
@@ -61,6 +68,9 @@ impl ManagedAccountCollection {
             provider_owner_keys: None,
             provider_operator_keys: None,
             provider_platform_keys: None,
+            dashpay_receival_accounts: BTreeMap::new(),
+            dashpay_external_accounts: BTreeMap::new(),
+            platform_payment_accounts: BTreeMap::new(),
         }
     }
 
@@ -110,6 +120,43 @@ impl ManagedAccountCollection {
             ManagedAccountType::ProviderPlatformKeys {
                 ..
             } => self.provider_platform_keys.is_some(),
+            ManagedAccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => {
+                let key = DashpayAccountKey {
+                    index: *index,
+                    user_identity_id: *user_identity_id,
+                    friend_identity_id: *friend_identity_id,
+                };
+                self.dashpay_receival_accounts.contains_key(&key)
+            }
+            ManagedAccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => {
+                let key = DashpayAccountKey {
+                    index: *index,
+                    user_identity_id: *user_identity_id,
+                    friend_identity_id: *friend_identity_id,
+                };
+                self.dashpay_external_accounts.contains_key(&key)
+            }
+            ManagedAccountType::PlatformPayment {
+                account,
+                key_class,
+                ..
+            } => {
+                let key = PlatformPaymentAccountKey {
+                    account: *account,
+                    key_class: *key_class,
+                };
+                self.platform_payment_accounts.contains_key(&key)
+            }
         }
     }
 
@@ -176,6 +223,43 @@ impl ManagedAccountCollection {
                 ..
             } => {
                 self.provider_platform_keys = Some(account);
+            }
+            ManagedAccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => {
+                let key = DashpayAccountKey {
+                    index: *index,
+                    user_identity_id: *user_identity_id,
+                    friend_identity_id: *friend_identity_id,
+                };
+                self.dashpay_receival_accounts.insert(key, account);
+            }
+            ManagedAccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => {
+                let key = DashpayAccountKey {
+                    index: *index,
+                    user_identity_id: *user_identity_id,
+                    friend_identity_id: *friend_identity_id,
+                };
+                self.dashpay_external_accounts.insert(key, account);
+            }
+            ManagedAccountType::PlatformPayment {
+                account: acc_index,
+                key_class,
+                ..
+            } => {
+                let key = PlatformPaymentAccountKey {
+                    account: *acc_index,
+                    key_class: *key_class,
+                };
+                self.platform_payment_accounts.insert(key, account);
             }
         }
     }
@@ -256,6 +340,27 @@ impl ManagedAccountCollection {
                 Self::create_managed_account_from_eddsa_account(account, None)
             {
                 managed_collection.provider_platform_keys = Some(managed_account);
+            }
+        }
+
+        // Convert DashPay receiving accounts
+        for (key, account) in &account_collection.dashpay_receival_accounts {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.dashpay_receival_accounts.insert(*key, managed_account);
+            }
+        }
+
+        // Convert DashPay external accounts
+        for (key, account) in &account_collection.dashpay_external_accounts {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.dashpay_external_accounts.insert(*key, managed_account);
+            }
+        }
+
+        // Convert Platform Payment accounts
+        for (key, account) in &account_collection.platform_payment_accounts {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.platform_payment_accounts.insert(*key, managed_account);
             }
         }
 
@@ -471,6 +576,52 @@ impl ManagedAccountCollection {
                     addresses,
                 }
             }
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::DashpayReceivingFunds {
+                    index,
+                    user_identity_id,
+                    friend_identity_id,
+                    addresses,
+                }
+            }
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::DashpayExternalAccount {
+                    index,
+                    user_identity_id,
+                    friend_identity_id,
+                    addresses,
+                }
+            }
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => {
+                // DIP-17/DIP-18: Platform Payment addresses
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DIP17_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                ManagedAccountType::PlatformPayment {
+                    account,
+                    key_class,
+                    addresses,
+                }
+            }
         };
 
         Ok(ManagedAccount::new(managed_type, network, is_watch_only))
@@ -619,6 +770,10 @@ impl ManagedAccountCollection {
             accounts.push(account);
         }
 
+        // Add DashPay accounts
+        accounts.extend(self.dashpay_receival_accounts.values());
+        accounts.extend(self.dashpay_external_accounts.values());
+
         accounts
     }
 
@@ -666,6 +821,10 @@ impl ManagedAccountCollection {
             accounts.push(account);
         }
 
+        // Add DashPay accounts
+        accounts.extend(self.dashpay_receival_accounts.values_mut());
+        accounts.extend(self.dashpay_external_accounts.values_mut());
+
         accounts
     }
 
@@ -706,6 +865,8 @@ impl ManagedAccountCollection {
             && self.provider_owner_keys.is_none()
             && self.provider_operator_keys.is_none()
             && self.provider_platform_keys.is_none()
+            && self.dashpay_receival_accounts.is_empty()
+            && self.dashpay_external_accounts.is_empty()
     }
 
     /// Clear all accounts
@@ -721,5 +882,7 @@ impl ManagedAccountCollection {
         self.provider_owner_keys = None;
         self.provider_operator_keys = None;
         self.provider_platform_keys = None;
+        self.dashpay_receival_accounts.clear();
+        self.dashpay_external_accounts.clear();
     }
 }

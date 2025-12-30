@@ -353,7 +353,7 @@ impl_consensus_encoding!(BlockTransactions, block_hash, transactions);
 
 impl BlockTransactions {
     /// Construct a [BlockTransactions] from a [BlockTransactionsRequest] and
-    /// the corresponsing full [Block] by providing all requested transactions.
+    /// the corresponding full [Block] by providing all requested transactions.
     pub fn from_request(
         request: &BlockTransactionsRequest,
         block: &Block,
@@ -459,7 +459,7 @@ mod test {
     #[test]
     fn test_getblocktx_differential_encoding_de_and_serialization() {
         let testcases = vec![
-            // differentially encoded VarInts, indicies
+            // differentially encoded VarInts, indices
             (vec![4, 0, 5, 1, 10], vec![0, 6, 8, 19]),
             (vec![1, 0], vec![0]),
             (vec![5, 0, 0, 0, 0, 0], vec![0, 1, 2, 3, 4]),

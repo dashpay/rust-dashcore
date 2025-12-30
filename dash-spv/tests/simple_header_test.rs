@@ -2,8 +2,8 @@
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
-    network::MultiPeerNetworkManager,
-    storage::{MemoryStorageManager, StorageManager},
+    network::PeerNetworkManager,
+    storage::{DiskStorageManager, StorageManager},
     types::ValidationMode,
 };
 use dashcore::Network;
@@ -11,6 +11,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::info;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 const DASH_NODE_ADDR: &str = "127.0.0.1:9999";
@@ -50,17 +51,20 @@ async fn test_simple_header_sync() {
     config.peers.push(peer_addr);
 
     // Create fresh storage
-    let storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let storage =
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+            .await
+            .expect("Failed to create tmp storage");
 
     // Verify starting from empty state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
 
     // Create network manager
     let network_manager =
-        MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
+        PeerNetworkManager::new(&config).await.expect("Failed to create network manager");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     let mut client = DashSpvClient::new(config.clone(), network_manager, storage, wallet)
         .await

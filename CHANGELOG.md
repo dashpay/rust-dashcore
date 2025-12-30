@@ -1,3 +1,110 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## 0.41.0 - 2025-12-30
+
+### Added
+
+- Use feature for console UI (#158) @QuantumExplorer
+- Code analysis documentation (#159) @QuantumExplorer
+- InstantLock BLS signature verification and peer reputation (#163) @PastaPastaPasta
+- Buffered stateful framing for TCP connections (#167) @PastaPastaPasta
+- Enhanced storage clear and balance display (#174) @PastaPastaPasta
+- Comprehensive wallet FFI transaction builder (#175) @PastaPastaPasta
+- DashPay support (#177) @QuantumExplorer
+- Async check transaction (#178) @QuantumExplorer
+- Broadcast transaction support (#180) @pauldelucia
+- Update FFI headers (#183) @xdustinface
+- Flush header index on shutdown and after header sync (#197) @pauldelucia
+- Add `pre-commit` infrastructure (#201) @xdustinface
+- Introduce `DashSpvClientInterface` (#214) @xdustinface
+- DIP-17 Platform Payment account support in key-wallet (#229) @pauldelucia
+- Add data directory lockfile protection (#241) @xdustinface
+- Validate headers during sync (#242) @xdustinface
+- Parallelize header validation with `rayon` (#243) @xdustinface
+- Add `atomic_write` for atomic file writing (#245) @xdustinface
+- Add logging module with file rotation support (#252) @xdustinface
+- Add workflow to label PRs with merge conflicts (#265) @xdustinface
+- Filter storage using segmentscache (#267) @ZocoLini
+- Height based storage (#272) @ZocoLini
+- Add benchmarks with criterion (#277) @ZocoLini
+- Add `--mnemonic-file` CLI argument (#285) @xdustinface
+- Add `network` to `FFIWalletManager` struct (#325) @xdustinface
+
+### Changed
+
+- Split big files in dash-spv (#160) @QuantumExplorer
+- Update GitHub Actions to use ubuntu-22.04-arm (#169) @PastaPastaPasta
+- Drop unused code in `dash-spv::network` (#179) @xdustinface
+- Rename `MultiPeerNetworkManager` to `PeerNetworkManager` (#184) @xdustinface
+- Improve SPV shutdown handling with `CancellationToken` (#187) @xdustinface
+- Rename `TcpConnection` to `Peer` and `ConnectionPool` to `PeerPool` (#190) @xdustinface
+- Drop unused code in `dash-spv::network` (#192) @xdustinface
+- Clippy auto fixes (#198) @pauldelucia
+- Make flow control syncing default (#211) @xdustinface
+- Rename `HeaderSyncManagerWithReorg` to `HeaderSyncManager` (#221) @xdustinface
+- Don't add a dummy in `mark_filter_received` (#222) @xdustinface
+- Cleanup and simplify `MemoryStorageManager` (#224) @xdustinface
+- Make `synced_from_checkpoint` based on `sync_base_height` (#226) @xdustinface
+- More address matching in typo checker (#230) @xdustinface
+- Use `genesis_block` for all nets in `initialize_genesis_block` (#231) @xdustinface
+- Rename `SequentialSyncManager` to `SyncManager` (#235) @xdustinface 
+- Some restructuring in `dash-spv::sync` (#236) @xdustinface
+- Cleanup SPV validation (#237) @xdustinface
+- Move header validation into `sync::headers::validation` (#238) @xdustinface
+- Replace SyncPhase matches wildcard usage with exhaustive match (#239) @ZocoLini
+- Storage segments cleanup (#244) @ZocoLini
+- Pin rust version in `rust-toolchain.toml` (#266) @xdustinface
+- Less cloning in SPV message handling (#268) @xdustinface
+- Make filter loading range based (#269) @xdustinface
+- Single network `Wallet` and `ManagedWalletInfo` (#271) @xdustinface
+- Remove all use of `dyn` (#274) @ZocoLini
+- Some `ChainState` cleanups (#289) @ZocoLini
+- Drop `FFINetworks` and use `FFINetwork` only (#294) @xdustinface
+- Single network `WalletManager` (#299) @xdustinface
+- Make wallet birth height non-optional (#300) @xdustinface
+
+### Removed
+
+- Drop unused sync code (#208) @xdustinface
+- Drop `ChainHash` and related tests from `dash` (#228) @xdustinface
+- Drop unused code in `dash-spv::sync` (#232) @xdustinface
+- Drop unused code in `dash-spv::checkpoint` (#233) @xdustinface
+- Remove unused struct `StorageConfig` (#273) @ZocoLini
+- Remove `MemoryStorageManager` (#275) @ZocoLini
+- Drop persistent sync state (#279) @ZocoLini
+- Remove unused `ChainLockStats` (#281) @ZocoLini
+- Remove unused orphan pool module (#282) @ZocoLini
+- Remove `StorageStats` (#283) @ZocoLini
+- Remove duplicate quorum validation logic (#284) @ZocoLini
+- Drop unused `lookahead` (#288) @xdustinface
+- Remove unused filters field from `ChainState` (#293) @xdustinface
+- Move logo and protx test data files to contrib (#295) @xdustinface
+- Remove unused `swift-dash-core-sdk` (#301) @xdustinface
+
+### Fixed
+
+- CFHeaders overlap verification and underflow prevention (#163) @PastaPastaPasta
+- FFI event flooding and memory leak in progress callbacks (#173) @PastaPastaPasta
+- `PeerNetworkManager` cast in `broadcast_transaction` (#185) @xdustinface
+- Use non-blocking `TcpStream` in TCP connection (#188) @xdustinface
+- Locking issue after #190 (#191) @xdustinface
+- Follow-up fixes to #190 (#193) @xdustinface
+- Let the examples start the network monitoring (#194) @xdustinface
+- Wait for MnListDiff responses before transitioning to next phase (#199) @pauldelucia
+- SPV Regtest/Devnet support (#227) @xdustinface
+- Drop duplicated received filter update (#248) @xdustinface
+- Compressed headers protocol compatibility with Dash Core (#256) @PastaPastaPasta
+- Stop loading headers twice into `ChainState::headers` (#258) @xdustinface
+- FILTER_REQUEST_BATCH_SIZE should be 1000, not 100 (#260) @PastaPastaPasta
+- Return the correct block hash in `prepare_sync` (#262) @xdustinface
+- FFI CLI percentage display (#263) @ZocoLini
+- `maintain_gap_limit` target calculation off by one (#286) @xdustinface
+- Docs build issues (#297) @xdustinface
+
 # 0.28 - 2022-04-20 "The Taproot Release"
 
 At nearly nine months, this is our longest release cycle ever, and thanks

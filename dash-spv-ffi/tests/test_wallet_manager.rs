@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
-    use dashcore::Network;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_ffi::{
@@ -28,6 +27,8 @@ mod tests {
             // Get wallet manager
             let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
             assert!(!wallet_manager.is_null());
+            let wallet_manager_ptr = wallet_manager as *mut FFIWalletManager;
+            assert_eq!((*wallet_manager_ptr).network(), FFINetwork::Testnet);
 
             // Get wallet count (should be 0 initially)
             let mut error = FFIError::success();
@@ -56,15 +57,16 @@ mod tests {
             let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
             assert!(!wallet_manager.is_null());
             let wallet_manager_ptr = wallet_manager as *mut key_wallet_ffi::FFIWalletManager;
+            assert_eq!((*wallet_manager_ptr).network(), FFINetwork::Testnet);
 
             // Prepare a serialized wallet using the native manager so we can import it
-            let mut native_manager = WalletManager::<ManagedWalletInfo>::new();
+            let mut native_manager =
+                WalletManager::<ManagedWalletInfo>::new((*config).get_inner().network);
             let (serialized_wallet, expected_wallet_id) = native_manager
                 .create_wallet_from_mnemonic_return_serialized_bytes(
                     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
                     "",
-                    &[Network::Dash],
-                    None,
+                    0,
                     WalletAccountCreationOptions::Default,
                     false,
                     false,
@@ -105,7 +107,6 @@ mod tests {
             let mut description_error = FFIError::success();
             let description_ptr = key_wallet_ffi::wallet_manager_describe(
                 wallet_manager_ptr as *const FFIWalletManager,
-                FFINetwork::Dash,
                 &mut description_error as *mut FFIError,
             );
             assert!(!description_ptr.is_null(), "describe should succeed: {:?}", description_error);

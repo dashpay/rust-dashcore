@@ -17,11 +17,12 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
+use tokio_util::sync::CancellationToken;
 
 /// Global callback registry for thread-safe callback management
 static CALLBACK_REGISTRY: Lazy<Arc<Mutex<CallbackRegistry>>> =
@@ -104,18 +105,12 @@ struct SyncCallbackData {
     _marker: std::marker::PhantomData<()>,
 }
 
-async fn wait_for_shutdown_signal(signal: Arc<AtomicBool>) {
-    while !signal.load(Ordering::Relaxed) {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
 /// FFIDashSpvClient structure
 type InnerClient = DashSpvClient<
     key_wallet_manager::wallet_manager::WalletManager<
         key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
     >,
-    dash_spv::network::MultiPeerNetworkManager,
+    dash_spv::network::PeerNetworkManager,
     DiskStorageManager,
 >;
 type SharedClient = Arc<Mutex<Option<InnerClient>>>;
@@ -126,7 +121,7 @@ pub struct FFIDashSpvClient {
     event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     sync_callbacks: Arc<Mutex<Option<SyncCallbackData>>>,
-    shutdown_signal: Arc<AtomicBool>,
+    shutdown_token: CancellationToken,
     // Stored event receiver for pull-based draining (no background thread by default)
     event_rx: Arc<Mutex<Option<UnboundedReceiver<dash_spv::types::SpvEvent>>>>,
 }
@@ -160,9 +155,20 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     let mut client_config = config.clone_inner();
 
     let storage_path = client_config.storage_path.clone().unwrap_or_else(|| {
+        // Create a unique temporary directory if none was provided
+        static PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut path = std::env::temp_dir();
         path.push("dash-spv");
-        path.push(format!("{:?}", client_config.network).to_lowercase());
+        path.push(
+            format!(
+                "{:?}-{}-{}",
+                client_config.network,
+                std::process::id(),
+                PATH_COUNTER.fetch_add(1, Ordering::Relaxed)
+            )
+            .to_lowercase(),
+        );
         tracing::warn!(
             "dash-spv FFI config missing storage path, falling back to temp dir {:?}",
             path
@@ -173,11 +179,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 
     let client_result = runtime.block_on(async move {
         // Construct concrete implementations for generics
-        let network = dash_spv::network::MultiPeerNetworkManager::new(&client_config).await;
+        let network = dash_spv::network::PeerNetworkManager::new(&client_config).await;
         let storage = DiskStorageManager::new(storage_path.clone()).await;
         let wallet = key_wallet_manager::wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
-        >::new();
+        >::new(client_config.network);
         let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));
 
         match (network, storage) {
@@ -197,7 +203,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 event_callbacks: Arc::new(Mutex::new(FFIEventCallbacks::default())),
                 active_threads: Arc::new(Mutex::new(Vec::new())),
                 sync_callbacks: Arc::new(Mutex::new(None)),
-                shutdown_signal: Arc::new(AtomicBool::new(false)),
+                shutdown_token: CancellationToken::new(),
                 event_rx: Arc::new(Mutex::new(None)),
             };
             Box::into_raw(Box::new(ffi_client))
@@ -239,7 +245,14 @@ impl FFIDashSpvClient {
             return;
         };
         let callbacks = self.event_callbacks.lock().unwrap();
+        // Prevent flooding the UI/main thread by limiting events per drain call.
+        // Remaining events stay queued and will be drained on the next tick.
+        let max_events_per_call: usize = 500;
+        let mut processed: usize = 0;
         loop {
+            if processed >= max_events_per_call {
+                break;
+            }
             match rx.try_recv() {
                 Ok(event) => match event {
                     dash_spv::types::SpvEvent::BalanceUpdate {
@@ -296,6 +309,12 @@ impl FFIDashSpvClient {
                     dash_spv::types::SpvEvent::ChainLockReceived {
                         ..
                     } => {}
+                    dash_spv::types::SpvEvent::InstantLockReceived {
+                        ..
+                    } => {
+                        // InstantLock received and validated
+                        // TODO: Add FFI callback if needed for instant lock notifications
+                    }
                     dash_spv::types::SpvEvent::MempoolTransactionAdded {
                         ref txid,
                         amount,
@@ -348,6 +367,7 @@ impl FFIDashSpvClient {
                     break;
                 }
             }
+            processed += 1;
         }
     }
 }
@@ -364,8 +384,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_drain_events(client: *mut FFIDashSp
     FFIErrorCode::Success as i32
 }
 
-fn stop_client_internal(client: &FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
-    client.shutdown_signal.store(true, Ordering::Relaxed);
+fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
+    client.shutdown_token.cancel();
 
     // Ensure callbacks are cleared so no further progress/completion notifications fire.
     {
@@ -397,7 +417,7 @@ fn stop_client_internal(client: &FFIDashSpvClient) -> Result<(), dash_spv::SpvEr
         res
     });
 
-    client.shutdown_signal.store(false, Ordering::Relaxed);
+    client.shutdown_token = CancellationToken::new();
 
     result
 }
@@ -511,7 +531,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
 pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
 
-    let client = &(*client);
+    let client = &mut (*client);
     match stop_client_internal(client) {
         Ok(()) => FFIErrorCode::Success as i32,
         Err(e) => {
@@ -771,7 +791,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let inner = client.inner.clone();
     let runtime = client.runtime.clone();
     let sync_callbacks = client.sync_callbacks.clone();
-    let shutdown_signal = client.shutdown_signal.clone();
 
     // Take progress receiver from client
     let progress_receiver = {
@@ -783,7 +802,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     if let Some(mut receiver) = progress_receiver {
         let runtime_handle = runtime.handle().clone();
         let sync_callbacks_clone = sync_callbacks.clone();
-        let shutdown_signal_clone = shutdown_signal.clone();
+        let shutdown_token_monitor = client.shutdown_token.clone();
 
         let handle = std::thread::spawn(move || {
             runtime_handle.block_on(async move {
@@ -798,8 +817,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                                         SyncStage::Complete | SyncStage::Failed(_)
                                     );
 
-                                    // Create FFI progress
-                                    let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));
+                                    // Create FFI progress (stack-allocated to avoid double-free issues)
+                                    let mut ffi_progress = FFIDetailedSyncProgress::from(progress);
 
                                     // Call the callback using the registry
                                     {
@@ -816,7 +835,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                                                 // SAFETY: The callback and user_data are safely stored in the registry
                                                 // and accessed through thread-safe mechanisms. The registry ensures
                                                 // proper lifetime management without raw pointer passing across threads.
-                                                callback(ffi_progress.as_ref(), *user_data);
+                                                callback(&ffi_progress, *user_data);
+
+                                                // Free any heap-allocated strings inside the progress struct
+                                                // to avoid leaking per-callback allocations (e.g., stage_message).
+                                                // Move stage_message out of the struct to avoid double-free.
+                                                unsafe {
+                                                    // Move stage_message out of the struct (not using ptr::read to avoid double-free)
+                                                    let stage_message = std::mem::replace(
+                                                        &mut ffi_progress.stage_message,
+                                                        crate::types::FFIString {
+                                                            ptr: std::ptr::null_mut(),
+                                                            length: 0,
+                                                        },
+                                                    );
+                                                    // Destroy stage_message allocated in FFIDetailedSyncProgress::from
+                                                    crate::types::dash_spv_ffi_string_destroy(stage_message);
+                                                    // ffi_progress will be dropped normally here; no Drop impl exists
+                                                }
                                             }
                                         }
                                     }
@@ -828,7 +864,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                                 None => break,
                             }
                         }
-                        _ = wait_for_shutdown_signal(shutdown_signal_clone.clone()) => {
+                        _ = shutdown_token_monitor.cancelled() => {
                             break;
                         }
                     }
@@ -843,15 +879,12 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     // Spawn sync task in a separate thread with safe callback access
     let runtime_handle = runtime.handle().clone();
     let sync_callbacks_clone = sync_callbacks.clone();
-    let shutdown_signal_for_thread = shutdown_signal.clone();
-    let stop_triggered_for_thread = Arc::new(AtomicBool::new(false));
+    let shutdown_token_sync = client.shutdown_token.clone();
     let sync_handle = std::thread::spawn(move || {
-        let stop_triggered_for_callback = stop_triggered_for_thread.clone();
+        let shutdown_token_callback = shutdown_token_sync.clone();
         // Run monitoring loop
         let monitor_result = runtime_handle.block_on({
             let inner = inner.clone();
-            let shutdown_signal_for_thread = shutdown_signal_for_thread.clone();
-            let stop_triggered_for_thread = stop_triggered_for_callback.clone();
             async move {
                 let mut spv_client = {
                     let mut guard = inner.lock().unwrap();
@@ -864,16 +897,19 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                         }
                     }
                 };
+                let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+                let run_token = shutdown_token_sync.clone();
                 let (abort_handle, abort_registration) = AbortHandle::new_pair();
-                let mut monitor_future =
-                    Box::pin(Abortable::new(spv_client.monitor_network(), abort_registration));
+                let mut monitor_future = Box::pin(Abortable::new(
+                    spv_client.monitor_network(command_receiver, run_token),
+                    abort_registration,
+                ));
                 let result = tokio::select! {
                     res = &mut monitor_future => match res {
                         Ok(inner) => inner,
                         Err(_) => Ok(()),
                     },
-                    _ = wait_for_shutdown_signal(shutdown_signal_for_thread.clone()) => {
-                        stop_triggered_for_thread.store(true, Ordering::Relaxed);
+                    _ = shutdown_token_sync.cancelled() => {
                         abort_handle.abort();
                         match monitor_future.as_mut().await {
                             Ok(inner) => inner,
@@ -899,7 +935,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                     ..
                 }) = registry.unregister(callback_data.callback_id)
                 {
-                    if stop_triggered_for_callback.load(Ordering::Relaxed) {
+                    if shutdown_token_callback.is_cancelled() {
                         let msg = CString::new("Sync stopped by request").unwrap_or_else(|_| {
                             CString::new("Sync stopped").expect("hardcoded string is safe")
                         });
@@ -953,7 +989,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
 pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
 
-    let client = &(*client);
+    let client = &mut (*client);
 
     match stop_client_internal(client) {
         Ok(()) => FFIErrorCode::Success as i32,
@@ -1186,45 +1222,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
     }
 }
 
-/// Clear only the persisted sync-state snapshot.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_clear_sync_state(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-
-        let res = spv_client.clear_sync_state().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
 /// Check if compact filter sync is currently available.
 ///
 /// # Safety
@@ -1287,8 +1284,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
     if !client.is_null() {
         let client = Box::from_raw(client);
 
-        // Set shutdown signal to stop all threads
-        client.shutdown_signal.store(true, Ordering::Relaxed);
+        // Cancel shutdown token to stop all threads
+        client.shutdown_token.cancel();
 
         // Clean up any registered callbacks
         if let Some(ref callback_data) = *client.sync_callbacks.lock().unwrap() {
@@ -1468,10 +1465,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
                 }
             }
         };
-        spv_client.record_transaction_send(txid).await;
+        let res = spv_client.record_send(txid).await;
         let mut guard = inner.lock().unwrap();
         *guard = Some(spv_client);
-        Ok(())
+        res
     });
 
     match result {

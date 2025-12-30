@@ -13,7 +13,7 @@ use dashcore::Transaction;
 pub enum AccountTypePreference {
     /// Use BIP44 account only
     BIP44,
-    /// Use BIP32 account only  
+    /// Use BIP32 account only
     BIP32,
     /// Prefer BIP44, fallback to BIP32
     PreferBIP44,
@@ -42,19 +42,24 @@ impl ManagedWalletInfo {
     pub(crate) fn create_unsigned_payment_transaction_internal(
         &mut self,
         wallet: &Wallet,
-        network: Network,
+        _network: Network,
         account_index: u32,
         account_type_pref: Option<AccountTypePreference>,
         recipients: Vec<(Address, u64)>,
         fee_level: FeeLevel,
         current_block_height: u32,
     ) -> Result<Transaction, TransactionError> {
-        // Get the wallet's account collection for this network
-        let wallet_collection = wallet.accounts.get(&network).ok_or(TransactionError::NoAccount)?;
+        // Validate network consistency
+        if wallet.network != self.network {
+            return Err(TransactionError::BuildFailed(format!(
+                "Network mismatch: wallet network {:?} does not match managed wallet info network {:?}",
+                wallet.network,
+                self.network
+            )));
+        }
 
-        // Get the mutable account collection from managed info
-        let managed_collection =
-            self.accounts.get_mut(&network).ok_or(TransactionError::NoAccount)?;
+        // Get the wallet's account collection
+        let wallet_collection = &wallet.accounts;
 
         // Use BIP44 as default if no preference specified
         let pref = account_type_pref.unwrap_or(AccountTypePreference::BIP44);
@@ -83,23 +88,27 @@ impl ManagedWalletInfo {
 
         // Get the mutable managed account for UTXO access
         let managed_account = match pref {
-            AccountTypePreference::BIP44 => managed_collection
+            AccountTypePreference::BIP44 => self
+                .accounts
                 .standard_bip44_accounts
                 .get_mut(&account_index)
                 .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::BIP32 => managed_collection
+            AccountTypePreference::BIP32 => self
+                .accounts
                 .standard_bip32_accounts
                 .get_mut(&account_index)
                 .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::PreferBIP44 => managed_collection
+            AccountTypePreference::PreferBIP44 => self
+                .accounts
                 .standard_bip44_accounts
                 .get_mut(&account_index)
-                .or_else(|| managed_collection.standard_bip32_accounts.get_mut(&account_index))
+                .or_else(|| self.accounts.standard_bip32_accounts.get_mut(&account_index))
                 .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::PreferBIP32 => managed_collection
+            AccountTypePreference::PreferBIP32 => self
+                .accounts
                 .standard_bip32_accounts
                 .get_mut(&account_index)
-                .or_else(|| managed_collection.standard_bip44_accounts.get_mut(&account_index))
+                .or_else(|| self.accounts.standard_bip44_accounts.get_mut(&account_index))
                 .ok_or(TransactionError::NoAccount)?,
         };
 

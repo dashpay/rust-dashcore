@@ -182,7 +182,6 @@ impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
 #[repr(C)]
 pub struct FFIChainState {
     pub header_height: u32,
-    pub filter_header_height: u32,
     pub masternode_height: u32,
     pub last_chainlock_height: u32,
     pub last_chainlock_hash: FFIString,
@@ -193,7 +192,6 @@ impl From<ChainState> for FFIChainState {
     fn from(state: ChainState) -> Self {
         FFIChainState {
             header_height: state.headers.len() as u32,
-            filter_header_height: state.filter_headers.len() as u32,
             masternode_height: state.last_masternode_diff_height.unwrap_or(0),
             last_chainlock_height: state.last_chainlock_height.unwrap_or(0),
             last_chainlock_hash: FFIString::new(
@@ -395,7 +393,6 @@ pub unsafe extern "C" fn dash_spv_ffi_string_array_destroy(arr: *mut FFIArray) {
 pub enum FFIMempoolStrategy {
     FetchAll = 0,
     BloomFilter = 1,
-    Selective = 2,
 }
 
 impl From<MempoolStrategy> for FFIMempoolStrategy {
@@ -403,7 +400,6 @@ impl From<MempoolStrategy> for FFIMempoolStrategy {
         match strategy {
             MempoolStrategy::FetchAll => FFIMempoolStrategy::FetchAll,
             MempoolStrategy::BloomFilter => FFIMempoolStrategy::BloomFilter,
-            MempoolStrategy::Selective => FFIMempoolStrategy::Selective,
         }
     }
 }
@@ -413,7 +409,6 @@ impl From<FFIMempoolStrategy> for MempoolStrategy {
         match strategy {
             FFIMempoolStrategy::FetchAll => MempoolStrategy::FetchAll,
             FFIMempoolStrategy::BloomFilter => MempoolStrategy::BloomFilter,
-            FFIMempoolStrategy::Selective => MempoolStrategy::Selective,
         }
     }
 }

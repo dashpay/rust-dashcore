@@ -126,10 +126,10 @@ def categorize_functions(functions: List[FFIFunction]) -> Dict[str, List[FFIFunc
         'Mnemonic Operations': [],
         'Utility Functions': [],
     }
-    
+
     for func in functions:
         name = func.name.lower()
-        
+
         if 'initialize' in name or 'version' in name:
             categories['Initialization'].append(func)
         elif 'error' in name:
@@ -154,15 +154,15 @@ def categorize_functions(functions: List[FFIFunction]) -> Dict[str, List[FFIFunc
             categories['Mnemonic Operations'].append(func)
         else:
             categories['Utility Functions'].append(func)
-    
+
     # Remove empty categories
     return {k: v for k, v in categories.items() if v}
 
 def generate_markdown(functions: List[FFIFunction]) -> str:
     """Generate markdown documentation from FFI functions."""
-    
+
     categories = categorize_functions(functions)
-    
+
     md = []
     md.append("# Key-Wallet FFI API Documentation")
     md.append("")
@@ -172,7 +172,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("")
     md.append(f"**Total Functions**: {len(functions)}")
     md.append("")
-    
+
     # Table of Contents
     md.append("## Table of Contents")
     md.append("")
@@ -180,45 +180,50 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
         anchor = category.lower().replace(' ', '-')
         md.append(f"- [{category}](#{anchor})")
     md.append("")
-    
+
     # Function Reference
     md.append("## Function Reference")
     md.append("")
-    
+
     for category, funcs in categories.items():
         if not funcs:
             continue
-            
+
         anchor = category.lower().replace(' ', '-')
         md.append(f"### {category}")
         md.append("")
         md.append(f"Functions: {len(funcs)}")
         md.append("")
-        
+
         # Create a table for each category
         md.append("| Function | Description | Module |")
         md.append("|----------|-------------|--------|")
-        
+
         for func in sorted(funcs, key=lambda f: f.name):
             desc = func.doc_comment.split('.')[0] if func.doc_comment else "No description"
             desc = desc.replace('|', '\\|')  # Escape pipes in description
             if len(desc) > 80:
-                desc = desc[:77] + "..."
+                # Truncate at last complete word before 77 chars to avoid mid-word breaks
+                truncate_pos = desc.rfind(' ', 0, 77)
+                if truncate_pos > 60:  # Only if we find a space reasonably close
+                    desc = desc[:truncate_pos] + "..."
+                else:
+                    desc = desc[:77] + "..."
             md.append(f"| `{func.name}` | {desc} | {func.module} |")
-        
+
         md.append("")
-    
+
     # Detailed Function Documentation
     md.append("## Detailed Function Documentation")
     md.append("")
-    
+
     for category, funcs in categories.items():
         if not funcs:
             continue
-            
+
         md.append(f"### {category} - Detailed")
         md.append("")
-        
+
         for func in sorted(funcs, key=lambda f: f.name):
             md.append(f"#### `{func.name}`")
             md.append("")
@@ -226,22 +231,22 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
             md.append(func.signature)
             md.append("```")
             md.append("")
-            
+
             if func.doc_comment:
                 md.append("**Description:**")
                 md.append(func.doc_comment)
                 md.append("")
-            
+
             if func.safety_comment:
                 md.append("**Safety:**")
                 md.append(func.safety_comment)
                 md.append("")
-            
+
             md.append(f"**Module:** `{func.module}`")
             md.append("")
             md.append("---")
             md.append("")
-    
+
     # Type Definitions
     md.append("## Type Definitions")
     md.append("")
@@ -252,9 +257,9 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("- `FFIWalletManager` - Wallet manager handle")
     md.append("- `FFIBalance` - Balance information")
     md.append("- `FFIUTXO` - Unspent transaction output")
-    md.append("- `FFINetworks` - Network enumeration")
+    md.append("- `FFINetwork` - Network enumeration")
     md.append("")
-    
+
     # Memory Management
     md.append("## Memory Management")
     md.append("")
@@ -265,7 +270,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("3. **Thread Safety**: Most functions are thread-safe, but check individual function documentation")
     md.append("4. **Error Handling**: Always check the `FFIError` parameter after function calls")
     md.append("")
-    
+
     # Usage Examples
     md.append("## Usage Examples")
     md.append("")
@@ -286,30 +291,30 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("wallet_manager_free(manager);")
     md.append("```")
     md.append("")
-    
+
     return '\n'.join(md)
 
 def main():
     # Find all Rust source files
     src_dir = Path(__file__).parent.parent / "src"
-    
+
     all_functions = []
-    
+
     for rust_file in src_dir.rglob("*.rs"):
         functions = extract_ffi_functions(rust_file)
         all_functions.extend(functions)
-    
+
     # Generate markdown
     markdown = generate_markdown(all_functions)
-    
+
     # Write to file
     output_file = Path(__file__).parent.parent / "FFI_API.md"
     with open(output_file, 'w') as f:
         f.write(markdown)
-    
+
     print(f"Generated FFI documentation with {len(all_functions)} functions")
     print(f"Output: {output_file}")
-    
+
     return 0
 
 if __name__ == "__main__":

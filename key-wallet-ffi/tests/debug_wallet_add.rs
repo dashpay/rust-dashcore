@@ -1,14 +1,14 @@
 #[test]
 fn test_debug_wallet_add() {
     use key_wallet_ffi::error::FFIError;
-    use key_wallet_ffi::types::FFINetworks;
     use key_wallet_ffi::wallet_manager;
+    use key_wallet_ffi::FFINetwork;
     use std::ffi::CString;
 
     let mut error = FFIError::success();
     let error = &mut error as *mut FFIError;
 
-    let manager = wallet_manager::wallet_manager_create(error);
+    let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
     assert!(!manager.is_null());
     println!("Manager created successfully");
 
@@ -21,7 +21,6 @@ fn test_debug_wallet_add() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetworks::TestnetFlag,
             error,
         )
     };

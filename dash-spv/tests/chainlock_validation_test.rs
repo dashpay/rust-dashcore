@@ -99,30 +99,6 @@ impl NetworkManager for MockNetworkManager {
         }]
     }
 
-    async fn send_ping(&mut self) -> dash_spv::error::NetworkResult<u64> {
-        Ok(12345) // Return a dummy nonce
-    }
-
-    async fn handle_ping(&mut self, _nonce: u64) -> dash_spv::error::NetworkResult<()> {
-        Ok(())
-    }
-
-    fn should_ping(&self) -> bool {
-        false // Mock doesn't need pinging
-    }
-
-    fn cleanup_old_pings(&mut self) {
-        // No-op for mock
-    }
-
-    fn get_message_sender(
-        &self,
-    ) -> tokio::sync::mpsc::Sender<dashcore::network::message::NetworkMessage> {
-        // Create a dummy sender that drops messages
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        tx
-    }
-
     async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
         Ok(Some(0)) // Return dummy height
     }
@@ -132,17 +108,6 @@ impl NetworkManager for MockNetworkManager {
         _service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool {
         true // Mock always has service
-    }
-
-    async fn get_peers_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> Vec<dash_spv::types::PeerInfo> {
-        self.peer_info() // Return same peer info
-    }
-
-    fn handle_pong(&mut self, _nonce: u64) -> dash_spv::error::NetworkResult<()> {
-        Ok(()) // No-op for mock
     }
 
     async fn update_peer_dsq_preference(
@@ -204,9 +169,6 @@ async fn test_chainlock_validation_with_masternode_engine() {
     let chain_lock = create_test_chainlock(0, genesis.block_hash());
     network.add_chain_lock(chain_lock.clone());
 
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
     // Create client config with masternodes enabled
     let config = ClientConfig {
         network: Network::Dash,
@@ -215,6 +177,9 @@ async fn test_chainlock_validation_with_masternode_engine() {
         validation_mode: ValidationMode::Basic,
         ..Default::default()
     };
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
@@ -257,9 +222,6 @@ async fn test_chainlock_queue_and_process_flow() {
     let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
     // Create client config
     let config = ClientConfig {
         network: Network::Dash,
@@ -268,6 +230,9 @@ async fn test_chainlock_queue_and_process_flow() {
         validation_mode: ValidationMode::Basic,
         ..Default::default()
     };
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
@@ -310,9 +275,6 @@ async fn test_chainlock_manager_cache_operations() {
     let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
     // Create client config
     let config = ClientConfig {
         network: Network::Dash,
@@ -321,6 +283,9 @@ async fn test_chainlock_manager_cache_operations() {
         validation_mode: ValidationMode::Basic,
         ..Default::default()
     };
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
@@ -347,12 +312,6 @@ async fn test_chainlock_manager_cache_operations() {
     let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&genesis.block_hash());
     assert!(entry_by_hash.is_some());
     assert_eq!(entry_by_hash.unwrap().chain_lock.block_height, 0);
-
-    // Check stats
-    let stats = chainlock_manager.get_stats();
-    assert!(stats.total_chain_locks > 0);
-    assert_eq!(stats.highest_locked_height, Some(0));
-    assert_eq!(stats.lowest_locked_height, Some(0));
 }
 
 #[ignore = "mock implementation incomplete"]
@@ -368,9 +327,6 @@ async fn test_client_chainlock_update_flow() {
     let storage = DiskStorageManager::new(storage_path).await.unwrap();
     let network = MockNetworkManager::new();
 
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new()));
-
     // Create client config with masternodes enabled
     let config = ClientConfig {
         network: Network::Dash,
@@ -379,6 +335,9 @@ async fn test_client_chainlock_update_flow() {
         validation_mode: ValidationMode::Basic,
         ..Default::default()
     };
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client
     let client = DashSpvClient::new(config, network, storage, wallet).await.unwrap();
@@ -390,7 +349,7 @@ async fn test_client_chainlock_update_flow() {
     // Simulate masternode sync by manually setting sequential sync state
     // In real usage, this would happen automatically during sync
     // Note: sync_manager is private, can't access directly
-    // client.sync_manager.set_phase(dash_spv::sync::sequential::phases::SyncPhase::FullySynced {
+    // client.sync_manager.set_phase(dash_spv::sync::SyncPhase::FullySynced {
     //     sync_completed_at: std::time::Instant::now(),
     //     total_sync_time: Duration::from_secs(10),
     //     headers_synced: 1000,

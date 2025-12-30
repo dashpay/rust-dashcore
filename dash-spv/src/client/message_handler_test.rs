@@ -9,10 +9,9 @@ mod tests {
     use crate::mempool_filter::MempoolFilter;
     use crate::network::mock::MockNetworkManager;
     use crate::network::NetworkManager;
-    use crate::storage::memory::MemoryStorageManager;
     use crate::storage::StorageManager;
     use crate::sync::filters::FilterNotificationSender;
-    use crate::sync::sequential::SequentialSyncManager;
+    use crate::sync::SyncManager;
     use crate::types::{ChainState, MempoolState, SpvEvent, SpvStats};
     use crate::validation::ValidationManager;
     use crate::wallet::Wallet;
@@ -29,7 +28,7 @@ mod tests {
     async fn setup_test_components() -> (
         Box<dyn NetworkManager>,
         Box<dyn StorageManager>,
-        SequentialSyncManager,
+        SyncManager,
         ClientConfig,
         Arc<RwLock<SpvStats>>,
         Option<FilterNotificationSender>,
@@ -41,18 +40,18 @@ mod tests {
     ) {
         let network = Box::new(MockNetworkManager::new()) as Box<dyn NetworkManager>;
         let storage =
-            Box::new(MemoryStorageManager::new().await.unwrap()) as Box<dyn StorageManager>;
+            Box::new(DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage")) as Box<dyn StorageManager>;
         let config = ClientConfig::default();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let (block_tx, _block_rx) = mpsc::unbounded_channel();
-        let wallet_storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let wallet_storage = Arc::new(RwLock::new(DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage")));
         let wallet = Arc::new(RwLock::new(Wallet::new(wallet_storage)));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
         // Create sync manager
         let received_filter_heights = Arc::new(Mutex::new(HashSet::new()));
-        let sync_manager = SequentialSyncManager::new(&config, received_filter_heights).unwrap();
+        let sync_manager = SyncManager::new(&config, received_filter_heights).unwrap();
 
         (
             network,

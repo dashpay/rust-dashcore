@@ -1,4 +1,19 @@
 //! Common type definitions for the Dash SPV client.
+//!
+//! # Architecture Note
+//! This file has grown to 1,065 lines and should be split into:
+//! - types/chain.rs - ChainState, CachedHeader
+//! - types/sync.rs - SyncProgress, SyncStage
+//! - types/events.rs - SpvEvent, MempoolRemovalReason
+//! - types/stats.rs - SpvStats, PeerInfo
+//! - types/balances.rs - AddressBalance, UnconfirmedTransaction
+//!
+//! # Thread Safety
+//! Many types here are wrapped in `Arc<RwLock>` or `Arc<Mutex>` when used.
+//! Always acquire locks in consistent order to prevent deadlocks:
+//! 1. state (ChainState)
+//! 2. stats (SpvStats)
+//! 3. mempool_state (MempoolState)
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -11,6 +26,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Shared, mutex-protected set of filter heights used across components.
+///
+/// # Why `Arc<Mutex<HashSet>>`?
+/// - Arc: Shared ownership between FilterSyncManager and SpvStats
+/// - Mutex: Interior mutability for concurrent updates from filter download tasks
+/// - HashSet: Fast O(1) membership testing for gap detection
+///
+/// # Performance Note
+/// Consider `Arc<RwLock>` if read contention becomes an issue (most operations are reads).
 pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<u32>>>;
 
 /// A block header with its cached hash to avoid expensive X11 recomputation.
@@ -213,13 +236,25 @@ impl DetailedSyncProgress {
 }
 
 /// Chain state maintained by the SPV client.
+///
+/// # CRITICAL: This is the heart of the SPV client's state
+///
+/// ## Thread Safety
+/// Almost always wrapped in `Arc<RwLock<ChainState>>` for shared access.
+/// Multiple readers can access simultaneously, but writes are exclusive.
+///
+/// ## Checkpoint Sync
+/// When syncing from a checkpoint (not genesis), `sync_base_height` is non-zero.
+/// The `headers` vector contains headers starting from the checkpoint, not from genesis.
+/// Use `tip_height()` to get the absolute blockchain height.
+///
+/// ## Memory Considerations
+/// - headers: ~80 bytes per header
+/// - At 2M blocks: ~160MB for headers
 #[derive(Clone, Default)]
 pub struct ChainState {
     /// Block headers indexed by height.
     pub headers: Vec<BlockHeader>,
-
-    /// Filter headers indexed by height.
-    pub filter_headers: Vec<FilterHeader>,
 
     /// Last ChainLock height.
     pub last_chainlock_height: Option<u32>,
@@ -238,9 +273,6 @@ pub struct ChainState {
 
     /// Base height when syncing from a checkpoint (0 if syncing from genesis).
     pub sync_base_height: u32,
-
-    /// Whether the chain was synced from a checkpoint rather than genesis.
-    pub synced_from_checkpoint: bool,
 }
 
 impl ChainState {
@@ -272,7 +304,7 @@ impl ChainState {
         // Add genesis header to the chain state
         state.headers.push(genesis_header);
 
-        tracing::debug!("Initialized ChainState with genesis block - network: {:?}, hash: {}, headers_count: {}", 
+        tracing::debug!("Initialized ChainState with genesis block - network: {:?}, hash: {}, headers_count: {}",
             network, genesis_header.block_hash(), state.headers.len());
 
         // Initialize masternode engine for the network
@@ -284,9 +316,13 @@ impl ChainState {
 
         // Initialize checkpoint fields
         state.sync_base_height = 0;
-        state.synced_from_checkpoint = false;
 
         state
+    }
+
+    /// Whether the chain was synced from a checkpoint rather than genesis.
+    pub fn synced_from_checkpoint(&self) -> bool {
+        self.sync_base_height > 0
     }
 
     /// Get the current tip height.
@@ -315,26 +351,9 @@ impl ChainState {
         self.headers.get(index)
     }
 
-    /// Get filter header at the given height.
-    pub fn filter_header_at_height(&self, height: u32) -> Option<&FilterHeader> {
-        if height < self.sync_base_height {
-            return None; // Height is before our sync base
-        }
-        let index = (height - self.sync_base_height) as usize;
-        self.filter_headers.get(index)
-    }
-
     /// Add headers to the chain.
     pub fn add_headers(&mut self, headers: Vec<BlockHeader>) {
         self.headers.extend(headers);
-    }
-
-    /// Add filter headers to the chain.
-    pub fn add_filter_headers(&mut self, filter_headers: Vec<FilterHeader>) {
-        if let Some(last) = filter_headers.last() {
-            self.current_filter_tip = Some(*last);
-        }
-        self.filter_headers.extend(filter_headers);
     }
 
     /// Get the tip header
@@ -418,11 +437,9 @@ impl ChainState {
     ) {
         // Clear any existing headers
         self.headers.clear();
-        self.filter_headers.clear();
 
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
-        self.synced_from_checkpoint = true;
 
         // Add the checkpoint header as our first header
         self.headers.push(checkpoint_header);
@@ -459,34 +476,27 @@ impl std::fmt::Debug for ChainState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainState")
             .field("headers", &format!("{} headers", self.headers.len()))
-            .field("filter_headers", &format!("{} filter headers", self.filter_headers.len()))
             .field("last_chainlock_height", &self.last_chainlock_height)
             .field("last_chainlock_hash", &self.last_chainlock_hash)
             .field("current_filter_tip", &self.current_filter_tip)
             .field("last_masternode_diff_height", &self.last_masternode_diff_height)
             .field("sync_base_height", &self.sync_base_height)
-            .field("synced_from_checkpoint", &self.synced_from_checkpoint)
             .finish()
     }
 }
 
 /// Validation mode for the SPV client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ValidationMode {
     /// Validate only basic structure and signatures.
     Basic,
 
     /// Validate proof of work and chain rules.
+    #[default]
     Full,
 
     /// Skip most validation (useful for testing).
     None,
-}
-
-impl Default for ValidationMode {
-    fn default() -> Self {
-        Self::Full
-    }
 }
 
 /// Peer information.
@@ -858,6 +868,14 @@ pub enum SpvEvent {
         height: u32,
         /// Block hash of the ChainLock.
         hash: dashcore::BlockHash,
+    },
+
+    /// InstantLock received and validated.
+    InstantLockReceived {
+        /// Transaction ID locked by this InstantLock.
+        txid: Txid,
+        /// Transaction inputs locked by this InstantLock.
+        inputs: Vec<dashcore::OutPoint>,
     },
 
     /// Unconfirmed transaction added to mempool.
