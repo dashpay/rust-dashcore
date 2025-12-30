@@ -81,11 +81,7 @@ impl PeerNetworkManager {
 
         let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
 
-        let mut reputation_manager = PeerReputationManager::default();
-
-        if let Err(e) = reputation_manager.load_from_storage(&peer_store).await {
-            log::warn!("Failed to load peer reputation data: {}", e);
-        }
+        let reputation_manager = PeerReputationManager::load_or_new(&peer_store).await;
 
         // Determine exclusive mode: either explicitly requested or peers were provided
         let exclusive_mode = config.restrict_to_configured_peers || !config.peers.is_empty();

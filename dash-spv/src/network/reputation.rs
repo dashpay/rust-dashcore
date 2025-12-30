@@ -189,12 +189,28 @@ impl PeerReputation {
     }
 }
 
-#[derive(Default)]
 pub struct PeerReputationManager {
     reputations: HashMap<SocketAddr, PeerReputation>,
 }
 
 impl PeerReputationManager {
+    pub async fn load_or_new(storage: &PersistentPeerStorage) -> Self {
+        let mut reputations =
+            storage.load_peers_reputation().await.unwrap_or_else(|_| HashMap::new());
+
+        log::info!("Loaded reputation data for {} peers", reputations.len());
+
+        for (_, reputation) in reputations.iter_mut() {
+            if reputation.ban_count > 0 {
+                reputation.score = reputation.score.max(50); // Start with higher score for previously banned peers
+            }
+        }
+
+        Self {
+            reputations,
+        }
+    }
+
     /// Update peer reputation
     pub async fn update_reputation(
         &mut self,
@@ -320,28 +336,6 @@ impl PeerReputationManager {
     ) -> std::io::Result<()> {
         storage.save_peers_reputation(&self.reputations).await.map_err(std::io::Error::other)
     }
-
-    /// Load reputation data from persistent storage
-    pub async fn load_from_storage(
-        &mut self,
-        storage: &PersistentPeerStorage,
-    ) -> std::io::Result<()> {
-        let data = storage.load_peers_reputation().await.map_err(std::io::Error::other)?;
-        log::info!("Loaded reputation data for {} peers", data.len());
-
-        let reputations = &mut self.reputations;
-
-        for (addr, mut reputation) in data {
-            // Apply initial decay based on ban count
-            if reputation.ban_count > 0 {
-                reputation.score = reputation.score.max(50); // Start with higher score for previously banned peers
-            }
-
-            reputations.insert(addr, reputation);
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -351,9 +345,17 @@ mod tests {
     use super::*;
     use std::net::SocketAddr;
 
+    async fn build_peer_reputation_manager() -> PeerReputationManager {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let peer_storage = PersistentPeerStorage::open(temp_dir.path())
+            .await
+            .expect("Failed to open PersistentPeerStorage");
+        PeerReputationManager::load_or_new(&peer_storage).await
+    }
+
     #[tokio::test]
     async fn test_basic_reputation_operations() {
-        let mut manager = PeerReputationManager::default();
+        let mut manager = build_peer_reputation_manager().await;
         let peer: SocketAddr = "127.0.0.1:8333".parse().unwrap();
 
         // Initial score should be 0
@@ -367,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_banning_mechanism() {
-        let mut manager = PeerReputationManager::default();
+        let mut manager = build_peer_reputation_manager().await;
         let peer: SocketAddr = "192.168.1.1:8333".parse().unwrap();
 
         // Accumulate misbehavior
@@ -388,7 +390,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reputation_persistence() {
-        let mut manager = PeerReputationManager::default();
+        let mut manager = build_peer_reputation_manager().await;
         let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
         let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
 
@@ -407,8 +409,7 @@ mod tests {
             .expect("Failed to open PersistentPeerStorage");
         manager.save_to_storage(&peer_storage).await.unwrap();
 
-        let mut new_manager = PeerReputationManager::default();
-        new_manager.load_from_storage(&peer_storage).await.unwrap();
+        let new_manager = PeerReputationManager::load_or_new(&peer_storage).await;
 
         // Verify scores were preserved
         assert_eq!(new_manager.reputations.get(&peer1).expect("Peer not found").score, -10);
@@ -417,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_selection() {
-        let mut manager = PeerReputationManager::default();
+        let mut manager = build_peer_reputation_manager().await;
 
         let good_peer: SocketAddr = "1.1.1.1:8333".parse().unwrap();
         let neutral_peer: SocketAddr = "2.2.2.2:8333".parse().unwrap();
