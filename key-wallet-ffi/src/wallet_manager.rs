@@ -26,6 +26,7 @@ use key_wallet_manager::wallet_manager::WalletManager;
 /// allowing FFI code to interact with it directly without going through
 /// the SPV client.
 pub struct FFIWalletManager {
+    network: FFINetwork,
     pub(crate) manager: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
     pub(crate) runtime: Arc<tokio::runtime::Runtime>,
 }
@@ -36,10 +37,20 @@ impl FFIWalletManager {
         manager: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
         runtime: Arc<tokio::runtime::Runtime>,
     ) -> Self {
+        let network = runtime.block_on(async {
+            let manager_guard = manager.read().await;
+            manager_guard.network()
+        });
+
         FFIWalletManager {
+            network: FFINetwork::from(network),
             manager,
             runtime,
         }
+    }
+
+    pub fn network(&self) -> FFINetwork {
+        self.network
     }
 }
 
@@ -120,6 +131,7 @@ pub extern "C" fn wallet_manager_create(
     };
     FFIError::set_success(error);
     Box::into_raw(Box::new(FFIWalletManager {
+        network,
         manager: Arc::new(RwLock::new(manager)),
         runtime,
     }))

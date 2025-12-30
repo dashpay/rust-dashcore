@@ -8,7 +8,7 @@ mod tests {
             wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
             wallet_manager_import_wallet_from_bytes, wallet_manager_wallet_count,
         },
-        FFIError, FFIWalletManager,
+        FFIError, FFINetwork, FFIWalletManager,
     };
     use key_wallet_manager::wallet_manager::WalletManager;
     use std::ffi::CStr;
@@ -27,6 +27,8 @@ mod tests {
             // Get wallet manager
             let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
             assert!(!wallet_manager.is_null());
+            let wallet_manager_ptr = wallet_manager as *mut FFIWalletManager;
+            assert_eq!((*wallet_manager_ptr).network(), FFINetwork::Testnet);
 
             // Get wallet count (should be 0 initially)
             let mut error = FFIError::success();
@@ -55,6 +57,7 @@ mod tests {
             let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
             assert!(!wallet_manager.is_null());
             let wallet_manager_ptr = wallet_manager as *mut key_wallet_ffi::FFIWalletManager;
+            assert_eq!((*wallet_manager_ptr).network(), FFINetwork::Testnet);
 
             // Prepare a serialized wallet using the native manager so we can import it
             let mut native_manager =

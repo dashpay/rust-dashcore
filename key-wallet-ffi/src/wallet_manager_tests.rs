@@ -21,6 +21,7 @@ mod tests {
 
         // Create a wallet manager
         let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        assert_eq!(unsafe { (*manager).network() }, FFINetwork::Testnet);
 
         assert!(!manager.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
