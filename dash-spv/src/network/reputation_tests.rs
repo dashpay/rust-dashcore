@@ -9,7 +9,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_reputation_operations() {
-        let manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::new();
         let peer: SocketAddr = "127.0.0.1:8333".parse().unwrap();
 
         // Initial score should be 0
@@ -28,7 +28,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_banning_mechanism() {
-        let manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::new();
         let peer: SocketAddr = "192.168.1.1:8333".parse().unwrap();
 
         // Accumulate misbehavior
@@ -54,7 +54,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reputation_persistence() {
-        let manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::new();
         let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
         let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
 
@@ -69,7 +69,7 @@ mod tests {
             .expect("Failed to open PersistentPeerStorage");
         manager.save_to_storage(&peer_storage).await.unwrap();
 
-        let new_manager = PeerReputationManager::new();
+        let mut new_manager = PeerReputationManager::new();
         new_manager.load_from_storage(&peer_storage).await.unwrap();
 
         // Verify scores were preserved
@@ -79,7 +79,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_selection() {
-        let manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::new();
 
         let good_peer: SocketAddr = "1.1.1.1:8333".parse().unwrap();
         let neutral_peer: SocketAddr = "2.2.2.2:8333".parse().unwrap();
@@ -101,7 +101,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_tracking() {
-        let manager = PeerReputationManager::new();
+        let mut manager = PeerReputationManager::new();
         let peer: SocketAddr = "127.0.0.1:9999".parse().unwrap();
 
         // Track connection attempts

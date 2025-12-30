@@ -41,7 +41,7 @@ pub struct PeerNetworkManager {
     /// Peer persistence
     peer_store: Arc<PersistentPeerStorage>,
     /// Peer reputation manager
-    reputation_manager: Arc<PeerReputationManager>,
+    reputation_manager: Arc<Mutex<PeerReputationManager>>,
     /// Network type
     network: Network,
     /// Shutdown token
@@ -83,7 +83,7 @@ impl PeerNetworkManager {
 
         let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
 
-        let reputation_manager = Arc::new(PeerReputationManager::new());
+        let mut reputation_manager = PeerReputationManager::new();
 
         if let Err(e) = reputation_manager.load_from_storage(&peer_store).await {
             log::warn!("Failed to load peer reputation data: {}", e);
@@ -97,7 +97,7 @@ impl PeerNetworkManager {
             discovery: Arc::new(discovery),
             addrv2_handler: Arc::new(AddrV2Handler::new()),
             peer_store: Arc::new(peer_store),
-            reputation_manager,
+            reputation_manager: Arc::new(Mutex::new(reputation_manager)),
             network: config.network,
             shutdown_token: CancellationToken::new(),
             message_tx,
@@ -172,7 +172,7 @@ impl PeerNetworkManager {
     /// Connect to a specific peer
     async fn connect_to_peer(&self, addr: SocketAddr) {
         // Check reputation first
-        if !self.reputation_manager.should_connect_to_peer(&addr).await {
+        if !self.reputation_manager.lock().await.should_connect_to_peer(&addr).await {
             log::warn!("Not connecting to {} due to bad reputation", addr);
             return;
         }
@@ -188,7 +188,7 @@ impl PeerNetworkManager {
         }
 
         // Record connection attempt
-        self.reputation_manager.record_connection_attempt(addr).await;
+        self.reputation_manager.lock().await.record_connection_attempt(addr).await;
 
         let pool = self.pool.clone();
         let network = self.network;
@@ -215,7 +215,11 @@ impl PeerNetworkManager {
                             log::info!("Successfully connected to {}", addr);
 
                             // Record successful connection
-                            reputation_manager.record_successful_connection(addr).await;
+                            reputation_manager
+                                .lock()
+                                .await
+                                .record_successful_connection(addr)
+                                .await;
 
                             // Add to pool
                             if let Err(e) = pool.add_peer(addr, peer).await {
@@ -245,6 +249,8 @@ impl PeerNetworkManager {
                             log::warn!("Handshake failed with {}: {}", addr, e);
                             // Update reputation for handshake failure
                             reputation_manager
+                                .lock()
+                                .await
                                 .update_reputation(
                                     addr,
                                     misbehavior_scores::INVALID_MESSAGE,
@@ -260,6 +266,8 @@ impl PeerNetworkManager {
                     log::debug!("Failed to connect to {}: {}", addr, e);
                     // Minor reputation penalty for connection failure
                     reputation_manager
+                        .lock()
+                        .await
                         .update_reputation(
                             addr,
                             misbehavior_scores::TIMEOUT / 2,
@@ -278,7 +286,7 @@ impl PeerNetworkManager {
         message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
         addrv2_handler: Arc<AddrV2Handler>,
         shutdown_token: CancellationToken,
-        reputation_manager: Arc<PeerReputationManager>,
+        reputation_manager: Arc<Mutex<PeerReputationManager>>,
         connected_peer_count: Arc<AtomicUsize>,
     ) {
         tokio::spawn(async move {
@@ -485,6 +493,8 @@ impl PeerNetworkManager {
                                 log::debug!("Timeout reading from {}, continuing...", addr);
                                 // Minor reputation penalty for timeout
                                 reputation_manager
+                                    .lock()
+                                    .await
                                     .update_reputation(
                                         addr,
                                         misbehavior_scores::TIMEOUT,
@@ -507,6 +517,8 @@ impl PeerNetworkManager {
                                         );
                                         // Reputation penalty for invalid data
                                         reputation_manager
+                                            .lock()
+                                            .await
                                             .update_reputation(
                                                 addr,
                                                 misbehavior_scores::INVALID_TRANSACTION,
@@ -567,6 +579,8 @@ impl PeerNetworkManager {
             if conn_duration > Duration::from_secs(3600) {
                 // 1 hour
                 reputation_manager
+                    .lock()
+                    .await
                     .update_reputation(addr, positive_scores::LONG_UPTIME, "Long connection uptime")
                     .await;
             }
@@ -644,7 +658,7 @@ impl PeerNetworkManager {
                         let known = addrv2_handler.get_known_addresses().await;
                         let needed = TARGET_PEERS.saturating_sub(count);
                         // Select best peers based on reputation
-                        let best_peers = reputation_manager.select_best_peers(known, needed * 2).await;
+                        let best_peers = reputation_manager.lock().await.select_best_peers(known, needed * 2).await;
                         let mut attempted = 0;
 
                         for addr in best_peers {
@@ -718,7 +732,7 @@ impl PeerNetworkManager {
                         if let Err(e) = peer_guard.send_ping().await {
                             log::error!("Failed to ping {}: {}", addr, e);
                             // Update reputation for ping failure
-                            reputation_manager.update_reputation(
+                            reputation_manager.lock().await.update_reputation(
                                 addr,
                                 misbehavior_scores::TIMEOUT,
                                 "Ping failed",
@@ -738,7 +752,7 @@ impl PeerNetworkManager {
                     }
 
                     // Save reputation data periodically
-                    if let Err(e) = reputation_manager.save_to_storage(&peer_store).await {
+                    if let Err(e) = reputation_manager.lock().await.save_to_storage(&peer_store).await {
                         log::warn!("Failed to save reputation data: {}", e);
                     }
                 }
@@ -944,7 +958,7 @@ impl PeerNetworkManager {
 
     /// Get reputation information for all peers
     pub async fn get_peer_reputations(&self) -> HashMap<SocketAddr, (i32, bool)> {
-        let reputations = self.reputation_manager.get_all_reputations().await;
+        let reputations = self.reputation_manager.lock().await.get_all_reputations().await;
         reputations.into_iter().map(|(addr, rep)| (addr, (rep.score, rep.is_banned()))).collect()
     }
 
@@ -983,6 +997,8 @@ impl PeerNetworkManager {
 
         // Update reputation to trigger ban
         self.reputation_manager
+            .lock()
+            .await
             .update_reputation(
                 *addr,
                 misbehavior_scores::INVALID_HEADER * 2, // Severe penalty
@@ -995,7 +1011,7 @@ impl PeerNetworkManager {
 
     /// Unban a specific peer
     pub async fn unban_peer(&self, addr: &SocketAddr) {
-        self.reputation_manager.unban_peer(addr).await;
+        self.reputation_manager.lock().await.unban_peer(addr).await;
     }
 
     /// Shutdown the network manager
@@ -1012,7 +1028,8 @@ impl PeerNetworkManager {
         }
 
         // Save reputation data before shutdown
-        if let Err(e) = self.reputation_manager.save_to_storage(&self.peer_store).await {
+        if let Err(e) = self.reputation_manager.lock().await.save_to_storage(&self.peer_store).await
+        {
             log::warn!("Failed to save reputation data on shutdown: {}", e);
         }
 
@@ -1112,7 +1129,11 @@ impl NetworkManager for PeerNetworkManager {
     ) -> NetworkResult<()> {
         // Get the last peer that sent us a message
         if let Some(addr) = self.get_last_message_peer().await {
-            self.reputation_manager.update_reputation(addr, score_change, reason).await;
+            self.reputation_manager
+                .lock()
+                .await
+                .update_reputation(addr, score_change, reason)
+                .await;
         }
         Ok(())
     }
@@ -1142,11 +1163,15 @@ impl NetworkManager for PeerNetworkManager {
 
             // Apply misbehavior score and a short temporary ban
             self.reputation_manager
+                .lock()
+                .await
                 .update_reputation(addr, misbehavior_scores::INVALID_CHAINLOCK, reason)
                 .await;
 
             // Short ban: 10 minutes for relaying invalid ChainLock
             self.reputation_manager
+                .lock()
+                .await
                 .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
                 .await;
         }
@@ -1160,11 +1185,15 @@ impl NetworkManager for PeerNetworkManager {
         if let Some(addr) = self.get_last_message_peer().await {
             // Apply misbehavior score and a short temporary ban
             self.reputation_manager
+                .lock()
+                .await
                 .update_reputation(addr, misbehavior_scores::INVALID_INSTANTLOCK, reason)
                 .await;
 
             // Short ban: 10 minutes for relaying invalid InstantLock
             self.reputation_manager
+                .lock()
+                .await
                 .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
                 .await;
 

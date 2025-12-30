@@ -8,9 +8,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 
 use crate::storage::{PeerStorage, PersistentPeerStorage};
 
@@ -239,10 +237,10 @@ pub struct ReputationEvent {
 /// Peer reputation manager
 pub struct PeerReputationManager {
     /// Reputation data for each peer
-    reputations: Arc<RwLock<HashMap<SocketAddr, PeerReputation>>>,
+    reputations: HashMap<SocketAddr, PeerReputation>,
 
     /// Recent reputation events for monitoring
-    recent_events: Arc<RwLock<Vec<ReputationEvent>>>,
+    recent_events: Vec<ReputationEvent>,
 
     /// Maximum number of events to keep
     max_events: usize,
@@ -258,21 +256,20 @@ impl PeerReputationManager {
     /// Create a new reputation manager
     pub fn new() -> Self {
         Self {
-            reputations: Arc::new(RwLock::new(HashMap::new())),
-            recent_events: Arc::new(RwLock::new(Vec::new())),
+            reputations: HashMap::new(),
+            recent_events: Vec::new(),
             max_events: 1000,
         }
     }
 
     /// Update peer reputation
     pub async fn update_reputation(
-        &self,
+        &mut self,
         peer: SocketAddr,
         score_change: i32,
         reason: &str,
     ) -> bool {
-        let mut reputations = self.reputations.write().await;
-        let reputation = reputations.entry(peer).or_default();
+        let reputation = self.reputations.entry(peer).or_default();
 
         // Apply decay first
         reputation.apply_decay();
@@ -323,15 +320,14 @@ impl PeerReputationManager {
             timestamp: Instant::now(),
         };
 
-        drop(reputations); // Release lock before recording event
         self.record_event(event).await;
 
         should_ban
     }
 
     /// Record a reputation event
-    async fn record_event(&self, event: ReputationEvent) {
-        let mut events = self.recent_events.write().await;
+    async fn record_event(&mut self, event: ReputationEvent) {
+        let events = &mut self.recent_events;
         events.push(event);
 
         // Keep only recent events
@@ -342,8 +338,8 @@ impl PeerReputationManager {
     }
 
     /// Check if a peer is banned
-    pub async fn is_banned(&self, peer: &SocketAddr) -> bool {
-        let mut reputations = self.reputations.write().await;
+    pub async fn is_banned(&mut self, peer: &SocketAddr) -> bool {
+        let reputations = &mut self.reputations;
         if let Some(reputation) = reputations.get_mut(peer) {
             reputation.apply_decay();
             reputation.is_banned()
@@ -353,8 +349,8 @@ impl PeerReputationManager {
     }
 
     /// Get peer reputation score
-    pub async fn get_score(&self, peer: &SocketAddr) -> i32 {
-        let mut reputations = self.reputations.write().await;
+    pub async fn get_score(&mut self, peer: &SocketAddr) -> i32 {
+        let reputations = &mut self.reputations;
         if let Some(reputation) = reputations.get_mut(peer) {
             reputation.apply_decay();
             reputation.score
@@ -365,8 +361,8 @@ impl PeerReputationManager {
 
     /// Temporarily ban a peer for a specified duration, regardless of score.
     /// This can be used for critical protocol violations (e.g., invalid ChainLocks).
-    pub async fn temporary_ban_peer(&self, peer: SocketAddr, duration: Duration, reason: &str) {
-        let mut reputations = self.reputations.write().await;
+    pub async fn temporary_ban_peer(&mut self, peer: SocketAddr, duration: Duration, reason: &str) {
+        let reputations = &mut self.reputations;
         let reputation = reputations.entry(peer).or_default();
 
         reputation.banned_until = Some(Instant::now() + duration);
@@ -382,23 +378,23 @@ impl PeerReputationManager {
     }
 
     /// Record a connection attempt
-    pub async fn record_connection_attempt(&self, peer: SocketAddr) {
-        let mut reputations = self.reputations.write().await;
+    pub async fn record_connection_attempt(&mut self, peer: SocketAddr) {
+        let reputations = &mut self.reputations;
         let reputation = reputations.entry(peer).or_default();
         reputation.connection_attempts += 1;
         reputation.last_connection = Some(Instant::now());
     }
 
     /// Record a successful connection
-    pub async fn record_successful_connection(&self, peer: SocketAddr) {
-        let mut reputations = self.reputations.write().await;
+    pub async fn record_successful_connection(&mut self, peer: SocketAddr) {
+        let reputations = &mut self.reputations;
         let reputation = reputations.entry(peer).or_default();
         reputation.successful_connections += 1;
     }
 
     /// Get all peer reputations
-    pub async fn get_all_reputations(&self) -> HashMap<SocketAddr, PeerReputation> {
-        let mut reputations = self.reputations.write().await;
+    pub async fn get_all_reputations(&mut self) -> HashMap<SocketAddr, PeerReputation> {
+        let reputations = &mut self.reputations;
 
         // Apply decay to all peers
         for reputation in reputations.values_mut() {
@@ -410,12 +406,12 @@ impl PeerReputationManager {
 
     /// Get recent reputation events
     pub async fn get_recent_events(&self) -> Vec<ReputationEvent> {
-        self.recent_events.read().await.clone()
+        self.recent_events.clone()
     }
 
     /// Clear banned status for a peer (admin function)
-    pub async fn unban_peer(&self, peer: &SocketAddr) {
-        let mut reputations = self.reputations.write().await;
+    pub async fn unban_peer(&mut self, peer: &SocketAddr) {
+        let reputations = &mut self.reputations;
         if let Some(reputation) = reputations.get_mut(peer) {
             reputation.banned_until = None;
             reputation.score = reputation.score.min(MAX_MISBEHAVIOR_SCORE - 10);
@@ -424,15 +420,15 @@ impl PeerReputationManager {
     }
 
     /// Reset reputation for a peer
-    pub async fn reset_reputation(&self, peer: &SocketAddr) {
-        let mut reputations = self.reputations.write().await;
+    pub async fn reset_reputation(&mut self, peer: &SocketAddr) {
+        let reputations = &mut self.reputations;
         reputations.remove(peer);
         log::info!("Reset reputation for peer {}", peer);
     }
 
     /// Get peers sorted by reputation (best first)
-    pub async fn get_peers_by_reputation(&self) -> Vec<(SocketAddr, i32)> {
-        let mut reputations = self.reputations.write().await;
+    pub async fn get_peers_by_reputation(&mut self) -> Vec<(SocketAddr, i32)> {
+        let reputations = &mut self.reputations;
 
         // Apply decay and collect scores
         let mut peer_scores: Vec<(SocketAddr, i32)> = reputations
@@ -451,17 +447,21 @@ impl PeerReputationManager {
     }
 
     /// Save reputation data to persistent storage
-    pub async fn save_to_storage(&self, storage: &PersistentPeerStorage) -> std::io::Result<()> {
-        let reputations = self.reputations.read().await;
-
-        storage.save_peers_reputation(&reputations).await.map_err(std::io::Error::other)
+    pub async fn save_to_storage(
+        &mut self,
+        storage: &PersistentPeerStorage,
+    ) -> std::io::Result<()> {
+        storage.save_peers_reputation(&self.reputations).await.map_err(std::io::Error::other)
     }
 
     /// Load reputation data from persistent storage
-    pub async fn load_from_storage(&self, storage: &PersistentPeerStorage) -> std::io::Result<()> {
+    pub async fn load_from_storage(
+        &mut self,
+        storage: &PersistentPeerStorage,
+    ) -> std::io::Result<()> {
         let data = storage.load_peers_reputation().await.map_err(std::io::Error::other)?;
 
-        let mut reputations = self.reputations.write().await;
+        let reputations = &mut self.reputations;
         let mut loaded_count = 0;
         let mut skipped_count = 0;
 
@@ -501,26 +501,26 @@ impl PeerReputationManager {
 pub trait ReputationAware {
     /// Select best peers based on reputation
     fn select_best_peers(
-        &self,
+        &mut self,
         available_peers: Vec<SocketAddr>,
         count: usize,
     ) -> impl std::future::Future<Output = Vec<SocketAddr>> + Send;
 
     /// Check if we should connect to a peer based on reputation
     fn should_connect_to_peer(
-        &self,
+        &mut self,
         peer: &SocketAddr,
     ) -> impl std::future::Future<Output = bool> + Send;
 }
 
 impl ReputationAware for PeerReputationManager {
     async fn select_best_peers(
-        &self,
+        &mut self,
         available_peers: Vec<SocketAddr>,
         count: usize,
     ) -> Vec<SocketAddr> {
         let mut peer_scores = Vec::new();
-        let mut reputations = self.reputations.write().await;
+        let reputations = &mut self.reputations;
 
         for peer in available_peers {
             let reputation = reputations.entry(peer).or_default();
@@ -538,7 +538,7 @@ impl ReputationAware for PeerReputationManager {
         peer_scores.into_iter().take(count).map(|(peer, _)| peer).collect()
     }
 
-    async fn should_connect_to_peer(&self, peer: &SocketAddr) -> bool {
+    async fn should_connect_to_peer(&mut self, peer: &SocketAddr) -> bool {
         !self.is_banned(peer).await
     }
 }
