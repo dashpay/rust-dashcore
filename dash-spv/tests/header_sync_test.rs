@@ -261,9 +261,11 @@ async fn test_header_sync_performance() {
 #[tokio::test]
 async fn test_header_sync_with_client_integration() {
     let _ = env_logger::try_init();
+    let temp_dir = tempfile::TempDir::new().expect("Failed to create temporary directory");
 
     // Test header sync integration with the full client
     let config = ClientConfig::new(Network::Dash)
+        .with_storage_path(temp_dir.path().to_path_buf())
         .with_validation_mode(ValidationMode::Basic)
         .with_connection_timeout(Duration::from_secs(10));
 
