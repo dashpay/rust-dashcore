@@ -23,7 +23,7 @@ use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
 use crate::network::pool::PeerPool;
-use crate::network::reputation::{misbehavior_scores, positive_scores, PeerReputationManager};
+use crate::network::reputation::{PeerReputationManager, ReputationChangeReason};
 use crate::network::{HandshakeManager, NetworkManager, Peer};
 use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use crate::types::PeerInfo;
@@ -249,11 +249,7 @@ impl PeerNetworkManager {
                             reputation_manager
                                 .lock()
                                 .await
-                                .update_reputation(
-                                    addr,
-                                    misbehavior_scores::INVALID_MESSAGE,
-                                    "Handshake failed",
-                                )
+                                .update_reputation(addr, ReputationChangeReason::InvalidMessage)
                                 .await;
                             // For handshake failures, try again later
                             tokio::time::sleep(RECONNECT_DELAY).await;
@@ -266,11 +262,7 @@ impl PeerNetworkManager {
                     reputation_manager
                         .lock()
                         .await
-                        .update_reputation(
-                            addr,
-                            misbehavior_scores::TIMEOUT / 2,
-                            "Connection failed",
-                        )
+                        .update_reputation(addr, ReputationChangeReason::Timeout)
                         .await;
                 }
             }
@@ -493,11 +485,7 @@ impl PeerNetworkManager {
                                 reputation_manager
                                     .lock()
                                     .await
-                                    .update_reputation(
-                                        addr,
-                                        misbehavior_scores::TIMEOUT,
-                                        "Read timeout",
-                                    )
+                                    .update_reputation(addr, ReputationChangeReason::Timeout)
                                     .await;
                                 continue;
                             }
@@ -519,8 +507,7 @@ impl PeerNetworkManager {
                                             .await
                                             .update_reputation(
                                                 addr,
-                                                misbehavior_scores::INVALID_TRANSACTION,
-                                                "Invalid transaction type in block",
+                                                ReputationChangeReason::InvalidTransaction,
                                             )
                                             .await;
                                     } else if error_msg
@@ -579,7 +566,7 @@ impl PeerNetworkManager {
                 reputation_manager
                     .lock()
                     .await
-                    .update_reputation(addr, positive_scores::LONG_UPTIME, "Long connection uptime")
+                    .update_reputation(addr, ReputationChangeReason::LongUptime)
                     .await;
             }
         });
@@ -732,8 +719,7 @@ impl PeerNetworkManager {
                             // Update reputation for ping failure
                             reputation_manager.lock().await.update_reputation(
                                 addr,
-                                misbehavior_scores::TIMEOUT,
-                                "Ping failed",
+                                ReputationChangeReason::Timeout,
                             ).await;
                         }
                     }
@@ -945,10 +931,7 @@ impl PeerNetworkManager {
     }
 
     /// Disconnect a specific peer
-    pub async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
-        log::info!("Disconnecting peer {} - reason: {}", addr, reason);
-
-        // Remove the peer
+    pub async fn disconnect_peer(&self, addr: &SocketAddr) -> Result<(), Error> {
         self.pool.remove_peer(addr).await;
 
         Ok(())
@@ -978,27 +961,6 @@ impl PeerNetworkManager {
     pub async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
         let last_peer = self.last_message_peer.lock().await;
         *last_peer
-    }
-
-    /// Ban a specific peer manually
-    pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
-        log::info!("Manually banning peer {} - reason: {}", addr, reason);
-
-        // Disconnect the peer first
-        self.disconnect_peer(addr, reason).await?;
-
-        // Update reputation to trigger ban
-        self.reputation_manager
-            .lock()
-            .await
-            .update_reputation(
-                *addr,
-                misbehavior_scores::INVALID_HEADER * 2, // Severe penalty
-                reason,
-            )
-            .await;
-
-        Ok(())
     }
 
     /// Unban a specific peer
@@ -1116,39 +1078,24 @@ impl NetworkManager for PeerNetworkManager {
 
     async fn penalize_last_message_peer(
         &self,
-        score_change: i32,
-        reason: &str,
+        reason: ReputationChangeReason,
     ) -> NetworkResult<()> {
         // Get the last peer that sent us a message
         if let Some(addr) = self.get_last_message_peer().await {
-            self.reputation_manager
-                .lock()
-                .await
-                .update_reputation(addr, score_change, reason)
-                .await;
+            self.reputation_manager.lock().await.update_reputation(addr, reason).await;
         }
         Ok(())
     }
 
-    async fn penalize_last_message_peer_invalid_chainlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
+    async fn penalize_last_message_peer_invalid_chainlock(&self) -> NetworkResult<()> {
         if let Some(addr) = self.get_last_message_peer().await {
-            match self.disconnect_peer(&addr, reason).await {
+            match self.disconnect_peer(&addr).await {
                 Ok(()) => {
-                    log::warn!(
-                        "Peer {} disconnected for invalid ChainLock enforcement: {}",
-                        addr,
-                        reason
-                    );
+                    log::warn!("Peer {addr} disconnected for invalid ChainLock enforcement",);
                 }
                 Err(err) => {
                     log::error!(
-                        "Failed to disconnect peer {} after invalid ChainLock enforcement ({}): {}",
-                        addr,
-                        reason,
-                        err
+                        "Failed to disconnect peer {addr} after invalid ChainLock enforcement: {err}",
                     );
                 }
             }
@@ -1157,52 +1104,42 @@ impl NetworkManager for PeerNetworkManager {
             self.reputation_manager
                 .lock()
                 .await
-                .update_reputation(addr, misbehavior_scores::INVALID_CHAINLOCK, reason)
+                .update_reputation(addr, ReputationChangeReason::InvalidChainLock)
                 .await;
 
             // Short ban: 10 minutes for relaying invalid ChainLock
             self.reputation_manager
                 .lock()
                 .await
-                .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
+                .temporary_ban_peer(addr, Duration::from_secs(10 * 60))
                 .await;
         }
         Ok(())
     }
 
-    async fn penalize_last_message_peer_invalid_instantlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
+    async fn penalize_last_message_peer_invalid_instantlock(&self) -> NetworkResult<()> {
         if let Some(addr) = self.get_last_message_peer().await {
             // Apply misbehavior score and a short temporary ban
             self.reputation_manager
                 .lock()
                 .await
-                .update_reputation(addr, misbehavior_scores::INVALID_INSTANTLOCK, reason)
+                .update_reputation(addr, ReputationChangeReason::InvalidInstantLock)
                 .await;
 
             // Short ban: 10 minutes for relaying invalid InstantLock
             self.reputation_manager
                 .lock()
                 .await
-                .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
+                .temporary_ban_peer(addr, Duration::from_secs(10 * 60))
                 .await;
 
-            match self.disconnect_peer(&addr, reason).await {
+            match self.disconnect_peer(&addr).await {
                 Ok(()) => {
-                    log::warn!(
-                        "Peer {} disconnected for invalid InstantLock enforcement: {}",
-                        addr,
-                        reason
-                    );
+                    log::warn!("Peer {addr} disconnected for invalid InstantLock enforcement",);
                 }
                 Err(err) => {
                     log::error!(
-                        "Failed to disconnect peer {} after invalid InstantLock enforcement ({}): {}",
-                        addr,
-                        reason,
-                        err
+                        "Failed to disconnect peer {addr} after invalid InstantLock enforcement: {err}"
                     );
                 }
             }

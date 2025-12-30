@@ -12,32 +12,54 @@ use std::time::{Duration, Instant};
 
 use crate::storage::{PeerStorage, PersistentPeerStorage};
 
-/// Misbehavior score thresholds for different violations
-pub mod misbehavior_scores {
-    /// Invalid message format or protocol violation
-    pub const INVALID_MESSAGE: i32 = 10;
+pub enum ReputationChangeReason {
+    // Negative Changes
+    InvalidMessage,
+    InvalidHeader,
+    Timeout,
+    InvalidTransaction,
+    InvalidChainLock,
+    InvalidInstantLock,
 
-    /// Invalid block header
-    pub const INVALID_HEADER: i32 = 50;
+    // Positive changes
+    LongUptime,
 
-    /// Timeout or slow response
-    pub const TIMEOUT: i32 = 5;
-
-    /// Invalid transaction
-    pub const INVALID_TRANSACTION: i32 = 20;
-
-    /// Invalid ChainLock
-    pub const INVALID_CHAINLOCK: i32 = 40;
-
-    /// Invalid InstantLock
-    pub const INVALID_INSTANTLOCK: i32 = 35;
+    // Other
+    Other(i32, String),
 }
 
-/// Positive behavior scores
-pub mod positive_scores {
+impl ReputationChangeReason {
+    pub fn score(&self) -> i32 {
+        // This score represents the missbehaviour score change, that means
+        // the higher the score, the more severe the violation.
+        match self {
+            ReputationChangeReason::InvalidMessage => 10,
+            ReputationChangeReason::InvalidHeader => 50,
+            ReputationChangeReason::Timeout => 5,
+            ReputationChangeReason::InvalidTransaction => 20,
+            ReputationChangeReason::InvalidChainLock => 40,
+            ReputationChangeReason::InvalidInstantLock => 35,
+            ReputationChangeReason::LongUptime => -5,
+            ReputationChangeReason::Other(score, _) => *score,
+        }
+    }
+}
 
-    /// Long uptime connection
-    pub const LONG_UPTIME: i32 = -5;
+impl std::fmt::Display for ReputationChangeReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ReputationChangeReason::InvalidMessage => {
+                write!(f, "Invalid message format or protocol violation")
+            }
+            ReputationChangeReason::InvalidHeader => write!(f, "Invalid block header"),
+            ReputationChangeReason::Timeout => write!(f, "Timeout or slow response"),
+            ReputationChangeReason::InvalidTransaction => write!(f, "Invalid transaction"),
+            ReputationChangeReason::InvalidChainLock => write!(f, "Invalid ChainLock"),
+            ReputationChangeReason::InvalidInstantLock => write!(f, "Invalid InstantLock"),
+            ReputationChangeReason::LongUptime => write!(f, "Long uptime"),
+            ReputationChangeReason::Other(_, reason) => write!(f, "{}", reason),
+        }
+    }
 }
 
 /// Ban duration for misbehaving peers
@@ -207,8 +229,7 @@ impl PeerReputationManager {
     pub async fn update_reputation(
         &mut self,
         peer: SocketAddr,
-        score_change: i32,
-        reason: &str,
+        reason: ReputationChangeReason,
     ) -> bool {
         let reputation = self.reputations.entry(peer).or_default();
 
@@ -218,12 +239,12 @@ impl PeerReputationManager {
         // Update score
         let old_score = reputation.score;
         reputation.score =
-            (reputation.score + score_change).clamp(MIN_MISBEHAVIOR_SCORE, MAX_MISBEHAVIOR_SCORE);
+            (reputation.score + reason.score()).clamp(MIN_MISBEHAVIOR_SCORE, MAX_MISBEHAVIOR_SCORE);
 
         // Track positive/negative actions
-        if score_change > 0 {
+        if reason.score() > 0 {
             reputation.negative_actions += 1;
-        } else if score_change < 0 {
+        } else if reason.score() < 0 {
             reputation.positive_actions += 1;
         }
 
@@ -242,13 +263,13 @@ impl PeerReputationManager {
         }
 
         // Log significant changes
-        if score_change.abs() >= 10 || should_ban {
+        if reason.score().abs() >= 10 || should_ban {
             log::info!(
                 "Peer {} reputation changed: {} -> {} (change: {}, reason: {})",
                 peer,
                 old_score,
                 reputation.score,
-                score_change,
+                reason.score(),
                 reason
             );
         }
@@ -269,7 +290,7 @@ impl PeerReputationManager {
 
     /// Temporarily ban a peer for a specified duration, regardless of score.
     /// This can be used for critical protocol violations (e.g., invalid ChainLocks).
-    pub async fn temporary_ban_peer(&mut self, peer: SocketAddr, duration: Duration, reason: &str) {
+    pub async fn temporary_ban_peer(&mut self, peer: SocketAddr, duration: Duration) {
         let reputations = &mut self.reputations;
         let reputation = reputations.entry(peer).or_default();
 
@@ -277,11 +298,10 @@ impl PeerReputationManager {
         reputation.ban_count += 1;
 
         log::warn!(
-            "Peer {} temporarily banned for {:?} (ban #{}, reason: {})",
+            "Peer {} temporarily banned for {:?} (ban #{})",
             peer,
             duration,
             reputation.ban_count,
-            reason
         );
     }
 
@@ -402,12 +422,11 @@ mod tests {
         let peer: SocketAddr = "127.0.0.1:8333".parse().unwrap();
 
         // Initial score should be 0
+        assert_eq!(manager.select_best_peers(vec![peer], 1).await[0], peer);
         assert_eq!(manager.reputations.get(&peer).expect("Peer not found").score, 0);
 
         // Test misbehavior
-        manager
-            .update_reputation(peer, misbehavior_scores::INVALID_MESSAGE, "Test invalid message")
-            .await;
+        manager.update_reputation(peer, ReputationChangeReason::InvalidMessage).await;
         assert_eq!(manager.reputations.get(&peer).expect("Peer not found").score, 10);
     }
 
@@ -418,13 +437,8 @@ mod tests {
 
         // Accumulate misbehavior
         for i in 0..10 {
-            let banned = manager
-                .update_reputation(
-                    peer,
-                    misbehavior_scores::INVALID_MESSAGE,
-                    &format!("Violation {}", i),
-                )
-                .await;
+            let banned =
+                manager.update_reputation(peer, ReputationChangeReason::InvalidMessage).await;
 
             // Should be banned on the 10th violation (total score = 100)
             if i == 9 {
@@ -444,8 +458,12 @@ mod tests {
         let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
 
         // Set reputations
-        manager.update_reputation(peer1, -10, "Good peer").await;
-        manager.update_reputation(peer2, 50, "Bad peer").await;
+        manager
+            .update_reputation(peer1, ReputationChangeReason::Other(-10, "Good peer".to_string()))
+            .await;
+        manager
+            .update_reputation(peer2, ReputationChangeReason::Other(50, "Bad peer".to_string()))
+            .await;
 
         // Save and load
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -471,8 +489,15 @@ mod tests {
         let bad_peer: SocketAddr = "3.3.3.3:8333".parse().unwrap();
 
         // Set different reputations
-        manager.update_reputation(good_peer, -20, "Very good").await;
-        manager.update_reputation(bad_peer, 80, "Very bad").await;
+        manager
+            .update_reputation(
+                good_peer,
+                ReputationChangeReason::Other(-20, "Very good".to_string()),
+            )
+            .await;
+        manager
+            .update_reputation(bad_peer, ReputationChangeReason::Other(80, "Very bad".to_string()))
+            .await;
         // neutral_peer has default score of 0
 
         let all_peers = vec![good_peer, neutral_peer, bad_peer];
