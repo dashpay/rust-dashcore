@@ -85,19 +85,7 @@ impl PeerNetworkManager {
 
         let reputation_manager = Arc::new(PeerReputationManager::new());
 
-        // Load reputation data if available
-        let reputation_path = data_dir.join("peer_reputation.json");
-
-        // Ensure the directory exists before attempting to load
-        if let Some(parent_dir) = reputation_path.parent() {
-            if !parent_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(parent_dir) {
-                    log::warn!("Failed to create directory for reputation data: {}", e);
-                }
-            }
-        }
-
-        if let Err(e) = reputation_manager.load_from_storage(&reputation_path).await {
+        if let Err(e) = reputation_manager.load_from_storage(&peer_store).await {
             log::warn!("Failed to load peer reputation data: {}", e);
         }
 
@@ -635,7 +623,6 @@ impl PeerNetworkManager {
         let reputation_manager = self.reputation_manager.clone();
         let peer_search_started = self.peer_search_started.clone();
         let initial_peers = self.initial_peers.clone();
-        let data_dir = self.data_dir.clone();
         let connected_peer_count = self.connected_peer_count.clone();
 
         // Check if we're in exclusive mode (explicit flag or peers configured)
@@ -790,8 +777,7 @@ impl PeerNetworkManager {
                     }
 
                     // Save reputation data periodically
-                    let storage_path = data_dir.join("peer_reputation.json");
-                    if let Err(e) = reputation_manager.save_to_storage(&storage_path).await {
+                    if let Err(e) = reputation_manager.save_to_storage(&peer_store).await {
                         log::warn!("Failed to save reputation data: {}", e);
                     }
                 }
@@ -1083,8 +1069,7 @@ impl PeerNetworkManager {
         }
 
         // Save reputation data before shutdown
-        let reputation_path = self.data_dir.join("peer_reputation.json");
-        if let Err(e) = self.reputation_manager.save_to_storage(&reputation_path).await {
+        if let Err(e) = self.reputation_manager.save_to_storage(&self.peer_store).await {
             log::warn!("Failed to save reputation data on shutdown: {}", e);
         }
 
