@@ -5,7 +5,7 @@
 //! implements automatic banning for excessive misbehavior, and provides reputation
 //! decay over time for recovery.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -13,9 +13,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use crate::storage::{PeerStorage, PersistentPeerStorage};
-
-/// Maximum misbehavior score before a peer is banned
-const MAX_MISBEHAVIOR_SCORE: i32 = 100;
 
 /// Misbehavior score thresholds for different violations
 pub mod misbehavior_scores {
@@ -80,20 +77,71 @@ const DECAY_INTERVAL: Duration = Duration::from_secs(60 * 60); // 1 hour
 /// Amount to decay reputation score per interval
 const DECAY_AMOUNT: i32 = 5;
 
+/// Maximum misbehavior score before a peer is banned
+const MAX_MISBEHAVIOR_SCORE: i32 = 100;
+
 /// Minimum score (most positive reputation)
-const MIN_SCORE: i32 = -50;
+const MIN_MISBEHAVIOR_SCORE: i32 = -50;
+
+const MAX_BAN_COUNT: u32 = 1000;
+
+const MAX_ACTION_COUNT: u64 = 1_000_000;
 
 fn default_instant() -> Instant {
     Instant::now()
+}
+
+fn clamp_peer_score<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut v = i32::deserialize(deserializer)?;
+
+    if v < MIN_MISBEHAVIOR_SCORE {
+        log::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
+        v = MIN_MISBEHAVIOR_SCORE
+    } else if v > MAX_MISBEHAVIOR_SCORE {
+        log::warn!("Peer has invalid score {v}, clamping to max {MAX_MISBEHAVIOR_SCORE}");
+        v = MAX_MISBEHAVIOR_SCORE
+    }
+
+    Ok(v)
+}
+
+fn clamp_peer_ban_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut v = u32::deserialize(deserializer)?;
+
+    if v > MAX_BAN_COUNT {
+        log::warn!("Peer has excessive ban count {v}, clamping to {MAX_BAN_COUNT}");
+        v = MAX_BAN_COUNT
+    }
+
+    Ok(v)
+}
+
+fn clamp_peer_connection_attempts<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut v = u64::deserialize(deserializer)?;
+
+    v = v.min(MAX_ACTION_COUNT);
+
+    Ok(v)
 }
 
 /// Peer reputation entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerReputation {
     /// Current misbehavior score
+    #[serde(deserialize_with = "clamp_peer_score")]
     pub score: i32,
 
     /// Number of times this peer has been banned
+    #[serde(deserialize_with = "clamp_peer_ban_count")]
     pub ban_count: u32,
 
     /// Time when the peer was banned (if currently banned)
@@ -111,6 +159,7 @@ pub struct PeerReputation {
     pub negative_actions: u64,
 
     /// Connection count
+    #[serde(deserialize_with = "clamp_peer_connection_attempts")]
     pub connection_attempts: u64,
 
     /// Successful connection count
@@ -167,7 +216,7 @@ impl PeerReputation {
             // Cap at a reasonable maximum to avoid excessive decay
             let intervals_i32 = intervals.min(i32::MAX as u64) as i32;
             let decay = intervals_i32.saturating_mul(DECAY_AMOUNT);
-            self.score = (self.score - decay).max(MIN_SCORE);
+            self.score = (self.score - decay).max(MIN_MISBEHAVIOR_SCORE);
             self.last_update = now;
         }
 
@@ -231,7 +280,7 @@ impl PeerReputationManager {
         // Update score
         let old_score = reputation.score;
         reputation.score =
-            (reputation.score + score_change).clamp(MIN_SCORE, MAX_MISBEHAVIOR_SCORE);
+            (reputation.score + score_change).clamp(MIN_MISBEHAVIOR_SCORE, MAX_MISBEHAVIOR_SCORE);
 
         // Track positive/negative actions
         if score_change > 0 {
@@ -417,52 +466,13 @@ impl PeerReputationManager {
         let mut skipped_count = 0;
 
         for (addr, mut reputation) in data {
-            // Validate score is within expected range
-            if reputation.score < MIN_SCORE {
-                log::warn!(
-                    "Peer {} has invalid score {} (below minimum), clamping to {}",
-                    addr,
-                    reputation.score,
-                    MIN_SCORE
-                );
-                reputation.score = MIN_SCORE
-            } else if reputation.score > MAX_MISBEHAVIOR_SCORE {
-                log::warn!(
-                    "Peer {} has invalid score {} (above maximum), clamping to {}",
-                    addr,
-                    reputation.score,
-                    MAX_MISBEHAVIOR_SCORE
-                );
-                reputation.score = MAX_MISBEHAVIOR_SCORE
-            }
-
-            // Validate ban count is reasonable (max 1000 bans)
-            const MAX_BAN_COUNT: u32 = 1000;
-            if reputation.ban_count > MAX_BAN_COUNT {
-                log::warn!(
-                    "Peer {} has excessive ban count {}, clamping to {}",
-                    addr,
-                    reputation.ban_count,
-                    MAX_BAN_COUNT
-                );
-                reputation.ban_count = MAX_BAN_COUNT
-            }
-
-            // Validate action counts are reasonable (max 1 million actions)
-            const MAX_ACTION_COUNT: u64 = 1_000_000;
-            reputation.positive_actions = reputation.positive_actions.min(MAX_ACTION_COUNT);
-            reputation.negative_actions = reputation.negative_actions.min(MAX_ACTION_COUNT);
-            reputation.connection_attempts = reputation.connection_attempts.min(MAX_ACTION_COUNT);
-            reputation.successful_connections =
-                reputation.successful_connections.min(MAX_ACTION_COUNT);
-
             // Validate successful connections don't exceed attempts
             reputation.successful_connections =
                 reputation.successful_connections.min(reputation.connection_attempts);
 
             // Skip entry if data appears corrupted
-            if reputation.positive_actions == MAX_ACTION_COUNT
-                || reputation.negative_actions == MAX_ACTION_COUNT
+            if reputation.positive_actions > MAX_ACTION_COUNT
+                || reputation.negative_actions > MAX_ACTION_COUNT
             {
                 log::warn!("Skipping peer {} with potentially corrupted action counts", addr);
                 skipped_count += 1;
