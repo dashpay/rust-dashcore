@@ -55,8 +55,10 @@ impl PersistentPeerStorage {
 #[async_trait]
 impl PersistentStorage for PersistentPeerStorage {
     async fn open(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+        let storage_path = storage_path.into();
+
         Ok(PersistentPeerStorage {
-            storage_path: storage_path.into().join(Self::FOLDER_NAME),
+            storage_path: storage_path.join(Self::FOLDER_NAME),
         })
     }
 

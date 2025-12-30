@@ -15,7 +15,11 @@ use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
 ) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager> {
-    let config = ClientConfig::testnet().without_filters().without_masternodes();
+    let temp_dir = tempfile::TempDir::new().expect("Failed to create temporary directory");
+    let config = ClientConfig::testnet()
+        .without_filters()
+        .without_masternodes()
+        .with_storage_path(temp_dir.path().to_path_buf());
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();

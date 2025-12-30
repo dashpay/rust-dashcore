@@ -81,6 +81,7 @@ impl PeerNetworkManager {
 
         let discovery = DnsDiscovery::new().await?;
         let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
+
         let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
 
         let reputation_manager = Arc::new(PeerReputationManager::new());

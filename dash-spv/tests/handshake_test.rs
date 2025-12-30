@@ -72,7 +72,8 @@ async fn test_handshake_timeout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_network_manager_creation() {
-    let config = ClientConfig::new(Network::Dash);
+    let temp_dir = tempfile::TempDir::new().expect("Failed to create temporary directory");
+    let config = ClientConfig::new(Network::Dash).with_storage_path(temp_dir.path().to_path_buf());
     let network = PeerNetworkManager::new(&config).await;
 
     assert!(network.is_ok(), "Network manager creation should succeed");
