@@ -212,13 +212,6 @@ impl PeerNetworkManager {
                         Ok(_) => {
                             log::info!("Successfully connected to {}", addr);
 
-                            // Record successful connection
-                            reputation_manager
-                                .lock()
-                                .await
-                                .record_successful_connection(addr)
-                                .await;
-
                             // Add to pool
                             if let Err(e) = pool.add_peer(addr, peer).await {
                                 log::error!("Failed to add peer to pool: {}", e);

@@ -79,8 +79,6 @@ const MIN_MISBEHAVIOR_SCORE: i32 = -50;
 
 const MAX_BAN_COUNT: u32 = 1000;
 
-const MAX_ACTION_COUNT: u64 = 1_000_000;
-
 fn default_instant() -> Instant {
     Instant::now()
 }
@@ -116,17 +114,6 @@ where
     Ok(v)
 }
 
-fn clamp_peer_connection_attempts<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let mut v = u64::deserialize(deserializer)?;
-
-    v = v.min(MAX_ACTION_COUNT);
-
-    Ok(v)
-}
-
 /// Peer reputation entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerReputation {
@@ -146,13 +133,6 @@ pub struct PeerReputation {
     #[serde(skip, default = "default_instant")]
     last_update: Instant,
 
-    /// Connection count
-    #[serde(deserialize_with = "clamp_peer_connection_attempts")]
-    connection_attempts: u64,
-
-    /// Successful connection count
-    successful_connections: u64,
-
     /// Last connection time
     #[serde(skip)]
     last_connection: Option<Instant>,
@@ -165,8 +145,6 @@ impl Default for PeerReputation {
             ban_count: 0,
             banned_until: None,
             last_update: default_instant(),
-            connection_attempts: 0,
-            successful_connections: 0,
             last_connection: None,
         }
     }
@@ -294,15 +272,7 @@ impl PeerReputationManager {
     pub async fn record_connection_attempt(&mut self, peer: SocketAddr) {
         let reputations = &mut self.reputations;
         let reputation = reputations.entry(peer).or_default();
-        reputation.connection_attempts += 1;
         reputation.last_connection = Some(Instant::now());
-    }
-
-    /// Record a successful connection
-    pub async fn record_successful_connection(&mut self, peer: SocketAddr) {
-        let reputations = &mut self.reputations;
-        let reputation = reputations.entry(peer).or_default();
-        reputation.successful_connections += 1;
     }
 
     /// Clear banned status for a peer (admin function)
@@ -362,10 +332,6 @@ impl PeerReputationManager {
         let reputations = &mut self.reputations;
 
         for (addr, mut reputation) in data {
-            // Validate successful connections don't exceed attempts
-            reputation.successful_connections =
-                reputation.successful_connections.min(reputation.connection_attempts);
-
             // Apply initial decay based on ban count
             if reputation.ban_count > 0 {
                 reputation.score = reputation.score.max(50); // Start with higher score for previously banned peers
