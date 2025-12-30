@@ -20,47 +20,21 @@ pub mod misbehavior_scores {
     /// Invalid block header
     pub const INVALID_HEADER: i32 = 50;
 
-    /// Invalid compact filter
-    pub const INVALID_FILTER: i32 = 25;
-
     /// Timeout or slow response
     pub const TIMEOUT: i32 = 5;
 
-    /// Sending unsolicited data
-    pub const UNSOLICITED_DATA: i32 = 15;
-
     /// Invalid transaction
     pub const INVALID_TRANSACTION: i32 = 20;
-
-    /// Invalid masternode list diff
-    pub const INVALID_MASTERNODE_DIFF: i32 = 30;
 
     /// Invalid ChainLock
     pub const INVALID_CHAINLOCK: i32 = 40;
 
     /// Invalid InstantLock
     pub const INVALID_INSTANTLOCK: i32 = 35;
-
-    /// Duplicate message
-    pub const DUPLICATE_MESSAGE: i32 = 5;
-
-    /// Connection flood attempt
-    pub const CONNECTION_FLOOD: i32 = 20;
 }
 
 /// Positive behavior scores
 pub mod positive_scores {
-    /// Successfully provided valid headers
-    pub const VALID_HEADERS: i32 = -5;
-
-    /// Successfully provided valid filters
-    pub const VALID_FILTERS: i32 = -3;
-
-    /// Successfully provided valid block
-    pub const VALID_BLOCK: i32 = -10;
-
-    /// Fast response time
-    pub const FAST_RESPONSE: i32 = -2;
 
     /// Long uptime connection
     pub const LONG_UPTIME: i32 = -5;
@@ -309,17 +283,6 @@ impl PeerReputationManager {
         }
     }
 
-    /// Get peer reputation score
-    pub async fn get_score(&mut self, peer: &SocketAddr) -> i32 {
-        let reputations = &mut self.reputations;
-        if let Some(reputation) = reputations.get_mut(peer) {
-            reputation.apply_decay();
-            reputation.score
-        } else {
-            0
-        }
-    }
-
     /// Temporarily ban a peer for a specified duration, regardless of score.
     /// This can be used for critical protocol violations (e.g., invalid ChainLocks).
     pub async fn temporary_ban_peer(&mut self, peer: SocketAddr, duration: Duration, reason: &str) {
@@ -353,18 +316,6 @@ impl PeerReputationManager {
         reputation.successful_connections += 1;
     }
 
-    /// Get all peer reputations
-    pub async fn get_all_reputations(&mut self) -> HashMap<SocketAddr, PeerReputation> {
-        let reputations = &mut self.reputations;
-
-        // Apply decay to all peers
-        for reputation in reputations.values_mut() {
-            reputation.apply_decay();
-        }
-
-        reputations.clone()
-    }
-
     /// Clear banned status for a peer (admin function)
     pub async fn unban_peer(&mut self, peer: &SocketAddr) {
         let reputations = &mut self.reputations;
@@ -373,33 +324,6 @@ impl PeerReputationManager {
             reputation.score = reputation.score.min(MAX_MISBEHAVIOR_SCORE - 10);
             log::info!("Manually unbanned peer {}", peer);
         }
-    }
-
-    /// Reset reputation for a peer
-    pub async fn reset_reputation(&mut self, peer: &SocketAddr) {
-        let reputations = &mut self.reputations;
-        reputations.remove(peer);
-        log::info!("Reset reputation for peer {}", peer);
-    }
-
-    /// Get peers sorted by reputation (best first)
-    pub async fn get_peers_by_reputation(&mut self) -> Vec<(SocketAddr, i32)> {
-        let reputations = &mut self.reputations;
-
-        // Apply decay and collect scores
-        let mut peer_scores: Vec<(SocketAddr, i32)> = reputations
-            .iter_mut()
-            .map(|(addr, rep)| {
-                rep.apply_decay();
-                (*addr, rep.score)
-            })
-            .filter(|(_, score)| *score < MAX_MISBEHAVIOR_SCORE) // Exclude banned peers
-            .collect();
-
-        // Sort by score (lower is better)
-        peer_scores.sort_by_key(|(_, score)| *score);
-
-        peer_scores
     }
 
     /// Save reputation data to persistent storage
@@ -499,7 +423,98 @@ impl ReputationAware for PeerReputationManager {
     }
 }
 
-// Include tests module
 #[cfg(test)]
-#[path = "reputation_tests.rs"]
-mod reputation_tests;
+mod tests {
+    use crate::storage::PersistentStorage;
+
+    use super::*;
+    use std::net::SocketAddr;
+
+    #[tokio::test]
+    async fn test_basic_reputation_operations() {
+        let mut manager = PeerReputationManager::new();
+        let peer: SocketAddr = "127.0.0.1:8333".parse().unwrap();
+
+        // Initial score should be 0
+        assert_eq!(manager.reputations.get(&peer).expect("Peer not found").score, 0);
+
+        // Test misbehavior
+        manager
+            .update_reputation(peer, misbehavior_scores::INVALID_MESSAGE, "Test invalid message")
+            .await;
+        assert_eq!(manager.reputations.get(&peer).expect("Peer not found").score, 10);
+    }
+
+    #[tokio::test]
+    async fn test_banning_mechanism() {
+        let mut manager = PeerReputationManager::new();
+        let peer: SocketAddr = "192.168.1.1:8333".parse().unwrap();
+
+        // Accumulate misbehavior
+        for i in 0..10 {
+            let banned = manager
+                .update_reputation(
+                    peer,
+                    misbehavior_scores::INVALID_MESSAGE,
+                    &format!("Violation {}", i),
+                )
+                .await;
+
+            // Should be banned on the 10th violation (total score = 100)
+            if i == 9 {
+                assert!(banned);
+            } else {
+                assert!(!banned);
+            }
+        }
+
+        assert!(manager.is_banned(&peer).await);
+    }
+
+    #[tokio::test]
+    async fn test_reputation_persistence() {
+        let mut manager = PeerReputationManager::new();
+        let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
+        let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
+
+        // Set reputations
+        manager.update_reputation(peer1, -10, "Good peer").await;
+        manager.update_reputation(peer2, 50, "Bad peer").await;
+
+        // Save and load
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let peer_storage = PersistentPeerStorage::open(temp_dir.path())
+            .await
+            .expect("Failed to open PersistentPeerStorage");
+        manager.save_to_storage(&peer_storage).await.unwrap();
+
+        let mut new_manager = PeerReputationManager::new();
+        new_manager.load_from_storage(&peer_storage).await.unwrap();
+
+        // Verify scores were preserved
+        assert_eq!(new_manager.reputations.get(&peer1).expect("Peer not found").score, -10);
+        assert_eq!(new_manager.reputations.get(&peer2).expect("Peer not found").score, 50);
+    }
+
+    #[tokio::test]
+    async fn test_peer_selection() {
+        let mut manager = PeerReputationManager::new();
+
+        let good_peer: SocketAddr = "1.1.1.1:8333".parse().unwrap();
+        let neutral_peer: SocketAddr = "2.2.2.2:8333".parse().unwrap();
+        let bad_peer: SocketAddr = "3.3.3.3:8333".parse().unwrap();
+
+        // Set different reputations
+        manager.update_reputation(good_peer, -20, "Very good").await;
+        manager.update_reputation(bad_peer, 80, "Very bad").await;
+        // neutral_peer has default score of 0
+
+        let all_peers = vec![good_peer, neutral_peer, bad_peer];
+        let selected = manager.select_best_peers(all_peers, 2).await;
+
+        // Should select good_peer first, then neutral_peer
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0], good_peer);
+        assert_eq!(selected[1], neutral_peer);
+    }
+}

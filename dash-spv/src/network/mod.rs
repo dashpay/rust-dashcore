@@ -7,7 +7,7 @@ pub mod handshake;
 pub mod manager;
 pub mod peer;
 pub mod pool;
-pub mod reputation;
+mod reputation;
 
 #[cfg(test)]
 mod tests;
@@ -24,6 +24,7 @@ use dashcore::BlockHash;
 pub use handshake::{HandshakeManager, HandshakeState};
 pub use manager::PeerNetworkManager;
 pub use peer::Peer;
+pub use reputation::PeerReputation;
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]

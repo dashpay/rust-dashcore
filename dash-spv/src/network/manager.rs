@@ -1,6 +1,6 @@
 //! Peer network manager for SPV client
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -954,12 +954,6 @@ impl PeerNetworkManager {
         self.pool.remove_peer(addr).await;
 
         Ok(())
-    }
-
-    /// Get reputation information for all peers
-    pub async fn get_peer_reputations(&self) -> HashMap<SocketAddr, (i32, bool)> {
-        let reputations = self.reputation_manager.lock().await.get_all_reputations().await;
-        reputations.into_iter().map(|(addr, rep)| (addr, (rep.score, rep.is_banned()))).collect()
     }
 
     /// Get the last peer that sent us a message
