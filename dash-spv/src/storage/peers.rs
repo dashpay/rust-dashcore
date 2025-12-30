@@ -33,7 +33,7 @@ pub trait PeerStorage {
         reputations: &HashMap<SocketAddr, PeerReputation>,
     ) -> StorageResult<()>;
 
-    async fn load_peers_reputation(&self) -> StorageResult<Vec<(SocketAddr, PeerReputation)>>;
+    async fn load_peers_reputation(&self) -> StorageResult<HashMap<SocketAddr, PeerReputation>>;
 }
 
 pub struct PersistentPeerStorage {
@@ -42,6 +42,14 @@ pub struct PersistentPeerStorage {
 
 impl PersistentPeerStorage {
     const FOLDER_NAME: &str = "peers";
+
+    fn peers_data_file(&self) -> PathBuf {
+        self.storage_path.join("peers.dat")
+    }
+
+    fn peers_reputation_file(&self) -> PathBuf {
+        self.storage_path.join("reputations.json")
+    }
 }
 
 #[async_trait]
@@ -64,7 +72,7 @@ impl PeerStorage for PersistentPeerStorage {
         &self,
         peers: &[dashcore::network::address::AddrV2Message],
     ) -> StorageResult<()> {
-        let peers_file = self.storage_path.join("peers.dat");
+        let peers_file = self.peers_data_file();
 
         if let Err(e) = fs::create_dir_all(peers_file.parent().unwrap()) {
             return Err(StorageError::WriteFailed(format!("Failed to persist peers: {}", e)));
@@ -77,37 +85,39 @@ impl PeerStorage for PersistentPeerStorage {
                 .map_err(|e| StorageError::WriteFailed(format!("Failed to encode peer: {}", e)))?;
         }
 
+        let peers_file_parent = peers_file
+            .parent()
+            .ok_or(StorageError::NotFound(format!("peers_file doesn't have a parent")))?;
+
+        tokio::fs::create_dir_all(peers_file_parent).await?;
+
         atomic_write(&peers_file, &buffer).await?;
 
         Ok(())
     }
 
     async fn load_peers(&self) -> StorageResult<Vec<SocketAddr>> {
-        let peers_file = self.storage_path.join("peers.dat");
+        let peers_file = self.peers_data_file();
 
-        let peers = if peers_file.exists() {
-            let file = File::open(&peers_file)?;
-            let mut reader = BufReader::new(file);
-            let mut peers = Vec::new();
+        if !peers_file.exists() {
+            return Ok(Vec::new());
+        };
 
-            loop {
-                match AddrV2Message::consensus_decode(&mut reader) {
-                    Ok(peer) => peers.push(peer),
-                    Err(encode::Error::Io(ref e))
-                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                    {
-                        break
-                    }
-                    Err(e) => {
-                        return Err(StorageError::ReadFailed(format!("Failed to decode peer: {e}")))
-                    }
+        let file = File::open(&peers_file)?;
+        let mut reader = BufReader::new(file);
+        let mut peers = Vec::new();
+
+        loop {
+            match AddrV2Message::consensus_decode(&mut reader) {
+                Ok(peer) => peers.push(peer),
+                Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    break
+                }
+                Err(e) => {
+                    return Err(StorageError::ReadFailed(format!("Failed to decode peer: {e}")))
                 }
             }
-
-            peers
-        } else {
-            Vec::new()
-        };
+        }
 
         let peers = peers.into_iter().filter_map(|p| p.socket_addr().ok()).collect();
 
@@ -118,24 +128,26 @@ impl PeerStorage for PersistentPeerStorage {
         &self,
         reputations: &HashMap<SocketAddr, PeerReputation>,
     ) -> StorageResult<()> {
-        let reputation_file = self.storage_path.join("reputations.json");
+        let reputation_file = self.peers_reputation_file();
 
-        tokio::fs::create_dir_all(&self.storage_path).await?;
-
-        let data: Vec<(SocketAddr, PeerReputation)> =
-            reputations.iter().map(|(addr, rep)| (*addr, rep.clone())).collect();
-
-        let json = serde_json::to_string_pretty(&data).map_err(|e| {
+        let json = serde_json::to_string_pretty(reputations).map_err(|e| {
             StorageError::Serialization(format!("Failed to serialize peers reputations: {e}"))
         })?;
+
+        let reputation_file_parent = reputation_file
+            .parent()
+            .ok_or(StorageError::NotFound(format!("reputation_file doesn't have a parent")))?;
+
+        tokio::fs::create_dir_all(reputation_file_parent).await?;
+
         atomic_write(&reputation_file, json.as_bytes()).await
     }
 
-    async fn load_peers_reputation(&self) -> StorageResult<Vec<(SocketAddr, PeerReputation)>> {
-        let reputation_file = self.storage_path.join("reputations.json");
+    async fn load_peers_reputation(&self) -> StorageResult<HashMap<SocketAddr, PeerReputation>> {
+        let reputation_file = self.peers_reputation_file();
 
         if !reputation_file.exists() {
-            return Ok(Vec::new());
+            return Ok(HashMap::new());
         }
 
         let json = tokio::fs::read_to_string(reputation_file).await?;
