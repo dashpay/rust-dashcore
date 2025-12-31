@@ -35,7 +35,10 @@ def generate_ffi_docs(crate_dir: Path) -> tuple[str, int, str]:
         capture_output=True,
         text=True
     )
-    return crate_dir.name, result.returncode, result.stdout
+    output = result.stdout
+    if result.returncode != 0 and result.stderr:
+        output = result.stderr
+    return crate_dir.name, result.returncode, output
 
 
 def main():
