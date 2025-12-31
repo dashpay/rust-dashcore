@@ -5,22 +5,23 @@ mod tests {
     use super::super::checkpoints::*;
     use dashcore::{BlockHash, CompactTarget, Target};
     use dashcore_hashes::Hash;
+    use dashcore_test_utils::fixtures::test_block_hash;
 
     fn create_test_checkpoint(height: u32, timestamp: u32) -> Checkpoint {
-        let hash_bytes = dashcore_hashes::hash_x11::Hash::hash(&height.to_le_bytes());
-        let prev_bytes = if height > 0 {
-            dashcore_hashes::hash_x11::Hash::hash(&(height - 1).to_le_bytes())
+        let block_hash = test_block_hash(height);
+        let prev_blockhash = if height > 0 {
+            test_block_hash(height - 1)
         } else {
-            dashcore_hashes::hash_x11::Hash::all_zeros()
+            BlockHash::all_zeros()
         };
 
         Checkpoint {
             height,
-            block_hash: BlockHash::from_raw_hash(hash_bytes),
-            prev_blockhash: BlockHash::from_raw_hash(prev_bytes),
+            block_hash,
+            prev_blockhash,
             timestamp,
             target: Target::from_compact(CompactTarget::from_consensus(0x1d00ffff)),
-            merkle_root: Some(BlockHash::from_raw_hash(hash_bytes)),
+            merkle_root: Some(block_hash),
             chain_work: format!("0x{:064x}", height * 1000),
             masternode_list_name: if height.is_multiple_of(100000) && height > 0 {
                 Some(format!("ML{}__70230", height))
