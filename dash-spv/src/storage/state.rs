@@ -256,7 +256,7 @@ impl DiskStorageManager {
     }
 
     /// Shutdown the storage manager.
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(&mut self) {
         self.stop_worker();
 
         // Persist all dirty data

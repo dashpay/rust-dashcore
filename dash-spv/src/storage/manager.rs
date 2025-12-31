@@ -134,8 +134,8 @@ impl DiskStorageManager {
     }
 
     /// Stop the background worker without forcing a save.
-    pub(super) fn stop_worker(&self) {
-        if let Some(handle) = &self.worker_handle {
+    pub(super) fn stop_worker(&mut self) {
+        if let Some(handle) = self.worker_handle.take() {
             handle.abort();
         }
     }
