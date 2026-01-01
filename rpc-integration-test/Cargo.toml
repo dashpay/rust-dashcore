@@ -1,6 +1,7 @@
 [package]
 name = "integration_test"
 authors = ["Steven Roose <steven@stevenroose.org>"]
+license = "CC0-1.0"
 edition = "2024"
 publish = false
 
