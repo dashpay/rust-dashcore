@@ -2,59 +2,55 @@
 
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 
+/// Helper to test an FFIError conversion and clean up the message
+fn assert_ffi_error_code(mut ffi_err: FFIError, expected: FFIErrorCode) {
+    assert_eq!(ffi_err.code, expected);
+    unsafe { ffi_err.free_message() };
+}
+
 #[test]
 fn test_key_wallet_error_to_ffi_error() {
     use key_wallet::Error as KeyWalletError;
 
     // Test InvalidMnemonic conversion
     let err = KeyWalletError::InvalidMnemonic("bad mnemonic".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidMnemonic);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidMnemonic);
 
     // Test InvalidNetwork conversion
     let err = KeyWalletError::InvalidNetwork;
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidNetwork);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidNetwork);
 
     // Test InvalidAddress conversion
     let err = KeyWalletError::InvalidAddress("bad address".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidAddress);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidAddress);
 
     // Test InvalidDerivationPath conversion
     let err = KeyWalletError::InvalidDerivationPath("bad path".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidDerivationPath);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidDerivationPath);
 
     // Test InvalidParameter conversion
     let err = KeyWalletError::InvalidParameter("bad param".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidInput);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidInput);
 
     // Test Serialization conversion
     let err = KeyWalletError::Serialization("serialization failed".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::SerializationError);
+    assert_ffi_error_code(err.into(), FFIErrorCode::SerializationError);
 
     // Test WatchOnly conversion
     let err = KeyWalletError::WatchOnly;
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidState);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidState);
 
     // Test CoinJoinNotEnabled conversion
     let err = KeyWalletError::CoinJoinNotEnabled;
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidState);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidState);
 
     // Test KeyError conversion (should map to WalletError)
     let err = KeyWalletError::KeyError("key error".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::WalletError);
+    assert_ffi_error_code(err.into(), FFIErrorCode::WalletError);
 
     // Test Base58 conversion (should map to WalletError)
     let err = KeyWalletError::Base58;
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::WalletError);
+    assert_ffi_error_code(err.into(), FFIErrorCode::WalletError);
 }
 
 #[test]
@@ -64,58 +60,47 @@ fn test_wallet_manager_error_to_ffi_error() {
     // Test WalletNotFound conversion
     let wallet_id = [0u8; 32];
     let err = WalletError::WalletNotFound(wallet_id);
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::NotFound);
+    assert_ffi_error_code(err.into(), FFIErrorCode::NotFound);
 
     // Test InvalidMnemonic conversion
     let err = WalletError::InvalidMnemonic("bad mnemonic".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidMnemonic);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidMnemonic);
 
     // Test InvalidNetwork conversion
     let err = WalletError::InvalidNetwork;
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidNetwork);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidNetwork);
 
     // Test AccountNotFound conversion
     let err = WalletError::AccountNotFound(0);
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::NotFound);
+    assert_ffi_error_code(err.into(), FFIErrorCode::NotFound);
 
     // Test AddressGeneration conversion
     let err = WalletError::AddressGeneration("failed to generate".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidAddress);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidAddress);
 
     // Test InvalidParameter conversion
     let err = WalletError::InvalidParameter("bad param".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidInput);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidInput);
 
     // Test TransactionBuild conversion
     let err = WalletError::TransactionBuild("tx build failed".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidTransaction);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidTransaction);
 
     // Test InsufficientFunds conversion
     let err = WalletError::InsufficientFunds;
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidState);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidState);
 
     // Test WalletCreation conversion
     let err = WalletError::WalletCreation("creation failed".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::WalletError);
+    assert_ffi_error_code(err.into(), FFIErrorCode::WalletError);
 
     // Test WalletExists conversion
     let err = WalletError::WalletExists(wallet_id);
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidState);
+    assert_ffi_error_code(err.into(), FFIErrorCode::InvalidState);
 
     // Test AccountCreation conversion
     let err = WalletError::AccountCreation("account creation failed".to_string());
-    let ffi_err: FFIError = err.into();
-    assert_eq!(ffi_err.code, FFIErrorCode::WalletError);
+    assert_ffi_error_code(err.into(), FFIErrorCode::WalletError);
 }
 
 #[test]
@@ -201,9 +186,7 @@ fn test_error_message_consistency() {
 
     // Convert to FFIError
     let ffi_err: FFIError = key_err.into();
-    // Note: We can't easily check the message in FFIError since it's a raw pointer
-    // but we know it should contain the original message
-    assert_eq!(ffi_err.code, FFIErrorCode::InvalidMnemonic);
+    assert_ffi_error_code(ffi_err, FFIErrorCode::InvalidMnemonic);
 }
 
 #[test]

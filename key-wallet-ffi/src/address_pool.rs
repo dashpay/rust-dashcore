@@ -1135,6 +1135,7 @@ mod tests {
             managed_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
+            error.free_message();
         }
     }
 
@@ -1263,6 +1264,7 @@ mod tests {
             managed_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
+            error.free_message();
         }
     }
 }

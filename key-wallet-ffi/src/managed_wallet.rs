@@ -657,6 +657,8 @@ mod tests {
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -675,6 +677,8 @@ mod tests {
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -701,6 +705,8 @@ mod tests {
         assert_eq!(count_out, 0);
         assert!(addresses_out.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -727,6 +733,8 @@ mod tests {
         assert_eq!(count_out, 0);
         assert!(addresses_out.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -748,14 +756,14 @@ mod tests {
         assert!(!wallet.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
 
-        // Create managed wallet info from the wallet
+        // Create managed wallet info from the wallet heap-allocated like C would do
         let wallet_rust = unsafe { &(*wallet).wallet };
         let managed_info = ManagedWalletInfo::from_wallet(wallet_rust);
-        let mut ffi_managed = FFIManagedWalletInfo::new(managed_info);
+        let ffi_managed = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         // Test get_next_receive_address with valid pointers
         let receive_addr = unsafe {
-            managed_wallet_get_next_bip44_receive_address(&mut ffi_managed, wallet, 0, &mut error)
+            managed_wallet_get_next_bip44_receive_address(ffi_managed, wallet, 0, &mut error)
         };
 
         if !receive_addr.is_null() {
@@ -776,7 +784,7 @@ mod tests {
 
         // Test get_next_change_address with valid pointers
         let change_addr = unsafe {
-            managed_wallet_get_next_bip44_change_address(&mut ffi_managed, wallet, 0, &mut error)
+            managed_wallet_get_next_bip44_change_address(ffi_managed, wallet, 0, &mut error)
         };
 
         if !change_addr.is_null() {
@@ -795,7 +803,9 @@ mod tests {
 
         // Clean up
         unsafe {
+            managed_wallet_free(ffi_managed);
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -869,8 +879,8 @@ mod tests {
         // Insert the managed account directly into managed_info's accounts
         managed_info.accounts.insert(managed_account);
 
-        // Create wrapper for managed info
-        let mut ffi_managed = FFIManagedWalletInfo::new(managed_info);
+        // Create wrapper for managed info heap-allocated like C would do
+        let ffi_managed = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         // Use the existing wallet pointer
         let ffi_wallet_ptr = wallet_ptr;
@@ -878,7 +888,7 @@ mod tests {
         // Test 1: Get next receive address
         let receive_addr = unsafe {
             managed_wallet_get_next_bip44_receive_address(
-                &mut ffi_managed,
+                ffi_managed,
                 ffi_wallet_ptr,
                 0,
                 &mut error,
@@ -895,12 +905,7 @@ mod tests {
 
         // Test 2: Get next change address
         let change_addr = unsafe {
-            managed_wallet_get_next_bip44_change_address(
-                &mut ffi_managed,
-                ffi_wallet_ptr,
-                0,
-                &mut error,
-            )
+            managed_wallet_get_next_bip44_change_address(ffi_managed, ffi_wallet_ptr, 0, &mut error)
         };
 
         assert!(!change_addr.is_null());
@@ -917,7 +922,7 @@ mod tests {
 
         let success = unsafe {
             managed_wallet_get_bip_44_external_address_range(
-                &mut ffi_managed,
+                ffi_managed,
                 ffi_wallet_ptr,
                 0,
                 0,
@@ -950,7 +955,7 @@ mod tests {
 
         let success = unsafe {
             managed_wallet_get_bip_44_internal_address_range(
-                &mut ffi_managed,
+                ffi_managed,
                 ffi_wallet_ptr,
                 0,
                 0,
@@ -980,7 +985,9 @@ mod tests {
 
         // Clean up
         unsafe {
+            managed_wallet_free(ffi_managed);
             wallet::wallet_free(wallet_ptr);
+            error.free_message();
         }
     }
 
@@ -1076,6 +1083,7 @@ mod tests {
         unsafe {
             managed_wallet_free(ffi_managed_ptr);
             wallet::wallet_free(wallet_ptr);
+            error.free_message();
         }
     }
 
@@ -1117,5 +1125,7 @@ mod tests {
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 }

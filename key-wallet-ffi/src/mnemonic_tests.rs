@@ -38,6 +38,8 @@ mod tests {
         let is_valid = unsafe { mnemonic::mnemonic_validate(ptr::null(), error) };
         assert!(!is_valid);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -78,6 +80,8 @@ mod tests {
         let invalid = mnemonic::mnemonic_generate(13, error);
         assert!(invalid.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -121,6 +125,8 @@ mod tests {
 
         assert!(success);
         assert_ne!(seed, seed_with_pass); // Different passphrase should produce different seed
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -143,6 +149,8 @@ mod tests {
                 mnemonic::mnemonic_free(mnemonic);
             }
         }
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -158,6 +166,8 @@ mod tests {
             assert!(mnemonic.is_null());
             assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
         }
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -195,6 +205,8 @@ mod tests {
         };
         assert!(success);
         assert_eq!(seed_len, 64);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -230,6 +242,8 @@ mod tests {
                 mnemonic::mnemonic_free(mnemonic_ptr);
             }
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -269,6 +283,8 @@ mod tests {
 
             mnemonic::mnemonic_free(portuguese_mnemonic);
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -291,6 +307,8 @@ mod tests {
         unsafe {
             mnemonic::mnemonic_free(mnemonic_ptr);
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -340,6 +358,8 @@ mod tests {
 
         // Seeds should be different
         assert_ne!(seed1, seed2);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -363,6 +383,8 @@ mod tests {
                 assert_eq!(count, expected_count);
                 assert_eq!(error.code, FFIErrorCode::Success);
             }
+
+            error.free_message();
         }
     }
 
@@ -374,6 +396,8 @@ mod tests {
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -391,6 +415,8 @@ mod tests {
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -438,6 +464,8 @@ mod tests {
         };
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -459,6 +487,8 @@ mod tests {
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidMnemonic);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -494,6 +524,8 @@ mod tests {
         };
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -511,6 +543,8 @@ mod tests {
 
         assert!(!is_valid);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -526,6 +560,8 @@ mod tests {
 
         assert!(mnemonic.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -552,6 +588,8 @@ mod tests {
                 mnemonic::mnemonic_free(mnemonic);
             }
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -589,6 +627,8 @@ mod tests {
                 }
             }
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -634,6 +674,7 @@ mod tests {
 
         unsafe {
             mnemonic::mnemonic_free(mnemonic);
+            error.free_message();
         }
     }
 
@@ -679,6 +720,7 @@ mod tests {
         // Free
         unsafe {
             mnemonic::mnemonic_free(mnemonic);
+            error.free_message();
         }
     }
 }

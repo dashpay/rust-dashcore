@@ -94,6 +94,7 @@ mod tests {
             public_key_free(pub_key);
             extended_public_key_free(ext_pub);
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -127,6 +128,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -159,8 +161,8 @@ mod tests {
         // Clean up
         unsafe {
             crate::utils::string_free(xpub_str);
-
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -207,9 +209,8 @@ mod tests {
         }
         unsafe {
             private_key_free(privkey_ptr);
-        }
-        unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -265,6 +266,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -299,6 +301,7 @@ mod tests {
             // Clean up
             crate::utils::string_free(hex_str);
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -346,6 +349,7 @@ mod tests {
         // Clean up
         unsafe {
             derivation_path_free(indices_out, hardened_out, count_out);
+            error.free_message();
         }
     }
 
@@ -376,6 +380,7 @@ mod tests {
         // Clean up (should handle null pointers gracefully)
         unsafe {
             derivation_path_free(indices_out, hardened_out, count_out);
+            error.free_message();
         }
     }
 
@@ -405,6 +410,8 @@ mod tests {
         };
 
         assert!(!success);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -441,6 +448,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -480,6 +488,8 @@ mod tests {
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -546,6 +556,7 @@ mod tests {
         // Clean up
         unsafe {
             derivation_path_free(indices_out, hardened_out, count_out);
+            error.free_message();
         }
     }
 
@@ -591,6 +602,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -649,6 +661,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
