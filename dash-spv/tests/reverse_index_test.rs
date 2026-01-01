@@ -28,9 +28,6 @@ async fn test_reverse_index_disk_storage() {
             assert_eq!(height, Some(i as u32), "Height mismatch for header {}", i);
         }
 
-        // Add a small delay to ensure background worker processes save commands
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
         storage.shutdown().await;
     }
 
