@@ -23,9 +23,7 @@ pub struct StatusDisplay<'a, S: StorageManager, W: WalletInterface> {
     config: &'a ClientConfig,
 }
 
-impl<'a, S: StorageManager + Send + Sync + 'static, W: WalletInterface + Send + Sync + 'static>
-    StatusDisplay<'a, S, W>
-{
+impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
     /// Create a new status display manager.
     #[cfg(feature = "terminal-ui")]
     pub fn new(

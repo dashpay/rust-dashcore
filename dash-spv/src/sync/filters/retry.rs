@@ -12,9 +12,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use dashcore::BlockHash;
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    super::manager::FilterSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     /// Check if filter header sync has timed out (no progress for SYNC_TIMEOUT_SECONDS).
     ///
     /// If timeout is detected, attempts recovery by re-sending the current batch request.

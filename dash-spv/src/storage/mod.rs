@@ -70,7 +70,7 @@ pub use types::*;
 /// Note that the `&mut self` requirement means only one thread can be mutating the storage
 /// at a time when using external synchronization, which naturally provides consistency.
 #[async_trait]
-pub trait StorageManager: Send + Sync {
+pub trait StorageManager: Send + Sync + 'static {
     /// Store block headers.
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()>;
 

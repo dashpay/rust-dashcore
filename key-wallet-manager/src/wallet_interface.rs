@@ -10,7 +10,7 @@ use dashcore::{Block, Transaction, Txid};
 
 /// Trait for wallet implementations to receive SPV events
 #[async_trait]
-pub trait WalletInterface: Send + Sync {
+pub trait WalletInterface: Send + Sync + 'static {
     /// Called when a new block is received that may contain relevant transactions
     /// Returns transaction IDs that were relevant to the wallet
     async fn process_block(&mut self, block: &Block, height: CoreBlockHeight) -> Vec<Txid>;

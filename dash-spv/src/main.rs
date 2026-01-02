@@ -347,7 +347,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static>(
+async fn run_client<S: dash_spv::storage::StorageManager>(
     config: ClientConfig,
     network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,

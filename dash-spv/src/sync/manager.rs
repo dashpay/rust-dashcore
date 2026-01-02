@@ -100,12 +100,7 @@ pub struct SyncManager<S: StorageManager, N: NetworkManager, W: WalletInterface>
     pub(super) stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
 }
 
-impl<
-        S: StorageManager + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        W: WalletInterface,
-    > SyncManager<S, N, W>
-{
+impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N, W> {
     /// Create a new sequential sync manager
     pub fn new(
         config: &ClientConfig,

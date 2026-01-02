@@ -86,9 +86,7 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     pub(super) cfheader_request_timeout: std::time::Duration,
 }
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    FilterSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> FilterSyncManager<S, N> {
     /// Verify that the received compact filter hashes to the expected filter header
     pub fn new(config: &ClientConfig, received_filter_heights: SharedFilterHeights) -> Self {
         Self {

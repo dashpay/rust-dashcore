@@ -23,12 +23,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Synchronize to the tip of the blockchain.
     pub async fn sync_to_tip(&mut self) -> Result<SyncProgress> {
         let running = self.running.read().await;
