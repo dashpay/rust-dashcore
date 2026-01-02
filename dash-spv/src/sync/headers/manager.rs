@@ -49,6 +49,7 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     config: ClientConfig,
     tip_manager: ChainTipManager,
     checkpoint_manager: CheckpointManager,
+    reorg_config: ReorgConfig,
     chain_state: Arc<RwLock<ChainState>>,
     // WalletState removed - wallet functionality is now handled externally
     headers2_state: Headers2StateManager,
@@ -82,6 +83,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             config: config.clone(),
             tip_manager: ChainTipManager::new(reorg_config.max_forks),
             checkpoint_manager,
+            reorg_config,
             chain_state,
             // WalletState removed
             headers2_state: Headers2StateManager::new(),
@@ -213,6 +215,22 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         // Step 3: Process the Entire Validated Batch
+
+        // Checkpoint Validation: Perform in-memory security check against checkpoints
+        for (index, cached_header) in cached_headers.iter().enumerate() {
+            let prospective_height = tip_height + (index as u32) + 1;
+
+            if self.reorg_config.enforce_checkpoints {
+                // Use cached hash to avoid redundant X11 computation in loop
+                let header_hash = cached_header.block_hash();
+                if !self.checkpoint_manager.validate_block(prospective_height, &header_hash) {
+                    return Err(SyncError::Validation(format!(
+                        "Block at height {} does not match checkpoint",
+                        prospective_height
+                    )));
+                }
+            }
+        }
 
         storage
             .store_headers(headers)
