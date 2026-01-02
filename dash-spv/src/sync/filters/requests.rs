@@ -11,9 +11,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    super::manager::FilterSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     /// Build a queue of filter requests covering the specified range.
     ///
     /// If start_height is None, defaults to (filter_header_tip - DEFAULT_FILTER_SYNC_RANGE).

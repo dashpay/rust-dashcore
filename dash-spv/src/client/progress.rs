@@ -14,12 +14,7 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::DashSpvClient;
 
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> Result<SyncProgress> {
         let display = self.create_status_display().await;

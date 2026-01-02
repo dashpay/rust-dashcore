@@ -4,9 +4,7 @@ use super::types::*;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    super::manager::FilterSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     /// Get state (pending count, active count).
     pub fn get_filter_sync_state(&self) -> (usize, usize) {
         (self.pending_filter_requests.len(), self.active_filter_requests.len())

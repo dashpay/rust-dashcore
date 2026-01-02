@@ -16,12 +16,7 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 use super::manager::SyncManager;
 use super::phases::SyncPhase;
 
-impl<
-        S: StorageManager + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        W: WalletInterface,
-    > SyncManager<S, N, W>
-{
+impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N, W> {
     /// Handle incoming network messages with phase filtering
     pub async fn handle_message(
         &mut self,

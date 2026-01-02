@@ -28,7 +28,7 @@ pub use peer::Peer;
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]
-pub trait NetworkManager: Send + Sync {
+pub trait NetworkManager: Send + Sync + 'static {
     /// Convert to Any for downcasting.
     fn as_any(&self) -> &dyn std::any::Any;
 

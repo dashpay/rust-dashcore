@@ -24,13 +24,7 @@ pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager, W: WalletInt
     event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
 }
 
-impl<
-        'a,
-        S: StorageManager + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        W: WalletInterface,
-    > MessageHandler<'a, S, N, W>
-{
+impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandler<'a, S, N, W> {
     /// Create a new message handler.
     #[allow(clippy::too_many_arguments)]
     pub fn new(

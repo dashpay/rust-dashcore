@@ -38,9 +38,7 @@ pub struct BlockProcessor<W: WalletInterface, S: StorageManager> {
     failed: bool,
 }
 
-impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync + 'static>
-    BlockProcessor<W, S>
-{
+impl<W: WalletInterface, S: StorageManager> BlockProcessor<W, S> {
     /// Create a new block processor.
     pub fn new(
         receiver: mpsc::UnboundedReceiver<BlockProcessingTask>,

@@ -19,9 +19,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    super::manager::FilterSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     pub async fn check_filter_for_matches<
         W: key_wallet_manager::wallet_interface::WalletInterface,
     >(

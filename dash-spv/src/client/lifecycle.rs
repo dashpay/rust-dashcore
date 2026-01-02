@@ -25,12 +25,7 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::{BlockProcessor, ClientConfig, DashSpvClient};
 
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
     pub async fn new(
         config: ClientConfig,

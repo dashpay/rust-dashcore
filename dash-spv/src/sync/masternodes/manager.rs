@@ -51,9 +51,7 @@ pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
     mnlistdiff_retry_count: u8,
 }
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    MasternodeSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
     /// Create a new masternode sync manager.
     pub fn new(config: &ClientConfig) -> Self {
         let (engine, mnlist_diffs) = if config.enable_masternodes {

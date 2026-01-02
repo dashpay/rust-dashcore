@@ -61,9 +61,7 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     cached_sync_base_height: u32,
 }
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    HeaderSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
     /// Create a new header sync manager
     pub fn new(
         config: &ClientConfig,
