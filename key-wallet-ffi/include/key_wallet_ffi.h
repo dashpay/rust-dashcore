@@ -3090,6 +3090,20 @@ bool managed_wallet_get_balance(const FFIManagedWalletInfo *managed_wallet,
 ;
 
 /*
+ Get current synced height from wallet info
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The caller must ensure all pointers remain valid for the duration of this call
+ */
+
+unsigned int managed_wallet_synced_height(const FFIManagedWalletInfo *managed_wallet,
+                                          FFIError *error)
+;
+
+/*
  Free managed wallet info
 
  # Safety
@@ -4085,21 +4099,6 @@ bool wallet_manager_process_transaction(FFIWalletManager *manager,
                                         const FFITransactionContextDetails *context,
                                         bool update_state_if_found,
                                         FFIError *error)
-;
-
-/*
- Update block height for a network
-
- # Safety
-
- - `manager` must be a valid pointer to an FFIWalletManager
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- */
-
-bool wallet_manager_update_height(FFIWalletManager *manager,
-                                  unsigned int height,
-                                  FFIError *error)
 ;
 
 /*

@@ -61,6 +61,9 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Update last synced timestamp
     fn update_last_synced(&mut self, timestamp: u64);
 
+    /// Get the synced height
+    fn synced_height(&self) -> CoreBlockHeight;
+
     /// Get all monitored addresses
     fn monitored_addresses(&self) -> Vec<DashAddress>;
 
@@ -111,7 +114,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
-    fn update_chain_height(&mut self, current_height: u32);
+    fn update_synced_height(&mut self, current_height: u32);
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -154,6 +157,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn set_birth_height(&mut self, height: CoreBlockHeight) {
         self.metadata.birth_height = height;
+    }
+
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.metadata.synced_height
     }
 
     fn first_loaded_at(&self) -> u64 {
@@ -322,7 +329,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
         )
     }
 
-    fn update_chain_height(&mut self, current_height: u32) {
+    fn update_synced_height(&mut self, current_height: u32) {
+        self.metadata.synced_height = current_height;
+
         let matured = self.process_matured_transactions(current_height);
 
         if !matured.is_empty() {

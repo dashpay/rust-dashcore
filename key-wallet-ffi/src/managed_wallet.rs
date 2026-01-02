@@ -5,12 +5,13 @@
 //!
 
 use std::ffi::CString;
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_uint};
 use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIWallet;
 use key_wallet::managed_account::address_pool::KeySource;
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use std::ffi::c_void;
 
@@ -583,6 +584,31 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
 
     FFIError::set_success(error);
     true
+}
+
+/// Get current synced height from wallet info
+///
+/// # Safety
+///
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn managed_wallet_synced_height(
+    managed_wallet: *const FFIManagedWalletInfo,
+    error: *mut FFIError,
+) -> c_uint {
+    if managed_wallet.is_null() {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Managed wallet is null".to_string(),
+        );
+        return 0;
+    }
+    let managed_wallet = unsafe { &*managed_wallet };
+    FFIError::set_success(error);
+    managed_wallet.inner().synced_height()
 }
 
 /// Free managed wallet info

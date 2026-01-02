@@ -16,6 +16,8 @@ pub struct WalletMetadata {
     pub first_loaded_at: u64,
     /// Birth height (when wallet was created/restored) - 0 (genesis) if unknown
     pub birth_height: CoreBlockHeight,
+    /// Synced to block height
+    pub synced_height: CoreBlockHeight,
     /// Last sync timestamp
     pub last_synced: Option<u64>,
     /// Total transactions

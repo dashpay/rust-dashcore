@@ -827,7 +827,7 @@ mod tests {
 
         // Now advance the chain height past maturity (100 blocks)
         let mature_height = block_height + 100;
-        managed_wallet.update_chain_height(mature_height);
+        managed_wallet.update_synced_height(mature_height);
 
         // Verify transaction moved from immature to regular
         let managed_account =
