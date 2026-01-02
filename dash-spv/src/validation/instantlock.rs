@@ -6,15 +6,10 @@ use dashcore_hashes::Hash;
 use crate::error::{ValidationError, ValidationResult};
 
 /// Validates InstantLock messages.
+#[derive(Default)]
 pub struct InstantLockValidator {
     // Quorum manager is now passed as parameter to validate_signature
     // to avoid circular dependencies and allow flexible usage
-}
-
-impl Default for InstantLockValidator {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl InstantLockValidator {
@@ -55,8 +50,7 @@ impl InstantLockValidator {
     ///
     /// **WARNING**: This is insufficient for accepting network messages.
     /// For production use, always call `validate()` with a masternode engine.
-    /// This method is public only for testing purposes.
-    pub fn validate_structure(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
+    fn validate_structure(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
         // Check transaction ID is not zero (null txid)
         if instant_lock.txid == dashcore::Txid::all_zeros() {
             return Err(ValidationError::InvalidInstantLock(
@@ -96,7 +90,7 @@ impl InstantLockValidator {
     /// This properly uses the cyclehash to select the correct quorum according to DIP 24.
     /// The MasternodeListEngine tracks rotated quorums per cycle and selects the specific
     /// quorum based on the request_id.
-    pub fn validate_signature(
+    fn validate_signature(
         &self,
         instant_lock: &InstantLock,
         masternode_engine: &dashcore::sml::masternode_list_engine::MasternodeListEngine,
@@ -119,32 +113,6 @@ impl InstantLockValidator {
         );
 
         Ok(())
-    }
-
-    /// Check if an InstantLock is still valid (not too old).
-    pub fn is_still_valid(&self, _instant_lock: &InstantLock) -> bool {
-        // InstantLocks should be processed quickly
-        // In a real implementation, we'd check against block height or timestamp
-        // For now, we assume all InstantLocks are valid
-        true
-    }
-
-    /// Check if an InstantLock conflicts with another.
-    pub fn conflicts_with(&self, lock1: &InstantLock, lock2: &InstantLock) -> bool {
-        // InstantLocks for the same transaction don't conflict
-        if lock1.txid == lock2.txid {
-            return false;
-        }
-
-        // InstantLocks conflict if they try to lock the same input
-        for input1 in &lock1.inputs {
-            for input2 in &lock2.inputs {
-                if input1 == input2 {
-                    return true;
-                }
-            }
-        }
-        false
     }
 }
 
@@ -290,82 +258,6 @@ mod tests {
         assert!(err_str.contains("input") && err_str.contains("null transaction ID"));
     }
 
-    #[test]
-    fn test_conflicts_with_same_input() {
-        let validator = InstantLockValidator::new();
-        let input = (sha256d::Hash::hash(&[1, 2, 3]), 0);
-
-        let lock1 =
-            create_instant_lock_with_inputs(sha256d::Hash::hash(&[10, 11, 12]), vec![input]);
-
-        let lock2 =
-            create_instant_lock_with_inputs(sha256d::Hash::hash(&[13, 14, 15]), vec![input]);
-
-        assert!(validator.conflicts_with(&lock1, &lock2));
-    }
-
-    #[test]
-    fn test_no_conflict_different_inputs() {
-        let validator = InstantLockValidator::new();
-
-        let lock1 = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[10, 11, 12]),
-            vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)],
-        );
-
-        let lock2 = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[13, 14, 15]),
-            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)],
-        );
-
-        assert!(!validator.conflicts_with(&lock1, &lock2));
-    }
-
-    #[test]
-    fn test_partial_conflict() {
-        let validator = InstantLockValidator::new();
-        let shared_input = (sha256d::Hash::hash(&[1, 2, 3]), 0);
-
-        let lock1 = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[10, 11, 12]),
-            vec![shared_input, (sha256d::Hash::hash(&[4, 5, 6]), 0)],
-        );
-
-        let lock2 = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[13, 14, 15]),
-            vec![shared_input, (sha256d::Hash::hash(&[7, 8, 9]), 0)],
-        );
-
-        assert!(validator.conflicts_with(&lock1, &lock2));
-    }
-
-    #[test]
-    fn test_multiple_inputs_no_conflict() {
-        let validator = InstantLockValidator::new();
-
-        let lock1 = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[10, 11, 12]),
-            vec![(sha256d::Hash::hash(&[1, 2, 3]), 0), (sha256d::Hash::hash(&[4, 5, 6]), 0)],
-        );
-
-        let lock2 = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[13, 14, 15]),
-            vec![(sha256d::Hash::hash(&[7, 8, 9]), 0), (sha256d::Hash::hash(&[10, 11, 12]), 0)],
-        );
-
-        assert!(!validator.conflicts_with(&lock1, &lock2));
-    }
-
-    #[test]
-    fn test_is_still_valid() {
-        let validator = InstantLockValidator::new();
-        let tx = create_test_transaction(vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)], COIN_VALUE);
-        let is_lock = create_test_instant_lock(&tx);
-
-        // For now, all locks are considered valid
-        assert!(validator.is_still_valid(&is_lock));
-    }
-
     // Note: test_signature_validation_without_quorum has been removed as BLS signature
     // verification now requires MasternodeListEngine, not the simplified QuorumManager.
 
@@ -401,15 +293,5 @@ mod tests {
             create_instant_lock_with_inputs(sha256d::Hash::hash(&[100, 101, 102]), many_inputs);
 
         assert!(validator.validate_structure(&lock).is_ok());
-    }
-
-    #[test]
-    fn test_same_lock_no_conflict() {
-        let validator = InstantLockValidator::new();
-        let tx = create_test_transaction(vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)], COIN_VALUE);
-        let is_lock = create_test_instant_lock(&tx);
-
-        // Same lock should not conflict with itself
-        assert!(!validator.conflicts_with(&is_lock, &is_lock));
     }
 }
