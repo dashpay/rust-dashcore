@@ -43,7 +43,7 @@ mod tests {
     fn test_ffi_array_new_and_destroy() {
         let test_data = vec![1u32, 2, 3, 4, 5];
         let len = test_data.len();
-        let array = FFIArray::new(test_data);
+        let mut array = FFIArray::new(test_data);
 
         assert!(!array.data.is_null());
         assert_eq!(array.len, len);
@@ -54,16 +54,14 @@ mod tests {
             assert_eq!(slice.len(), len);
             assert_eq!(slice, &[1, 2, 3, 4, 5]);
 
-            // Allocate on heap for proper FFI destroy
-            let array_ptr = Box::into_raw(Box::new(array));
-            dash_spv_ffi_array_destroy(array_ptr);
+            dash_spv_ffi_array_destroy(&mut array as *mut FFIArray);
         }
     }
 
     #[test]
     fn test_ffi_array_empty() {
         let empty_vec: Vec<u8> = vec![];
-        let array = FFIArray::new(empty_vec);
+        let mut array = FFIArray::new(empty_vec);
 
         assert_eq!(array.len, 0);
 
@@ -71,9 +69,7 @@ mod tests {
             let slice = array.as_slice::<u8>();
             assert_eq!(slice.len(), 0);
 
-            // Allocate on heap for proper FFI destroy
-            let array_ptr = Box::into_raw(Box::new(array));
-            dash_spv_ffi_array_destroy(array_ptr);
+            dash_spv_ffi_array_destroy(&mut array as *mut FFIArray);
         }
     }
 

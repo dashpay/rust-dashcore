@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use key_wallet_ffi::error::{FFIError, FFIErrorCode};
+    use key_wallet_ffi::wallet::wallet_free_const;
     use key_wallet_ffi::wallet_manager::*;
     use key_wallet_ffi::FFINetwork;
     use std::os::raw::c_char;
@@ -14,7 +15,7 @@ mod tests {
         unsafe {
             // Create a wallet manager
             let mut error = FFIError::success();
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert_eq!(error.code, FFIErrorCode::Success);
             assert!(!manager.is_null());
 
@@ -26,7 +27,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr() as *const c_char,
                 passphrase.as_ptr() as *const c_char,
-                FFINetwork::Dash,
                 &mut error,
             );
             assert!(success);
@@ -50,7 +50,7 @@ mod tests {
             // For now, we'll just test that the import function exists and compiles
 
             // Create a second manager to test import
-            let manager2 = wallet_manager_create(&mut error);
+            let manager2 = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert_eq!(error.code, FFIErrorCode::Success);
             assert!(!manager2.is_null());
 
@@ -67,6 +67,8 @@ mod tests {
             assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
             // Clean up
+            error.free_message();
+            wallet_free_const(wallet_ptr);
             wallet_manager_free_wallet_ids(wallet_ids_ptr, count);
             wallet_manager_free(manager);
             wallet_manager_free(manager2);

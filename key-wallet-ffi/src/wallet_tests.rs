@@ -35,6 +35,7 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            (*error).free_message();
         }
     }
 
@@ -55,6 +56,7 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            (*error).free_message();
         }
     }
 
@@ -75,6 +77,7 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(random_wallet);
+            (*error).free_message();
         }
     }
 
@@ -101,6 +104,8 @@ mod wallet_tests {
                 // Clean up
                 wallet::wallet_free(wallet);
             }
+
+            (*error).free_message();
         }
     }
 
@@ -127,6 +132,7 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            (*error).free_message();
         }
     }
 
@@ -165,6 +171,8 @@ mod wallet_tests {
             unsafe { wallet::wallet_create_from_seed(ptr::null(), 64, FFINetwork::Testnet, error) };
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -191,6 +199,7 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            (*error).free_message();
         }
     }
 
@@ -217,6 +226,7 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            (*error).free_message();
         }
     }
 
@@ -231,6 +241,8 @@ mod wallet_tests {
 
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -260,6 +272,7 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet_with_mnemonic);
+            (*error).free_message();
         }
     }
 
@@ -272,6 +285,8 @@ mod wallet_tests {
         let has_mnemonic = unsafe { wallet::wallet_has_mnemonic(ptr::null(), error) };
         assert!(!has_mnemonic);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -306,6 +321,7 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
+            (*error).free_message();
         }
     }
 
@@ -362,6 +378,8 @@ mod wallet_tests {
                 wallet::wallet_free(wallet);
             }
         }
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -385,6 +403,7 @@ mod wallet_tests {
         unsafe {
             let _ = CString::from_raw(xpub);
             wallet::wallet_free(wallet);
+            (*error).free_message();
         }
     }
 
@@ -397,6 +416,8 @@ mod wallet_tests {
         let xpub = unsafe { wallet::wallet_get_xpub(ptr::null(), 0, error) };
         assert!(xpub.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]

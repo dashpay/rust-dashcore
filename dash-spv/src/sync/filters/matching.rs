@@ -29,13 +29,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         filter_data: &[u8],
         block_hash: &BlockHash,
         wallet: &mut W,
-        network: dashcore::Network,
     ) -> SyncResult<bool> {
         // Create the BlockFilter from the raw data
         let filter = dashcore::bip158::BlockFilter::new(filter_data);
 
         // Use wallet's check_compact_filter method
-        let matches = wallet.check_compact_filter(&filter, block_hash, network).await;
+        let matches = wallet.check_compact_filter(&filter, block_hash).await;
         if matches {
             tracing::info!("🎯 Filter match found for block {}", block_hash);
             Ok(true)

@@ -7,7 +7,7 @@ repos:
   # ============================================================================
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: '\.md$'  # Allow trailing spaces in markdown for line breaks
@@ -33,12 +33,12 @@ repos:
         exclude: '\.rs$'  # Rust inner attributes (#![...]) look like shebangs
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.8
+    rev: v1.7.9
     hooks:
       - id: actionlint
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.16.23
+    rev: v1.40.0
     hooks:
       - id: typos
         args: ['--write-changes']
@@ -80,7 +80,7 @@ repos:
       - id: clippy
         name: clippy (workspace strict)
         description: Strict clippy on entire workspace - deny all warnings
-        entry: cargo clippy --workspace --all-features --all-targets -- -D warnings
+        entry: python3 contrib/run_clippy.py
         language: system
         types: [rust]
         pass_filenames: false

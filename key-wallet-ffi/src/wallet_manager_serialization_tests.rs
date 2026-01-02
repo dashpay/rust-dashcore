@@ -17,7 +17,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -33,7 +33,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,           // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet
@@ -60,6 +59,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -69,7 +69,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -85,7 +85,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 true,  // downgrade to pubkey wallet
@@ -109,6 +108,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -118,7 +118,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -134,7 +134,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 true, // downgrade to pubkey wallet
@@ -158,6 +157,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -167,7 +167,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -183,7 +183,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -207,6 +206,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -216,8 +216,8 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
+        let manager1 = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        assert!(!manager1.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
@@ -229,10 +229,9 @@ mod tests {
         // First create and serialize a wallet
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
-                manager,
+                manager1,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -248,13 +247,13 @@ mod tests {
         assert!(!wallet_bytes_out.is_null());
 
         // Now import the wallet into a new manager
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
+        let manager2 = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        assert!(!manager2.is_null());
 
         let mut imported_wallet_id = [0u8; 32];
         let import_success = unsafe {
             wallet_manager::wallet_manager_import_wallet_from_bytes(
-                manager,
+                manager2,
                 wallet_bytes_out,
                 wallet_bytes_len_out,
                 imported_wallet_id.as_mut_ptr(),
@@ -274,7 +273,9 @@ mod tests {
                 wallet_bytes_out,
                 wallet_bytes_len_out,
             );
-            wallet_manager::wallet_manager_free(manager);
+            wallet_manager::wallet_manager_free(manager1);
+            wallet_manager::wallet_manager_free(manager2);
+            (*error).free_message();
         }
     }
 
@@ -284,7 +285,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let invalid_mnemonic = CString::new("invalid mnemonic phrase").unwrap();
@@ -299,7 +300,6 @@ mod tests {
                 manager,
                 invalid_mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -315,6 +315,12 @@ mod tests {
         assert_ne!(unsafe { (*error).code }, FFIErrorCode::Success);
         assert!(wallet_bytes_out.is_null());
         assert_eq!(wallet_bytes_len_out, 0);
+
+        // Clean up
+        unsafe {
+            wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
+        }
     }
 
     #[test]
@@ -323,7 +329,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
@@ -335,7 +341,6 @@ mod tests {
                 manager,
                 ptr::null(),
                 ptr::null(),
-                FFINetwork::Testnet,
                 0,
                 ptr::null(),
                 false,
@@ -349,6 +354,12 @@ mod tests {
 
         assert!(!success, "Should fail with null mnemonic");
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        // Clean up
+        unsafe {
+            wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
+        }
     }
 
     #[test]
@@ -359,7 +370,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(error);
+        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -391,7 +402,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 0,
                 &account_options,
                 false,
@@ -415,6 +425,7 @@ mod tests {
                 wallet_bytes_len_out,
             );
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 }

@@ -20,7 +20,7 @@ impl DiskStorageManager {
     ) -> StorageResult<()> {
         let hashes = headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>();
 
-        self.block_headers.write().await.store_items(headers, height, self).await?;
+        self.block_headers.write().await.store_items_at_height(headers, height).await?;
 
         // Update reverse index
         let mut reverse_index = self.header_hash_index.write().await;
@@ -29,9 +29,6 @@ impl DiskStorageManager {
             reverse_index.insert(hash, height);
             height += 1;
         }
-
-        // Release locks before saving (to avoid deadlocks during background saves)
-        drop(reverse_index);
 
         Ok(())
     }

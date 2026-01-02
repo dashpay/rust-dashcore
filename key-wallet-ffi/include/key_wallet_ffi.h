@@ -3854,11 +3854,7 @@ FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
  - `manager` must be a valid pointer to an `FFIWalletManager`
  - Callers must free the returned string with `wallet_manager_free_string`
  */
-
-char *wallet_manager_describe(const FFIWalletManager *manager,
-                              FFINetwork network,
-                              FFIError *error)
-;
+ char *wallet_manager_describe(const FFIWalletManager *manager, FFIError *error) ;
 
 /*
  Free a string previously returned by wallet manager APIs.
@@ -3874,7 +3870,7 @@ char *wallet_manager_describe(const FFIWalletManager *manager,
 /*
  Create a new wallet manager
  */
- FFIWalletManager *wallet_manager_create(FFIError *error) ;
+ FFIWalletManager *wallet_manager_create(FFINetwork network, FFIError *error) ;
 
 /*
  Add a wallet from mnemonic to the manager with options
@@ -3892,7 +3888,6 @@ char *wallet_manager_describe(const FFIWalletManager *manager,
 bool wallet_manager_add_wallet_from_mnemonic_with_options(FFIWalletManager *manager,
                                                           const char *mnemonic,
                                                           const char *passphrase,
-                                                          FFINetwork network,
                                                           const FFIWalletAccountCreationOptions *account_options,
                                                           FFIError *error)
 ;
@@ -3912,7 +3907,6 @@ bool wallet_manager_add_wallet_from_mnemonic_with_options(FFIWalletManager *mana
 bool wallet_manager_add_wallet_from_mnemonic(FFIWalletManager *manager,
                                              const char *mnemonic,
                                              const char *passphrase,
-                                             FFINetwork network,
                                              FFIError *error)
 ;
 
@@ -3942,7 +3936,6 @@ bool wallet_manager_add_wallet_from_mnemonic(FFIWalletManager *manager,
 bool wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(FFIWalletManager *manager,
                                                                      const char *mnemonic,
                                                                      const char *passphrase,
-                                                                     FFINetwork network,
                                                                      unsigned int birth_height,
                                                                      const FFIWalletAccountCreationOptions *account_options,
                                                                      bool downgrade_to_pubkey_wallet,
@@ -4080,7 +4073,6 @@ bool wallet_manager_get_wallet_balance(const FFIWalletManager *manager,
  - `manager` must be a valid pointer to an FFIWalletManager instance
  - `tx_bytes` must be a valid pointer to transaction bytes
  - `tx_len` must be the length of the transaction bytes
- - `network` is the network type
  - `context` must be a valid pointer to FFITransactionContextDetails
  - `update_state_if_found` indicates whether to update wallet state when transaction is relevant
  - `error` must be a valid pointer to an FFIError structure or null
@@ -4090,7 +4082,6 @@ bool wallet_manager_get_wallet_balance(const FFIWalletManager *manager,
 bool wallet_manager_process_transaction(FFIWalletManager *manager,
                                         const uint8_t *tx_bytes,
                                         size_t tx_len,
-                                        FFINetwork network,
                                         const FFITransactionContextDetails *context,
                                         bool update_state_if_found,
                                         FFIError *error)
@@ -4107,7 +4098,6 @@ bool wallet_manager_process_transaction(FFIWalletManager *manager,
  */
 
 bool wallet_manager_update_height(FFIWalletManager *manager,
-                                  FFINetwork network,
                                   unsigned int height,
                                   FFIError *error)
 ;
@@ -4121,11 +4111,7 @@ bool wallet_manager_update_height(FFIWalletManager *manager,
  - `error` must be a valid pointer to an FFIError structure or null
  - The caller must ensure all pointers remain valid for the duration of this call
  */
-
-unsigned int wallet_manager_current_height(const FFIWalletManager *manager,
-                                           FFINetwork network,
-                                           FFIError *error)
-;
+ unsigned int wallet_manager_current_height(const FFIWalletManager *manager, FFIError *error) ;
 
 /*
  Get wallet count

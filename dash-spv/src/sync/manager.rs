@@ -11,7 +11,7 @@ use crate::types::{SharedFilterHeights, SyncProgress};
 use crate::{SpvStats, SyncError};
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
-use key_wallet_manager::{wallet_interface::WalletInterface, Network as WalletNetwork};
+use key_wallet_manager::wallet_interface::WalletInterface;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -146,18 +146,9 @@ impl<
 
     /// Get the earliest wallet birth height hint for the configured network, if available.
     pub async fn wallet_birth_height_hint(&self) -> CoreBlockHeight {
-        // Map the dashcore network to wallet network, returning None for unknown variants
-        let wallet_network = match self.config.network {
-            dashcore::Network::Dash => WalletNetwork::Dash,
-            dashcore::Network::Testnet => WalletNetwork::Testnet,
-            dashcore::Network::Devnet => WalletNetwork::Devnet,
-            dashcore::Network::Regtest => WalletNetwork::Regtest,
-            _ => return 0, // Unknown network variant - return None instead of defaulting
-        };
-
         // Only acquire the wallet lock if we have a valid network mapping
         let wallet_guard = self.wallet.read().await;
-        let result = wallet_guard.earliest_required_height(wallet_network).await;
+        let result = wallet_guard.earliest_required_height().await;
         drop(wallet_guard);
         result
     }

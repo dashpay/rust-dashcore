@@ -3,10 +3,12 @@ members = ["dash", "dash-network", "dash-network-ffi", "hashes", "internals", "f
 resolver = "2"
 
 [workspace.package]
-version = "0.40.0"
+version = "0.41.0"
 
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }
+# Use directly from GitHub while we don't have ownership of the crate on crates.io
+rs-x11-hash = { git = "https://github.com/dashpay/rs-x11-hash", tag = "0.1.9" }
 
 [profile.release]
 # Default to unwinding for most crates

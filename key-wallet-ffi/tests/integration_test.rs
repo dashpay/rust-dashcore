@@ -25,7 +25,7 @@ fn test_full_wallet_workflow() {
     assert!(is_valid);
 
     // 3. Create wallet manager
-    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
+    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
     assert!(!manager.is_null());
 
     // 4. Add wallet to manager
@@ -35,7 +35,6 @@ fn test_full_wallet_workflow() {
             manager,
             mnemonic,
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
             error,
         )
     };
@@ -212,4 +211,6 @@ fn test_error_handling() {
     };
     assert!(wallet.is_null());
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+    unsafe { (*error).free_message() };
 }

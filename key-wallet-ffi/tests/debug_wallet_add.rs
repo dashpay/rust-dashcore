@@ -8,7 +8,7 @@ fn test_debug_wallet_add() {
     let mut error = FFIError::success();
     let error = &mut error as *mut FFIError;
 
-    let manager = wallet_manager::wallet_manager_create(error);
+    let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
     assert!(!manager.is_null());
     println!("Manager created successfully");
 
@@ -21,7 +21,6 @@ fn test_debug_wallet_add() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
             error,
         )
     };

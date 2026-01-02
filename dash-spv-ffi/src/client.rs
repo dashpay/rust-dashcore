@@ -183,7 +183,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
         let storage = DiskStorageManager::new(storage_path.clone()).await;
         let wallet = key_wallet_manager::wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
-        >::new();
+        >::new(client_config.network);
         let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));
 
         match (network, storage) {

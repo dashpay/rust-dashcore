@@ -41,8 +41,8 @@ fn main() -> ! {
     let pk = PrivateKey::from_wif(raw).unwrap();
     hprintln!("Seed WIF: {}", pk).unwrap();
 
-    let mut buf_ful = vec![AlignedType::zeroed(); size];
-    let secp = Secp256k1::preallocated_new(&mut buf_ful).unwrap();
+    let mut buf_full = vec![AlignedType::zeroed(); size];
+    let secp = Secp256k1::preallocated_new(&mut buf_full).unwrap();
 
     // Derive address
     let pubkey = pk.public_key(&secp);

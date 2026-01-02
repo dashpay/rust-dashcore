@@ -100,6 +100,8 @@ mod utxo_tests {
             unsafe { managed_wallet_get_utxos(ptr::null(), &mut utxos_out, &mut count_out, error) };
         assert!(!result);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -113,18 +115,20 @@ mod utxo_tests {
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        // Create an empty managed wallet info
+        // Create an empty managed wallet info heap-allocated like C would do
         let managed_info = ManagedWalletInfo::new(Network::Testnet, [0u8; 32]);
-        let ffi_managed_info = FFIManagedWalletInfo::new(managed_info);
+        let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         let result = unsafe {
-            managed_wallet_get_utxos(&ffi_managed_info, &mut utxos_out, &mut count_out, error)
+            managed_wallet_get_utxos(&*ffi_managed_info, &mut utxos_out, &mut count_out, error)
         };
 
         assert!(result);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
         assert_eq!(count_out, 0);
         assert!(utxos_out.is_null());
+
+        unsafe { crate::managed_wallet::managed_wallet_free(ffi_managed_info) };
     }
 
     // Note: There's no individual utxo_free function, only utxo_array_free
@@ -229,10 +233,10 @@ mod utxo_tests {
 
         managed_info.accounts.insert(bip44_account);
 
-        let ffi_managed_info = FFIManagedWalletInfo::new(managed_info);
+        let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         let result = unsafe {
-            managed_wallet_get_utxos(&ffi_managed_info, &mut utxos_out, &mut count_out, error)
+            managed_wallet_get_utxos(&*ffi_managed_info, &mut utxos_out, &mut count_out, error)
         };
 
         assert!(result);
@@ -267,6 +271,7 @@ mod utxo_tests {
         // Clean up
         unsafe {
             utxo_array_free(utxos_out, count_out);
+            crate::managed_wallet::managed_wallet_free(ffi_managed_info);
         }
     }
 
@@ -393,10 +398,10 @@ mod utxo_tests {
         }
         managed_info.accounts.insert(coinjoin_account);
 
-        let ffi_managed_info = FFIManagedWalletInfo::new(managed_info);
+        let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         let result = unsafe {
-            managed_wallet_get_utxos(&ffi_managed_info, &mut utxos_out, &mut count_out, error)
+            managed_wallet_get_utxos(&*ffi_managed_info, &mut utxos_out, &mut count_out, error)
         };
 
         assert!(result);
@@ -406,6 +411,7 @@ mod utxo_tests {
         // Clean up
         unsafe {
             utxo_array_free(utxos_out, count_out);
+            crate::managed_wallet::managed_wallet_free(ffi_managed_info);
         }
     }
 
@@ -464,16 +470,17 @@ mod utxo_tests {
         testnet_account.utxos.insert(outpoint, utxo);
         managed_info.accounts.insert(testnet_account);
 
-        let ffi_managed_info = FFIManagedWalletInfo::new(managed_info);
+        let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         // Get UTXOs
         let result = unsafe {
-            managed_wallet_get_utxos(&ffi_managed_info, &mut utxos_out, &mut count_out, error)
+            managed_wallet_get_utxos(&*ffi_managed_info, &mut utxos_out, &mut count_out, error)
         };
         assert!(result);
         assert_eq!(count_out, 1);
         unsafe {
             utxo_array_free(utxos_out, count_out);
+            crate::managed_wallet::managed_wallet_free(ffi_managed_info);
         }
     }
 
@@ -573,11 +580,11 @@ mod utxo_tests {
         let mut count_out: usize = 0;
 
         let managed_info = ManagedWalletInfo::new(Network::Testnet, [4u8; 32]);
-        let ffi_managed_info = FFIManagedWalletInfo::new(managed_info);
+        let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         // Test with null utxos_out
         let result = unsafe {
-            managed_wallet_get_utxos(&ffi_managed_info, ptr::null_mut(), &mut count_out, error)
+            managed_wallet_get_utxos(&*ffi_managed_info, ptr::null_mut(), &mut count_out, error)
         };
         assert!(!result);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
@@ -585,10 +592,15 @@ mod utxo_tests {
         // Test with null count_out
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let result = unsafe {
-            managed_wallet_get_utxos(&ffi_managed_info, &mut utxos_out, ptr::null_mut(), error)
+            managed_wallet_get_utxos(&*ffi_managed_info, &mut utxos_out, ptr::null_mut(), error)
         };
         assert!(!result);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe {
+            crate::managed_wallet::managed_wallet_free(ffi_managed_info);
+            (*error).free_message();
+        }
     }
 
     #[test]

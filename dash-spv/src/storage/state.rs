@@ -4,11 +4,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 use dashcore::{block::Header as BlockHeader, BlockHash, Txid};
-#[cfg(test)]
-use dashcore_hashes::Hash;
 
 use crate::error::StorageResult;
-use crate::storage::manager::WorkerCommand;
+use crate::storage::headers::save_index_to_disk;
 use crate::storage::{MasternodeState, StorageManager};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 
@@ -205,7 +203,7 @@ impl DiskStorageManager {
     /// Clear all storage.
     pub async fn clear(&mut self) -> StorageResult<()> {
         // First, stop the background worker to avoid races with file deletion
-        self.stop_worker().await;
+        self.stop_worker();
 
         // Clear in-memory state
         self.block_headers.write().await.clear_in_memory();
@@ -249,54 +247,22 @@ impl DiskStorageManager {
 
     /// Shutdown the storage manager.
     pub async fn shutdown(&mut self) {
+        self.stop_worker();
+
         // Persist all dirty data
         self.save_dirty().await;
-
-        // Shutdown background worker
-        if let Some(tx) = self.worker_tx.take() {
-            // Save the header index before shutdown
-            let index = self.header_hash_index.read().await.clone();
-            let _ = tx
-                .send(super::manager::WorkerCommand::SaveIndex {
-                    index,
-                })
-                .await;
-            let _ = tx.send(super::manager::WorkerCommand::Shutdown).await;
-        }
-
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.await;
-        }
     }
 
-    /// Save all dirty segments to disk via background worker.
+    /// Save all dirty data.
     pub(super) async fn save_dirty(&self) {
-        self.filter_headers.write().await.persist_dirty(self).await;
-        self.block_headers.write().await.persist_dirty(self).await;
-        self.filters.write().await.persist_dirty(self).await;
+        self.filter_headers.write().await.persist().await;
+        self.block_headers.write().await.persist().await;
+        self.filters.write().await.persist().await;
 
-        if let Some(tx) = &self.worker_tx {
-            // Save the index only if it has grown significantly (every 10k new entries)
-            let current_index_size = self.header_hash_index.read().await.len();
-            let last_save_count = *self.last_index_save_count.read().await;
-
-            // Save if index has grown by 10k entries, or if we've never saved before
-            if current_index_size >= last_save_count + 10_000 || last_save_count == 0 {
-                let index = self.header_hash_index.read().await.clone();
-                let _ = tx
-                    .send(WorkerCommand::SaveIndex {
-                        index,
-                    })
-                    .await;
-
-                // Update the last save count
-                *self.last_index_save_count.write().await = current_index_size;
-                tracing::debug!(
-                    "Scheduled index save (size: {}, last_save: {})",
-                    current_index_size,
-                    last_save_count
-                );
-            }
+        let path = self.base_path.join("headers/index.dat");
+        let index = self.header_hash_index.read().await;
+        if let Err(e) = save_index_to_disk(&path, &index).await {
+            tracing::error!("Failed to persist header index: {}", e);
         }
     }
 }
@@ -412,9 +378,7 @@ impl StorageManager for DiskStorageManager {
         &mut self,
         headers: &[dashcore::hash_types::FilterHeader],
     ) -> StorageResult<()> {
-        let mut filter_headers = self.filter_headers.write().await;
-        let next_height = filter_headers.next_height();
-        filter_headers.store_items(headers, next_height, self).await
+        self.filter_headers.write().await.store_items(headers).await
     }
 
     async fn load_filter_headers(
@@ -452,7 +416,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
-        self.filters.write().await.store_items(&[filter.to_vec()], height, self).await
+        self.filters.write().await.store_items_at_height(&[filter.to_vec()], height).await
     }
 
     async fn load_filters(&self, range: std::ops::Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
@@ -473,7 +437,7 @@ impl StorageManager for DiskStorageManager {
 
     async fn clear_filters(&mut self) -> StorageResult<()> {
         // Stop worker to prevent concurrent writes to filter directories
-        self.stop_worker().await;
+        self.stop_worker();
 
         // Clear in-memory and on-disk filter headers segments
         self.filter_headers.write().await.clear_all().await?;
@@ -556,6 +520,7 @@ impl StorageManager for DiskStorageManager {
 mod tests {
     use super::*;
     use dashcore::{block::Version, pow::CompactTarget};
+    use dashcore_hashes::Hash;
     use tempfile::TempDir;
 
     fn build_headers(count: usize) -> Vec<BlockHeader> {
@@ -676,7 +641,6 @@ mod tests {
 
         // Force save to disk
         storage.save_dirty().await;
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         drop(storage);
 

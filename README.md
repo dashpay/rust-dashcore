@@ -92,14 +92,13 @@ This library provides comprehensive wallet functionality through multiple compon
 For most applications, start with [key-wallet-manager](key-wallet-manager/README.md) which provides a complete, easy-to-use interface for wallet operations.
 
 # Supported Dash Core Versions
-The following versions are officially supported and automatically tested:
-* 0.18.0
-* 0.18.1
-* 0.19.0.1
-* 0.19.1
-* 0.20.0
-* 0.20.1
-* 0.21.0
+The following versions are officially supported:
+* 0.18.x
+* 0.19.x
+* 0.20.x
+* 0.21.x
+* 0.22.x
+* 0.23.x
 
 # Minimum Supported Rust Version (MSRV)
 This workspace compiles on Rust 1.89 or newer. Crates use mixed editions (2021 and 2024). See CLAUDE.md/AGENTS.md for common commands and CI expectations.

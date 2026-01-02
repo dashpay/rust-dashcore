@@ -20,7 +20,7 @@ fn test_managed_account_collection_basic() {
         let mut error = FFIError::success();
 
         // Create wallet manager
-        let manager = wallet_manager_create(&mut error);
+        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
         assert!(!manager.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -32,7 +32,6 @@ fn test_managed_account_collection_basic() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
             ptr::null(), // Use default options
             &mut error,
         );
@@ -90,7 +89,7 @@ fn test_managed_account_collection_with_special_accounts() {
         let mut error = FFIError::success();
 
         // Create wallet manager
-        let manager = wallet_manager_create(&mut error);
+        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
         assert!(!manager.is_null());
 
         // Create wallet with special accounts
@@ -132,7 +131,6 @@ fn test_managed_account_collection_with_special_accounts() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
             &options,
             &mut error,
         );
@@ -219,7 +217,7 @@ fn test_managed_account_collection_summary() {
         let mut error = FFIError::success();
 
         // Create wallet manager
-        let manager = wallet_manager_create(&mut error);
+        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
         assert!(!manager.is_null());
 
         // Create wallet with multiple account types
@@ -252,7 +250,6 @@ fn test_managed_account_collection_summary() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
             &options,
             &mut error,
         );
@@ -301,7 +298,7 @@ fn test_managed_account_collection_summary_data() {
         let mut error = FFIError::success();
 
         // Create wallet manager
-        let manager = wallet_manager_create(&mut error);
+        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
         assert!(!manager.is_null());
 
         // Create wallet with various account types
@@ -341,7 +338,6 @@ fn test_managed_account_collection_summary_data() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
             &options,
             &mut error,
         );
@@ -407,6 +403,7 @@ fn test_managed_account_collection_null_safety() {
             managed_wallet_get_account_collection(ptr::null(), ptr::null(), &mut error);
         assert!(collection.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+        error.free_message();
 
         // Test with null collection for various functions
         assert_eq!(managed_account_collection_count(ptr::null()), 0);
@@ -427,7 +424,7 @@ fn test_managed_account_collection_nonexistent_accounts() {
         let mut error = FFIError::success();
 
         // Create wallet manager
-        let manager = wallet_manager_create(&mut error);
+        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
         assert!(!manager.is_null());
 
         // Create wallet with minimal accounts
@@ -438,7 +435,6 @@ fn test_managed_account_collection_nonexistent_accounts() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
             ptr::null(), // Default options
             &mut error,
         );

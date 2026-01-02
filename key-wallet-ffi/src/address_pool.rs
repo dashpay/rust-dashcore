@@ -1057,7 +1057,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -1069,7 +1069,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1136,6 +1135,7 @@ mod tests {
             managed_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
+            error.free_message();
         }
     }
 
@@ -1157,7 +1157,7 @@ mod tests {
             let mut error = FFIError::success();
 
             // Create wallet manager
-            let manager = wallet_manager_create(&mut error);
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -1169,7 +1169,6 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
                 ptr::null(),
                 &mut error,
             );
@@ -1265,6 +1264,7 @@ mod tests {
             managed_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
+            error.free_message();
         }
     }
 }

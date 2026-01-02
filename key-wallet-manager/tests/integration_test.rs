@@ -12,10 +12,10 @@ use key_wallet_manager::wallet_manager::{WalletError, WalletManager};
 #[test]
 fn test_wallet_manager_creation() {
     // Create a wallet manager
-    let manager = WalletManager::<ManagedWalletInfo>::new();
+    let manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // WalletManager::new returns Self, not Result
-    assert_eq!(manager.current_height(Network::Testnet), 0);
+    assert_eq!(manager.current_height(), 0);
     assert_eq!(manager.wallet_count(), 0); // No wallets created yet
 }
 
@@ -23,13 +23,12 @@ fn test_wallet_manager_creation() {
 fn test_wallet_manager_from_mnemonic() {
     // Create from a test mnemonic
     let mnemonic = Mnemonic::generate(12, Language::English).unwrap();
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Create a wallet from mnemonic
     let wallet_result = manager.create_wallet_from_mnemonic(
         &mnemonic.to_string(),
         "",
-        Network::Testnet,
         0,
         WalletAccountCreationOptions::Default,
     );
@@ -39,13 +38,11 @@ fn test_wallet_manager_from_mnemonic() {
 
 #[test]
 fn test_account_management() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Create a wallet first
-    let wallet_result = manager.create_wallet_with_random_mnemonic(
-        WalletAccountCreationOptions::Default,
-        Network::Testnet,
-    );
+    let wallet_result =
+        manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default);
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     let wallet_id = wallet_result.unwrap();
 
@@ -69,13 +66,11 @@ fn test_account_management() {
 
 #[test]
 fn test_address_generation() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Create a wallet first
-    let wallet_result = manager.create_wallet_with_random_mnemonic(
-        WalletAccountCreationOptions::Default,
-        Network::Testnet,
-    );
+    let wallet_result =
+        manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default);
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     let wallet_id = wallet_result.unwrap();
 
@@ -111,13 +106,11 @@ fn test_address_generation() {
 fn test_utxo_management() {
     // Unused imports removed - UTXOs are created by processing transactions
 
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Create a wallet first
-    let wallet_result = manager.create_wallet_with_random_mnemonic(
-        WalletAccountCreationOptions::Default,
-        Network::Testnet,
-    );
+    let wallet_result =
+        manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default);
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     let wallet_id = wallet_result.unwrap();
 
@@ -137,13 +130,11 @@ fn test_utxo_management() {
 
 #[test]
 fn test_balance_calculation() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Create a wallet first
-    let wallet_result = manager.create_wallet_with_random_mnemonic(
-        WalletAccountCreationOptions::Default,
-        Network::Testnet,
-    );
+    let wallet_result =
+        manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default);
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     let wallet_id = wallet_result.unwrap();
 
@@ -162,10 +153,10 @@ fn test_balance_calculation() {
 
 #[test]
 fn test_block_height_tracking() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
-    assert_eq!(manager.current_height(Network::Testnet), 0);
+    assert_eq!(manager.current_height(), 0);
 
-    manager.update_height(Network::Testnet, 12345);
-    assert_eq!(manager.current_height(Network::Testnet), 12345);
+    manager.update_height(12345);
+    assert_eq!(manager.current_height(), 12345);
 }

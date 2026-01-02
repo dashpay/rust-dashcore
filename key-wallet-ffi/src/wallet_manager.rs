@@ -17,7 +17,6 @@ use tokio::sync::RwLock;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::FFINetwork;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet::Network;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::WalletManager;
 
@@ -27,6 +26,7 @@ use key_wallet_manager::wallet_manager::WalletManager;
 /// allowing FFI code to interact with it directly without going through
 /// the SPV client.
 pub struct FFIWalletManager {
+    network: FFINetwork,
     pub(crate) manager: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
     pub(crate) runtime: Arc<tokio::runtime::Runtime>,
 }
@@ -37,10 +37,20 @@ impl FFIWalletManager {
         manager: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
         runtime: Arc<tokio::runtime::Runtime>,
     ) -> Self {
+        let network = runtime.block_on(async {
+            let manager_guard = manager.read().await;
+            manager_guard.network()
+        });
+
         FFIWalletManager {
+            network: FFINetwork::from(network),
             manager,
             runtime,
         }
+    }
+
+    pub fn network(&self) -> FFINetwork {
+        self.network
     }
 }
 
@@ -53,7 +63,6 @@ impl FFIWalletManager {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_describe(
     manager: *const FFIWalletManager,
-    network: crate::FFINetwork,
     error: *mut FFIError,
 ) -> *mut c_char {
     if manager.is_null() {
@@ -67,7 +76,7 @@ pub unsafe extern "C" fn wallet_manager_describe(
 
     let description = runtime.block_on(async {
         let guard = manager_arc.read().await;
-        guard.describe(network.into()).await
+        guard.describe().await
     });
 
     match CString::new(description) {
@@ -104,8 +113,11 @@ pub unsafe extern "C" fn wallet_manager_free_string(value: *mut c_char) {
 
 /// Create a new wallet manager
 #[no_mangle]
-pub extern "C" fn wallet_manager_create(error: *mut FFIError) -> *mut FFIWalletManager {
-    let manager = WalletManager::new();
+pub extern "C" fn wallet_manager_create(
+    network: FFINetwork,
+    error: *mut FFIError,
+) -> *mut FFIWalletManager {
+    let manager = WalletManager::new(network.into());
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => Arc::new(rt),
         Err(e) => {
@@ -119,6 +131,7 @@ pub extern "C" fn wallet_manager_create(error: *mut FFIError) -> *mut FFIWalletM
     };
     FFIError::set_success(error);
     Box::into_raw(Box::new(FFIWalletManager {
+        network,
         manager: Arc::new(RwLock::new(manager)),
         runtime,
     }))
@@ -139,7 +152,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> bool {
@@ -180,8 +192,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
         }
     };
 
-    let network_rust: Network = network.into();
-
     unsafe {
         let manager_ref = &*manager;
 
@@ -200,7 +210,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
             manager_guard.create_wallet_from_mnemonic(
                 mnemonic_str,
                 passphrase_str,
-                network_rust,
                 0,
                 creation_options,
             )
@@ -237,14 +246,12 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
     error: *mut FFIError,
 ) -> bool {
     wallet_manager_add_wallet_from_mnemonic_with_options(
         manager,
         mnemonic,
         passphrase,
-        network,
         ptr::null(), // Use default options
         error,
     )
@@ -276,7 +283,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
     birth_height: c_uint,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     downgrade_to_pubkey_wallet: bool,
@@ -331,8 +337,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         }
     };
 
-    let network_rust: Network = network.into();
-
     // Convert account creation options
     let creation_options = if account_options.is_null() {
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
@@ -349,7 +353,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         manager_guard.create_wallet_from_mnemonic_return_serialized_bytes(
             mnemonic_str,
             passphrase_str,
-            network_rust,
             birth_height,
             creation_options,
             downgrade_to_pubkey_wallet,
@@ -727,7 +730,6 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `tx_bytes` must be a valid pointer to transaction bytes
 /// - `tx_len` must be the length of the transaction bytes
-/// - `network` is the network type
 /// - `context` must be a valid pointer to FFITransactionContextDetails
 /// - `update_state_if_found` indicates whether to update wallet state when transaction is relevant
 /// - `error` must be a valid pointer to an FFIError structure or null
@@ -737,7 +739,6 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     manager: *mut FFIWalletManager,
     tx_bytes: *const u8,
     tx_len: usize,
-    network: FFINetwork,
     context: *const crate::types::FFITransactionContextDetails,
     update_state_if_found: bool,
     error: *mut FFIError,
@@ -770,9 +771,6 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
         }
     };
 
-    // Convert FFINetwork to Network
-    let network = network.into();
-
     // Convert FFI context to native TransactionContext
     let context = unsafe { (*context).to_transaction_context() };
 
@@ -782,9 +780,7 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     // Process the transaction using async runtime
     let relevant_wallets = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
-        manager_guard
-            .check_transaction_in_all_wallets(&tx, network, context, update_state_if_found)
-            .await
+        manager_guard.check_transaction_in_all_wallets(&tx, context, update_state_if_found).await
     });
 
     FFIError::set_success(error);
@@ -801,7 +797,6 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_update_height(
     manager: *mut FFIWalletManager,
-    network: FFINetwork,
     height: c_uint,
     error: *mut FFIError,
 ) -> bool {
@@ -812,11 +807,9 @@ pub unsafe extern "C" fn wallet_manager_update_height(
 
     let manager_ref = &*manager;
 
-    let network_rust: Network = network.into();
-
     manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
-        manager_guard.update_height(network_rust, height);
+        manager_guard.update_height(height);
     });
 
     FFIError::set_success(error);
@@ -833,7 +826,6 @@ pub unsafe extern "C" fn wallet_manager_update_height(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_current_height(
     manager: *const FFIWalletManager,
-    network: FFINetwork,
     error: *mut FFIError,
 ) -> c_uint {
     if manager.is_null() {
@@ -843,12 +835,10 @@ pub unsafe extern "C" fn wallet_manager_current_height(
 
     let manager_ref = &*manager;
 
-    let network_rust: Network = network.into();
-
     // Get current height from network state if it exists
     let height = manager_ref.runtime.block_on(async {
         let manager_guard = manager_ref.manager.read().await;
-        manager_guard.get_network_state(network_rust).map(|state| state.current_height).unwrap_or(0)
+        manager_guard.current_height()
     });
 
     FFIError::set_success(error);
