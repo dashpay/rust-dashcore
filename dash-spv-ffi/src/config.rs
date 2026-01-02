@@ -163,20 +163,14 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
         }
     };
 
-    // 1) Try parsing as full SocketAddr first (handles IPv6 [::1]:port forms)
-    if let Ok(sock) = addr_str.parse::<SocketAddr>() {
-        cfg.peers.push(sock);
-        return FFIErrorCode::Success as i32;
-    }
-
-    // 2) If that fails, try parsing as bare IP address and apply default port
+    // Try parsing as bare IP address and apply default port
     if let Ok(ip) = addr_str.parse::<IpAddr>() {
         let sock = SocketAddr::new(ip, default_port);
         cfg.peers.push(sock);
         return FFIErrorCode::Success as i32;
     }
 
-    // 3) Must be a hostname - reject empty or missing hostname
+    // If not, must be a hostname - reject empty or missing hostname
     if addr_str.is_empty() || addr_str.starts_with(':') {
         set_last_error("Empty or missing hostname");
         return FFIErrorCode::InvalidArgument as i32;
