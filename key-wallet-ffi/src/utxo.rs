@@ -1,11 +1,11 @@
 //! UTXO management
 
+use crate::error::{FFIError, FFIErrorCode};
+use crate::managed_wallet::FFIManagedWalletInfo;
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::ptr;
-
-use crate::error::{FFIError, FFIErrorCode};
-use crate::managed_wallet::FFIManagedWalletInfo;
 
 /// UTXO structure for FFI
 #[repr(C)]
@@ -99,7 +99,7 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
     let managed_info = &*managed_info;
 
     // Get UTXOs from the managed wallet info
-    let utxos = managed_info.inner().get_utxos();
+    let utxos = managed_info.inner().utxos();
 
     if utxos.is_empty() {
         *count_out = 0;
@@ -108,10 +108,10 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
         // Convert UTXOs to FFI format
         let mut ffi_utxos = Vec::with_capacity(utxos.len());
 
-        for (outpoint, utxo) in utxos {
+        for utxo in utxos {
             // Convert txid to byte array
             let mut txid_bytes = [0u8; 32];
-            txid_bytes.copy_from_slice(&outpoint.txid[..]);
+            txid_bytes.copy_from_slice(&utxo.outpoint.txid[..]);
 
             // Convert address to string
             let address_str = utxo.address.to_string();
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
 
             let ffi_utxo = FFIUTXO::new(
                 txid_bytes,
-                outpoint.vout,
+                utxo.outpoint.vout,
                 utxo.value(),
                 address_str,
                 script_bytes,
