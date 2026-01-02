@@ -13,7 +13,8 @@ def build_ffi_crates(repo_root: Path) -> bool:
     """Build all FFI crates to regenerate headers."""
     print("  Building FFI crates...")
     result = subprocess.run(
-        ["cargo", "build", "--quiet"] + [f"-p={crate}" for crate in FFI_CRATES],
+        ["cargo", "build", "--quiet", "--target-dir", "target/verify-ffi"]
+        + [f"-p={crate}" for crate in FFI_CRATES],
         cwd=repo_root,
         capture_output=True,
         text=True

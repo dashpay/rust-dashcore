@@ -9,6 +9,7 @@ cmd = [
     "--workspace",
     "--all-features",
     "--all-targets",
+    "--target-dir", "target/clippy",
 ]
 
 # Exclude dash-fuzz on Windows (honggfuzz doesn't support Windows)
