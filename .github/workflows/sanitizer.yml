@@ -1,0 +1,68 @@
+name: Sanitizer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - 'v**-dev'
+  pull_request:
+    paths:
+      - 'key-wallet-ffi/**'
+      - 'dash-spv-ffi/**'
+      - 'dash-network-ffi/**'
+      - 'dashcore/**'
+      - 'dashcore_hashes/**'
+      - 'key-wallet/**'
+      - 'dash-spv/**'
+      - 'dash-network/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  asan:
+    name: Address Sanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Run tests with ASAN
+        env:
+          RUSTFLAGS: "-Zsanitizer=address -Cdebuginfo=2"
+          ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
+          ASAN_OPTIONS: "symbolize=1"
+          LSAN_OPTIONS: "fast_unwind_on_malloc=0"
+        run: |
+          # FFI crates (C interop)
+          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+            -p key-wallet-ffi -p dash-spv-ffi -p dash-network-ffi --lib --tests
+
+          # Core crypto crates (unsafe optimizations)
+          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+            -p dashcore -p dashcore_hashes --lib --tests
+
+  tsan:
+    name: Thread Sanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Run tests with TSAN
+        env:
+          RUSTFLAGS: "-Zsanitizer=thread -Cdebuginfo=2"
+          TSAN_OPTIONS: "second_deadlock_stack=1"
+        run: |
+          # Async crate with concurrent code
+          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+            -p dash-spv --lib --tests
