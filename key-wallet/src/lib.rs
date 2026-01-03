@@ -65,10 +65,7 @@ pub use managed_account::managed_account_type::ManagedAccountType;
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
 pub use utxo::{Utxo, UtxoSet};
-pub use wallet::{
-    balance::{BalanceError, WalletBalance},
-    Wallet,
-};
+pub use wallet::{balance::WalletBalance, Wallet};
 
 /// Re-export commonly used types
 pub mod prelude {
