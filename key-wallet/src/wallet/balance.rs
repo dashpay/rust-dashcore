@@ -3,6 +3,7 @@
 //! This module provides a wallet balance structure containing all available balances.
 
 use core::fmt::{Display, Formatter};
+use core::ops::AddAssign;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +63,14 @@ impl Display for WalletBalance {
     }
 }
 
+impl AddAssign for WalletBalance {
+    fn add_assign(&mut self, other: Self) {
+        self.spendable += other.spendable;
+        self.unconfirmed += other.unconfirmed;
+        self.locked += other.locked;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +99,21 @@ mod tests {
         let balance = WalletBalance::new(1000, 500, 200);
         let display = balance.to_string();
         assert_eq!(display, "Spendable: 1000, Unconfirmed: 500, Locked: 200, Total: 1700");
+    }
+
+    #[test]
+    fn test_balance_add_assign() {
+        let mut balance = WalletBalance::new(1000, 500, 200);
+        let balance_add = WalletBalance::new(300, 100, 50);
+        // Test adding actual balances
+        balance += balance_add;
+        assert_eq!(balance.spendable(), 1300);
+        assert_eq!(balance.unconfirmed(), 600);
+        assert_eq!(balance.locked(), 250);
+        assert_eq!(balance.total(), 2150);
+        // Test adding zero balances
+        let balance_before = balance;
+        balance += WalletBalance::default();
+        assert_eq!(balance_before, balance);
     }
 }
