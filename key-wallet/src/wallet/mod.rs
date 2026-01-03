@@ -9,7 +9,6 @@ pub mod balance;
 #[cfg(feature = "bip38")]
 pub mod bip38;
 pub mod helper;
-pub mod immature_transaction;
 pub mod initialization;
 pub mod managed_wallet_info;
 pub mod metadata;
