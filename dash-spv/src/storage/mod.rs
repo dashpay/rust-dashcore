@@ -81,7 +81,11 @@ pub trait StorageManager: Send + Sync + 'static {
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>>;
 
     /// Get the current tip blockchain height.
-    async fn get_tip_height(&self) -> StorageResult<Option<u32>>;
+    async fn get_tip_height(&self) -> Option<u32>;
+
+    async fn get_start_height(&self) -> Option<u32>;
+
+    async fn get_stored_headers_len(&self) -> u32;
 
     /// Store filter headers.
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()>;

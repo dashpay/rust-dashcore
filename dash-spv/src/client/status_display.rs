@@ -74,7 +74,7 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
         // For genesis sync: sync_base_height = 0, so height = 0 + storage_count
         // For checkpoint sync: height = checkpoint_height + storage_count
         let storage = self.storage.lock().await;
-        if let Ok(Some(storage_tip)) = storage.get_tip_height().await {
+        if let Some(storage_tip) = storage.get_tip_height().await {
             let blockchain_height = storage_tip;
             if with_logging {
                 tracing::debug!(

@@ -80,13 +80,9 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
         cf_headers: &CFHeaders,
         storage: &S,
     ) -> SyncResult<(u32, u32, u32)> {
-        let header_tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
-            .ok_or_else(|| {
-                SyncError::Storage("No headers available for filter sync".to_string())
-            })?;
+        let header_tip_height = storage.get_tip_height().await.ok_or_else(|| {
+            SyncError::Storage("No headers available for filter sync".to_string())
+        })?;
 
         let stop_height = self
             .find_height_for_block_hash(&cf_headers.stop_hash, storage, 0, header_tip_height)
@@ -186,13 +182,9 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
             .unwrap_or(0);
 
         // Get header tip (absolute blockchain height)
-        let header_tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
-            .ok_or_else(|| {
-                SyncError::Storage("No headers available for filter sync".to_string())
-            })?;
+        let header_tip_height = storage.get_tip_height().await.ok_or_else(|| {
+            SyncError::Storage("No headers available for filter sync".to_string())
+        })?;
         tracing::debug!(
             "FilterSync context: header_tip_height={} (base={})",
             header_tip_height,
@@ -401,13 +393,9 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
             .unwrap_or(0);
 
         // Get header tip (absolute blockchain height)
-        let header_tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
-            .ok_or_else(|| {
-                SyncError::Storage("No headers available for filter sync".to_string())
-            })?;
+        let header_tip_height = storage.get_tip_height().await.ok_or_else(|| {
+            SyncError::Storage("No headers available for filter sync".to_string())
+        })?;
 
         if current_filter_height >= header_tip_height {
             tracing::info!("Filter headers already synced to header tip");
@@ -771,11 +759,7 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
             return Ok(false);
         }
 
-        let header_tip = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header tip: {}", e)))?
-            .unwrap_or(0);
+        let header_tip = storage.get_tip_height().await.unwrap_or(0);
 
         Ok(self.next_cfheader_height_to_process > header_tip)
     }

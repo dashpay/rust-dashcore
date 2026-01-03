@@ -340,7 +340,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         storage: &mut S,
         transition_reason: &str,
     ) -> SyncResult<()> {
-        let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
+        let blockchain_height = self.get_blockchain_height_from_storage(storage).await;
 
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,

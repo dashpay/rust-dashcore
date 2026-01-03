@@ -33,7 +33,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Get current heights from storage
         {
             let storage = self.storage.lock().await;
-            if let Ok(Some(header_height)) = storage.get_tip_height().await {
+            if let Some(header_height) = storage.get_tip_height().await {
                 stats.header_height = header_height;
             }
 

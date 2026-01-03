@@ -197,7 +197,7 @@ async fn test_filter_header_verification_failure_reproduction() {
     let initial_headers = create_test_headers_range(1000, 5000); // Headers 1000-4999
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
-    let tip_height = storage.get_tip_height().await.unwrap().unwrap();
+    let tip_height = storage.get_tip_height().await.unwrap();
     println!("Initial header chain stored: tip height = {}", tip_height);
     assert_eq!(tip_height, 4999);
 
@@ -361,7 +361,7 @@ async fn test_overlapping_batches_from_different_peers() {
     let initial_headers = create_test_headers_range(1, 3000); // Headers 1-2999
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
-    let tip_height = storage.get_tip_height().await.unwrap().unwrap();
+    let tip_height = storage.get_tip_height().await.unwrap();
     println!("Header chain stored: tip height = {}", tip_height);
     assert_eq!(tip_height, 2999);
 

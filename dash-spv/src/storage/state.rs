@@ -16,10 +16,6 @@ use super::manager::DiskStorageManager;
 impl DiskStorageManager {
     /// Store chain state to disk.
     pub async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        // First store all headers
-        // For checkpoint sync, we need to store headers starting from the checkpoint height
-        self.store_headers_at_height(&state.headers, state.sync_base_height).await?;
-
         // Store other state as JSON
         let state_data = serde_json::json!({
             "last_chainlock_height": state.last_chainlock_height,
@@ -48,7 +44,7 @@ impl DiskStorageManager {
             crate::error::StorageError::Serialization(format!("Failed to parse chain state: {}", e))
         })?;
 
-        let mut state = ChainState {
+        let state = ChainState {
             last_chainlock_height: value
                 .get("last_chainlock_height")
                 .and_then(|v| v.as_u64())
@@ -71,13 +67,7 @@ impl DiskStorageManager {
                 .and_then(|v| v.as_u64())
                 .map(|h| h as u32)
                 .unwrap_or(0),
-            ..Default::default()
         };
-
-        let range_start = state.sync_base_height;
-        if let Some(tip_height) = self.get_tip_height().await? {
-            state.headers = self.load_headers(range_start..tip_height + 1).await?;
-        }
 
         Ok(Some(state))
     }
@@ -340,11 +330,40 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
+        if self.get_tip_height().await.is_none_or(|tip_height| height > tip_height) {
+            return Ok(None);
+        }
+
+        if self.get_start_height().await.is_none_or(|start_height| height < start_height) {
+            return Ok(None);
+        }
+
         Ok(self.block_headers.write().await.get_items(height..height + 1).await?.first().copied())
     }
 
-    async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
-        Ok(self.block_headers.read().await.tip_height())
+    async fn get_tip_height(&self) -> Option<u32> {
+        self.block_headers.read().await.tip_height()
+    }
+
+    async fn get_start_height(&self) -> Option<u32> {
+        self.block_headers.read().await.start_height()
+    }
+
+    async fn get_stored_headers_len(&self) -> u32 {
+        let headers_guard = self.block_headers.read().await;
+        let start_height = if let Some(start_height) = headers_guard.start_height() {
+            start_height
+        } else {
+            return 0;
+        };
+
+        let end_height = if let Some(end_height) = headers_guard.tip_height() {
+            end_height
+        } else {
+            return 0;
+        };
+
+        end_height - start_height + 1
     }
 
     async fn store_filter_headers(
@@ -575,6 +594,7 @@ mod tests {
         storage.store_chain_state(&base_state).await?;
 
         storage.store_headers_at_height(&headers, checkpoint_height).await?;
+        assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
 
         // Verify headers are stored at correct blockchain heights
         let header_at_base = storage.get_header(checkpoint_height).await?;

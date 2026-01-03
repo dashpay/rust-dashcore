@@ -184,14 +184,17 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Returns the current chain tip hash if available.
     pub async fn tip_hash(&self) -> Option<dashcore::BlockHash> {
-        let state = self.state.read().await;
-        state.tip_hash()
+        let storage = self.storage.lock().await;
+
+        let tip_height = storage.get_tip_height().await?;
+        let header = storage.get_header(tip_height).await.ok()??;
+
+        Some(header.block_hash())
     }
 
     /// Returns the current chain tip height (absolute), accounting for checkpoint base.
     pub async fn tip_height(&self) -> u32 {
-        let state = self.state.read().await;
-        state.tip_height()
+        self.storage.lock().await.get_tip_height().await.unwrap_or(0)
     }
 
     /// Get current chain state (read-only).

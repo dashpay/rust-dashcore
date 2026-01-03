@@ -134,23 +134,9 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
     }
 
     /// Load headers from storage into the sync managers
-    pub async fn load_headers_from_storage(&mut self, storage: &S) -> SyncResult<u32> {
+    pub async fn load_headers_from_storage(&mut self, storage: &S) {
         // Load headers into the header sync manager
-        let loaded_count = self.header_sync.load_headers_from_storage(storage).await?;
-
-        if loaded_count > 0 {
-            tracing::info!("Sequential sync manager loaded {} headers from storage", loaded_count);
-
-            // Update the current phase if we have headers
-            // This helps the sync manager understand where to resume from
-            if matches!(self.current_phase, SyncPhase::Idle) {
-                // We have headers but haven't started sync yet
-                // The phase will be properly set when start_sync is called
-                tracing::debug!("Headers loaded but sync not started yet");
-            }
-        }
-
-        Ok(loaded_count)
+        self.header_sync.load_headers_from_storage(storage).await;
     }
 
     /// Get the earliest wallet birth height hint for the configured network, if available.
@@ -221,7 +207,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                     let base_hash = self.get_base_hash_from_storage(storage).await?;
 
                     // Request headers starting from our current tip
-                    self.header_sync.request_headers(network, base_hash).await?;
+                    self.header_sync.request_headers(network, base_hash, storage).await?;
                 } else {
                     // Otherwise start sync normally
                     self.header_sync.start_sync(network, storage).await?;
@@ -252,10 +238,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         &self,
         storage: &S,
     ) -> SyncResult<Option<BlockHash>> {
-        let current_tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
+        let current_tip_height = storage.get_tip_height().await;
 
         let base_hash = match current_tip_height {
             None => None,
@@ -269,11 +252,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         };
 
         Ok(base_hash)
-    }
-
-    /// Get the current chain height from the header sync manager
-    pub fn get_chain_height(&self) -> u32 {
-        self.header_sync.get_chain_height()
     }
 
     /// Get current sync progress template.
@@ -365,8 +343,8 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
     }
 
     /// Update the chain state (used for checkpoint sync initialization)
-    pub fn update_chain_state_cache(&mut self, sync_base_height: u32, headers_len: u32) {
-        self.header_sync.update_cached_from_state_snapshot(sync_base_height, headers_len);
+    pub fn update_chain_state_cache(&mut self, sync_base_height: u32) {
+        self.header_sync.update_cached_from_state_snapshot(sync_base_height);
     }
 
     /// Get reference to the masternode engine if available.
@@ -388,22 +366,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
     }
 
     /// Get the actual blockchain height from storage height, accounting for checkpoints
-    pub(super) async fn get_blockchain_height_from_storage(&self, storage: &S) -> SyncResult<u32> {
-        let storage_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| {
-                crate::error::SyncError::Storage(format!("Failed to get tip height: {}", e))
-            })?
-            .unwrap_or(0);
-
-        // Check if we're syncing from a checkpoint
-        if self.header_sync.is_synced_from_checkpoint() {
-            // For checkpoint sync, blockchain height = sync_base_height + storage_height
-            Ok(self.header_sync.get_sync_base_height() + storage_height)
-        } else {
-            // Normal sync: storage height IS the blockchain height
-            Ok(storage_height)
-        }
+    pub(super) async fn get_blockchain_height_from_storage(&self, storage: &S) -> u32 {
+        storage.get_tip_height().await.unwrap_or(0)
     }
 }

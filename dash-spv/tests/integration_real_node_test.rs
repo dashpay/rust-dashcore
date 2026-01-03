@@ -206,7 +206,7 @@ async fn test_real_header_sync_up_to_10k() {
             .expect("Failed to create tmp storage");
 
     // Verify starting from empty state
-    assert_eq!(storage.get_tip_height().await.unwrap(), None);
+    assert_eq!(storage.get_tip_height().await, None);
 
     let mut client = create_test_client(config.clone()).await.expect("Failed to create SPV client");
 

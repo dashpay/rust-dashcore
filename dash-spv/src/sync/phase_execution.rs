@@ -27,7 +27,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                     // Already prepared, just send the initial request
                     let base_hash = self.get_base_hash_from_storage(storage).await?;
 
-                    self.header_sync.request_headers(network, base_hash).await?;
+                    self.header_sync.request_headers(network, base_hash, storage).await?;
                 } else {
                     // Not prepared yet, start sync normally
                     self.header_sync.start_sync(network, storage).await?;
@@ -38,47 +38,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                 ..
             } => {
                 tracing::info!("📥 Starting masternode list download phase");
-                // Get the effective chain height from header sync which accounts for checkpoint base
-                let effective_height = self.header_sync.get_chain_height();
-                let sync_base_height = self.header_sync.get_sync_base_height();
-
-                // Also get the actual tip height to verify (blockchain height)
-                let storage_tip = storage
-                    .get_tip_height()
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to get storage tip: {}", e)))?;
-
-                // Debug: Check chain state
-                let chain_state = storage.load_chain_state().await.map_err(|e| {
-                    SyncError::Storage(format!("Failed to load chain state: {}", e))
-                })?;
-                let chain_state_height = chain_state.as_ref().map(|s| s.get_height()).unwrap_or(0);
-
-                tracing::info!(
-                    "Starting masternode sync: effective_height={}, sync_base={}, storage_tip={:?}, chain_state_height={}, expected_storage_index={}",
-                    effective_height,
-                    sync_base_height,
-                    storage_tip,
-                    chain_state_height,
-                    if sync_base_height > 0 { effective_height.saturating_sub(sync_base_height) } else { effective_height }
-                );
-
-                // Use the minimum of effective height and what's actually in storage
-                let _safe_height = if let Some(tip) = storage_tip {
-                    let storage_based_height = tip;
-                    if storage_based_height < effective_height {
-                        tracing::warn!(
-                            "Chain state height {} exceeds storage height {}, using storage height",
-                            effective_height,
-                            storage_based_height
-                        );
-                        storage_based_height
-                    } else {
-                        effective_height
-                    }
-                } else {
-                    effective_height
-                };
 
                 // Start masternode sync (unified processing)
                 match self.masternode_sync.start_sync(network, storage).await {
