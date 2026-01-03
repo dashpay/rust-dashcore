@@ -31,7 +31,6 @@ Supports (or should support)
 * Pay-to-contract support as in Appendix A of the [Blockstream sidechains whitepaper](https://www.blockstream.com/sidechains.pdf)
 * JSONRPC interaction with Dash Core
 * FFI bindings for C/Swift integration (dash-spv-ffi, key-wallet-ffi)
-* [Unified SDK](UNIFIED_SDK.md) option for iOS that combines Core and Platform functionality
 * [High-level wallet management](key-wallet-manager/README.md) with transaction building and UTXO management
 
 # Known limitations
@@ -111,7 +110,6 @@ Documentation can be found on [dashcore.readme.io/docs](https://dashcore.readme.
 ## Component Documentation
 
 * **[key-wallet-manager](key-wallet-manager/README.md)** - High-level wallet management guide
-* **[Unified SDK](UNIFIED_SDK.md)** - iOS SDK combining Core and Platform functionality
 
 # Contributing
 
