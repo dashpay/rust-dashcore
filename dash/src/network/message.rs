@@ -352,45 +352,21 @@ impl NetworkMessage {
             _ => CommandString::try_from_static(self.cmd()).expect("cmd returns valid commands"),
         }
     }
-}
 
-impl RawNetworkMessage {
-    /// Return the message command as a static string reference.
+    /// Serialize the message payload without V1 framing (magic/command/checksum).
     ///
-    /// This returns `"unknown"` for [NetworkMessage::Unknown],
-    /// regardless of the actual command in the unknown message.
-    /// Use the [Self::command] method to get the command for unknown messages.
-    pub fn cmd(&self) -> &'static str {
-        self.payload.cmd()
-    }
-
-    /// Return the CommandString for the message command.
-    pub fn command(&self) -> CommandString {
-        self.payload.command()
-    }
-}
-
-struct HeaderSerializationWrapper<'a>(&'a Vec<block::Header>);
-
-impl<'a> Encodable for HeaderSerializationWrapper<'a> {
-    #[inline]
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        let mut len = 0;
-        len += VarInt(self.0.len() as u64).consensus_encode(w)?;
-        for header in self.0.iter() {
-            len += header.consensus_encode(w)?;
-            len += 0u8.consensus_encode(w)?;
-        }
-        Ok(len)
-    }
-}
-
-impl Encodable for RawNetworkMessage {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        let mut len = 0;
-        len += self.magic.consensus_encode(w)?;
-        len += self.command().consensus_encode(w)?;
-        len += CheckedData(match self.payload {
+    /// This method returns the raw serialized bytes of the message payload,
+    /// suitable for use with V2 (BIP324) transport or other protocols that
+    /// handle framing separately.
+    ///
+    /// # Note on Headers serialization
+    ///
+    /// The `Headers` message is serialized with a trailing zero byte after each
+    /// header, representing an empty transaction count (VarInt). This matches
+    /// the Bitcoin/Dash protocol where headers messages reuse the block
+    /// serialization format but with no transactions.
+    pub fn consensus_encode_payload(&self) -> Vec<u8> {
+        match *self {
             NetworkMessage::Version(ref dat) => serialize(dat),
             NetworkMessage::Addr(ref dat) => serialize(dat),
             NetworkMessage::Inv(ref dat) => serialize(dat),
@@ -420,8 +396,19 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::BlockTxn(ref dat) => serialize(dat),
             NetworkMessage::Alert(ref dat) => serialize(dat),
             NetworkMessage::Reject(ref dat) => serialize(dat),
-            NetworkMessage::FeeFilter(ref data) => serialize(data),
+            NetworkMessage::FeeFilter(ref dat) => serialize(dat),
             NetworkMessage::AddrV2(ref dat) => serialize(dat),
+            NetworkMessage::GetMnListD(ref dat) => serialize(dat),
+            NetworkMessage::MnListDiff(ref dat) => serialize(dat),
+            NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
+            NetworkMessage::QRInfo(ref dat) => serialize(dat),
+            NetworkMessage::CLSig(ref dat) => serialize(dat),
+            NetworkMessage::ISLock(ref dat) => serialize(dat),
+            NetworkMessage::SendDsq(wants_dsq) => serialize(&(wants_dsq as u8)),
+            NetworkMessage::Unknown {
+                payload: ref data,
+                ..
+            } => data.clone(),
             NetworkMessage::Verack
             | NetworkMessage::SendHeaders
             | NetworkMessage::SendHeaders2
@@ -430,81 +417,29 @@ impl Encodable for RawNetworkMessage {
             | NetworkMessage::WtxidRelay
             | NetworkMessage::FilterClear
             | NetworkMessage::SendAddrV2 => vec![],
-            NetworkMessage::Unknown {
-                payload: ref data,
-                ..
-            } => serialize(data),
-            NetworkMessage::GetMnListD(ref dat) => serialize(dat),
-            NetworkMessage::MnListDiff(ref dat) => serialize(dat),
-            NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
-            NetworkMessage::QRInfo(ref dat) => serialize(dat),
-            NetworkMessage::CLSig(ref dat) => serialize(dat),
-            NetworkMessage::ISLock(ref dat) => serialize(dat),
-            NetworkMessage::SendDsq(wants_dsq) => serialize(&(wants_dsq as u8)),
-        })
-        .consensus_encode(w)?;
-        Ok(len)
-    }
-}
-
-struct HeaderDeserializationWrapper(Vec<block::Header>);
-
-impl Decodable for HeaderDeserializationWrapper {
-    #[inline]
-    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
-        r: &mut R,
-    ) -> Result<Self, encode::Error> {
-        let len = VarInt::consensus_decode(r)?.0;
-        // should be above usual number of items to avoid
-        // allocation
-        let mut ret = Vec::with_capacity(core::cmp::min(1024 * 16, len as usize));
-        for _ in 0..len {
-            ret.push(Decodable::consensus_decode(r)?);
-            if u8::consensus_decode(r)? != 0u8 {
-                return Err(encode::Error::ParseFailed(
-                    "Headers message should not contain transactions",
-                ));
-            }
         }
-        Ok(HeaderDeserializationWrapper(ret))
     }
 
-    #[inline]
-    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
-        Self::consensus_decode_from_finite_reader(r.take(MAX_MSG_SIZE as u64).by_ref())
-    }
-}
-
-impl Decodable for RawNetworkMessage {
-    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
-        r: &mut R,
-    ) -> Result<Self, encode::Error> {
-        let magic = Decodable::consensus_decode_from_finite_reader(r)?;
-        let cmd = CommandString::consensus_decode_from_finite_reader(r)?;
-        let raw_payload = match CheckedData::consensus_decode_from_finite_reader(r) {
-            Ok(cd) => cd.0,
-            Err(encode::Error::InvalidChecksum {
-                expected,
-                actual,
-            }) => {
-                // Include message command and magic in logging to aid diagnostics
-                log::warn!(
-                    "Invalid payload checksum for network message '{}' (magic {:#x}): expected {:02x?}, actual {:02x?}",
-                    cmd.0,
-                    magic,
-                    expected,
-                    actual
-                );
-                return Err(encode::Error::InvalidChecksum {
-                    expected,
-                    actual,
-                });
-            }
-            Err(e) => return Err(e),
-        };
-
-        let mut mem_d = io::Cursor::new(raw_payload);
-        let payload = match &cmd.0[..] {
+    /// Decode a message payload from raw bytes given a command string.
+    ///
+    /// This method decodes the raw payload bytes into a `NetworkMessage` variant
+    /// based on the command string. It handles all standard Bitcoin and Dash-specific
+    /// message types, including special cases like `Headers` which has trailing
+    /// transaction count bytes.
+    ///
+    /// This is the inverse of [`consensus_encode_payload`], suitable for use with
+    /// V2 (BIP324) transport or other protocols that handle framing separately.
+    ///
+    /// # Arguments
+    /// * `cmd` - The command string identifying the message type (e.g., "version", "headers")
+    /// * `payload` - The raw payload bytes to decode
+    ///
+    /// # Returns
+    /// * `Ok(NetworkMessage)` - Successfully decoded message
+    /// * `Err(encode::Error)` - Decoding failed
+    pub fn consensus_decode_payload(cmd: &str, payload: &[u8]) -> Result<Self, encode::Error> {
+        let mut mem_d = io::Cursor::new(payload);
+        let message = match cmd {
             "version" => {
                 NetworkMessage::Version(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
             }
@@ -650,10 +585,113 @@ impl Decodable for RawNetworkMessage {
                 NetworkMessage::SendDsq(byte != 0)
             }
             _ => NetworkMessage::Unknown {
-                command: cmd,
-                payload: mem_d.into_inner(),
+                command: CommandString::try_from(cmd.to_string())
+                    .map_err(|_| encode::Error::ParseFailed("Invalid command string"))?,
+                payload: payload.to_vec(),
             },
         };
+        Ok(message)
+    }
+}
+
+impl RawNetworkMessage {
+    /// Return the message command as a static string reference.
+    ///
+    /// This returns `"unknown"` for [NetworkMessage::Unknown],
+    /// regardless of the actual command in the unknown message.
+    /// Use the [Self::command] method to get the command for unknown messages.
+    pub fn cmd(&self) -> &'static str {
+        self.payload.cmd()
+    }
+
+    /// Return the CommandString for the message command.
+    pub fn command(&self) -> CommandString {
+        self.payload.command()
+    }
+}
+
+struct HeaderSerializationWrapper<'a>(&'a Vec<block::Header>);
+
+impl<'a> Encodable for HeaderSerializationWrapper<'a> {
+    #[inline]
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        let mut len = 0;
+        len += VarInt(self.0.len() as u64).consensus_encode(w)?;
+        for header in self.0.iter() {
+            len += header.consensus_encode(w)?;
+            len += 0u8.consensus_encode(w)?;
+        }
+        Ok(len)
+    }
+}
+
+impl Encodable for RawNetworkMessage {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        let mut len = 0;
+        len += self.magic.consensus_encode(w)?;
+        len += self.command().consensus_encode(w)?;
+        len += CheckedData(self.payload.consensus_encode_payload()).consensus_encode(w)?;
+        Ok(len)
+    }
+}
+
+struct HeaderDeserializationWrapper(Vec<block::Header>);
+
+impl Decodable for HeaderDeserializationWrapper {
+    #[inline]
+    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
+        let len = VarInt::consensus_decode(r)?.0;
+        // should be above usual number of items to avoid
+        // allocation
+        let mut ret = Vec::with_capacity(core::cmp::min(1024 * 16, len as usize));
+        for _ in 0..len {
+            ret.push(Decodable::consensus_decode(r)?);
+            if u8::consensus_decode(r)? != 0u8 {
+                return Err(encode::Error::ParseFailed(
+                    "Headers message should not contain transactions",
+                ));
+            }
+        }
+        Ok(HeaderDeserializationWrapper(ret))
+    }
+
+    #[inline]
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        Self::consensus_decode_from_finite_reader(r.take(MAX_MSG_SIZE as u64).by_ref())
+    }
+}
+
+impl Decodable for RawNetworkMessage {
+    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
+        let magic = Decodable::consensus_decode_from_finite_reader(r)?;
+        let cmd = CommandString::consensus_decode_from_finite_reader(r)?;
+        let raw_payload = match CheckedData::consensus_decode_from_finite_reader(r) {
+            Ok(cd) => cd.0,
+            Err(encode::Error::InvalidChecksum {
+                expected,
+                actual,
+            }) => {
+                // Include message command and magic in logging to aid diagnostics
+                log::warn!(
+                    "Invalid payload checksum for network message '{}' (magic {:#x}): expected {:02x?}, actual {:02x?}",
+                    cmd.0,
+                    magic,
+                    expected,
+                    actual
+                );
+                return Err(encode::Error::InvalidChecksum {
+                    expected,
+                    actual,
+                });
+            }
+            Err(e) => return Err(e),
+        };
+
+        let payload = NetworkMessage::consensus_decode_payload(&cmd.0, &raw_payload)?;
         Ok(RawNetworkMessage {
             magic,
             payload,
@@ -1045,5 +1083,212 @@ mod test {
     fn test_senddsq_command_string() {
         let msg = NetworkMessage::SendDsq(true);
         assert_eq!(msg.cmd(), "senddsq");
+    }
+
+    // =========================================================================
+    // V2 Transport Payload Encode/Decode Tests
+    // These tests verify consensus_encode_payload and consensus_decode_payload
+    // for use with BIP324 V2 encrypted transport.
+    // =========================================================================
+
+    /// Helper to test round-trip encoding/decoding for a message
+    fn test_payload_round_trip(msg: &NetworkMessage) {
+        let encoded = msg.consensus_encode_payload();
+        let decoded = NetworkMessage::consensus_decode_payload(msg.cmd(), &encoded)
+            .expect(&format!("Failed to decode {} message", msg.cmd()));
+        assert_eq!(msg, &decoded, "Round-trip failed for {} message", msg.cmd());
+    }
+
+    #[test]
+    #[cfg(feature = "core-block-hash-use-x11")]
+    fn test_encode_decode_standard_bitcoin_messages() {
+        // Use deserialized test data to avoid complex construction
+        let tx: Transaction = deserialize(&hex!("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000")).unwrap();
+        let block: Block = deserialize(&include_bytes!("../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw")[..]).unwrap();
+        let header: block::Header = deserialize(&hex!("010000004ddccd549d28f385ab457e98d1b11ce80bfea2c5ab93015ade4973e400000000bf4473e53794beae34e64fccc471dace6ae544180816f89591894e0f417a914cd74d6e49ffff001d323b3a7b")).unwrap();
+
+        let inv = vec![Inventory::Transaction(hash([3u8; 32]).into())];
+
+        let messages: Vec<NetworkMessage> = vec![
+            NetworkMessage::Ping(0x1234567890abcdef),
+            NetworkMessage::Pong(0xfedcba0987654321),
+            NetworkMessage::Inv(inv.clone()),
+            NetworkMessage::GetData(inv.clone()),
+            NetworkMessage::NotFound(inv),
+            NetworkMessage::GetBlocks(GetBlocksMessage {
+                version: 70015,
+                locator_hashes: vec![hash_x11([4u8; 32]).into()],
+                stop_hash: hash_x11([5u8; 32]).into(),
+            }),
+            NetworkMessage::GetHeaders(GetHeadersMessage {
+                version: 70015,
+                locator_hashes: vec![hash_x11([6u8; 32]).into()],
+                stop_hash: hash_x11([7u8; 32]).into(),
+            }),
+            NetworkMessage::Headers(vec![header]),
+            NetworkMessage::Tx(tx),
+            NetworkMessage::Block(block),
+            NetworkMessage::FilterLoad(FilterLoad {
+                filter: vec![0x01, 0x02, 0x03],
+                hash_funcs: 11,
+                tweak: 0x12345678,
+                flags: BloomFlags::All,
+            }),
+            NetworkMessage::FilterAdd(FilterAdd {
+                data: vec![0xaa, 0xbb, 0xcc],
+            }),
+            NetworkMessage::SendCmpct(SendCmpct {
+                send_compact: true,
+                version: 1,
+            }),
+            NetworkMessage::GetCFilters(GetCFilters {
+                filter_type: 0,
+                start_height: 100,
+                stop_hash: hash_x11([8u8; 32]).into(),
+            }),
+            NetworkMessage::GetCFHeaders(GetCFHeaders {
+                filter_type: 0,
+                start_height: 100,
+                stop_hash: hash_x11([9u8; 32]).into(),
+            }),
+            NetworkMessage::GetCFCheckpt(GetCFCheckpt {
+                filter_type: 0,
+                stop_hash: hash_x11([10u8; 32]).into(),
+            }),
+        ];
+
+        for msg in &messages {
+            test_payload_round_trip(msg);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "core-block-hash-use-x11")]
+    fn test_encode_decode_dash_specific_messages() {
+        use crate::bls_sig_utils::BLSSignature;
+        use crate::hash_types::CycleHash;
+        use crate::network::message_sml::GetMnListDiff;
+        use crate::{ChainLock, InstantLock};
+
+        let messages: Vec<NetworkMessage> = vec![
+            NetworkMessage::SendDsq(true),
+            NetworkMessage::SendDsq(false),
+            NetworkMessage::GetMnListD(GetMnListDiff {
+                base_block_hash: hash_x11([1u8; 32]).into(),
+                block_hash: hash_x11([2u8; 32]).into(),
+            }),
+            NetworkMessage::CLSig(ChainLock {
+                block_height: 123456,
+                block_hash: hash_x11([3u8; 32]).into(),
+                signature: BLSSignature::from([0u8; 96]),
+            }),
+            NetworkMessage::ISLock(InstantLock {
+                version: 1,
+                inputs: vec![],
+                txid: hash([4u8; 32]).into(),
+                cyclehash: CycleHash::from([5u8; 32]),
+                signature: BLSSignature::from([0u8; 96]),
+            }),
+            NetworkMessage::GetHeaders2(GetHeadersMessage {
+                version: 70015,
+                locator_hashes: vec![hash_x11([6u8; 32]).into()],
+                stop_hash: hash_x11([7u8; 32]).into(),
+            }),
+            NetworkMessage::SendHeaders2,
+        ];
+
+        for msg in &messages {
+            test_payload_round_trip(msg);
+        }
+    }
+
+    #[test]
+    fn test_encode_decode_empty_payload_messages() {
+        let empty_payload_messages: Vec<NetworkMessage> = vec![
+            NetworkMessage::Verack,
+            NetworkMessage::SendHeaders,
+            NetworkMessage::SendHeaders2,
+            NetworkMessage::MemPool,
+            NetworkMessage::GetAddr,
+            NetworkMessage::WtxidRelay,
+            NetworkMessage::FilterClear,
+            NetworkMessage::SendAddrV2,
+        ];
+
+        for msg in &empty_payload_messages {
+            // Verify encoding produces empty payload
+            let encoded = msg.consensus_encode_payload();
+            assert!(
+                encoded.is_empty(),
+                "{} should have empty payload, got {} bytes",
+                msg.cmd(),
+                encoded.len()
+            );
+
+            // Verify decoding works with empty payload
+            let decoded = NetworkMessage::consensus_decode_payload(msg.cmd(), &[])
+                .expect(&format!("Failed to decode empty {} message", msg.cmd()));
+            assert_eq!(msg, &decoded, "Empty payload round-trip failed for {}", msg.cmd());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "core-block-hash-use-x11")]
+    fn test_headers_message_special_encoding() {
+        let header = block::Header {
+            version: block::Version::from_consensus(1),
+            prev_blockhash: hash_x11([1u8; 32]).into(),
+            merkle_root: hash([2u8; 32]).into(),
+            time: 1234567890,
+            bits: crate::pow::CompactTarget::from_consensus(0x1d00ffff),
+            nonce: 42,
+        };
+
+        // Test empty headers
+        let empty_headers = NetworkMessage::Headers(vec![]);
+        let encoded = empty_headers.consensus_encode_payload();
+        assert_eq!(encoded, vec![0x00], "Empty headers should encode to single 0x00 varint");
+        test_payload_round_trip(&empty_headers);
+
+        // Test single header
+        let single_header = NetworkMessage::Headers(vec![header.clone()]);
+        let encoded = single_header.consensus_encode_payload();
+        // Should be: varint(1) + header_bytes + 0x00 (tx count)
+        // Header is 80 bytes, so total should be 1 + 80 + 1 = 82 bytes
+        assert_eq!(encoded.len(), 82, "Single header should be 82 bytes");
+        assert_eq!(encoded[81], 0x00, "Header should have trailing zero tx count");
+        test_payload_round_trip(&single_header);
+
+        // Test multiple headers
+        let multi_headers = NetworkMessage::Headers(vec![header.clone(), header.clone(), header]);
+        let encoded = multi_headers.consensus_encode_payload();
+        // Should be: varint(3) + 3 * (header + 0x00) = 1 + 3*81 = 244 bytes
+        assert_eq!(encoded.len(), 244, "Three headers should be 244 bytes");
+        test_payload_round_trip(&multi_headers);
+    }
+
+    #[test]
+    fn test_encode_decode_unknown_message() {
+        // Create an Unknown message with a custom command and payload
+        let unknown_msg = NetworkMessage::Unknown {
+            command: CommandString::try_from_static("custom").unwrap(),
+            payload: vec![0xaa, 0xbb, 0xcc, 0xdd],
+        };
+
+        // Test encoding - should return raw payload bytes without length prefix
+        let encoded = unknown_msg.consensus_encode_payload();
+        assert_eq!(
+            encoded,
+            vec![0xaa, 0xbb, 0xcc, 0xdd],
+            "Unknown message should encode to raw payload bytes without length prefix"
+        );
+
+        // Test decoding with the actual command (not "unknown")
+        // Note: We must use command() not cmd() because cmd() returns "unknown" for Unknown variants
+        let cmd = unknown_msg.command();
+        let decoded = NetworkMessage::consensus_decode_payload(cmd.as_ref(), &encoded)
+            .expect("Failed to decode unknown message");
+
+        assert_eq!(unknown_msg, decoded, "Round-trip failed for unknown message");
     }
 }

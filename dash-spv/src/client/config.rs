@@ -7,6 +7,7 @@ use std::time::Duration;
 use dashcore::Network;
 // Serialization removed due to complex Address types
 
+use crate::network::transport::TransportPreference;
 use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
@@ -152,6 +153,10 @@ pub struct ClientConfig {
 
     /// Timeout for QRInfo requests (default: 30 seconds).
     pub qr_info_timeout: Duration,
+
+    /// Transport preference for peer connections (V1, V2, or V2 with fallback).
+    /// Default is V2Preferred: try V2 encrypted transport first, fall back to V1.
+    pub transport_preference: TransportPreference,
 }
 
 impl Default for ClientConfig {
@@ -201,6 +206,8 @@ impl Default for ClientConfig {
             // QRInfo defaults (simplified per plan)
             qr_info_extra_share: false, // Matches DMLviewer.patch default
             qr_info_timeout: Duration::from_secs(30),
+            // Transport preference (BIP324 v2 encrypted by default with v1 fallback)
+            transport_preference: TransportPreference::default(),
         }
     }
 }
@@ -339,6 +346,16 @@ impl ClientConfig {
     /// Set QRInfo request timeout.
     pub fn with_qr_info_timeout(mut self, timeout: Duration) -> Self {
         self.qr_info_timeout = timeout;
+        self
+    }
+
+    /// Set transport preference for peer connections.
+    ///
+    /// - `V2Preferred` (default): Try BIP324 v2 encrypted transport first, fall back to v1
+    /// - `V2Only`: Require BIP324 v2 encrypted transport, fail if peer doesn't support it
+    /// - `V1Only`: Use traditional unencrypted v1 transport only
+    pub fn with_transport_preference(mut self, preference: TransportPreference) -> Self {
+        self.transport_preference = preference;
         self
     }
 
