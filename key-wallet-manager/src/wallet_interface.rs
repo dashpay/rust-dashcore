@@ -2,11 +2,28 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
+use crate::wallet_manager::matching::{FilterMatchInput, FilterMatchOutput};
 use alloc::string::String;
+use alloc::vec::Vec;
 use async_trait::async_trait;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Block, Transaction, Txid};
+use dashcore::{Block, BlockHash, Transaction, Txid};
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FilterMatchKey {
+    pub block_height: CoreBlockHeight,
+    pub block_hash: BlockHash,
+}
+
+impl FilterMatchKey {
+    pub fn new(height: CoreBlockHeight, hash: BlockHash) -> Self {
+        Self {
+            block_height: height,
+            block_hash: hash,
+        }
+    }
+}
 
 /// Trait for wallet implementations to receive SPV events
 #[async_trait]
@@ -25,6 +42,10 @@ pub trait WalletInterface: Send + Sync + 'static {
         filter: &BlockFilter,
         block_hash: &dashcore::BlockHash,
     ) -> bool;
+
+    /// Check compact filters against watched addresses in batch
+    /// Returns map of filter keys to match results
+    async fn check_compact_filters(&self, input: FilterMatchInput) -> FilterMatchOutput;
 
     /// Return the wallet's per-transaction net change and involved addresses if known.
     /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.

@@ -7,7 +7,7 @@ mod tests {
     use crate::storage::DiskStorageManager;
     use crate::types::{SpvEvent, SpvStats};
     use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
-
+    use key_wallet_manager::wallet_manager::matching::{FilterMatchInput, FilterMatchOutput};
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
@@ -60,6 +60,10 @@ mod tests {
         ) -> bool {
             // Return true for all filters in test
             true
+        }
+
+        async fn check_compact_filters(&self, input: FilterMatchInput) -> FilterMatchOutput {
+            input.keys().cloned().collect()
         }
 
         async fn describe(&self) -> String {
@@ -261,6 +265,10 @@ mod tests {
             ) -> bool {
                 // Always return false - filter doesn't match
                 false
+            }
+
+            async fn check_compact_filters(&self, _input: FilterMatchInput) -> FilterMatchOutput {
+                FilterMatchOutput::new()
             }
 
             async fn describe(&self) -> String {

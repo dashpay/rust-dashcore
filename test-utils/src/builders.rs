@@ -195,6 +195,64 @@ pub fn random_block_hash() -> BlockHash {
     BlockHash::from_slice(&bytes).unwrap()
 }
 
+/// Create a test transaction paying to a specific script
+pub fn create_test_transaction_to_script(script: ScriptBuf) -> Transaction {
+    Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([1u8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: 1000,
+            script_pubkey: script,
+        }],
+        special_transaction_payload: None,
+    }
+}
+
+/// Create a test block with given height and transactions
+pub fn create_test_block(height: u32, transactions: Vec<Transaction>) -> dashcore::Block {
+    dashcore::Block {
+        header: Header {
+            version: block::Version::ONE,
+            prev_blockhash: BlockHash::from_byte_array([height as u8; 32]),
+            merkle_root: TxMerkleNode::from_byte_array([0u8; 32]),
+            time: height,
+            bits: dashcore::CompactTarget::from_consensus(0x1d00ffff),
+            nonce: height,
+        },
+        txdata: transactions,
+    }
+}
+
+/// Create a BIP158 compact block filter for a block
+pub fn create_filter_for_block(block: &dashcore::Block) -> dashcore::bip158::BlockFilter {
+    use dashcore::bip158::BlockFilterWriter;
+    let mut content = Vec::new();
+    let mut writer = BlockFilterWriter::new(&mut content, block);
+    writer.add_output_scripts();
+    writer.finish().expect("Failed to finish filter");
+    dashcore::bip158::BlockFilter::new(&content)
+}
+
+/// Create a deterministic test address from an index
+pub fn test_address(idx: usize) -> dashcore::Address {
+    use dashcore::secp256k1::{Secp256k1, SecretKey};
+    let secp = Secp256k1::new();
+    let mut key_bytes = [0u8; 32];
+    key_bytes[31] = (idx as u8) + 1;
+    let secret_key = SecretKey::from_slice(&key_bytes).expect("valid secret key");
+    let public_key = dashcore::PublicKey::new(secret_key.public_key(&secp));
+    dashcore::Address::p2pkh(&public_key, dashcore::Network::Testnet)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

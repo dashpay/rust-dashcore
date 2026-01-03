@@ -4,6 +4,7 @@
 //! each of which can have multiple accounts. This follows the architecture
 //! pattern where a manager oversees multiple distinct wallets.
 
+pub mod matching;
 mod process_block;
 mod transaction_building;
 

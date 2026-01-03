@@ -8,16 +8,16 @@
 //! - Efficient filter matching using BIP158 algorithms
 //! - Block download coordination for matches
 
+use crate::error::{SyncError, SyncResult};
+use crate::network::NetworkManager;
+use crate::storage::StorageManager;
 use dashcore::{
     bip158::{BlockFilterReader, Error as Bip158Error},
     network::message::NetworkMessage,
     network::message_blockdata::Inventory,
     BlockHash, ScriptBuf,
 };
-
-use crate::error::{SyncError, SyncResult};
-use crate::network::NetworkManager;
-use crate::storage::StorageManager;
+use key_wallet_manager::wallet_manager::matching::{FilterMatchInput, FilterMatchOutput};
 
 impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     pub async fn check_filter_for_matches<
@@ -39,6 +39,16 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
         } else {
             Ok(false)
         }
+    }
+
+    pub async fn check_filters_for_matches<
+        W: key_wallet_manager::wallet_interface::WalletInterface,
+    >(
+        &self,
+        input_map: FilterMatchInput,
+        wallet: &W,
+    ) -> FilterMatchOutput {
+        wallet.check_compact_filters(input_map).await
     }
 
     /// Check if filter matches any of the provided scripts using BIP158 GCS filter.
