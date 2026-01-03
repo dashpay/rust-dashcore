@@ -230,7 +230,7 @@ async fn test_update_state_flag_behavior() {
         let address = managed_account
             .next_receive_address(Some(&xpub), true)
             .expect("Failed to generate receive address");
-        let balance = managed_account.balance.confirmed;
+        let balance = managed_account.balance.spendable();
         let tx_count = managed_account.transactions.len();
         (address, balance, tx_count)
     };
@@ -261,7 +261,8 @@ async fn test_update_state_flag_behavior() {
             .first_bip44_managed_account_mut()
             .expect("Failed to get first BIP44 managed account");
         assert_eq!(
-            managed_account.balance.confirmed, initial_balance,
+            managed_account.balance.spendable(),
+            initial_balance,
             "Balance should not change when update_state=false"
         );
         assert_eq!(
@@ -296,7 +297,7 @@ async fn test_update_state_flag_behavior() {
             .expect("Failed to get first BIP44 managed account");
         println!(
             "After update_state=true: balance={}, tx_count={}",
-            managed_account.balance.confirmed,
+            managed_account.balance.spendable(),
             managed_account.transactions.len()
         );
     }

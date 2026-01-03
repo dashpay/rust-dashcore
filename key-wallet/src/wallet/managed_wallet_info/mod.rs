@@ -120,30 +120,6 @@ impl ManagedWalletInfo {
     pub fn increment_transactions(&mut self) {
         self.metadata.total_transactions += 1;
     }
-
-    /// Get total wallet balance by recalculating from all accounts (for verification)
-    pub fn calculate_balance(&self) -> WalletBalance {
-        let mut confirmed = 0u64;
-        let mut unconfirmed = 0u64;
-        let mut locked = 0u64;
-
-        // Sum balances from all accounts across all networks
-        for account in self.accounts.all_accounts() {
-            for utxo in account.utxos.values() {
-                let value = utxo.txout.value;
-                if utxo.is_locked {
-                    locked += value;
-                } else if utxo.is_confirmed {
-                    confirmed += value;
-                } else {
-                    unconfirmed += value;
-                }
-            }
-        }
-
-        WalletBalance::new(confirmed, unconfirmed, locked)
-            .unwrap_or_else(|_| WalletBalance::default())
-    }
 }
 
 /// Re-export types from account module for convenience

@@ -64,10 +64,10 @@ pub struct FFIBalance {
 impl From<key_wallet::WalletBalance> for FFIBalance {
     fn from(balance: key_wallet::WalletBalance) -> Self {
         FFIBalance {
-            confirmed: balance.confirmed,
-            unconfirmed: balance.unconfirmed,
-            immature: balance.locked, // Map locked to immature for now
-            total: balance.total,
+            confirmed: balance.spendable(),
+            unconfirmed: balance.unconfirmed(),
+            immature: balance.locked(), // Map locked to immature for now
+            total: balance.total(),
         }
     }
 }

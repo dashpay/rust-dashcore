@@ -880,7 +880,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
     /// Get total balance across all wallets and networks
     pub fn get_total_balance(&self) -> u64 {
-        self.wallet_infos.values().map(|info| info.balance().total).sum()
+        self.wallet_infos.values().map(|info| info.balance().total()).sum()
     }
 
     /// Get balance for a specific wallet

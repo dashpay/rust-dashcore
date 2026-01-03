@@ -513,10 +513,10 @@ pub unsafe extern "C" fn managed_account_get_balance(
     let balance = &account.inner().balance;
 
     *balance_out = crate::types::FFIBalance {
-        confirmed: balance.confirmed,
-        unconfirmed: balance.unconfirmed,
+        confirmed: balance.spendable(),
+        unconfirmed: balance.unconfirmed(),
         immature: 0, // WalletBalance doesn't have immature field
-        total: balance.total,
+        total: balance.total(),
     };
 
     true

@@ -813,7 +813,7 @@ mod tests {
 
         // Verify balance is still zero
         assert_eq!(
-            managed_wallet.balance().total,
+            managed_wallet.balance().total(),
             0,
             "Balance should be zero while coinbase is immature"
         );
