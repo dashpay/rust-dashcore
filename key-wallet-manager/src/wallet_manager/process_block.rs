@@ -37,7 +37,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
         }
 
-        self.current_height = height;
+        self.update_height(height);
 
         relevant_txids
     }
