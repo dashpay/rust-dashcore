@@ -8,6 +8,7 @@ mod tests {
     use crate::types::{SpvEvent, SpvStats};
     use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
 
+    use key_wallet_manager::BlockProcessingResult;
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
@@ -40,12 +41,15 @@ mod tests {
 
     #[async_trait::async_trait]
     impl key_wallet_manager::wallet_interface::WalletInterface for MockWallet {
-        async fn process_block(&mut self, block: &Block, height: u32) -> Vec<dashcore::Txid> {
+        async fn process_block(&mut self, block: &Block, height: u32) -> BlockProcessingResult {
             let mut processed = self.processed_blocks.lock().await;
             processed.push((block.block_hash(), height));
 
             // Return txids of all transactions in block as "relevant"
-            block.txdata.iter().map(|tx| tx.txid()).collect()
+            BlockProcessingResult {
+                relevant_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
+                new_addresses: Vec::new(),
+            }
         }
 
         async fn process_mempool_transaction(&mut self, tx: &Transaction) {
@@ -248,8 +252,12 @@ mod tests {
 
         #[async_trait::async_trait]
         impl key_wallet_manager::wallet_interface::WalletInterface for NonMatchingWallet {
-            async fn process_block(&mut self, _block: &Block, _height: u32) -> Vec<dashcore::Txid> {
-                Vec::new()
+            async fn process_block(
+                &mut self,
+                _block: &Block,
+                _height: u32,
+            ) -> BlockProcessingResult {
+                BlockProcessingResult::default()
             }
 
             async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}

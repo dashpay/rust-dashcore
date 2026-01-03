@@ -220,11 +220,11 @@ impl<W: WalletInterface, S: StorageManager> BlockProcessor<W, S> {
 
         // Process block with wallet
         let mut wallet = self.wallet.write().await;
-        let txids = wallet.process_block(&block, height).await;
-        if !txids.is_empty() {
+        let result = wallet.process_block(&block, height).await;
+        if !result.relevant_txids.is_empty() {
             tracing::info!(
                 "🎯 Wallet found {} relevant transactions in block {} at height {}",
-                txids.len(),
+                result.relevant_txids.len(),
                 block_hash,
                 height
             );
@@ -236,7 +236,7 @@ impl<W: WalletInterface, S: StorageManager> BlockProcessor<W, S> {
             }
 
             // Emit TransactionDetected events for each relevant transaction
-            for txid in &txids {
+            for txid in &result.relevant_txids {
                 if let Some(tx) = block.txdata.iter().find(|t| &t.txid() == txid) {
                     // Ask the wallet for the precise effect of this transaction
                     let effect = wallet.transaction_effect(tx).await;
@@ -269,7 +269,7 @@ impl<W: WalletInterface, S: StorageManager> BlockProcessor<W, S> {
             height,
             hash: block_hash.to_string(),
             transactions_count: block.txdata.len(),
-            relevant_transactions: txids.len(),
+            relevant_transactions: result.relevant_txids.len(),
         });
 
         // Update chain state if needed
