@@ -127,7 +127,7 @@ fn main() {
     for (i, wallet_id) in [wallet_id, wallet_id2].iter().enumerate() {
         match manager.get_wallet_balance(wallet_id) {
             Ok(balance) => {
-                println!("   Wallet {}: {} satoshis", i + 1, balance.total);
+                println!("   Wallet {}: {} satoshis", i + 1, balance.total());
             }
             Err(e) => {
                 println!("   Wallet {}: Error - {:?}", i + 1, e);

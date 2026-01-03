@@ -202,7 +202,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn update_balance(&mut self) {
-        let mut confirmed = 0u64;
+        let mut spendable = 0u64;
         let mut unconfirmed = 0u64;
         let mut locked = 0u64;
 
@@ -212,16 +212,14 @@ impl WalletInfoInterface for ManagedWalletInfo {
                 if utxo.is_locked {
                     locked += value;
                 } else if utxo.is_confirmed {
-                    confirmed += value;
+                    spendable += value;
                 } else {
                     unconfirmed += value;
                 }
             }
         }
 
-        // Update balance, ignoring overflow errors as we're recalculating from scratch
-        self.balance = WalletBalance::new(confirmed, unconfirmed, locked)
-            .unwrap_or_else(|_| WalletBalance::default());
+        self.balance = WalletBalance::new(spendable, unconfirmed, locked)
     }
 
     fn transaction_history(&self) -> Vec<&TransactionRecord> {

@@ -169,7 +169,8 @@ async fn test_transaction_routing_to_bip32_account() {
             .first_bip32_managed_account_mut()
             .expect("Failed to get first BIP32 managed account");
         assert_eq!(
-            managed_account.balance.confirmed, 0,
+            managed_account.balance.spendable(),
+            0,
             "Balance should not be updated when update_state is false"
         );
     }
