@@ -3,6 +3,7 @@
 //! This trait allows WalletManager to work with different wallet info implementations
 
 use super::managed_account_operations::ManagedAccountOperations;
+use crate::account::ManagedAccountTrait;
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::immature_transaction::{ImmatureTransaction, ImmatureTransactionCollection};
@@ -206,17 +207,12 @@ impl WalletInfoInterface for ManagedWalletInfo {
         let mut unconfirmed = 0u64;
         let mut locked = 0u64;
 
-        for account in self.accounts.all_accounts() {
-            for utxo in account.utxos.values() {
-                let value = utxo.txout.value;
-                if utxo.is_locked {
-                    locked += value;
-                } else if utxo.is_confirmed {
-                    spendable += value;
-                } else {
-                    unconfirmed += value;
-                }
-            }
+        for account in self.accounts.all_accounts_mut() {
+            account.update_balance();
+            let account_balance = account.balance();
+            spendable += account_balance.spendable();
+            unconfirmed += account_balance.unconfirmed();
+            locked += account_balance.locked();
         }
 
         self.balance = WalletBalance::new(spendable, unconfirmed, locked)
