@@ -272,63 +272,12 @@ impl ChainState {
         Self::default()
     }
 
-    /// Whether the chain was synced from a checkpoint rather than genesis.
-    pub fn synced_from_checkpoint(&self) -> bool {
-        self.sync_base_height > 0
-    }
-
-    /// Update chain lock status
-    pub fn update_chain_lock(&mut self, height: u32, hash: BlockHash) {
-        // Only update if this is a newer chain lock
-        if self.last_chainlock_height.is_none_or(|h| height > h) {
-            self.last_chainlock_height = Some(height);
-            self.last_chainlock_hash = Some(hash);
-        }
-    }
-
-    /// Check if a block at given height is chain-locked
-    pub fn is_height_chain_locked(&self, height: u32) -> bool {
-        self.last_chainlock_height.is_some_and(|locked_height| height <= locked_height)
-    }
-
-    /// Check if we have a chain lock
-    pub fn has_chain_lock(&self) -> bool {
-        self.last_chainlock_height.is_some()
-    }
-
-    /// Get the last chain-locked height
-    pub fn get_last_chainlock_height(&self) -> Option<u32> {
-        self.last_chainlock_height
-    }
-
-    /// Get filter matched heights (placeholder for now)
-    /// In a real implementation, this would track heights where filters matched wallet transactions
-    pub fn get_filter_matched_heights(&self) -> Option<Vec<u32>> {
-        // For now, return an empty vector as we don't track this yet
-        // This would typically be populated during filter sync when matches are found
-        Some(Vec::new())
-    }
-
     /// Initialize chain state from a checkpoint.
     pub fn init_from_checkpoint(&mut self, checkpoint_height: u32) {
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
 
         tracing::info!("Initialized ChainState from checkpoint - height: {}", checkpoint_height);
-    }
-
-    /// Get the absolute height for a given index in our headers vector.
-    pub fn index_to_height(&self, index: usize) -> u32 {
-        self.sync_base_height + index as u32
-    }
-
-    /// Get the index in our headers vector for a given absolute height.
-    pub fn height_to_index(&self, height: u32) -> Option<usize> {
-        if height < self.sync_base_height {
-            None
-        } else {
-            Some((height - self.sync_base_height) as usize)
-        }
     }
 }
 
