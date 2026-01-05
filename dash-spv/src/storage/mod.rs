@@ -155,6 +155,7 @@ impl DiskStorageManager {
         let transactions = Arc::clone(&self.transactions);
         let metadata = Arc::clone(&self.metadata);
         let chainstate = Arc::clone(&self.chainstate);
+        let masternodestate = Arc::clone(&self.masternodestate);
 
         let storage_path = self.storage_path.clone();
 
@@ -170,6 +171,7 @@ impl DiskStorageManager {
                 let _ = transactions.write().await.persist(&storage_path).await;
                 let _ = metadata.write().await.persist(&storage_path).await;
                 let _ = chainstate.write().await.persist(&storage_path).await;
+                let _ = masternodestate.write().await.persist(&storage_path).await;
             }
         });
 
@@ -192,6 +194,7 @@ impl DiskStorageManager {
         let _ = self.transactions.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
         let _ = self.chainstate.write().await.persist(storage_path).await;
+        let _ = self.masternodestate.write().await.persist(storage_path).await;
     }
 }
 
@@ -231,6 +234,8 @@ impl StorageManager for DiskStorageManager {
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
         self.chainstate =
             Arc::new(RwLock::new(PersistentChainStateStorage::open(storage_path).await?));
+        self.masternodestate =
+            Arc::new(RwLock::new(PersistentMasternodeStateStorage::open(storage_path).await?));
 
         // Restart the background worker for future operations
         self.start_worker().await;
