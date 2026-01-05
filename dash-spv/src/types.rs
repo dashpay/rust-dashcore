@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 use dashcore::{
     block::Header as BlockHeader,
     consensus::{Decodable, Encodable},
-    Amount, BlockHash, Network, Transaction, Txid,
+    Amount, BlockHash, Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
 
@@ -310,15 +310,11 @@ impl ChainState {
     }
 
     /// Initialize chain state from a checkpoint.
-    pub fn init_from_checkpoint(&mut self, checkpoint_height: u32, network: Network) {
+    pub fn init_from_checkpoint(&mut self, checkpoint_height: u32) {
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
 
-        tracing::info!(
-            "Initialized ChainState from checkpoint - height: {}, network: {:?}",
-            checkpoint_height,
-            network
-        );
+        tracing::info!("Initialized ChainState from checkpoint - height: {}", checkpoint_height);
     }
 
     /// Get the absolute height for a given index in our headers vector.

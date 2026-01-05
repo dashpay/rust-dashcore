@@ -281,7 +281,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         );
                     } else {
                         // Initialize chain state from checkpoint
-                        chain_state.init_from_checkpoint(checkpoint.height, self.config.network);
+                        chain_state.init_from_checkpoint(checkpoint.height);
 
                         // Clone the chain state for storage
                         let chain_state_for_storage = (*chain_state).clone();
