@@ -593,7 +593,7 @@ mod tests {
             .await
             .expect("Failed to create new segment_cache");
 
-        cache.store_items(&items).await.expect("Failed to store items");
+        cache.store_items_at_height(&items, 10).await.expect("Failed to store items");
 
         cache.persist(tmp_dir.path()).await;
 
@@ -601,26 +601,10 @@ mod tests {
             .await
             .expect("Failed to load new segment_cache");
 
-<<<<<<< HEAD
-        let recovered_items = cache.get_items(0..10).await.expect("Failed to load items");
-
-        assert_eq!(recovered_items, items);
-        assert_eq!(cache.segments.len(), 1);
-
-        cache.clear_all().await.expect("Failed to clean on-memory and on-disk data");
-        assert!(cache.segments.is_empty());
-
-        let segment = cache.get_segment(&0).await.expect("Failed to create a new segment");
-
-        assert!(segment.first_valid_offset().is_none());
-        assert!(segment.last_valid_offset().is_none());
-        assert_eq!(segment.state, SegmentState::Dirty);
-=======
         assert_eq!(
             cache.get_items(10..20).await.expect("Failed to get items from segment cache"),
             items
         );
->>>>>>> f40a2bd9 (storage manager trait implemented)
     }
 
     #[tokio::test]

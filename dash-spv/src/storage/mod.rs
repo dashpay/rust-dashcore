@@ -64,6 +64,7 @@ pub trait StorageManager:
     + MasternodeStateStorage
     + Send
     + Sync
+    + 'static
 {
     /// Deletes in-disk and in-memory data
     async fn clear(&mut self) -> StorageResult<()>;
@@ -238,7 +239,7 @@ impl StorageManager for DiskStorageManager {
     }
 
     /// Shutdown the storage manager.
-    pub async fn shutdown(&mut self) {
+    async fn shutdown(&mut self) {
         self.stop_worker();
 
         self.persist().await;

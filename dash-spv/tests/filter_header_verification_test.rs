@@ -19,7 +19,7 @@ use dash_spv::{
     client::ClientConfig,
     error::{NetworkError, NetworkResult, SyncError},
     network::NetworkManager,
-    storage::{DiskStorageManager, StorageManager},
+    storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::filters::FilterSyncManager,
     types::PeerInfo,
 };

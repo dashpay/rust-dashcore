@@ -49,6 +49,7 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     config: ClientConfig,
     tip_manager: ChainTipManager,
     checkpoint_manager: CheckpointManager,
+    reorg_config: ReorgConfig,
     chain_state: Arc<RwLock<ChainState>>,
     // WalletState removed - wallet functionality is now handled externally
     headers2_state: Headers2StateManager,
@@ -80,6 +81,7 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             config: config.clone(),
             tip_manager: ChainTipManager::new(reorg_config.max_forks),
             checkpoint_manager,
+            reorg_config,
             chain_state,
             // WalletState removed
             headers2_state: Headers2StateManager::new(),
@@ -212,7 +214,6 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
 
         // Step 3: Process the Entire Validated Batch
 
-<<<<<<< HEAD
         // Checkpoint Validation: Perform in-memory security check against checkpoints
         for (index, cached_header) in cached_headers.iter().enumerate() {
             let prospective_height = tip_height + (index as u32) + 1;
@@ -229,8 +230,6 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             }
         }
 
-=======
->>>>>>> 7acccc0b (removed two methos that where invovled in the same process)
         storage
             .store_headers(headers)
             .await
