@@ -266,7 +266,7 @@ impl blocks::BlockHeaderStorage for DiskStorageManager {
     }
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        self.block_headers.write().await.load_headers(range).await
+        self.block_headers.read().await.load_headers(range).await
     }
 
     async fn get_tip_height(&self) -> Option<u32> {
@@ -296,7 +296,7 @@ impl filters::FilterHeaderStorage for DiskStorageManager {
     }
 
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
-        self.filter_headers.write().await.load_filter_headers(range).await
+        self.filter_headers.read().await.load_filter_headers(range).await
     }
 
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
@@ -315,7 +315,7 @@ impl filters::FilterStorage for DiskStorageManager {
     }
 
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
-        self.filters.write().await.load_filters(range).await
+        self.filters.read().await.load_filters(range).await
     }
 }
 
