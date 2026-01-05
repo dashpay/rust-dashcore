@@ -19,7 +19,6 @@ impl DiskStorageManager {
         // Store other state as JSON
         let state_data = serde_json::json!({
             "last_chainlock_height": state.last_chainlock_height,
-            "last_chainlock_hash": state.last_chainlock_hash,
             "sync_base_height": state.sync_base_height,
         });
 
@@ -47,10 +46,6 @@ impl DiskStorageManager {
                 .get("last_chainlock_height")
                 .and_then(|v| v.as_u64())
                 .map(|h| h as u32),
-            last_chainlock_hash: value
-                .get("last_chainlock_hash")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok()),
             sync_base_height: value
                 .get("sync_base_height")
                 .and_then(|v| v.as_u64())

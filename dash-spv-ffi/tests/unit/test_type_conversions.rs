@@ -164,7 +164,6 @@ mod tests {
     fn test_chain_state_none_values() {
         let state = dash_spv::ChainState {
             last_chainlock_height: None,
-            last_chainlock_hash: None,
             sync_base_height: 0,
         };
 
@@ -172,12 +171,6 @@ mod tests {
 
         assert_eq!(ffi_state.last_chainlock_height, 0);
         assert_eq!(ffi_state.current_filter_tip, 0);
-
-        unsafe {
-            let hash_str = FFIString::from_ptr(ffi_state.last_chainlock_hash.ptr).unwrap();
-            assert_eq!(hash_str, "");
-            dash_spv_ffi_string_destroy(ffi_state.last_chainlock_hash);
-        }
     }
 
     #[test]

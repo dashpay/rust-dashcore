@@ -259,9 +259,6 @@ pub struct ChainState {
     /// Last ChainLock height.
     pub last_chainlock_height: Option<u32>,
 
-    /// Last ChainLock hash.
-    pub last_chainlock_hash: Option<BlockHash>,
-
     /// Base height when syncing from a checkpoint (0 if syncing from genesis).
     pub sync_base_height: u32,
 }
@@ -285,7 +282,6 @@ impl std::fmt::Debug for ChainState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainState")
             .field("last_chainlock_height", &self.last_chainlock_height)
-            .field("last_chainlock_hash", &self.last_chainlock_hash)
             .field("sync_base_height", &self.sync_base_height)
             .finish()
     }
