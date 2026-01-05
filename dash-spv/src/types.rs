@@ -272,16 +272,6 @@ impl ChainState {
         Self::default()
     }
 
-    /// Create a new chain state for the given network.
-    pub fn new_for_network() -> Self {
-        let mut state = Self::default();
-
-        // Initialize checkpoint fields
-        state.sync_base_height = 0;
-
-        state
-    }
-
     /// Whether the chain was synced from a checkpoint rather than genesis.
     pub fn synced_from_checkpoint(&self) -> bool {
         self.sync_base_height > 0

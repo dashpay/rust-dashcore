@@ -37,7 +37,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         config.validate().map_err(SpvError::Config)?;
 
         // Initialize state for the network
-        let state = Arc::new(RwLock::new(ChainState::new_for_network()));
+        let state = Arc::new(RwLock::new(ChainState::new()));
         let stats = Arc::new(RwLock::new(SpvStats::default()));
 
         // Wrap storage in Arc<Mutex>
