@@ -126,7 +126,7 @@ fn test_utxo_management() {
 
     let balance = manager.get_wallet_balance(&wallet_id);
     assert!(balance.is_ok());
-    assert_eq!(balance.unwrap().total, 0);
+    assert_eq!(balance.unwrap().total(), 0);
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn test_balance_calculation() {
     // Check wallet balance (should be 0 initially)
     let balance = manager.get_wallet_balance(&wallet_id);
     assert!(balance.is_ok());
-    assert_eq!(balance.unwrap().total, 0);
+    assert_eq!(balance.unwrap().total(), 0);
 
     // Check global balance
     let total = manager.get_total_balance();

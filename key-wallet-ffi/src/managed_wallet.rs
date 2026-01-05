@@ -576,10 +576,10 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
     let balance = &managed_wallet.inner().balance;
 
     unsafe {
-        *confirmed_out = balance.confirmed;
-        *unconfirmed_out = balance.unconfirmed;
-        *locked_out = balance.locked;
-        *total_out = balance.total;
+        *confirmed_out = balance.spendable();
+        *unconfirmed_out = balance.unconfirmed();
+        *locked_out = balance.locked();
+        *total_out = balance.total();
     }
 
     FFIError::set_success(error);
@@ -1042,12 +1042,7 @@ mod tests {
         let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
 
         // Set some test balance values
-        managed_info.balance = WalletBalance {
-            confirmed: 1000000,
-            unconfirmed: 50000,
-            locked: 25000,
-            total: 1075000,
-        };
+        managed_info.balance = WalletBalance::new(1000000, 50000, 25000);
 
         let ffi_managed = FFIManagedWalletInfo::new(managed_info);
         let ffi_managed_ptr = Box::into_raw(Box::new(ffi_managed));

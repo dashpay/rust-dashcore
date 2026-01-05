@@ -265,15 +265,9 @@ impl ManagedAccount {
     }
 
     /// Update the account balance
-    pub fn update_balance(
-        &mut self,
-        confirmed: u64,
-        unconfirmed: u64,
-        locked: u64,
-    ) -> Result<(), crate::wallet::balance::BalanceError> {
-        self.balance.update(confirmed, unconfirmed, locked)?;
+    pub fn update_balance(&mut self, spendable: u64, unconfirmed: u64, locked: u64) {
+        self.balance = WalletBalance::new(spendable, unconfirmed, locked);
         self.metadata.last_used = Some(Self::current_timestamp());
-        Ok(())
     }
 
     /// Get all addresses from all pools
