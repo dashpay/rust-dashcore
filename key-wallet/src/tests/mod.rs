@@ -2,8 +2,6 @@
 //!
 //! This module contains exhaustive tests for all functionality.
 
-pub mod test_utils;
-
 mod account_tests;
 
 mod address_pool_tests;

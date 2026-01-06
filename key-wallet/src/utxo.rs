@@ -307,7 +307,7 @@ impl Default for UtxoSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::test_utils::test_utxo_full;
+    use crate::test_utils::test_utxo_full;
 
     #[test]
     fn test_utxo_spendability() {

@@ -835,7 +835,7 @@ impl std::error::Error for BuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::test_utils::{test_address, test_utxo};
+    use crate::test_utils::{test_address, test_utxo};
     use crate::Network;
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore_hashes::{sha256d, Hash};

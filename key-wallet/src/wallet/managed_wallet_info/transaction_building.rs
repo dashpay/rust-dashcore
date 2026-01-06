@@ -177,7 +177,7 @@ impl ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::test_utils::test_utxo;
+    use crate::test_utils::test_utxo;
     use crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::{Address, Network, Transaction, Txid};

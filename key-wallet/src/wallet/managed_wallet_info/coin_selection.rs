@@ -690,7 +690,7 @@ impl std::error::Error for SelectionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::test_utils::test_utxo;
+    use crate::test_utils::test_utxo;
 
     #[test]
     fn test_smallest_first_selection() {
