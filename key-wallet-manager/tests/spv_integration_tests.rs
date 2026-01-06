@@ -4,6 +4,7 @@ use dashcore::bip158::{BlockFilter, BlockFilterWriter};
 use dashcore::blockdata::block::{Block, Header, Version};
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::Transaction;
+use dashcore::constants::COINBASE_MATURITY;
 use dashcore::pow::CompactTarget;
 use dashcore::{BlockHash, OutPoint, TxIn, TxOut, Txid};
 use dashcore_hashes::Hash;
@@ -199,6 +200,29 @@ fn assert_wallet_heights(manager: &WalletManager<ManagedWalletInfo>, expected_he
     }
 }
 
+/// Create a coinbase transaction paying to the given script
+/// TODO: Unify with other `create_coinbase_transaction` helpers into `dashcore` crate.
+fn create_coinbase_transaction(script_pubkey: ScriptBuf, value: u64) -> Transaction {
+    Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::all_zeros(),
+                vout: 0xffffffff,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![TxOut {
+            value,
+            script_pubkey,
+        }],
+        special_transaction_payload: None,
+    }
+}
+
 /// Test that the wallet heights are updated after block processing.
 #[tokio::test]
 async fn test_height_updated_after_block_processing() {
@@ -217,4 +241,82 @@ async fn test_height_updated_after_block_processing() {
         manager.process_block(&block, height).await;
         assert_wallet_heights(&manager, height);
     }
+}
+
+#[tokio::test]
+async fn test_immature_balance_matures_during_block_processing() {
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+
+    // Create a wallet and get an address to receive the coinbase
+    let wallet_id = manager
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
+        .expect("Failed to create wallet");
+
+    let account_xpub = {
+        let wallet = manager.get_wallet(&wallet_id).expect("Wallet should exist");
+        wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have account").account_xpub
+    };
+
+    // Get the first receive address from the wallet
+    let receive_address = {
+        let wallet_info =
+            manager.get_wallet_info_mut(&wallet_id).expect("Wallet info should exist");
+        wallet_info
+            .first_bip44_managed_account_mut()
+            .expect("Should have managed account")
+            .next_receive_address(Some(&account_xpub), true)
+            .expect("Should get address")
+    };
+
+    // Create a coinbase transaction paying to our wallet
+    let coinbase_value = 100;
+    let coinbase_tx = create_coinbase_transaction(receive_address.script_pubkey(), coinbase_value);
+
+    // Process the coinbase at height 1000
+    let coinbase_height = 1000;
+    let coinbase_block = create_test_block(coinbase_height, vec![coinbase_tx.clone()]);
+    manager.process_block(&coinbase_block, coinbase_height).await;
+
+    // Verify the coinbase is detected and stored as immature
+    let wallet_info = manager.get_wallet_info(&wallet_id).expect("Wallet info should exist");
+    assert!(
+        wallet_info.immature_transactions().contains(&coinbase_tx),
+        "Coinbase should be in immature transactions"
+    );
+    assert_eq!(
+        wallet_info.balance().immature(),
+        coinbase_value,
+        "Immature balance should reflect coinbase"
+    );
+
+    // Process 99 more blocks up to just before maturity
+    let maturity_height = coinbase_height + COINBASE_MATURITY;
+    for height in (coinbase_height + 1)..maturity_height {
+        let block = create_test_block(height, vec![create_test_transaction(1000)]);
+        manager.process_block(&block, height).await;
+    }
+
+    // Verify still immature just before maturity
+    let wallet_info = manager.get_wallet_info(&wallet_id).expect("Wallet info should exist");
+    assert!(
+        wallet_info.immature_transactions().contains(&coinbase_tx),
+        "Coinbase should still be immature at height {}",
+        maturity_height - 1
+    );
+
+    // Process the maturity block
+    let maturity_block = create_test_block(maturity_height, vec![create_test_transaction(1000)]);
+    manager.process_block(&maturity_block, maturity_height).await;
+
+    // Verify the coinbase has matured
+    let wallet_info = manager.get_wallet_info(&wallet_id).expect("Wallet info should exist");
+    assert!(
+        !wallet_info.immature_transactions().contains(&coinbase_tx),
+        "Coinbase should no longer be immature after maturity height"
+    );
+    assert_eq!(
+        wallet_info.balance().immature(),
+        0,
+        "Immature balance should be zero after maturity"
+    );
 }

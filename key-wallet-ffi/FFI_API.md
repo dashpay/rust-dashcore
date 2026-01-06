@@ -915,14 +915,14 @@ Get address pool information for an account  # Safety  - `managed_wallet` must b
 #### `managed_wallet_get_balance`
 
 ```c
-managed_wallet_get_balance(managed_wallet: *const FFIManagedWalletInfo, confirmed_out: *mut u64, unconfirmed_out: *mut u64, locked_out: *mut u64, total_out: *mut u64, error: *mut FFIError,) -> bool
+managed_wallet_get_balance(managed_wallet: *const FFIManagedWalletInfo, confirmed_out: *mut u64, unconfirmed_out: *mut u64, immature_out: *mut u64, locked_out: *mut u64, total_out: *mut u64, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Get wallet balance from managed wallet info  Returns the balance breakdown including confirmed, unconfirmed, locked, and total amounts.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `confirmed_out` must be a valid pointer to store the confirmed balance - `unconfirmed_out` must be a valid pointer to store the unconfirmed balance - `locked_out` must be a valid pointer to store the locked balance - `total_out` must be a valid pointer to store the total balance - `error` must be a valid pointer to an FFIError
+Get wallet balance from managed wallet info  Returns the balance breakdown including confirmed, unconfirmed, immature, locked, and total amounts.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `confirmed_out` must be a valid pointer to store the confirmed balance - `unconfirmed_out` must be a valid pointer to store the unconfirmed balance - `immature_out` must be a valid pointer to store the immature balance - `locked_out` must be a valid pointer to store the locked balance - `total_out` must be a valid pointer to store the total balance - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `confirmed_out` must be a valid pointer to store the confirmed balance - `unconfirmed_out` must be a valid pointer to store the unconfirmed balance - `locked_out` must be a valid pointer to store the locked balance - `total_out` must be a valid pointer to store the total balance - `error` must be a valid pointer to an FFIError
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `confirmed_out` must be a valid pointer to store the confirmed balance - `unconfirmed_out` must be a valid pointer to store the unconfirmed balance - `immature_out` must be a valid pointer to store the immature balance - `locked_out` must be a valid pointer to store the locked balance - `total_out` must be a valid pointer to store the total balance - `error` must be a valid pointer to an FFIError
 
 **Module:** `managed_wallet`
 
