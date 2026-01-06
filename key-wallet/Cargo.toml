@@ -48,5 +48,5 @@ async-trait = "0.1"
 
 [dev-dependencies]
 hex = "0.4"
-key-wallet = { path = ".", features = ["bip38", "serde", "bincode", "eddsa", "bls"] }
+key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
 tokio = { version = "1", features = ["macros", "rt"] }
