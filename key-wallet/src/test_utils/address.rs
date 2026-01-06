@@ -1,5 +1,3 @@
-// TODO: This module should be in the dashcore crate
-
 use dashcore::{Address, Network};
 
 const TEST_PUBKEY_BYTES: [u8; 33] = [

@@ -1,4 +1,4 @@
-use key_wallet::test_utils::test_utxo2;
+use key_wallet::Utxo;
 
 // Test for OptimalConsolidation coin selection strategy
 #[test]
@@ -8,12 +8,12 @@ fn test_optimal_consolidation_strategy() {
 
     // Test that OptimalConsolidation strategy works correctly
     let utxos = vec![
-        test_utxo2(100, true),
-        test_utxo2(200, true),
-        test_utxo2(300, true),
-        test_utxo2(500, true),
-        test_utxo2(1000, true),
-        test_utxo2(2000, true),
+        Utxo::new_test(0, 100, 100, true),
+        Utxo::new_test(0, 200, 100, true),
+        Utxo::new_test(0, 300, 100, true),
+        Utxo::new_test(0, 500, 100, true),
+        Utxo::new_test(0, 1000, 100, true),
+        Utxo::new_test(0, 2000, 100, true),
     ];
 
     let selector = CoinSelector::new(SelectionStrategy::OptimalConsolidation);

@@ -307,11 +307,10 @@ impl Default for UtxoSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::test_utxo_full;
 
     #[test]
     fn test_utxo_spendability() {
-        let mut utxo = test_utxo_full(100000, 100, 0, false);
+        let mut utxo = Utxo::new_test(0, 100000, 100, false);
 
         // Unconfirmed UTXO should not be spendable
         assert!(!utxo.is_spendable(200));
@@ -329,8 +328,8 @@ mod tests {
     fn test_utxo_set_operations() {
         let mut set = UtxoSet::new();
 
-        let utxo1 = test_utxo_full(100000, 100, 0, false);
-        let utxo2 = test_utxo_full(200000, 150, 1, false); // Different vout to ensure unique OutPoint
+        let utxo1 = Utxo::new_test(0, 100000, 100, false);
+        let utxo2 = Utxo::new_test(1, 200000, 150, false);
 
         set.add(utxo1.clone());
         set.add(utxo2.clone());

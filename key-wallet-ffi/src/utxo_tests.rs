@@ -3,7 +3,7 @@ mod utxo_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
-    use key_wallet::test_utils::{test_utxo_range, test_utxo_range_with_value};
+    use key_wallet::Utxo;
     use std::ffi::CStr;
     use std::ptr;
 
@@ -311,7 +311,7 @@ mod utxo_tests {
             false,
         );
 
-        let utxos = test_utxo_range(0..2);
+        let utxos = Utxo::new_test_batch(0..2, 10000, 100, false);
 
         for utxo in utxos {
             bip44_account.utxos.insert(utxo.outpoint, utxo);
@@ -339,7 +339,7 @@ mod utxo_tests {
             false,
         );
 
-        let utxos = test_utxo_range_with_value(10..11, 20000, 200);
+        let utxos = Utxo::new_test_batch(10..11, 20000, 200, false);
 
         for utxo in utxos {
             bip32_account.utxos.insert(utxo.outpoint, utxo);
@@ -360,7 +360,7 @@ mod utxo_tests {
             false,
         );
 
-        let utxos = test_utxo_range_with_value(20..22, 30000, 300);
+        let utxos = Utxo::new_test_batch(20..22, 30000, 300, false);
 
         for utxo in utxos {
             coinjoin_account.utxos.insert(utxo.outpoint, utxo);
@@ -421,7 +421,7 @@ mod utxo_tests {
             false,
         );
 
-        let utxos = test_utxo_range_with_value(1..2, 10000, 100);
+        let utxos = Utxo::new_test_batch(1..2, 10000, 100, false);
 
         for utxo in utxos {
             testnet_account.utxos.insert(utxo.outpoint, utxo);

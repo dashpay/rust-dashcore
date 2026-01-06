@@ -177,8 +177,8 @@ impl ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::test_utxo;
     use crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
+    use crate::Utxo;
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::{Address, Network, Transaction, Txid};
     use dashcore_hashes::{sha256d, Hash};
@@ -187,7 +187,11 @@ mod tests {
     #[test]
     fn test_basic_transaction_creation() {
         // Test creating a basic transaction with inputs and outputs
-        let utxos = vec![test_utxo(100000), test_utxo(200000), test_utxo(300000)];
+        let utxos = vec![
+            Utxo::new_test(0, 100000, 100, true),
+            Utxo::new_test(0, 200000, 100, true),
+            Utxo::new_test(0, 300000, 100, true),
+        ];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -288,7 +292,8 @@ mod tests {
     #[test]
     fn test_transaction_size_estimation() {
         // Test that transaction size estimation is accurate
-        let utxos = vec![test_utxo(100000), test_utxo(200000)];
+        let utxos =
+            vec![Utxo::new_test(0, 100000, 100, true), Utxo::new_test(0, 200000, 100, true)];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -323,7 +328,7 @@ mod tests {
     #[test]
     fn test_fee_calculation() {
         // Test that fees are calculated correctly
-        let utxos = vec![test_utxo(1000000)];
+        let utxos = vec![Utxo::new_test(0, 1000000, 100, true)];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -357,7 +362,7 @@ mod tests {
     #[test]
     fn test_insufficient_funds() {
         // Test that insufficient funds returns an error
-        let utxos = vec![test_utxo(10000)];
+        let utxos = vec![Utxo::new_test(0, 100000, 100, true)];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -381,7 +386,7 @@ mod tests {
     #[test]
     fn test_exact_change_no_change_output() {
         // Test when the exact amount is used (no change output needed)
-        let utxos = vec![test_utxo(150226)]; // Exact amount for output + fee
+        let utxos = vec![Utxo::new_test(0, 150226, 100, true)]; // Exact amount for output + fee
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
