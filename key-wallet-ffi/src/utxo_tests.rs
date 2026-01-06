@@ -3,6 +3,7 @@ mod utxo_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
+    use key_wallet::test_utils::{test_utxo_range, test_utxo_range_with_value};
     use std::ffi::CStr;
     use std::ptr;
 
@@ -278,11 +279,8 @@ mod utxo_tests {
     #[test]
     fn test_managed_wallet_get_utxos_multiple_accounts() {
         use crate::managed_wallet::FFIManagedWalletInfo;
-        use dashcore::blockdata::script::ScriptBuf;
-        use dashcore::{Address, OutPoint, TxOut, Txid};
         use key_wallet::account::account_type::StandardAccountType;
         use key_wallet::managed_account::ManagedAccount;
-        use key_wallet::utxo::Utxo;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
@@ -313,22 +311,12 @@ mod utxo_tests {
             false,
         );
 
-        for i in 0..2 {
-            let outpoint = OutPoint {
-                txid: Txid::from([i as u8; 32]),
-                vout: i as u32,
-            };
-            let txout = TxOut {
-                value: 10000,
-                script_pubkey: ScriptBuf::from(vec![]),
-            };
-            // Create a dummy P2PKH address
-            let dummy_pubkey_hash = dashcore::PubkeyHash::from([0u8; 20]);
-            let script = ScriptBuf::new_p2pkh(&dummy_pubkey_hash);
-            let address = Address::from_script(&script, Network::Testnet).unwrap();
-            let utxo = Utxo::new(outpoint, txout, address, 100, false);
-            bip44_account.utxos.insert(outpoint, utxo);
+        let utxos = test_utxo_range(0..2);
+
+        for utxo in utxos {
+            bip44_account.utxos.insert(utxo.outpoint, utxo);
         }
+
         managed_info.accounts.insert(bip44_account);
 
         // Create BIP32 account with 1 UTXO
@@ -351,20 +339,12 @@ mod utxo_tests {
             false,
         );
 
-        let outpoint = OutPoint {
-            txid: Txid::from([10u8; 32]),
-            vout: 0,
-        };
-        let txout = TxOut {
-            value: 20000,
-            script_pubkey: ScriptBuf::from(vec![]),
-        };
-        // Create a dummy P2PKH address
-        let dummy_pubkey_hash = dashcore::PubkeyHash::from([0u8; 20]);
-        let script = ScriptBuf::new_p2pkh(&dummy_pubkey_hash);
-        let address = Address::from_script(&script, Network::Testnet).unwrap();
-        let utxo = Utxo::new(outpoint, txout, address, 200, false);
-        bip32_account.utxos.insert(outpoint, utxo);
+        let utxos = test_utxo_range_with_value(10..11, 20000, 200);
+
+        for utxo in utxos {
+            bip32_account.utxos.insert(utxo.outpoint, utxo);
+        }
+
         managed_info.accounts.insert(bip32_account);
 
         // Create CoinJoin account with 2 UTXOs
@@ -380,22 +360,12 @@ mod utxo_tests {
             false,
         );
 
-        for i in 0..2 {
-            let outpoint = OutPoint {
-                txid: Txid::from([(20 + i) as u8; 32]),
-                vout: i as u32,
-            };
-            let txout = TxOut {
-                value: 30000,
-                script_pubkey: ScriptBuf::from(vec![]),
-            };
-            // Create a dummy P2PKH address
-            let dummy_pubkey_hash = dashcore::PubkeyHash::from([0u8; 20]);
-            let script = ScriptBuf::new_p2pkh(&dummy_pubkey_hash);
-            let address = Address::from_script(&script, Network::Testnet).unwrap();
-            let utxo = Utxo::new(outpoint, txout, address, 300, false);
-            coinjoin_account.utxos.insert(outpoint, utxo);
+        let utxos = test_utxo_range_with_value(20..22, 30000, 300);
+
+        for utxo in utxos {
+            coinjoin_account.utxos.insert(utxo.outpoint, utxo);
         }
+
         managed_info.accounts.insert(coinjoin_account);
 
         let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
@@ -418,11 +388,8 @@ mod utxo_tests {
     #[test]
     fn test_managed_wallet_get_utxos() {
         use crate::managed_wallet::FFIManagedWalletInfo;
-        use dashcore::blockdata::script::ScriptBuf;
-        use dashcore::{Address, OutPoint, TxOut, Txid};
         use key_wallet::account::account_type::StandardAccountType;
         use key_wallet::managed_account::ManagedAccount;
-        use key_wallet::utxo::Utxo;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
@@ -454,20 +421,12 @@ mod utxo_tests {
             false,
         );
 
-        let outpoint = OutPoint {
-            txid: Txid::from([1u8; 32]),
-            vout: 0,
-        };
-        let txout = TxOut {
-            value: 10000,
-            script_pubkey: ScriptBuf::from(vec![]),
-        };
-        // Create a dummy P2PKH address
-        let dummy_pubkey_hash = dashcore::PubkeyHash::from([0u8; 20]);
-        let script = ScriptBuf::new_p2pkh(&dummy_pubkey_hash);
-        let address = Address::from_script(&script, Network::Testnet).unwrap();
-        let utxo = Utxo::new(outpoint, txout, address, 100, false);
-        testnet_account.utxos.insert(outpoint, utxo);
+        let utxos = test_utxo_range_with_value(1..2, 10000, 100);
+
+        for utxo in utxos {
+            testnet_account.utxos.insert(utxo.outpoint, utxo);
+        }
+
         managed_info.accounts.insert(testnet_account);
 
         let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
