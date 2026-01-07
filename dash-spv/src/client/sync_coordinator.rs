@@ -389,7 +389,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             // Check for sync timeouts and handle recovery (only periodically, not every loop)
             if last_timeout_check.elapsed() >= timeout_check_interval {
                 let mut storage = self.storage.lock().await;
-                let _ = self.sync_manager.check_timeout(&mut self.network, &mut *storage).await;
+                self.sync_manager.check_timeout(&mut self.network, &mut *storage).await?;
                 drop(storage);
             }
 
