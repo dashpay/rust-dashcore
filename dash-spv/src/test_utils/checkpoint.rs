@@ -4,7 +4,7 @@ use dashcore_hashes::Hash;
 use crate::chain::Checkpoint;
 
 impl Checkpoint {
-    pub fn dummy_with_timestamp(height: u32, timestamp: u32) -> Checkpoint {
+    pub fn dummy(height: u32, timestamp: u32) -> Checkpoint {
         let block_hash = BlockHash::dummy(height);
         let prev_blockhash = if height > 0 {
             BlockHash::dummy(height - 1)

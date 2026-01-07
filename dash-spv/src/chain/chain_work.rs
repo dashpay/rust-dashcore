@@ -155,10 +155,8 @@ mod tests {
 
     #[test]
     fn test_chain_work_comparison() {
-        let work1 = ChainWork::from_bytes([0u8; 32]);
-        let mut bytes2 = [0u8; 32];
-        bytes2[31] = 1;
-        let work2 = ChainWork::from_bytes(bytes2);
+        let work1 = ChainWork::dummy(0);
+        let work2 = ChainWork::dummy(1);
 
         assert!(work1 < work2);
         assert!(work2 > work1);
@@ -167,13 +165,8 @@ mod tests {
 
     #[test]
     fn test_chain_work_addition() {
-        let mut bytes1 = [0u8; 32];
-        bytes1[31] = 100;
-        let work1 = ChainWork::from_bytes(bytes1);
-
-        let mut bytes2 = [0u8; 32];
-        bytes2[31] = 200;
-        let work2 = ChainWork::from_bytes(bytes2);
+        let work1 = ChainWork::dummy(100);
+        let work2 = ChainWork::dummy(200);
 
         let sum = work1.add(work2);
         assert_eq!(sum.work[31], 44); // 100 + 200 = 300, which is 44 + 256
@@ -189,13 +182,7 @@ mod tests {
 
     #[test]
     fn test_chain_work_ordering() {
-        let works: Vec<ChainWork> = (0..5)
-            .map(|i| {
-                let mut bytes = [0u8; 32];
-                bytes[31] = i;
-                ChainWork::from_bytes(bytes)
-            })
-            .collect();
+        let works: Vec<ChainWork> = (0..5).map(ChainWork::dummy).collect();
 
         for i in 0..4 {
             assert!(works[i] < works[i + 1]);

@@ -8,10 +8,10 @@ mod tests {
     #[test]
     fn test_wallet_creation_time_checkpoint_selection() {
         let checkpoints = vec![
-            Checkpoint::dummy_with_timestamp(0, 1000000), // Jan 1970
-            Checkpoint::dummy_with_timestamp(100000, 1500000000), // July 2017
-            Checkpoint::dummy_with_timestamp(200000, 1600000000), // Sept 2020
-            Checkpoint::dummy_with_timestamp(300000, 1700000000), // Nov 2023
+            Checkpoint::dummy(0, 1000000),         // Jan 1970
+            Checkpoint::dummy(100000, 1500000000), // July 2017
+            Checkpoint::dummy(200000, 1600000000), // Sept 2020
+            Checkpoint::dummy(300000, 1700000000), // Nov 2023
         ];
 
         let manager = CheckpointManager::new(checkpoints);
@@ -39,9 +39,9 @@ mod tests {
     #[test]
     fn test_fork_rejection_logic() {
         let checkpoints = vec![
-            Checkpoint::dummy_with_timestamp(0, 1000000),
-            Checkpoint::dummy_with_timestamp(100000, 1500000000),
-            Checkpoint::dummy_with_timestamp(200000, 1600000000),
+            Checkpoint::dummy(0, 1000000),
+            Checkpoint::dummy(100000, 1500000000),
+            Checkpoint::dummy(200000, 1600000000),
         ];
 
         let manager = CheckpointManager::new(checkpoints.clone());
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn test_checkpoint_protocol_version_extraction() {
-        let mut checkpoint = Checkpoint::dummy_with_timestamp(100000, 1500000000);
+        let mut checkpoint = Checkpoint::dummy(100000, 1500000000);
 
         // Test with masternode list name
         checkpoint.masternode_list_name = Some("ML100000__70227".to_string());
@@ -84,7 +84,7 @@ mod tests {
         // Create many checkpoints to test binary search
         let mut checkpoints = Vec::new();
         for i in 0..1000 {
-            checkpoints.push(Checkpoint::dummy_with_timestamp(i * 1000, 1000000 + i * 86400));
+            checkpoints.push(Checkpoint::dummy(i * 1000, 1000000 + i * 86400));
         }
 
         let manager = CheckpointManager::new(checkpoints.clone());
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_checkpoint_validation_edge_cases() {
-        let checkpoints = vec![Checkpoint::dummy_with_timestamp(100000, 1500000000)];
+        let checkpoints = vec![Checkpoint::dummy(100000, 1500000000)];
         let manager = CheckpointManager::new(checkpoints.clone());
 
         let correct_hash = manager.get_checkpoint(100000).unwrap().block_hash;
@@ -131,10 +131,10 @@ mod tests {
     fn test_checkpoint_sorting_and_lookup() {
         // Create checkpoints in random order
         let checkpoints = vec![
-            Checkpoint::dummy_with_timestamp(200000, 1600000000),
-            Checkpoint::dummy_with_timestamp(0, 1000000),
-            Checkpoint::dummy_with_timestamp(300000, 1700000000),
-            Checkpoint::dummy_with_timestamp(100000, 1500000000),
+            Checkpoint::dummy(200000, 1600000000),
+            Checkpoint::dummy(0, 1000000),
+            Checkpoint::dummy(300000, 1700000000),
+            Checkpoint::dummy(100000, 1500000000),
         ];
 
         let manager = CheckpointManager::new(checkpoints.clone());
