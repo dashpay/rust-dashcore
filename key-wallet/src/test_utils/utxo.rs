@@ -1,8 +1,8 @@
 use std::ops::Range;
 
-use dashcore::{OutPoint, ScriptBuf, TxOut, Txid};
+use dashcore::{Address, OutPoint, ScriptBuf, TxOut, Txid};
 
-use crate::{test_utils::test_address, Utxo};
+use crate::Utxo;
 
 impl Utxo {
     pub fn new_test(id: u8, value: u64, height: u32, coinbase: bool, confirmed: bool) -> Self {
@@ -26,7 +26,8 @@ impl Utxo {
                     script_pubkey: ScriptBuf::new(),
                 };
 
-                let mut utxo = Utxo::new(outpoint, txout, test_address(), height, coinbase);
+                let mut utxo =
+                    Utxo::new(outpoint, txout, Address::test_address(), height, coinbase);
                 utxo.is_confirmed = confirmed;
                 utxo
             })
