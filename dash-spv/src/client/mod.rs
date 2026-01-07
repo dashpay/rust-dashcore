@@ -72,7 +72,7 @@ mod tests {
     use super::{ClientConfig, DashSpvClient};
     use crate::storage::DiskStorageManager;
     use crate::{test_utils::MockNetworkManager, types::UnconfirmedTransaction};
-    use dashcore::{Amount, Network, Transaction, TxOut};
+    use dashcore::{Address, Amount, Network, Transaction, TxOut};
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::wallet_manager::WalletManager;
     use std::sync::Arc;
@@ -137,12 +137,7 @@ mod tests {
             .await
             .expect("enable mempool tracking must succeed");
 
-        // Create a test address (testnet address to match Network::Testnet config)
-        let test_address_str = "yP8A3cbdxRtLRduy5mXDsBnJtMzHWs6ZXr";
-        let test_address = test_address_str
-            .parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>()
-            .expect("valid address")
-            .assume_checked();
+        let test_address = Address::dummy_for_testnet();
 
         // Create a transaction that sends 10 Dash to the test address
         let tx = Transaction {
