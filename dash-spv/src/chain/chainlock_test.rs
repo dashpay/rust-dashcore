@@ -2,8 +2,7 @@
 mod tests {
     use super::super::*;
     use crate::{storage::DiskStorageManager, types::ChainState};
-    use dashcore::{ChainLock, Network};
-    use dashcore_test_utils::fixtures::test_block_hash;
+    use dashcore::Network;
 
     #[tokio::test]
     async fn test_chainlock_processing() {
@@ -13,12 +12,7 @@ mod tests {
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
 
-        // Create a test ChainLock
-        let chainlock = ChainLock {
-            block_height: 1000,
-            block_hash: test_block_hash(1),
-            signature: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
-        };
+        let chainlock = ChainLock::dummy(1000);
 
         // Process the ChainLock
         let result = chainlock_manager
@@ -46,23 +40,15 @@ mod tests {
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
 
-        // Process first ChainLock at height 1000
-        let chainlock1 = ChainLock {
-            block_height: 1000,
-            block_hash: test_block_hash(1),
-            signature: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
-        };
+        let chainlock1 = ChainLock::dummy(1000);
+
         chainlock_manager
             .process_chain_lock(chainlock1.clone(), &chain_state, &mut storage)
             .await
             .expect("First ChainLock should process successfully");
 
-        // Process second ChainLock at height 2000
-        let chainlock2 = ChainLock {
-            block_height: 2000,
-            block_hash: test_block_hash(2),
-            signature: dashcore::bls_sig_utils::BLSSignature::from([1; 96]),
-        };
+        let chainlock2 = ChainLock::dummy(2000);
+
         chainlock_manager
             .process_chain_lock(chainlock2.clone(), &chain_state, &mut storage)
             .await
@@ -86,11 +72,7 @@ mod tests {
 
         // Add ChainLocks at heights 1000, 2000, 3000
         for height in [1000, 2000, 3000] {
-            let chainlock = ChainLock {
-                block_height: height,
-                block_hash: test_block_hash(height),
-                signature: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
-            };
+            let chainlock = ChainLock::dummy(height);
             chainlock_manager
                 .process_chain_lock(chainlock, &chain_state, &mut storage)
                 .await

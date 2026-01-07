@@ -37,7 +37,6 @@ clap = { version = "4.5", features = ["derive"] }
 tempfile = "3.8"
 serial_test = "3.0"
 env_logger = "0.10"
-dashcore-test-utils = { path = "../test-utils" }
 
 [build-dependencies]
 cbindgen = "0.29"

@@ -3,43 +3,15 @@
 #[cfg(test)]
 mod tests {
     use super::super::checkpoints::*;
-    use dashcore::{BlockHash, CompactTarget, Target};
-    use dashcore_hashes::Hash;
-    use dashcore_test_utils::fixtures::test_block_hash;
-
-    fn create_test_checkpoint(height: u32, timestamp: u32) -> Checkpoint {
-        let block_hash = test_block_hash(height);
-        let prev_blockhash = if height > 0 {
-            test_block_hash(height - 1)
-        } else {
-            BlockHash::all_zeros()
-        };
-
-        Checkpoint {
-            height,
-            block_hash,
-            prev_blockhash,
-            timestamp,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1d00ffff)),
-            merkle_root: Some(block_hash),
-            chain_work: format!("0x{:064x}", height * 1000),
-            masternode_list_name: if height.is_multiple_of(100000) && height > 0 {
-                Some(format!("ML{}__70230", height))
-            } else {
-                None
-            },
-            protocol_version: None,
-            nonce: height * 123,
-        }
-    }
+    use dashcore::BlockHash;
 
     #[test]
     fn test_wallet_creation_time_checkpoint_selection() {
         let checkpoints = vec![
-            create_test_checkpoint(0, 1000000),         // Jan 1970
-            create_test_checkpoint(100000, 1500000000), // July 2017
-            create_test_checkpoint(200000, 1600000000), // Sept 2020
-            create_test_checkpoint(300000, 1700000000), // Nov 2023
+            Checkpoint::dummy_with_timestamp(0, 1000000), // Jan 1970
+            Checkpoint::dummy_with_timestamp(100000, 1500000000), // July 2017
+            Checkpoint::dummy_with_timestamp(200000, 1600000000), // Sept 2020
+            Checkpoint::dummy_with_timestamp(300000, 1700000000), // Nov 2023
         ];
 
         let manager = CheckpointManager::new(checkpoints);
@@ -67,9 +39,9 @@ mod tests {
     #[test]
     fn test_fork_rejection_logic() {
         let checkpoints = vec![
-            create_test_checkpoint(0, 1000000),
-            create_test_checkpoint(100000, 1500000000),
-            create_test_checkpoint(200000, 1600000000),
+            Checkpoint::dummy_with_timestamp(0, 1000000),
+            Checkpoint::dummy_with_timestamp(100000, 1500000000),
+            Checkpoint::dummy_with_timestamp(200000, 1600000000),
         ];
 
         let manager = CheckpointManager::new(checkpoints.clone());
@@ -87,7 +59,7 @@ mod tests {
 
     #[test]
     fn test_checkpoint_protocol_version_extraction() {
-        let mut checkpoint = create_test_checkpoint(100000, 1500000000);
+        let mut checkpoint = Checkpoint::dummy_with_timestamp(100000, 1500000000);
 
         // Test with masternode list name
         checkpoint.masternode_list_name = Some("ML100000__70227".to_string());
@@ -112,7 +84,7 @@ mod tests {
         // Create many checkpoints to test binary search
         let mut checkpoints = Vec::new();
         for i in 0..1000 {
-            checkpoints.push(create_test_checkpoint(i * 1000, 1000000 + i * 86400));
+            checkpoints.push(Checkpoint::dummy_with_timestamp(i * 1000, 1000000 + i * 86400));
         }
 
         let manager = CheckpointManager::new(checkpoints.clone());
@@ -140,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_checkpoint_validation_edge_cases() {
-        let checkpoints = vec![create_test_checkpoint(100000, 1500000000)];
+        let checkpoints = vec![Checkpoint::dummy_with_timestamp(100000, 1500000000)];
         let manager = CheckpointManager::new(checkpoints.clone());
 
         let correct_hash = manager.get_checkpoint(100000).unwrap().block_hash;
@@ -159,10 +131,10 @@ mod tests {
     fn test_checkpoint_sorting_and_lookup() {
         // Create checkpoints in random order
         let checkpoints = vec![
-            create_test_checkpoint(200000, 1600000000),
-            create_test_checkpoint(0, 1000000),
-            create_test_checkpoint(300000, 1700000000),
-            create_test_checkpoint(100000, 1500000000),
+            Checkpoint::dummy_with_timestamp(200000, 1600000000),
+            Checkpoint::dummy_with_timestamp(0, 1000000),
+            Checkpoint::dummy_with_timestamp(300000, 1700000000),
+            Checkpoint::dummy_with_timestamp(100000, 1500000000),
         ];
 
         let manager = CheckpointManager::new(checkpoints.clone());
