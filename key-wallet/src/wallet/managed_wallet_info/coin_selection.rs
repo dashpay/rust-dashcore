@@ -694,10 +694,10 @@ mod tests {
     #[test]
     fn test_smallest_first_selection() {
         let utxos = vec![
-            Utxo::new_test(0, 10000, 100, true),
-            Utxo::new_test(0, 20000, 100, true),
-            Utxo::new_test(0, 30000, 100, true),
-            Utxo::new_test(0, 40000, 100, true),
+            Utxo::new_test(0, 10000, 100, false, true),
+            Utxo::new_test(0, 20000, 100, false, true),
+            Utxo::new_test(0, 30000, 100, false, true),
+            Utxo::new_test(0, 40000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::SmallestFirst);
@@ -712,10 +712,10 @@ mod tests {
     #[test]
     fn test_largest_first_selection() {
         let utxos = vec![
-            Utxo::new_test(0, 10000, 100, true),
-            Utxo::new_test(0, 20000, 100, true),
-            Utxo::new_test(0, 30000, 100, true),
-            Utxo::new_test(0, 40000, 100, true),
+            Utxo::new_test(0, 10000, 100, false, true),
+            Utxo::new_test(0, 20000, 100, false, true),
+            Utxo::new_test(0, 30000, 100, false, true),
+            Utxo::new_test(0, 40000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::LargestFirst);
@@ -728,7 +728,10 @@ mod tests {
 
     #[test]
     fn test_insufficient_funds() {
-        let utxos = vec![Utxo::new_test(0, 10000, 100, true), Utxo::new_test(0, 20000, 100, true)];
+        let utxos = vec![
+            Utxo::new_test(0, 10000, 100, false, true),
+            Utxo::new_test(0, 20000, 100, false, true),
+        ];
 
         let selector = CoinSelector::new(SelectionStrategy::LargestFirst);
         let result = selector.select_coins(&utxos, 50000, FeeRate::new(1000), 200);
@@ -740,12 +743,12 @@ mod tests {
     fn test_optimal_consolidation_strategy() {
         // Test that OptimalConsolidation strategy works correctly
         let utxos = vec![
-            Utxo::new_test(0, 100, 100, true),
-            Utxo::new_test(0, 200, 100, true),
-            Utxo::new_test(0, 300, 100, true),
-            Utxo::new_test(0, 500, 100, true),
-            Utxo::new_test(0, 1000, 100, true),
-            Utxo::new_test(0, 2000, 100, true),
+            Utxo::new_test(0, 100, 100, false, true),
+            Utxo::new_test(0, 200, 100, false, true),
+            Utxo::new_test(0, 300, 100, false, true),
+            Utxo::new_test(0, 500, 100, false, true),
+            Utxo::new_test(0, 1000, 100, false, true),
+            Utxo::new_test(0, 2000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::OptimalConsolidation);

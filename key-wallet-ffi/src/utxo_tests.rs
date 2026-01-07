@@ -311,7 +311,7 @@ mod utxo_tests {
             false,
         );
 
-        let utxos = Utxo::new_test_batch(0..2, 10000, 100, false);
+        let utxos = Utxo::new_test_batch(0..2, 10000, 100, false, false);
         for utxo in utxos {
             bip44_account.utxos.insert(utxo.outpoint, utxo);
         }
@@ -337,7 +337,7 @@ mod utxo_tests {
             false,
         );
 
-        let utxos = Utxo::new_test_batch(10..11, 20000, 200, false);
+        let utxos = Utxo::new_test_batch(10..11, 20000, 200, false, false);
         for utxo in utxos {
             bip32_account.utxos.insert(utxo.outpoint, utxo);
         }
@@ -356,7 +356,7 @@ mod utxo_tests {
             false,
         );
 
-        let utxos = Utxo::new_test_batch(20..22, 30000, 300, false);
+        let utxos = Utxo::new_test_batch(20..22, 30000, 300, false, false);
         for utxo in utxos {
             coinjoin_account.utxos.insert(utxo.outpoint, utxo);
         }
@@ -415,7 +415,7 @@ mod utxo_tests {
             false,
         );
 
-        let utxos = Utxo::new_test_batch(1..2, 10000, 100, false);
+        let utxos = Utxo::new_test_batch(1..2, 10000, 100, false, false);
         for utxo in utxos {
             testnet_account.utxos.insert(utxo.outpoint, utxo);
         }

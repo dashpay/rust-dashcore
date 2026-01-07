@@ -188,9 +188,9 @@ mod tests {
     fn test_basic_transaction_creation() {
         // Test creating a basic transaction with inputs and outputs
         let utxos = vec![
-            Utxo::new_test(0, 100000, 100, true),
-            Utxo::new_test(0, 200000, 100, true),
-            Utxo::new_test(0, 300000, 100, true),
+            Utxo::new_test(0, 100000, 100, false, true),
+            Utxo::new_test(0, 200000, 100, false, true),
+            Utxo::new_test(0, 300000, 100, false, true),
         ];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
@@ -292,8 +292,10 @@ mod tests {
     #[test]
     fn test_transaction_size_estimation() {
         // Test that transaction size estimation is accurate
-        let utxos =
-            vec![Utxo::new_test(0, 100000, 100, true), Utxo::new_test(0, 200000, 100, true)];
+        let utxos = vec![
+            Utxo::new_test(0, 100000, 100, false, true),
+            Utxo::new_test(0, 200000, 100, false, true),
+        ];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -328,7 +330,7 @@ mod tests {
     #[test]
     fn test_fee_calculation() {
         // Test that fees are calculated correctly
-        let utxos = vec![Utxo::new_test(0, 1000000, 100, true)];
+        let utxos = vec![Utxo::new_test(0, 1000000, 100, false, true)];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -362,7 +364,7 @@ mod tests {
     #[test]
     fn test_insufficient_funds() {
         // Test that insufficient funds returns an error
-        let utxos = vec![Utxo::new_test(0, 100000, 100, true)];
+        let utxos = vec![Utxo::new_test(0, 100000, 100, false, true)];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -386,7 +388,7 @@ mod tests {
     #[test]
     fn test_exact_change_no_change_output() {
         // Test when the exact amount is used (no change output needed)
-        let utxos = vec![Utxo::new_test(0, 150226, 100, true)]; // Exact amount for output + fee
+        let utxos = vec![Utxo::new_test(0, 150226, 100, false, true)]; // Exact amount for output + fee
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
