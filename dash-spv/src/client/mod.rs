@@ -127,6 +127,8 @@ mod tests {
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
+        let test_address = Address::dummy(config.network, 0);
+
         let mut client = DashSpvClient::new(config, network_manager, storage, wallet)
             .await
             .expect("client construction must succeed");
@@ -136,8 +138,6 @@ mod tests {
             .enable_mempool_tracking(crate::client::config::MempoolStrategy::BloomFilter)
             .await
             .expect("enable mempool tracking must succeed");
-
-        let test_address = Address::dummy_for_testnet();
 
         // Create a transaction that sends 10 Dash to the test address
         let tx = Transaction {

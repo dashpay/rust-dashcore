@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use dashcore::{Address, OutPoint, ScriptBuf, TxOut, Txid};
+use dashcore::{Address, Network, OutPoint, ScriptBuf, TxOut, Txid};
 
 use crate::Utxo;
 
@@ -26,8 +26,13 @@ impl Utxo {
                     script_pubkey: ScriptBuf::new(),
                 };
 
-                let mut utxo =
-                    Utxo::new(outpoint, txout, Address::test_address(), height, coinbase);
+                let mut utxo = Utxo::new(
+                    outpoint,
+                    txout,
+                    Address::dummy(Network::Testnet, id as usize),
+                    height,
+                    coinbase,
+                );
                 utxo.is_confirmed = confirmed;
                 utxo
             })
