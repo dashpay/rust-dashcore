@@ -690,44 +690,14 @@ impl std::error::Error for SelectionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Utxo;
-    use dashcore::blockdata::script::ScriptBuf;
-    use dashcore::{Address, Network, OutPoint, TxOut, Txid};
-    use dashcore_hashes::{sha256d, Hash};
-
-    fn test_utxo(value: u64, confirmed: bool) -> Utxo {
-        let outpoint = OutPoint {
-            txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
-            vout: 0,
-        };
-
-        let txout = TxOut {
-            value,
-            script_pubkey: ScriptBuf::new(),
-        };
-
-        let address = Address::p2pkh(
-            &dashcore::PublicKey::from_slice(&[
-                0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
-                0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
-                0x88, 0x7e, 0x5b, 0x23, 0x52,
-            ])
-            .unwrap(),
-            Network::Testnet,
-        );
-
-        let mut utxo = Utxo::new(outpoint, txout, address, 100, false);
-        utxo.is_confirmed = confirmed;
-        utxo
-    }
 
     #[test]
     fn test_smallest_first_selection() {
         let utxos = vec![
-            test_utxo(10000, true),
-            test_utxo(20000, true),
-            test_utxo(30000, true),
-            test_utxo(40000, true),
+            Utxo::new_test(0, 10000, 100, false, true),
+            Utxo::new_test(0, 20000, 100, false, true),
+            Utxo::new_test(0, 30000, 100, false, true),
+            Utxo::new_test(0, 40000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::SmallestFirst);
@@ -742,10 +712,10 @@ mod tests {
     #[test]
     fn test_largest_first_selection() {
         let utxos = vec![
-            test_utxo(10000, true),
-            test_utxo(20000, true),
-            test_utxo(30000, true),
-            test_utxo(40000, true),
+            Utxo::new_test(0, 10000, 100, false, true),
+            Utxo::new_test(0, 20000, 100, false, true),
+            Utxo::new_test(0, 30000, 100, false, true),
+            Utxo::new_test(0, 40000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::LargestFirst);
@@ -758,7 +728,10 @@ mod tests {
 
     #[test]
     fn test_insufficient_funds() {
-        let utxos = vec![test_utxo(10000, true), test_utxo(20000, true)];
+        let utxos = vec![
+            Utxo::new_test(0, 10000, 100, false, true),
+            Utxo::new_test(0, 20000, 100, false, true),
+        ];
 
         let selector = CoinSelector::new(SelectionStrategy::LargestFirst);
         let result = selector.select_coins(&utxos, 50000, FeeRate::new(1000), 200);
@@ -770,12 +743,12 @@ mod tests {
     fn test_optimal_consolidation_strategy() {
         // Test that OptimalConsolidation strategy works correctly
         let utxos = vec![
-            test_utxo(100, true),
-            test_utxo(200, true),
-            test_utxo(300, true),
-            test_utxo(500, true),
-            test_utxo(1000, true),
-            test_utxo(2000, true),
+            Utxo::new_test(0, 100, 100, false, true),
+            Utxo::new_test(0, 200, 100, false, true),
+            Utxo::new_test(0, 300, 100, false, true),
+            Utxo::new_test(0, 500, 100, false, true),
+            Utxo::new_test(0, 1000, 100, false, true),
+            Utxo::new_test(0, 2000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::OptimalConsolidation);

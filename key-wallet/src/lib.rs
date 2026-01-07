@@ -12,6 +12,9 @@ extern crate core;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 #[cfg(test)]
 #[macro_use]
 mod test_macros;
