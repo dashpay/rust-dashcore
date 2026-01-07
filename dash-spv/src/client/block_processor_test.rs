@@ -6,15 +6,11 @@ mod tests {
 
     use crate::storage::DiskStorageManager;
     use crate::types::{SpvEvent, SpvStats};
-    use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
-    use key_wallet_manager::test_utils::MockWallet;
+    use dashcore::{Block, Network};
+    use key_wallet_manager::test_utils::{MockWallet, NonMatchingMockWallet};
 
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
-
-    fn create_test_block(network: Network) -> Block {
-        genesis_block(network)
-    }
 
     async fn setup_processor() -> (
         BlockProcessor<MockWallet, DiskStorageManager>,
@@ -41,7 +37,7 @@ mod tests {
         let (processor, task_tx, mut event_rx, wallet, storage) = setup_processor().await;
 
         // Create a test block
-        let block = create_test_block(Network::Dash);
+        let block = Block::dummy(Network::Dash);
         let block_hash = block.block_hash();
 
         // Store a header for the block first
@@ -131,7 +127,7 @@ mod tests {
         let (processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
 
         // Create a test block
-        let block = create_test_block(Network::Dash);
+        let block = Block::dummy(Network::Dash);
         let block_hash = block.block_hash();
 
         // Create mock filter data (in real scenario, this would be a GCS filter)
@@ -184,42 +180,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_compact_filter_no_match() {
-        // Create a custom mock wallet that returns false for filter checks
-        struct NonMatchingWallet {}
-
-        #[async_trait::async_trait]
-        impl key_wallet_manager::wallet_interface::WalletInterface for NonMatchingWallet {
-            async fn process_block(&mut self, _block: &Block, _height: u32) -> Vec<dashcore::Txid> {
-                Vec::new()
-            }
-
-            async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}
-
-            async fn check_compact_filter(
-                &mut self,
-                _filter: &dashcore::bip158::BlockFilter,
-                _block_hash: &dashcore::BlockHash,
-            ) -> bool {
-                // Always return false - filter doesn't match
-                false
-            }
-
-            async fn describe(&self) -> String {
-                "NonMatchingWallet (test implementation)".to_string()
-            }
-        }
-
         let (task_tx, task_rx) = mpsc::unbounded_channel();
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
-        let wallet = Arc::new(RwLock::new(NonMatchingWallet {}));
+        let wallet = Arc::new(RwLock::new(NonMatchingMockWallet::new()));
         let storage = Arc::new(Mutex::new(
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage"),
         ));
 
         let processor = BlockProcessor::new(task_rx, wallet, storage, stats, event_tx);
 
-        let block_hash = create_test_block(Network::Dash).block_hash();
+        let block_hash = Block::dummy(Network::Dash).block_hash();
         let filter_data = vec![1, 2, 3, 4, 5];
 
         // Send filter processing task
@@ -261,7 +232,7 @@ mod tests {
         let (processor, task_tx, mut event_rx, _wallet, storage) = setup_processor().await;
 
         // Create a test block
-        let block = create_test_block(Network::Dash);
+        let block = Block::dummy(Network::Dash);
         let block_hash = block.block_hash();
         let txid = block.txdata[0].txid();
 
@@ -332,7 +303,7 @@ mod tests {
         let (processor, task_tx, mut event_rx, wallet, storage) = setup_processor().await;
 
         // Create a test block
-        let block = create_test_block(Network::Dash);
+        let block = Block::dummy(Network::Dash);
         let block_hash = block.block_hash();
         let txid = block.txdata[0].txid();
 
@@ -413,7 +384,7 @@ mod tests {
         let (processor, task_tx, _event_rx, wallet, _storage) = setup_processor().await;
 
         // Create a test transaction
-        let block = create_test_block(Network::Dash);
+        let block = Block::dummy(Network::Dash);
         let tx = block.txdata[0].clone();
         let txid = tx.txid();
 
@@ -467,7 +438,7 @@ mod tests {
     async fn test_block_not_found_in_storage() {
         let (processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
 
-        let block = create_test_block(Network::Dash);
+        let block = Block::dummy(Network::Dash);
         let block_hash = block.block_hash();
 
         // Don't store header - should fail to find height

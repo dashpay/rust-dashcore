@@ -1,3 +1,3 @@
 mod wallet;
 
-pub use wallet::MockWallet;
+pub use wallet::{MockWallet, NonMatchingMockWallet};

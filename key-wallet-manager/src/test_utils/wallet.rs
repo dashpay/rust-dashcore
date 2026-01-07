@@ -68,3 +68,34 @@ impl WalletInterface for MockWallet {
         map.get(&tx.txid()).cloned()
     }
 }
+
+/// Mock wallet that returns false for filter checks
+pub struct NonMatchingMockWallet {}
+
+impl NonMatchingMockWallet {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+#[async_trait::async_trait]
+impl WalletInterface for NonMatchingMockWallet {
+    async fn process_block(&mut self, _block: &Block, _height: u32) -> Vec<dashcore::Txid> {
+        Vec::new()
+    }
+
+    async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}
+
+    async fn check_compact_filter(
+        &mut self,
+        _filter: &dashcore::bip158::BlockFilter,
+        _block_hash: &dashcore::BlockHash,
+    ) -> bool {
+        // Always return false - filter doesn't match
+        false
+    }
+
+    async fn describe(&self) -> String {
+        "NonMatchingWallet (test implementation)".to_string()
+    }
+}
