@@ -61,6 +61,7 @@ log = "0.4"
 [dev-dependencies]
 dash-spv = { path = ".", features = ["test-utils"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
+key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
 criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
 tokio-test = "0.4"

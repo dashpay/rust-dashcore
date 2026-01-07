@@ -7,70 +7,10 @@ mod tests {
     use crate::storage::DiskStorageManager;
     use crate::types::{SpvEvent, SpvStats};
     use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
+    use key_wallet_manager::test_utils::MockWallet;
 
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
-
-    // Type alias for transaction effects map
-    type TransactionEffectsMap =
-        Arc<Mutex<std::collections::BTreeMap<dashcore::Txid, (i64, Vec<String>)>>>;
-
-    // Mock WalletInterface implementation for testing
-    struct MockWallet {
-        processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
-        processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
-        // Map txid -> (net_amount, addresses)
-        effects: TransactionEffectsMap,
-    }
-
-    impl MockWallet {
-        fn new() -> Self {
-            Self {
-                processed_blocks: Arc::new(Mutex::new(Vec::new())),
-                processed_transactions: Arc::new(Mutex::new(Vec::new())),
-                effects: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
-            }
-        }
-
-        async fn set_effect(&self, txid: dashcore::Txid, net: i64, addresses: Vec<String>) {
-            let mut map = self.effects.lock().await;
-            map.insert(txid, (net, addresses));
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl key_wallet_manager::wallet_interface::WalletInterface for MockWallet {
-        async fn process_block(&mut self, block: &Block, height: u32) -> Vec<dashcore::Txid> {
-            let mut processed = self.processed_blocks.lock().await;
-            processed.push((block.block_hash(), height));
-
-            // Return txids of all transactions in block as "relevant"
-            block.txdata.iter().map(|tx| tx.txid()).collect()
-        }
-
-        async fn process_mempool_transaction(&mut self, tx: &Transaction) {
-            let mut processed = self.processed_transactions.lock().await;
-            processed.push(tx.txid());
-        }
-
-        async fn check_compact_filter(
-            &mut self,
-            _filter: &dashcore::bip158::BlockFilter,
-            _block_hash: &dashcore::BlockHash,
-        ) -> bool {
-            // Return true for all filters in test
-            true
-        }
-
-        async fn describe(&self) -> String {
-            "MockWallet (test implementation)".to_string()
-        }
-
-        async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
-            let map = self.effects.lock().await;
-            map.get(&tx.txid()).cloned()
-        }
-    }
 
     fn create_test_block(network: Network) -> Block {
         genesis_block(network)
@@ -175,7 +115,8 @@ mod tests {
         // Verify wallet was called
         {
             let wallet = wallet.read().await;
-            let processed = wallet.processed_blocks.lock().await;
+            let processed_blocks = wallet.processed_blocks();
+            let processed = processed_blocks.lock().await;
             assert_eq!(processed.len(), 1);
             assert_eq!(processed[0].0, block_hash);
         }
@@ -494,7 +435,8 @@ mod tests {
         // Verify wallet was called
         {
             let wallet = wallet.read().await;
-            let processed = wallet.processed_transactions.lock().await;
+            let processed_transactions = wallet.processed_transactions();
+            let processed = processed_transactions.lock().await;
             assert_eq!(processed.len(), 1);
             assert_eq!(processed[0], txid);
         }
