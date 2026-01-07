@@ -8,12 +8,12 @@ fn test_optimal_consolidation_strategy() {
 
     // Test that OptimalConsolidation strategy works correctly
     let utxos = vec![
-        Utxo::new_test(0, 100, 100, false, true),
-        Utxo::new_test(0, 200, 100, false, true),
-        Utxo::new_test(0, 300, 100, false, true),
-        Utxo::new_test(0, 500, 100, false, true),
-        Utxo::new_test(0, 1000, 100, false, true),
-        Utxo::new_test(0, 2000, 100, false, true),
+        Utxo::dummy(0, 100, 100, false, true),
+        Utxo::dummy(0, 200, 100, false, true),
+        Utxo::dummy(0, 300, 100, false, true),
+        Utxo::dummy(0, 500, 100, false, true),
+        Utxo::dummy(0, 1000, 100, false, true),
+        Utxo::dummy(0, 2000, 100, false, true),
     ];
 
     let selector = CoinSelector::new(SelectionStrategy::OptimalConsolidation);

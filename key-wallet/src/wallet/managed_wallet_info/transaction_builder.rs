@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_transaction_builder_basic() {
-        let utxo = Utxo::new_test(0, 100000, 100, false, true);
+        let utxo = Utxo::dummy(0, 100000, 100, false, true);
         let destination = Address::test_address();
         let change = Address::test_address();
 
@@ -861,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_insufficient_funds() {
-        let utxo = Utxo::new_test(0, 10000, 100, false, true);
+        let utxo = Utxo::dummy(0, 10000, 100, false, true);
         let destination = Address::test_address();
 
         let result = TransactionBuilder::new()
@@ -928,8 +928,8 @@ mod tests {
     fn test_transaction_size_estimation() {
         // Test that transaction size estimation is accurate
         let utxos = vec![
-            Utxo::new_test(0, 100000, 100, false, true),
-            Utxo::new_test(0, 200000, 100, false, true),
+            Utxo::dummy(0, 100000, 100, false, true),
+            Utxo::dummy(0, 200000, 100, false, true),
         ];
 
         let recipient_address = Address::test_address();
@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn test_fee_calculation() {
         // Test that fees are calculated correctly
-        let utxos = vec![Utxo::new_test(0, 1000000, 100, false, true)];
+        let utxos = vec![Utxo::dummy(0, 1000000, 100, false, true)];
 
         let recipient_address = Address::test_address();
         let change_address = Address::test_address();
@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn test_exact_change_no_change_output() {
         // Test when the exact amount is used (no change output needed)
-        let utxos = vec![Utxo::new_test(0, 150226, 100, false, true)]; // Exact amount for output + fee
+        let utxos = vec![Utxo::dummy(0, 150226, 100, false, true)]; // Exact amount for output + fee
 
         let recipient_address = Address::test_address();
         let change_address = Address::test_address();
@@ -1013,7 +1013,7 @@ mod tests {
     #[test]
     fn test_special_payload_size_calculations() {
         // Test that special payload sizes are calculated correctly
-        let utxo = Utxo::new_test(0, 100000, 100, false, true);
+        let utxo = Utxo::dummy(0, 100000, 100, false, true);
         let destination = Address::test_address();
         let change = Address::test_address();
 
@@ -1078,7 +1078,7 @@ mod tests {
     #[test]
     fn test_build_with_payload_override() {
         // Test that build_with_payload overrides set_special_payload
-        let utxo = Utxo::new_test(0, 100000, 100, false, true);
+        let utxo = Utxo::dummy(0, 100000, 100, false, true);
         let destination = Address::test_address();
         let change = Address::test_address();
 
@@ -1124,7 +1124,7 @@ mod tests {
     #[test]
     fn test_bip69_output_ordering() {
         // Test that outputs are sorted according to BIP-69
-        let utxo = Utxo::new_test(0, 1000000, 100, false, true);
+        let utxo = Utxo::dummy(0, 1000000, 100, false, true);
         let address1 = Address::test_address();
         let address2 = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[
@@ -1244,9 +1244,9 @@ mod tests {
     fn test_coin_selection_with_special_payload() {
         // Test that coin selection considers special payload size
         let utxos = vec![
-            Utxo::new_test(0, 50000, 100, false, true),
-            Utxo::new_test(0, 60000, 100, false, true),
-            Utxo::new_test(0, 70000, 100, false, true),
+            Utxo::dummy(0, 50000, 100, false, true),
+            Utxo::dummy(0, 60000, 100, false, true),
+            Utxo::dummy(0, 70000, 100, false, true),
         ];
 
         let recipient_address = Address::test_address();

@@ -119,79 +119,12 @@ impl InstantLockValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::blockdata::constants::COIN_VALUE;
-    use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
     use dashcore_hashes::{sha256d, Hash};
-
-    /// Helper to create a test transaction
-    fn create_test_transaction(inputs: Vec<(sha256d::Hash, u32)>, value: u64) -> Transaction {
-        let tx_ins = inputs
-            .into_iter()
-            .map(|(txid, vout)| TxIn {
-                previous_output: OutPoint {
-                    txid: dashcore::Txid::from_raw_hash(txid),
-                    vout,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
-            })
-            .collect();
-
-        let tx_outs = vec![TxOut {
-            value,
-            script_pubkey: ScriptBuf::new(),
-        }];
-
-        Transaction {
-            version: 2,
-            lock_time: 0,
-            input: tx_ins,
-            output: tx_outs,
-            special_transaction_payload: None,
-        }
-    }
-
-    /// Helper to create a test InstantLock
-    fn create_test_instant_lock(tx: &Transaction) -> InstantLock {
-        let inputs = tx.input.iter().map(|input| input.previous_output).collect();
-
-        InstantLock {
-            version: 1,
-            inputs,
-            txid: tx.txid(),
-            signature: dashcore::bls_sig_utils::BLSSignature::from([1; 96]),
-            cyclehash: dashcore::BlockHash::from_byte_array([0; 32]),
-        }
-    }
-
-    /// Helper to create an InstantLock with specific inputs
-    fn create_instant_lock_with_inputs(
-        txid: sha256d::Hash,
-        inputs: Vec<(sha256d::Hash, u32)>,
-    ) -> InstantLock {
-        let inputs = inputs
-            .into_iter()
-            .map(|(txid, vout)| OutPoint {
-                txid: dashcore::Txid::from_raw_hash(txid),
-                vout,
-            })
-            .collect();
-
-        InstantLock {
-            version: 1,
-            inputs,
-            txid: dashcore::Txid::from_raw_hash(txid),
-            signature: dashcore::bls_sig_utils::BLSSignature::from([1; 96]),
-            cyclehash: dashcore::BlockHash::from_byte_array([0; 32]),
-        }
-    }
 
     #[test]
     fn test_valid_instantlock() {
         let validator = InstantLockValidator::new();
-        let tx = create_test_transaction(vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)], COIN_VALUE);
-        let is_lock = create_test_instant_lock(&tx);
+        let is_lock = InstantLock::dummy();
 
         // Structural validation only (for testing)
         assert!(validator.validate_structure(&is_lock).is_ok());
@@ -200,10 +133,7 @@ mod tests {
     #[test]
     fn test_empty_inputs() {
         let validator = InstantLockValidator::new();
-        let mut is_lock = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[1, 2, 3]),
-            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)],
-        );
+        let mut is_lock = InstantLock::dummy();
         is_lock.inputs.clear();
 
         let result = validator.validate_structure(&is_lock);
@@ -214,10 +144,7 @@ mod tests {
     #[test]
     fn test_empty_signature() {
         let validator = InstantLockValidator::new();
-        let mut is_lock = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[1, 2, 3]),
-            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)],
-        );
+        let mut is_lock = InstantLock::dummy();
         is_lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]);
 
         // Zero signatures should be rejected as invalid structure
@@ -229,10 +156,7 @@ mod tests {
     #[test]
     fn test_null_txid() {
         let validator = InstantLockValidator::new();
-        let mut is_lock = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[1, 2, 3]),
-            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)],
-        );
+        let mut is_lock = InstantLock::dummy();
         is_lock.txid = dashcore::Txid::all_zeros();
 
         // Null txid should be rejected as invalid structure
@@ -244,10 +168,7 @@ mod tests {
     #[test]
     fn test_null_input_txid() {
         let validator = InstantLockValidator::new();
-        let mut is_lock = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[1, 2, 3]),
-            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0), (sha256d::Hash::hash(&[7, 8, 9]), 1)],
-        );
+        let mut is_lock = InstantLock::dummy();
         // Set the second input to have a null txid
         is_lock.inputs[1].txid = dashcore::Txid::all_zeros();
 
@@ -267,15 +188,14 @@ mod tests {
 
     #[test]
     fn test_request_id_computation() {
-        let tx = create_test_transaction(vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)], COIN_VALUE);
-        let is_lock = create_test_instant_lock(&tx);
+        let is_lock = InstantLock::dummy();
 
         // Verify request ID can be computed
         let request_id = is_lock.request_id();
         assert!(request_id.is_ok());
 
         // Same inputs should produce same request ID
-        let is_lock2 = create_test_instant_lock(&tx);
+        let is_lock2 = InstantLock::dummy();
         let request_id2 = is_lock2.request_id();
         assert!(request_id2.is_ok());
         assert_eq!(request_id.unwrap(), request_id2.unwrap());
@@ -286,11 +206,10 @@ mod tests {
         let validator = InstantLockValidator::new();
 
         // Create lock with many inputs
-        let many_inputs: Vec<(sha256d::Hash, u32)> =
-            (0..100u32).map(|i| (sha256d::Hash::hash(&i.to_le_bytes()), i % 10)).collect();
+        let many_inputs: Vec<sha256d::Hash> =
+            (0..100u32).map(|i| sha256d::Hash::hash(&i.to_le_bytes())).collect();
 
-        let lock =
-            create_instant_lock_with_inputs(sha256d::Hash::hash(&[100, 101, 102]), many_inputs);
+        let lock = InstantLock::dummy_with_inputs(many_inputs);
 
         assert!(validator.validate_structure(&lock).is_ok());
     }
