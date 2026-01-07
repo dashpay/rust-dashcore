@@ -70,8 +70,8 @@ mod message_handler_test;
 #[cfg(test)]
 mod tests {
     use super::{ClientConfig, DashSpvClient};
-    use crate::types::UnconfirmedTransaction;
-    use crate::{network::mock::MockNetworkManager, storage::DiskStorageManager};
+    use crate::storage::DiskStorageManager;
+    use crate::{test_utils::MockNetworkManager, types::UnconfirmedTransaction};
     use dashcore::{Amount, Network, Transaction, TxOut};
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::wallet_manager::WalletManager;

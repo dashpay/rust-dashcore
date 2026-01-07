@@ -1,5 +1,3 @@
-//! Mock network manager for testing
-
 use std::any::Any;
 use std::collections::VecDeque;
 
@@ -11,9 +9,8 @@ use dashcore::{
 use dashcore_hashes::Hash;
 
 use crate::error::{NetworkError, NetworkResult};
+use crate::network::NetworkManager;
 use crate::types::PeerInfo;
-
-use super::NetworkManager;
 
 /// Mock network manager for testing
 pub struct MockNetworkManager {
