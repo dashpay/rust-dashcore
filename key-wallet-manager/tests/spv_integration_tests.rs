@@ -1,14 +1,13 @@
 //! Integration tests for SPV wallet functionality
 
+use dashcore::bip158::{BlockFilter, BlockFilterWriter};
 use dashcore::blockdata::block::{Block, Header, Version};
 use dashcore::blockdata::script::ScriptBuf;
-use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::pow::CompactTarget;
-use dashcore::{BlockHash, Txid};
-use dashcore::{TxIn, TxOut};
+use dashcore::{BlockHash, OutPoint, TxIn, TxOut, Txid};
 use dashcore_hashes::Hash;
-
-use dashcore::bip158::{BlockFilter, BlockFilterWriter};
+use dashcore_test_utils::create_transaction_to_address;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -99,23 +98,61 @@ async fn test_filter_checking() {
 #[tokio::test]
 async fn test_block_processing() {
     let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
-
-    // Create a test wallet
     let _wallet_id = manager
         .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
-    // Create a transaction
-    let tx = create_test_transaction(100000);
+    let addresses = manager.monitored_addresses();
+    assert!(!addresses.is_empty());
+    let external = dashcore::Address::p2pkh(
+        &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("valid pubkey"),
+        Network::Testnet,
+    );
 
-    // Create a block with this transaction
-    let block = create_test_block(100, vec![tx.clone()]);
+    let addresses_before = manager.monitored_addresses();
+    assert!(!addresses_before.is_empty());
 
-    // Process the block
+    let tx1 = create_transaction_to_address(&addresses[0], 100_000);
+    let tx2 = create_transaction_to_address(&addresses[1], 200_000);
+    let tx3 = create_transaction_to_address(&external, 300_000);
+
+    let block = create_test_block(100, vec![tx1.clone(), tx2.clone(), tx3.clone()]);
     let result = manager.process_block(&block, 100).await;
 
-    // Since we're not watching specific addresses, no transactions should be relevant
-    assert_eq!(result.len(), 0);
+    assert_eq!(result.relevant_txids.len(), 2);
+    assert!(result.relevant_txids.contains(&tx1.txid()));
+    assert!(result.relevant_txids.contains(&tx2.txid()));
+    assert!(!result.relevant_txids.contains(&tx3.txid()));
+    assert_eq!(result.new_addresses.len(), 2);
+
+    let addresses_after = manager.monitored_addresses();
+    let actual_increase = addresses_after.len() - addresses_before.len();
+    assert_eq!(result.new_addresses.len(), actual_increase);
+
+    for new_addr in &result.new_addresses {
+        assert!(addresses_after.contains(new_addr));
+    }
+}
+
+#[tokio::test]
+async fn test_block_processing_result_empty() {
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+    let _wallet_id = manager
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
+        .expect("Failed to create wallet");
+
+    let external = dashcore::Address::p2pkh(
+        &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("valid pubkey"),
+        Network::Testnet,
+    );
+    let tx1 = create_transaction_to_address(&external, 100_000);
+    let tx2 = create_transaction_to_address(&external, 200_000);
+
+    let block = create_test_block(100, vec![tx1, tx2]);
+    let result = manager.process_block(&block, 100).await;
+
+    assert!(result.relevant_txids.is_empty());
+    assert!(result.new_addresses.is_empty());
 }
 
 #[tokio::test]

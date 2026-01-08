@@ -38,6 +38,8 @@ pub struct TransactionCheckResult {
     pub total_sent: u64,
     /// Total value received for Platform credit conversion
     pub total_received_for_credit_conversion: u64,
+    /// New addresses generated during gap limit maintenance
+    pub new_addresses: Vec<Address>,
 }
 
 /// Enum representing the type of account that matched with embedded data
@@ -284,6 +286,7 @@ impl ManagedAccountCollection {
             total_received: 0,
             total_sent: 0,
             total_received_for_credit_conversion: 0,
+            new_addresses: Vec::new(),
         };
 
         for account_type in account_types {

@@ -75,7 +75,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         let relevant_types = TransactionRouter::get_relevant_account_types(&tx_type);
 
         // Check only relevant account types
-        let result = self.accounts.check_transaction(tx, &relevant_types);
+        let mut result = self.accounts.check_transaction(tx, &relevant_types);
 
         // Update state if requested and transaction is relevant
         if update_state && result.is_relevant {
@@ -263,11 +263,41 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             internal_addresses,
                             ..
                         } = &mut account.account_type {
-                            let _ = external_addresses.maintain_gap_limit(&key_source);
-                            let _ = internal_addresses.maintain_gap_limit(&key_source);
+                            match external_addresses.maintain_gap_limit(&key_source) {
+                                Ok(new_addrs) => result.new_addresses.extend(new_addrs),
+                                Err(e) => {
+                                    tracing::error!(
+                                        account_index = ?account_match.account_type_match.account_index(),
+                                        pool_type = "external",
+                                        error = %e,
+                                        "Failed to maintain gap limit for address pool"
+                                    );
+                                }
+                            }
+                            match internal_addresses.maintain_gap_limit(&key_source) {
+                                Ok(new_addrs) => result.new_addresses.extend(new_addrs),
+                                Err(e) => {
+                                    tracing::error!(
+                                        account_index = ?account_match.account_type_match.account_index(),
+                                        pool_type = "internal",
+                                        error = %e,
+                                        "Failed to maintain gap limit for address pool"
+                                    );
+                                }
+                            }
                         } else {
                             for pool in account.account_type.address_pools_mut() {
-                                let _ = pool.maintain_gap_limit(&key_source);
+                                match pool.maintain_gap_limit(&key_source) {
+                                    Ok(new_addrs) => result.new_addresses.extend(new_addrs),
+                                    Err(e) => {
+                                        tracing::error!(
+                                            account_index = ?account_match.account_type_match.account_index(),
+                                            pool_type = ?pool.pool_type,
+                                            error = %e,
+                                            "Failed to maintain gap limit for address pool"
+                                        );
+                                    }
+                                }
                             }
                         }
                     }

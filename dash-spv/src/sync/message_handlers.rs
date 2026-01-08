@@ -745,18 +745,18 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
             .unwrap_or(0);
 
-        let relevant_txids = wallet.process_block(block, block_height).await;
+        let result = wallet.process_block(block, block_height).await;
 
         drop(wallet);
 
-        if !relevant_txids.is_empty() {
+        if !result.relevant_txids.is_empty() {
             tracing::info!(
                 "💰 Found {} relevant transactions in block {} at height {}",
-                relevant_txids.len(),
+                result.relevant_txids.len(),
                 block_hash,
                 block_height
             );
-            for txid in &relevant_txids {
+            for txid in &result.relevant_txids {
                 tracing::debug!("  - Transaction: {}", txid);
             }
         }
