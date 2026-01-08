@@ -38,7 +38,6 @@ async fn test_chainlock_validation_flow() {
         enable_masternodes,
         validation_mode: ValidationMode::Basic,
         storage_path: Some(storage_path),
-        enable_persistence: true,
         peers: vec!["127.0.0.1:9999".parse().unwrap()], // Dummy peer to satisfy config
         ..Default::default()
     };
@@ -88,7 +87,6 @@ async fn test_chainlock_manager_initialization() {
         enable_masternodes: false,
         validation_mode: ValidationMode::Basic,
         storage_path: Some(storage_path),
-        enable_persistence: true,
         peers: vec!["127.0.0.1:9999".parse().unwrap()], // Dummy peer to satisfy config
         ..Default::default()
     };

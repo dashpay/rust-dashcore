@@ -44,9 +44,7 @@ async fn test_simple_header_sync() {
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
     // Create client configuration
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(10));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     config.peers.push(peer_addr);
 
