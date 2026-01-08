@@ -324,7 +324,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         // Update storage with chain state including sync_base_height
                         {
                             let mut storage = self.storage.lock().await;
-                            storage.store_headers(&[checkpoint_header]).await?;
+                            storage
+                                .store_headers_at_height(&[checkpoint_header], checkpoint.height)
+                                .await?;
                             storage
                                 .store_chain_state(&chain_state_for_storage)
                                 .await
