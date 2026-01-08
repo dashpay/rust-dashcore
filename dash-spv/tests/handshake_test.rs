@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use dash_spv::client::config::MempoolStrategy;
+use dash_spv::network::transport::TransportPreference;
 use dash_spv::network::{HandshakeManager, NetworkManager, Peer, PeerNetworkManager};
 use dash_spv::{ClientConfig, Network};
 
@@ -13,7 +14,7 @@ async fn test_handshake_with_mainnet_peer() {
     let _ = env_logger::builder().filter_level(log::LevelFilter::Debug).is_test(true).try_init();
 
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
-    let result = Peer::connect(peer_addr, 10, Network::Dash).await;
+    let result = Peer::connect(peer_addr, 10, Network::Dash, TransportPreference::V1Only).await;
 
     match result {
         Ok(mut connection) => {
@@ -55,7 +56,7 @@ async fn test_handshake_timeout() {
     // This IP range is reserved for documentation and will never respond.
     let peer_addr: SocketAddr = "192.0.2.1:9999".parse().expect("Valid peer address");
     let start = std::time::Instant::now();
-    let result = Peer::connect(peer_addr, 2, Network::Dash).await;
+    let result = Peer::connect(peer_addr, 2, Network::Dash, TransportPreference::V1Only).await;
     let elapsed = start.elapsed();
 
     assert!(result.is_err(), "Connection should fail for unreachable peer");
@@ -93,7 +94,7 @@ async fn test_multiple_connect_disconnect_cycles() {
     for i in 1..=3 {
         println!("Attempt {} to connect to {}", i, peer_addr);
 
-        match connection.connect_instance().await {
+        match connection.connect_instance(TransportPreference::V1Only).await {
             Ok(_) => {
                 assert!(connection.is_connected(), "Should be connected after successful connect");
 
@@ -112,6 +113,64 @@ async fn test_multiple_connect_disconnect_cycles() {
                 println!("Connection attempt {} failed: {}", i, e);
                 break;
             }
+        }
+    }
+}
+
+// =============================================================================
+// BIP324 V2 Transport Integration Tests
+// =============================================================================
+
+/// Test V2Preferred mode which tries V2 first then falls back to V1.
+/// This test verifies the fallback mechanism works correctly.
+#[tokio::test]
+async fn test_v2preferred_fallback_to_v1() {
+    let _ = env_logger::builder().filter_level(log::LevelFilter::Debug).is_test(true).try_init();
+
+    let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
+    let result =
+        Peer::connect(peer_addr, 10, Network::Dash, TransportPreference::V2Preferred).await;
+
+    match result {
+        Ok(mut connection) => {
+            let transport_version = connection.transport_version();
+            println!(
+                "✓ Connected to {} using V{} transport (V2Preferred mode)",
+                peer_addr, transport_version
+            );
+
+            // V2Preferred should use V2 if supported, V1 otherwise
+            // Most current nodes are V1-only, so we typically expect V1
+            assert!(
+                transport_version == 1 || transport_version == 2,
+                "Transport version should be 1 or 2"
+            );
+
+            // Perform application-level handshake to verify transport works
+            let mut handshake_manager = HandshakeManager::new(
+                Network::Dash,
+                MempoolStrategy::BloomFilter,
+                Some("v2pref_test".parse().unwrap()),
+            );
+            handshake_manager
+                .perform_handshake(&mut connection)
+                .await
+                .expect("Application handshake failed");
+
+            assert!(connection.is_connected(), "Should be connected after handshake");
+
+            // Verify peer info is populated
+            let peer_info = connection.peer_info();
+            assert_eq!(peer_info.address, peer_addr);
+            assert!(peer_info.connected);
+
+            connection.disconnect().await.expect("Failed to disconnect");
+            println!("✓ V2Preferred test passed (used V{} transport)", transport_version);
+        }
+        Err(e) => {
+            println!("✗ Connection failed: {}", e);
+            println!("Note: This test requires a Dash Core node running at 127.0.0.1:9999");
+            // Don't fail - node might not be available in CI
         }
     }
 }

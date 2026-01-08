@@ -9,6 +9,7 @@ pub mod peer;
 pub mod persist;
 pub mod pool;
 pub mod reputation;
+pub mod transport;
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,7 @@ use dashcore::BlockHash;
 pub use handshake::{HandshakeManager, HandshakeState};
 pub use manager::PeerNetworkManager;
 pub use peer::Peer;
+pub use transport::{Transport, TransportPreference, V1Transport};
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]
