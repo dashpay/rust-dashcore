@@ -5,7 +5,7 @@ mod tests {
         storage::{BlockHeaderStorage, DiskStorageManager},
         types::ChainState,
     };
-    use dashcore::{Header};
+    use dashcore::Header;
 
     #[tokio::test]
     async fn test_chainlock_processing() {
