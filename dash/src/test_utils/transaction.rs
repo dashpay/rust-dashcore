@@ -1,4 +1,4 @@
-use hashes::sha256d;
+use hashes::{Hash, sha256d};
 
 use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
 
@@ -28,6 +28,27 @@ impl Transaction {
             lock_time: 0,
             input: tx_ins,
             output: tx_outs,
+            special_transaction_payload: None,
+        }
+    }
+
+    pub fn dummy_empty(value: u64) -> Transaction {
+        Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::from_byte_array([1u8; 32]),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: Witness::default(),
+            }],
+            output: vec![TxOut {
+                value,
+                script_pubkey: ScriptBuf::new(),
+            }],
             special_transaction_payload: None,
         }
     }
