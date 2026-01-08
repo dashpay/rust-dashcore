@@ -13,6 +13,6 @@ impl FilterHeader {
     }
 
     pub fn dummy_batch(heights: Range<u32>) -> Vec<Self> {
-        heights.map(|height| Self::dummy(height)).collect()
+        heights.map(Self::dummy).collect()
     }
 }

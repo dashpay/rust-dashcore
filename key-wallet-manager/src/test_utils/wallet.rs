@@ -8,6 +8,7 @@ use crate::{wallet_interface::WalletInterface, BlockProcessingResult};
 // Type alias for transaction effects map
 type TransactionEffectsMap = Arc<Mutex<BTreeMap<Txid, (i64, Vec<String>)>>>;
 
+#[derive(Default)]
 pub struct MockWallet {
     processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
     processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
@@ -76,6 +77,7 @@ impl WalletInterface for MockWallet {
 }
 
 /// Mock wallet that returns false for filter checks
+#[derive(Default)]
 pub struct NonMatchingMockWallet {}
 
 impl NonMatchingMockWallet {

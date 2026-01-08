@@ -6,7 +6,7 @@ mod tests {
 
     use crate::storage::{BlockHeaderStorage, DiskStorageManager};
     use crate::types::{SpvEvent, SpvStats};
-    use dashcore::{Block, Network};
+    use dashcore::{Address, Block, Network, Transaction};
     use key_wallet_manager::test_utils::{MockWallet, NonMatchingMockWallet};
 
     use std::sync::Arc;
@@ -37,7 +37,10 @@ mod tests {
         let (processor, task_tx, mut event_rx, wallet, storage) = setup_processor().await;
 
         // Create a test block
-        let block = Block::dummy(Network::Dash);
+        let block = Block::dummy(
+            0,
+            vec![Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[200])],
+        );
         let block_hash = block.block_hash();
 
         // Store a header for the block first
@@ -127,7 +130,7 @@ mod tests {
         let (processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
 
         // Create a test block
-        let block = Block::dummy(Network::Dash);
+        let block = Block::dummy(0, vec![]);
         let block_hash = block.block_hash();
 
         // Create mock filter data (in real scenario, this would be a GCS filter)
@@ -190,7 +193,7 @@ mod tests {
 
         let processor = BlockProcessor::new(task_rx, wallet, storage, stats, event_tx);
 
-        let block_hash = Block::dummy(Network::Dash).block_hash();
+        let block_hash = Block::dummy(0, vec![]).block_hash();
         let filter_data = vec![1, 2, 3, 4, 5];
 
         // Send filter processing task
@@ -232,7 +235,10 @@ mod tests {
         let (processor, task_tx, mut event_rx, _wallet, storage) = setup_processor().await;
 
         // Create a test block
-        let block = Block::dummy(Network::Dash);
+        let block = Block::dummy(
+            0,
+            vec![Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[200])],
+        );
         let block_hash = block.block_hash();
         let txid = block.txdata[0].txid();
 
@@ -303,7 +309,10 @@ mod tests {
         let (processor, task_tx, mut event_rx, wallet, storage) = setup_processor().await;
 
         // Create a test block
-        let block = Block::dummy(Network::Dash);
+        let block = Block::dummy(
+            0,
+            vec![Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[200])],
+        );
         let block_hash = block.block_hash();
         let txid = block.txdata[0].txid();
 
@@ -384,7 +393,10 @@ mod tests {
         let (processor, task_tx, _event_rx, wallet, _storage) = setup_processor().await;
 
         // Create a test transaction
-        let block = Block::dummy(Network::Dash);
+        let block = Block::dummy(
+            0,
+            vec![Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[200])],
+        );
         let tx = block.txdata[0].clone();
         let txid = tx.txid();
 
@@ -438,7 +450,7 @@ mod tests {
     async fn test_block_not_found_in_storage() {
         let (processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
 
-        let block = Block::dummy(Network::Dash);
+        let block = Block::dummy(0, vec![]);
         let block_hash = block.block_hash();
 
         // Don't store header - should fail to find height

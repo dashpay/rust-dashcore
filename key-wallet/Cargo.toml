@@ -16,7 +16,7 @@ bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dash-network/bincode",
 bip38 = ["scrypt", "aes", "bs58", "rand"]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
-test-utils = []
+test-utils = ["dashcore/test-utils"]
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }

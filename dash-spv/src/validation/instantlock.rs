@@ -119,12 +119,12 @@ impl InstantLockValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore_hashes::{sha256d, Hash};
+    use dashcore_hashes::Hash;
 
     #[test]
     fn test_valid_instantlock() {
         let validator = InstantLockValidator::new();
-        let is_lock = InstantLock::dummy();
+        let is_lock = InstantLock::dummy(0..3);
 
         // Structural validation only (for testing)
         assert!(validator.validate_structure(&is_lock).is_ok());
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn test_empty_inputs() {
         let validator = InstantLockValidator::new();
-        let mut is_lock = InstantLock::dummy();
+        let mut is_lock = InstantLock::dummy(0..3);
         is_lock.inputs.clear();
 
         let result = validator.validate_structure(&is_lock);
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn test_empty_signature() {
         let validator = InstantLockValidator::new();
-        let mut is_lock = InstantLock::dummy();
+        let mut is_lock = InstantLock::dummy(0..3);
         is_lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]);
 
         // Zero signatures should be rejected as invalid structure
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn test_null_txid() {
         let validator = InstantLockValidator::new();
-        let mut is_lock = InstantLock::dummy();
+        let mut is_lock = InstantLock::dummy(0..3);
         is_lock.txid = dashcore::Txid::all_zeros();
 
         // Null txid should be rejected as invalid structure
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn test_null_input_txid() {
         let validator = InstantLockValidator::new();
-        let mut is_lock = InstantLock::dummy();
+        let mut is_lock = InstantLock::dummy(0..3);
         // Set the second input to have a null txid
         is_lock.inputs[1].txid = dashcore::Txid::all_zeros();
 
@@ -188,14 +188,14 @@ mod tests {
 
     #[test]
     fn test_request_id_computation() {
-        let is_lock = InstantLock::dummy();
+        let is_lock = InstantLock::dummy(0..3);
 
         // Verify request ID can be computed
         let request_id = is_lock.request_id();
         assert!(request_id.is_ok());
 
         // Same inputs should produce same request ID
-        let is_lock2 = InstantLock::dummy();
+        let is_lock2 = InstantLock::dummy(0..3);
         let request_id2 = is_lock2.request_id();
         assert!(request_id2.is_ok());
         assert_eq!(request_id.unwrap(), request_id2.unwrap());
@@ -206,10 +206,7 @@ mod tests {
         let validator = InstantLockValidator::new();
 
         // Create lock with many inputs
-        let many_inputs: Vec<sha256d::Hash> =
-            (0..100u32).map(|i| sha256d::Hash::hash(&i.to_le_bytes())).collect();
-
-        let lock = InstantLock::dummy_with_inputs(many_inputs);
+        let lock = InstantLock::dummy(0..100);
 
         assert!(validator.validate_structure(&lock).is_ok());
     }

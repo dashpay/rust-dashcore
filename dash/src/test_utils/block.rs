@@ -1,25 +1,27 @@
 use std::ops::Range;
 
-use dash_network::Network;
 use hashes::Hash;
 
 use crate::{
     Block, BlockHash, CompactTarget, Header, Transaction, TxMerkleNode,
     bip158::{BlockFilter, BlockFilterWriter},
     block::Version,
-    constants::genesis_block,
 };
 
 impl Block {
-    pub fn dummy(network: Network) -> Self {
-        genesis_block(network)
-    }
-
-    pub fn dummy_with_transactions(height: u32, transactions: Vec<Transaction>) -> Block {
+    pub fn dummy(height: u32, transactions: Vec<Transaction>) -> Block {
         Block {
             header: Header::dummy(height),
             txdata: transactions,
         }
+    }
+}
+
+impl BlockHash {
+    pub fn dummy(id: u32) -> Self {
+        let mut bytes = [0u8; 32];
+        bytes[..4].copy_from_slice(&id.to_le_bytes());
+        BlockHash::from_byte_array(bytes)
     }
 }
 
@@ -36,7 +38,7 @@ impl Header {
     }
 
     pub fn dummy_batch(height_range: Range<u32>) -> Vec<Self> {
-        height_range.map(|height| Self::dummy(height)).collect()
+        height_range.map(Self::dummy).collect()
     }
 }
 
