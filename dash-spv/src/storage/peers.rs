@@ -1,10 +1,6 @@
-use std::{
-    collections::HashMap,
-    fs::{self, File},
-    io::BufReader,
-    net::SocketAddr,
-    path::PathBuf,
-};
+use std::{collections::HashMap, fs::File, io::BufReader, net::SocketAddr, path::PathBuf};
+
+use tokio::fs;
 
 use async_trait::async_trait;
 use dashcore::{
@@ -76,10 +72,6 @@ impl PeerStorage for PersistentPeerStorage {
     ) -> StorageResult<()> {
         let peers_file = self.peers_data_file();
 
-        if let Err(e) = fs::create_dir_all(peers_file.parent().unwrap()) {
-            return Err(StorageError::WriteFailed(format!("Failed to persist peers: {}", e)));
-        }
-
         let mut buffer = Vec::new();
 
         for item in peers.iter() {
@@ -101,25 +93,34 @@ impl PeerStorage for PersistentPeerStorage {
     async fn load_peers(&self) -> StorageResult<Vec<SocketAddr>> {
         let peers_file = self.peers_data_file();
 
-        if !peers_file.exists() {
+        if !fs::try_exists(&peers_file).await? {
             return Ok(Vec::new());
         };
 
-        let file = File::open(&peers_file)?;
-        let mut reader = BufReader::new(file);
         let mut peers = Vec::new();
 
-        loop {
-            match AddrV2Message::consensus_decode(&mut reader) {
-                Ok(peer) => peers.push(peer),
-                Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    break
-                }
-                Err(e) => {
-                    return Err(StorageError::ReadFailed(format!("Failed to decode peer: {e}")))
+        let peers = tokio::task::spawn_blocking(move || {
+            let file = File::open(&peers_file)?;
+            let mut reader = BufReader::new(file);
+
+            loop {
+                match AddrV2Message::consensus_decode(&mut reader) {
+                    Ok(peer) => peers.push(peer),
+                    Err(encode::Error::Io(ref e))
+                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        break
+                    }
+                    Err(e) => {
+                        return Err(StorageError::ReadFailed(format!("Failed to decode peer: {e}")))
+                    }
                 }
             }
-        }
+
+            Ok(peers)
+        })
+        .await
+        .map_err(|e| StorageError::ReadFailed(format!("Failed to load peers: {e}")))??;
 
         let peers = peers.into_iter().filter_map(|p| p.socket_addr().ok()).collect();
 
@@ -140,7 +141,7 @@ impl PeerStorage for PersistentPeerStorage {
             .parent()
             .ok_or(StorageError::NotFound("reputation_file doesn't have a parent".to_string()))?;
 
-        tokio::fs::create_dir_all(reputation_file_parent).await?;
+        fs::create_dir_all(reputation_file_parent).await?;
 
         atomic_write(&reputation_file, json.as_bytes()).await
     }
@@ -148,11 +149,11 @@ impl PeerStorage for PersistentPeerStorage {
     async fn load_peers_reputation(&self) -> StorageResult<HashMap<SocketAddr, PeerReputation>> {
         let reputation_file = self.peers_reputation_file();
 
-        if !reputation_file.exists() {
+        if !fs::try_exists(&reputation_file).await? {
             return Ok(HashMap::new());
         }
 
-        let json = tokio::fs::read_to_string(reputation_file).await?;
+        let json = fs::read_to_string(reputation_file).await?;
         serde_json::from_str(&json).map_err(|e| {
             StorageError::ReadFailed(format!("Failed to deserialize peers reputations: {e}"))
         })
