@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use dash_network::Network;
 use hashes::Hash;
 
@@ -15,16 +17,26 @@ impl Block {
 
     pub fn dummy_with_transactions(height: u32, transactions: Vec<Transaction>) -> Block {
         Block {
-            header: Header {
-                version: Version::ONE,
-                prev_blockhash: BlockHash::dummy(height.saturating_sub(1)),
-                merkle_root: TxMerkleNode::from_byte_array([0u8; 32]),
-                time: height,
-                bits: CompactTarget::from_consensus(0x1d00ffff),
-                nonce: 0,
-            },
+            header: Header::dummy(height),
             txdata: transactions,
         }
+    }
+}
+
+impl Header {
+    pub fn dummy(height: u32) -> Self {
+        Header {
+            version: Version::ONE,
+            prev_blockhash: BlockHash::dummy(height.saturating_sub(1)),
+            merkle_root: TxMerkleNode::from_byte_array([0u8; 32]),
+            time: height,
+            bits: CompactTarget::from_consensus(0x1d00ffff),
+            nonce: 0,
+        }
+    }
+
+    pub fn dummy_batch(height_range: Range<u32>) -> Vec<Self> {
+        height_range.map(|height| Self::dummy(height)).collect()
     }
 }
 
