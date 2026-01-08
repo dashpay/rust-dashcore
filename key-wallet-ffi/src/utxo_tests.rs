@@ -235,7 +235,7 @@ mod utxo_tests {
         managed_info.accounts.insert(bip44_account);
 
         let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
-
+        unsafe { (*ffi_managed_info).inner_mut() }.update_synced_height(300);
         let result = unsafe {
             managed_wallet_get_utxos(&*ffi_managed_info, &mut utxos_out, &mut count_out, error)
         };
@@ -254,19 +254,21 @@ mod utxo_tests {
             assert_eq!(utxos[0].vout, 0);
             assert_eq!(utxos[0].amount, 50000);
             assert_eq!(utxos[0].height, 100);
-            assert_eq!(utxos[0].confirmations, 1);
+            assert_eq!(utxos[0].confirmations, 201);
 
             // Check second UTXO
             assert_eq!(utxos[1].txid[0], 1);
             assert_eq!(utxos[1].vout, 1);
             assert_eq!(utxos[1].amount, 100000);
             assert_eq!(utxos[1].height, 101);
+            assert_eq!(utxos[1].confirmations, 200);
 
             // Check third UTXO
             assert_eq!(utxos[2].txid[0], 2);
             assert_eq!(utxos[2].vout, 2);
             assert_eq!(utxos[2].amount, 150000);
             assert_eq!(utxos[2].height, 102);
+            assert_eq!(utxos[2].confirmations, 199);
         }
 
         // Clean up
