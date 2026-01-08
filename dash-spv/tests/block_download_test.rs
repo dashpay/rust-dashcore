@@ -125,7 +125,6 @@ fn create_test_config() -> ClientConfig {
     ClientConfig::testnet()
         .without_masternodes()
         .with_validation_mode(dash_spv::types::ValidationMode::None)
-        .with_connection_timeout(std::time::Duration::from_secs(10))
 }
 
 // fn create_test_address() -> Address {
