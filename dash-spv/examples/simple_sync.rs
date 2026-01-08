@@ -24,8 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
-    let storage_manager =
-        DiskStorageManager::new("./.tmp/simple-sync-example-storage".into()).await?;
+    let storage_manager = DiskStorageManager::new("./.tmp/simple-sync-example-storage").await?;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));

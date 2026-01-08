@@ -6,10 +6,11 @@
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use dash_spv::storage::BlockHeaderStorage;
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::{NetworkManager, PeerNetworkManager},
-    storage::{DiskStorageManager, StorageManager},
+    storage::DiskStorageManager,
     types::ValidationMode,
 };
 use dashcore::Network;
@@ -36,8 +37,7 @@ async fn create_test_client(
 
     // Create storage manager
     let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await?;
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path()).await?;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
@@ -200,10 +200,9 @@ async fn test_real_header_sync_up_to_10k() {
     config.peers.push(peer_addr);
 
     // Create fresh storage and client
-    let storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await
-            .expect("Failed to create tmp storage");
+    let storage = DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
+        .await
+        .expect("Failed to create tmp storage");
 
     // Verify starting from empty state
     assert_eq!(storage.get_tip_height().await, None);
@@ -414,10 +413,9 @@ async fn test_real_header_chain_continuity() {
 
     config.peers.push(peer_addr);
 
-    let storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await
-            .expect("Failed to create tmp storage");
+    let storage = DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
+        .await
+        .expect("Failed to create tmp storage");
 
     let mut client = create_test_client(config).await.expect("Failed to create SPV client");
 

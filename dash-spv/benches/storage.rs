@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use dash_spv::{
-    storage::{DiskStorageManager, StorageManager},
+    storage::{BlockHeaderStorage, DiskStorageManager, StorageManager},
     Hash,
 };
 use dashcore::{block::Version, BlockHash, CompactTarget, Header};

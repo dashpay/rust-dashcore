@@ -86,6 +86,15 @@ impl Utxo {
         }
     }
 
+    /// Get the number of confirmations for this UTXO
+    pub fn confirmations(&self, current_height: u32) -> u32 {
+        if self.is_confirmed && current_height >= self.height {
+            current_height - self.height + 1
+        } else {
+            0
+        }
+    }
+
     /// Lock this UTXO to prevent it from being selected
     pub fn lock(&mut self) {
         self.is_locked = true;
@@ -307,6 +316,7 @@ impl Default for UtxoSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_case::test_case;
 
     #[test]
     fn test_utxo_spendability() {
@@ -349,5 +359,20 @@ mod tests {
         assert!(removed.is_some());
         assert_eq!(set.len(), 1);
         assert_eq!(set.total_balance(), 200000);
+    }
+
+    #[test_case(false, 0, 500, 0 ; "unconfirmed utxo has 0 confirmations")]
+    #[test_case(true, 0, 500, 501 ; "confirmed utxo at genesis height has 501 confirmations")]
+    #[test_case(true, 1000, 500, 0 ; "utxo height greater than current height has 0 confirmations")]
+    #[test_case(true, 500, 500, 1 ; "utxo at current height has 1 confirmation")]
+    #[test_case(true, 100, 500, 401 ; "normal case has current_height minus utxo_height plus 1 confirmations")]
+    fn test_confirmations(
+        is_confirmed: bool,
+        utxo_height: u32,
+        current_height: u32,
+        expected: u32,
+    ) {
+        let utxo = Utxo::dummy(0, 100000, utxo_height, false, is_confirmed);
+        assert_eq!(utxo.confirmations(current_height), expected);
     }
 }

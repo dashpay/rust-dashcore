@@ -12,8 +12,6 @@ mod backup_restore_tests;
 
 mod edge_case_tests;
 
-mod immature_transaction_tests;
-
 mod integration_tests;
 
 mod managed_account_collection_tests;

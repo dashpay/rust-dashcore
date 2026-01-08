@@ -3,13 +3,16 @@ use std::{collections::BTreeMap, sync::Arc};
 use dashcore::{Block, Transaction, Txid};
 use tokio::sync::Mutex;
 
-use crate::wallet_interface::WalletInterface;
+use crate::{wallet_interface::WalletInterface, BlockProcessingResult};
+
+// Type alias for transaction effects map
+type TransactionEffectsMap = Arc<Mutex<BTreeMap<Txid, (i64, Vec<String>)>>>;
 
 pub struct MockWallet {
     processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
     processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
     // Map txid -> (net_amount, addresses)
-    effects: Arc<Mutex<BTreeMap<Txid, (i64, Vec<String>)>>>,
+    effects: TransactionEffectsMap,
 }
 
 impl MockWallet {
@@ -17,7 +20,7 @@ impl MockWallet {
         Self {
             processed_blocks: Arc::new(Mutex::new(Vec::new())),
             processed_transactions: Arc::new(Mutex::new(Vec::new())),
-            effects: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
+            effects: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -37,12 +40,15 @@ impl MockWallet {
 
 #[async_trait::async_trait]
 impl WalletInterface for MockWallet {
-    async fn process_block(&mut self, block: &Block, height: u32) -> Vec<dashcore::Txid> {
+    async fn process_block(&mut self, block: &Block, height: u32) -> BlockProcessingResult {
         let mut processed = self.processed_blocks.lock().await;
         processed.push((block.block_hash(), height));
 
         // Return txids of all transactions in block as "relevant"
-        block.txdata.iter().map(|tx| tx.txid()).collect()
+        BlockProcessingResult {
+            relevant_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
+            new_addresses: Vec::new(),
+        }
     }
 
     async fn process_mempool_transaction(&mut self, tx: &Transaction) {
@@ -80,8 +86,8 @@ impl NonMatchingMockWallet {
 
 #[async_trait::async_trait]
 impl WalletInterface for NonMatchingMockWallet {
-    async fn process_block(&mut self, _block: &Block, _height: u32) -> Vec<dashcore::Txid> {
-        Vec::new()
+    async fn process_block(&mut self, _block: &Block, _height: u32) -> BlockProcessingResult {
+        BlockProcessingResult::default()
     }
 
     async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}

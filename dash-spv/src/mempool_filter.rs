@@ -263,11 +263,11 @@ mod tests {
         );
 
         // Transaction sending to watched address should be relevant
-        let tx1 = Transaction::dummy_with_address(addr1.clone(), vec![]);
+        let tx1 = Transaction::dummy_with_address(&addr1.clone(), vec![], 50000);
         assert!(filter.is_transaction_relevant(&tx1));
 
         // Transaction sending to unwatched address should not be relevant
-        let tx2 = Transaction::dummy_with_address(addr2.clone(), vec![]);
+        let tx2 = Transaction::dummy_with_address(&addr2.clone(), vec![], 50000);
         assert!(!filter.is_transaction_relevant(&tx2));
     }
 
@@ -290,11 +290,11 @@ mod tests {
         );
 
         // Transaction with watched script should be relevant
-        let tx = Transaction::dummy_with_address(addr1.clone(), vec![]);
+        let tx = Transaction::dummy_with_address(&addr1.clone(), vec![], 50000);
         assert!(filter.is_transaction_relevant(&tx));
 
         // Transaction without watched script should not be relevant
-        let tx2 = Transaction::dummy_with_address(addr2.clone(), vec![]);
+        let tx2 = Transaction::dummy_with_address(&addr2.clone(), vec![], 50000);
         assert!(!filter.is_transaction_relevant(&tx2));
     }
 
@@ -316,13 +316,13 @@ mod tests {
         );
 
         // Transaction receiving to watched address should be relevant
-        let tx = Transaction::dummy_with_address(addr1.clone(), vec![]);
+        let tx = Transaction::dummy_with_address(&addr1.clone(), vec![], 50000);
         assert!(filter.is_transaction_relevant(&tx));
 
         // Transaction not involving watched address should not be relevant
         // Create a completely different address not in our watched list
         let addr2 = Address::dummy(network, 1);
-        let tx2 = Transaction::dummy_with_address(addr2, vec![]);
+        let tx2 = Transaction::dummy_with_address(&addr2, vec![], 50000);
         assert!(!filter.is_transaction_relevant(&tx2));
     }
 
@@ -487,11 +487,11 @@ mod tests {
         );
 
         // Transaction to watched address should still be relevant
-        let tx = Transaction::dummy_with_address(addr1.clone(), vec![]);
+        let tx = Transaction::dummy_with_address(&addr1.clone(), vec![], 50000);
         assert!(filter.is_transaction_relevant(&tx));
 
         // TODO: Match by outpoint - requires OutPoint to be stored in WatchItem::Outpoint variant
-        // let tx2 = Transaction::dummy_with_address(addr2.clone(), vec![outpoint]);
+        // let tx2 = Transaction::dummy_with_address(&addr2.clone(), vec![outpoint]);
         // assert!(filter.is_transaction_relevant(&tx2));
 
         // No match
@@ -503,7 +503,7 @@ mod tests {
             vout: 0,
         };
 
-        let tx3 = Transaction::dummy_with_address(addr2, vec![other_outpoint]);
+        let tx3 = Transaction::dummy_with_address(&addr2, vec![other_outpoint], 50000);
         assert!(!filter.is_transaction_relevant(&tx3));
     }
 }

@@ -5,7 +5,7 @@
 
 #![cfg(feature = "skip_mock_implementation_incomplete")]
 
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage};
 use dashcore::{
     block::{Header as BlockHeader, Version},
     pow::CompactTarget,

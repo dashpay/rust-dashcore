@@ -43,4 +43,5 @@ pub use key_wallet::wallet::managed_wallet_info::coin_selection::{
 };
 pub use key_wallet::wallet::managed_wallet_info::fee::{FeeEstimator, FeeRate};
 pub use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
+pub use wallet_interface::BlockProcessingResult;
 pub use wallet_manager::{WalletError, WalletManager};

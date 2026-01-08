@@ -25,9 +25,10 @@ serde = { version = "1.0", default-features = false, features = ["derive"], opti
 async-trait = "0.1"
 bincode = { version = "=2.0.0-rc.3", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
-tokio = { version = "1.32", default-features = false }
+tokio = { version = "1.32", features = ["full"] }
 
 [dev-dependencies]
+dashcore = { path = "../dash", features = ["test-utils"] }
 hex = "0.4"
 serde_json = "1.0"
 

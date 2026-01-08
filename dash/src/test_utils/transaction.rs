@@ -32,9 +32,9 @@ impl Transaction {
         }
     }
 
-    pub fn dummy_with_address(address: Address, inputs: Vec<OutPoint>) -> Transaction {
+    pub fn dummy_with_address(address: &Address, inputs: Vec<OutPoint>, value: u64) -> Transaction {
         let tx_outputs = vec![TxOut {
-            value: 50000,
+            value,
             script_pubkey: address.script_pubkey(),
         }];
 

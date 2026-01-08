@@ -51,3 +51,4 @@ dashcore = { path="../dash", features = ["test-utils"] }
 hex = "0.4"
 key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
 tokio = { version = "1", features = ["macros", "rt"] }
+test-case = "3.3"

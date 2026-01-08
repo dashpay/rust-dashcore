@@ -8,6 +8,9 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 ignore = [
     # serde_cbor is unmaintained but only used in fuzz targets
     "RUSTSEC-2021-0127",
+    # bincode is unmaintained but used throughout the codebase, need to find a solution here.
+    # https://rustsec.org/advisories/RUSTSEC-2025-0141.html
+    "RUSTSEC-2025-0141",
 ]
 
 [licenses]

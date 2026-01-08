@@ -5,7 +5,6 @@
 
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
-use crate::wallet::immature_transaction::ImmatureTransaction;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{Utxo, Wallet};
@@ -13,7 +12,6 @@ use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::BlockHash;
 use dashcore::{Address as DashAddress, OutPoint};
-use dashcore_hashes::Hash;
 
 /// Context for transaction processing
 #[derive(Debug, Clone, Copy)]
@@ -75,19 +73,10 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         let relevant_types = TransactionRouter::get_relevant_account_types(&tx_type);
 
         // Check only relevant account types
-        let result = self.accounts.check_transaction(tx, &relevant_types);
+        let mut result = self.accounts.check_transaction(tx, &relevant_types);
 
         // Update state if requested and transaction is relevant
         if update_state && result.is_relevant {
-            // Check if this is an immature coinbase transaction before processing accounts
-            let is_coinbase = tx.is_coin_base();
-            let needs_maturity = is_coinbase
-                && matches!(
-                    context,
-                    TransactionContext::InBlock { .. }
-                        | TransactionContext::InChainLockedBlock { .. }
-                );
-
             for account_match in &result.affected_accounts {
                 // Find and update the specific account
                 use super::account_checker::AccountTypeMatch;
@@ -178,16 +167,11 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         is_ours: net_amount < 0,
                     };
 
-                    // For immature transactions, skip adding to regular transactions
-                    // They will be added when they mature via process_matured_transactions
-                    if !needs_maturity {
-                        account.transactions.insert(tx.txid(), tx_record);
-                    }
+                    account.transactions.insert(tx.txid(), tx_record);
 
                     // Ingest UTXOs for outputs that pay to our addresses and
                     // remove UTXOs that are spent by this transaction's inputs.
                     // Only apply for spendable account types (Standard, CoinJoin).
-                    // Skip UTXO creation for immature coinbase transactions.
                     match &mut account.account_type {
                         crate::managed_account::managed_account_type::ManagedAccountType::Standard { .. }
                         | crate::managed_account::managed_account_type::ManagedAccountType::CoinJoin { .. }
@@ -206,27 +190,25 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                 | TransactionContext::InChainLockedBlock { height, .. } => (true, height),
                             };
 
-                            // Insert UTXOs for matching outputs (skip for immature coinbase)
-                            if !needs_maturity {
-                                let txid = tx.txid();
-                                for (vout, output) in tx.output.iter().enumerate() {
-                                    if let Ok(addr) = DashAddress::from_script(&output.script_pubkey, network) {
-                                        if involved_addrs.contains(&addr) {
-                                            let outpoint = OutPoint { txid, vout: vout as u32 };
-                                            let txout = dashcore::TxOut {
-                                                value: output.value,
-                                                script_pubkey: output.script_pubkey.clone(),
-                                            };
-                                            let mut utxo = Utxo::new(
-                                                outpoint,
-                                                txout,
-                                                addr,
-                                                utxo_height,
-                                                tx.is_coin_base(),
-                                            );
-                                            utxo.is_confirmed = is_confirmed;
-                                            account.utxos.insert(outpoint, utxo);
-                                        }
+                            // Insert UTXOs for matching outputs
+                            let txid = tx.txid();
+                            for (vout, output) in tx.output.iter().enumerate() {
+                                if let Ok(addr) = DashAddress::from_script(&output.script_pubkey, network) {
+                                    if involved_addrs.contains(&addr) {
+                                        let outpoint = OutPoint { txid, vout: vout as u32 };
+                                        let txout = dashcore::TxOut {
+                                            value: output.value,
+                                            script_pubkey: output.script_pubkey.clone(),
+                                        };
+                                        let mut utxo = Utxo::new(
+                                            outpoint,
+                                            txout,
+                                            addr,
+                                            utxo_height,
+                                            tx.is_coin_base(),
+                                        );
+                                        utxo.is_confirmed = is_confirmed;
+                                        account.utxos.insert(outpoint, utxo);
                                     }
                                 }
                             }
@@ -263,74 +245,44 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             internal_addresses,
                             ..
                         } = &mut account.account_type {
-                            let _ = external_addresses.maintain_gap_limit(&key_source);
-                            let _ = internal_addresses.maintain_gap_limit(&key_source);
+                            match external_addresses.maintain_gap_limit(&key_source) {
+                                Ok(new_addrs) => result.new_addresses.extend(new_addrs),
+                                Err(e) => {
+                                    tracing::error!(
+                                        account_index = ?account_match.account_type_match.account_index(),
+                                        pool_type = "external",
+                                        error = %e,
+                                        "Failed to maintain gap limit for address pool"
+                                    );
+                                }
+                            }
+                            match internal_addresses.maintain_gap_limit(&key_source) {
+                                Ok(new_addrs) => result.new_addresses.extend(new_addrs),
+                                Err(e) => {
+                                    tracing::error!(
+                                        account_index = ?account_match.account_type_match.account_index(),
+                                        pool_type = "internal",
+                                        error = %e,
+                                        "Failed to maintain gap limit for address pool"
+                                    );
+                                }
+                            }
                         } else {
                             for pool in account.account_type.address_pools_mut() {
-                                let _ = pool.maintain_gap_limit(&key_source);
+                                match pool.maintain_gap_limit(&key_source) {
+                                    Ok(new_addrs) => result.new_addresses.extend(new_addrs),
+                                    Err(e) => {
+                                        tracing::error!(
+                                            account_index = ?account_match.account_type_match.account_index(),
+                                            pool_type = ?pool.pool_type,
+                                            error = %e,
+                                            "Failed to maintain gap limit for address pool"
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
-
-            // Store immature transaction if this is a coinbase in a block
-            if needs_maturity {
-                if let TransactionContext::InBlock {
-                    height,
-                    block_hash,
-                    timestamp,
-                }
-                | TransactionContext::InChainLockedBlock {
-                    height,
-                    block_hash,
-                    timestamp,
-                } = context
-                {
-                    let mut immature_tx = ImmatureTransaction::new(
-                        tx.clone(),
-                        height,
-                        block_hash.unwrap_or_else(BlockHash::all_zeros),
-                        timestamp.unwrap_or(0) as u64,
-                        100,
-                        true,
-                    );
-
-                    use super::account_checker::AccountTypeMatch;
-                    for account_match in &result.affected_accounts {
-                        match &account_match.account_type_match {
-                            AccountTypeMatch::StandardBIP44 {
-                                account_index,
-                                ..
-                            } => {
-                                immature_tx.affected_accounts.add_bip44(*account_index);
-                            }
-                            AccountTypeMatch::StandardBIP32 {
-                                account_index,
-                                ..
-                            } => {
-                                immature_tx.affected_accounts.add_bip32(*account_index);
-                            }
-                            AccountTypeMatch::CoinJoin {
-                                account_index,
-                                ..
-                            } => {
-                                immature_tx.affected_accounts.add_coinjoin(*account_index);
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    immature_tx.total_received = result.total_received;
-                    self.add_immature_transaction(immature_tx);
-
-                    tracing::info!(
-                        txid = %tx.txid(),
-                        height = height,
-                        maturity_height = height + 100,
-                        received = result.total_received,
-                        "Coinbase transaction stored as immature"
-                    );
                 }
             }
 
@@ -373,6 +325,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use crate::wallet::{ManagedWalletInfo, Wallet};
     use crate::Network;
     use dashcore::blockdata::script::ScriptBuf;
@@ -380,6 +333,7 @@ mod tests {
     use dashcore::OutPoint;
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
+    use dashcore_hashes::Hash;
 
     /// Create a test transaction that sends to a given address
     fn create_transaction_to_address(address: &Address, amount: u64) -> Transaction {
@@ -590,9 +544,13 @@ mod tests {
             special_transaction_payload: None,
         };
 
-        // Test with InBlock context (should trigger immature transaction handling)
+        let block_height = 100000;
+        // Set synced_height to the block height where coinbase was received
+        managed_wallet.update_synced_height(block_height);
+
+        // Test with InBlock context
         let context = TransactionContext::InBlock {
-            height: 100000,
+            height: block_height,
             block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
             timestamp: Some(1234567890),
         };
@@ -604,21 +562,30 @@ mod tests {
         assert!(result.is_relevant);
         assert_eq!(result.total_received, 5_000_000_000);
 
-        // The transaction should be stored in immature collection, not regular transactions
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
-
-        // Should NOT be in regular transactions yet
         assert!(
-            !managed_account.transactions.contains_key(&coinbase_tx.txid()),
-            "Immature coinbase should not be in regular transactions"
+            managed_account.transactions.contains_key(&coinbase_tx.txid()),
+            "Coinbase should be in regular transactions"
         );
 
-        // Should be in immature collection
+        // UTXO should be created with is_coinbase = true
+        assert!(!managed_account.utxos.is_empty(), "UTXO should be created for coinbase");
+        let utxo = managed_account.utxos.values().next().expect("Should have UTXO");
+        assert!(utxo.is_coinbase, "UTXO should be marked as coinbase");
+
+        // Coinbase should be in immature_transactions() since it hasn't matured
         let immature_txs = managed_wallet.immature_transactions();
+        assert_eq!(immature_txs.len(), 1, "Should have one immature transaction");
+        assert_eq!(immature_txs[0].txid(), coinbase_tx.txid());
+
+        // Immature balance should reflect the coinbase value
+        assert_eq!(managed_wallet.immature_balance(), 5_000_000_000);
+
+        // Spendable UTXOs should be empty (coinbase not mature)
         assert!(
-            immature_txs.contains(&coinbase_tx.txid()),
-            "Coinbase should be in immature collection"
+            managed_wallet.get_spendable_utxos().is_empty(),
+            "Coinbase UTXO should not be spendable until mature"
         );
     }
 
@@ -709,7 +676,7 @@ mod tests {
         assert_eq!(record.net_amount, -(funding_value as i64));
     }
 
-    /// Test that immature coinbase transactions are properly stored and processed
+    /// Test the full coinbase maturity flow - immature to mature transition
     #[tokio::test]
     async fn test_wallet_checker_immature_transaction_flow() {
         use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -753,6 +720,9 @@ mod tests {
         };
 
         let block_height = 100000;
+        // Set synced_height to block where coinbase was received
+        managed_wallet.update_synced_height(block_height);
+
         let context = TransactionContext::InBlock {
             height: block_height,
             block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
@@ -767,68 +737,57 @@ mod tests {
         assert!(result.is_relevant);
         assert_eq!(result.total_received, 5_000_000_000);
 
-        // Verify transaction is NOT in regular transactions yet
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
         assert!(
-            !managed_account.transactions.contains_key(&coinbase_tx.txid()),
-            "Immature coinbase should not be in regular transactions"
+            managed_account.transactions.contains_key(&coinbase_tx.txid()),
+            "Coinbase should be in regular transactions"
         );
 
-        // Verify transaction IS in immature collection
+        assert!(!managed_account.utxos.is_empty(), "UTXO should be created for coinbase");
+        let utxo = managed_account.utxos.values().next().expect("Should have UTXO");
+        assert!(utxo.is_coinbase, "UTXO should be marked as coinbase");
+        assert_eq!(utxo.height, block_height);
+
+        // Coinbase is in immature_transactions() since it hasn't matured
         let immature_txs = managed_wallet.immature_transactions();
-        assert!(
-            immature_txs.contains(&coinbase_tx.txid()),
-            "Coinbase should be in immature collection"
-        );
+        assert_eq!(immature_txs.len(), 1, "Should have one immature transaction");
 
-        // Verify the immature transaction has correct data
-        let immature_tx = immature_txs.get(&coinbase_tx.txid()).expect("Should have immature tx");
-        assert_eq!(immature_tx.height, block_height);
-        assert_eq!(immature_tx.total_received, 5_000_000_000);
-        assert_eq!(immature_tx.maturity_confirmations, 100);
-        assert!(immature_tx.is_coinbase);
-        assert!(immature_tx.affected_accounts.bip44_accounts.contains(&0));
-
-        // Verify no UTXOs were created (since it's immature)
-        assert!(managed_account.utxos.is_empty(), "No UTXOs should exist for immature coinbase");
-
-        // Verify balance is still zero
-        assert_eq!(
-            managed_wallet.balance().total(),
-            0,
-            "Balance should be zero while coinbase is immature"
-        );
-
-        // Verify immature balance is tracked
+        // Immature balance should reflect the coinbase value
         let immature_balance = managed_wallet.immature_balance();
         assert_eq!(
             immature_balance, 5_000_000_000,
             "Immature balance should reflect the coinbase value"
         );
 
+        // Spendable UTXOs should be empty (coinbase not mature yet)
+        assert!(
+            managed_wallet.get_spendable_utxos().is_empty(),
+            "No spendable UTXOs while coinbase is immature"
+        );
+
         // Now advance the chain height past maturity (100 blocks)
         let mature_height = block_height + 100;
         managed_wallet.update_synced_height(mature_height);
 
-        // Verify transaction moved from immature to regular
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
         assert!(
             managed_account.transactions.contains_key(&coinbase_tx.txid()),
-            "Matured coinbase should be in regular transactions"
+            "Coinbase should still be in regular transactions"
         );
 
-        // Verify transaction is no longer immature
+        // Coinbase is no longer in immature_transactions()
         let immature_txs = managed_wallet.immature_transactions();
-        assert!(
-            !immature_txs.contains(&coinbase_tx.txid()),
-            "Matured coinbase should not be in immature collection"
-        );
+        assert!(immature_txs.is_empty(), "Matured coinbase should not be in immature transactions");
 
-        // Verify immature balance is now zero
+        // Immature balance should now be zero
         let immature_balance = managed_wallet.immature_balance();
         assert_eq!(immature_balance, 0, "Immature balance should be zero after maturity");
+
+        // Spendable UTXOs should now contain the matured coinbase
+        let spendable = managed_wallet.get_spendable_utxos();
+        assert_eq!(spendable.len(), 1, "Should have one spendable UTXO after maturity");
     }
 
     /// Test mempool context for timestamp/height handling
