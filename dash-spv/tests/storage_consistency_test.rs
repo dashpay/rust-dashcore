@@ -3,7 +3,7 @@
 //! These tests are designed to expose the storage bug where get_tip_height()
 //! returns a value but get_header() at that height returns None.
 
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager, StorageManager};
 use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;

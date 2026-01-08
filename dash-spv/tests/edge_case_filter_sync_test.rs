@@ -16,7 +16,7 @@ use dash_spv::{
     client::ClientConfig,
     error::NetworkResult,
     network::NetworkManager,
-    storage::{DiskStorageManager, StorageManager},
+    storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::filters::FilterSyncManager,
 };
 use dashcore::{
