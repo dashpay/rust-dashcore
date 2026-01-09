@@ -436,23 +436,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
     FFIErrorCode::Success as i32
 }
 
-/// Sets the mempool transaction timeout in seconds
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_timeout(
-    config: *mut FFIClientConfig,
-    timeout_secs: u64,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.mempool_timeout_secs = timeout_secs;
-    FFIErrorCode::Success as i32
-}
-
 /// Sets whether to fetch full mempool transaction data
 ///
 /// # Safety
@@ -537,22 +520,5 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.start_from_height = Some(height);
-    FFIErrorCode::Success as i32
-}
-
-/// Sets the wallet creation timestamp for synchronization optimization
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_wallet_creation_time(
-    config: *mut FFIClientConfig,
-    timestamp: u32,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.wallet_creation_time = Some(timestamp);
     FFIErrorCode::Success as i32
 }

@@ -18,13 +18,11 @@ mod tests {
         assert!(config.enable_filters);
         assert!(config.enable_masternodes);
         assert_eq!(config.max_peers, 8);
-        assert_eq!(config.log_level, "info");
 
         // Mempool defaults
         assert!(config.enable_mempool_tracking);
         assert_eq!(config.mempool_strategy, MempoolStrategy::FetchAll);
         assert_eq!(config.max_mempool_transactions, 1000);
-        assert_eq!(config.mempool_timeout_secs, 3600);
         assert!(config.fetch_mempool_transactions);
         assert!(!config.persist_mempool);
     }
@@ -52,22 +50,18 @@ mod tests {
         let config = ClientConfig::mainnet()
             .with_storage_path(path.clone())
             .with_validation_mode(ValidationMode::Basic)
-            .with_log_level("debug")
             .with_mempool_tracking(MempoolStrategy::BloomFilter)
             .with_max_mempool_transactions(500)
-            .with_mempool_timeout(7200)
             .with_mempool_persistence(true)
             .with_start_height(100000);
 
         assert_eq!(config.storage_path, Some(path));
         assert_eq!(config.validation_mode, ValidationMode::Basic);
-        assert_eq!(config.log_level, "debug");
 
         // Mempool settings
         assert!(config.enable_mempool_tracking);
         assert_eq!(config.mempool_strategy, MempoolStrategy::BloomFilter);
         assert_eq!(config.max_mempool_transactions, 500);
-        assert_eq!(config.mempool_timeout_secs, 7200);
         assert!(config.persist_mempool);
         assert_eq!(config.start_from_height, Some(100000));
     }
@@ -125,41 +119,5 @@ mod tests {
         assert!(result.unwrap_err().contains("max_mempool_transactions must be > 0"));
     }
 
-    #[test]
-    fn test_validation_invalid_mempool_timeout() {
-        let config = ClientConfig {
-            enable_mempool_tracking: true,
-            mempool_timeout_secs: 0,
-            ..Default::default()
-        };
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "mempool_timeout_secs must be > 0");
-    }
-
     // Removed selective strategy validation test; Selective variant no longer exists
-
-    #[test]
-    fn test_wallet_creation_time() {
-        let config = ClientConfig {
-            wallet_creation_time: Some(1234567890),
-            ..Default::default()
-        };
-
-        assert_eq!(config.wallet_creation_time, Some(1234567890));
-    }
-
-    #[test]
-    fn test_clone_config() {
-        let mut original = ClientConfig::mainnet();
-        original.max_peers = 16;
-        original = original.with_log_level("debug");
-
-        let cloned = original.clone();
-
-        assert_eq!(cloned.network, original.network);
-        assert_eq!(cloned.max_peers, original.max_peers);
-        assert_eq!(cloned.log_level, original.log_level);
-    }
 }
