@@ -47,7 +47,6 @@ I have successfully implemented comprehensive unit tests for several critical da
 - **Location**: 
   - `dash-spv/src/client/config_test.rs`
   - `dash-spv/src/client/watch_manager_test.rs`
-  - `dash-spv/src/client/block_processor_test.rs`
   - `dash-spv/src/client/consistency_test.rs`
   - `dash-spv/src/client/message_handler_test.rs`
 - **Issue**: Tests were written against an incorrect API and need adjustment
