@@ -268,18 +268,21 @@ impl ManagedAccount {
     pub fn update_balance(&mut self, synced_height: u32) {
         let mut spendable = 0;
         let mut unconfirmed = 0;
+        let mut immature = 0;
         let mut locked = 0;
         for utxo in self.utxos.values() {
             let value = utxo.txout.value;
             if utxo.is_locked {
                 locked += value;
+            } else if !utxo.is_mature(synced_height) {
+                immature += value;
             } else if utxo.is_spendable(synced_height) {
                 spendable += value;
             } else {
                 unconfirmed += value;
             }
         }
-        self.balance = WalletBalance::new(spendable, unconfirmed, locked);
+        self.balance = WalletBalance::new(spendable, unconfirmed, immature, locked);
         self.metadata.last_used = Some(Self::current_timestamp());
     }
 

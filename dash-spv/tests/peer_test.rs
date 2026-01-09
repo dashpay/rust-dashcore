@@ -22,8 +22,6 @@ fn create_test_config(network: Network, data_dir: Option<TempDir>) -> ClientConf
     config.enable_filters = false;
     config.enable_masternodes = false;
     config.max_peers = 3;
-    config.connection_timeout = Duration::from_secs(10);
-    config.message_timeout = Duration::from_secs(30);
     config.peers = vec![]; // Will be populated by DNS discovery
     config
 }

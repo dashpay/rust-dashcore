@@ -73,9 +73,7 @@ async fn test_real_node_connectivity() {
 
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().expect("Valid peer address");
 
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(15));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     // Add the peer to the configuration
     config.peers.push(peer_addr);
@@ -117,9 +115,7 @@ async fn test_real_header_sync_genesis_to_1000() {
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
     // Create client with memory storage for this test
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     // Add the real peer
     config.peers.push(peer_addr);
@@ -192,9 +188,7 @@ async fn test_real_header_sync_up_to_10k() {
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
     // Create client configuration optimized for bulk sync
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic) // Use basic validation
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     // Add the real peer
     config.peers.push(peer_addr);
@@ -345,9 +339,7 @@ async fn test_real_header_validation_with_node() {
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
     // Test with Full validation mode to ensure headers are properly validated
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Full)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Full);
 
     config.peers.push(peer_addr);
 
@@ -407,9 +399,7 @@ async fn test_real_header_chain_continuity() {
 
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     config.peers.push(peer_addr);
 
@@ -482,9 +472,7 @@ async fn test_real_node_sync_resumption() {
 
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     config.peers.push(peer_addr);
 
@@ -548,9 +536,7 @@ async fn test_real_node_performance_benchmarks() {
 
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     config.peers.push(peer_addr);
 

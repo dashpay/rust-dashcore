@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{Address, OutPoint, Transaction, TxIn, TxOut, Txid, Witness};
+use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
 
 impl Transaction {
     pub fn dummy(
@@ -30,6 +30,28 @@ impl Transaction {
                 script_pubkey: address.script_pubkey(),
             })
             .collect();
+
+        Transaction {
+            version: 1,
+            lock_time: 0,
+            input: inputs,
+            output: outputs,
+            special_transaction_payload: None,
+        }
+    }
+
+    pub fn dummy_coinbase(address: &Address, value: u64) -> Transaction {
+        let inputs = vec![TxIn {
+            previous_output: OutPoint::null(),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: Witness::new(),
+        }];
+
+        let outputs = vec![TxOut {
+            value,
+            script_pubkey: address.script_pubkey(),
+        }];
 
         Transaction {
             version: 1,
