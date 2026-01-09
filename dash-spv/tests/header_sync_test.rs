@@ -22,17 +22,16 @@ async fn test_header_sync_with_client_integration() {
     let _ = env_logger::try_init();
 
     // Test header sync integration with the full client
-    let config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
+    let config = ClientConfig::new(Network::Dash)
+        .with_validation_mode(ValidationMode::Basic)
+        .with_storage_path(TempDir::new().expect("Failed to create tmp dir").path());
 
     // Create network manager
     let network_manager =
         PeerNetworkManager::new(&config).await.expect("Failed to create network manager");
 
     // Create storage manager
-    let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
-            .await
-            .expect("Failed to create tmp storage");
+    let storage_manager = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
@@ -88,8 +87,8 @@ fn create_test_header_chain_from(start: usize, count: usize) -> Vec<BlockHeader>
 #[tokio::test]
 async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let mut storage =
-        DiskStorageManager::new(temp_dir.path()).await.expect("Failed to create storage");
+    let config = ClientConfig::regtest().with_storage_path(temp_dir.path());
+    let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     let headers = create_test_header_chain(header_count);
     let expected_tip_hash = headers.last().unwrap().block_hash();

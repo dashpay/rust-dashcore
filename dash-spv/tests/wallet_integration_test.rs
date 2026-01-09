@@ -15,16 +15,16 @@ use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
 ) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager> {
-    let config = ClientConfig::testnet().without_filters().without_masternodes();
+    let config = ClientConfig::testnet()
+        .without_filters()
+        .with_storage_path(TempDir::new().unwrap().path())
+        .without_masternodes();
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
-    let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
-            .await
-            .expect("Failed to create tmp storage");
+    let storage_manager = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));

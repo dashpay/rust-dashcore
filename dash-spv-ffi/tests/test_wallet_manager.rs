@@ -11,7 +11,8 @@ mod tests {
         FFIError, FFINetwork, FFIWalletManager,
     };
     use key_wallet_manager::wallet_manager::WalletManager;
-    use std::ffi::CStr;
+    use std::ffi::{CStr, CString};
+    use tempfile::TempDir;
 
     #[test]
     fn test_get_wallet_manager() {
@@ -19,6 +20,12 @@ mod tests {
             // Create a config
             let config = dash_spv_ffi_config_testnet();
             assert!(!config.is_null());
+
+            let temp_dir = TempDir::new().unwrap();
+            dash_spv_ffi_config_set_data_dir(
+                config,
+                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+            );
 
             // Create a client
             let client = dash_spv_ffi_client_new(config);
@@ -50,6 +57,12 @@ mod tests {
         unsafe {
             let config = dash_spv_ffi_config_testnet();
             assert!(!config.is_null());
+
+            let temp_dir = TempDir::new().unwrap();
+            dash_spv_ffi_config_set_data_dir(
+                config,
+                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+            );
 
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null());

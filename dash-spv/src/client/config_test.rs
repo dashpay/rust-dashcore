@@ -55,7 +55,7 @@ mod tests {
             .with_mempool_persistence(true)
             .with_start_height(100000);
 
-        assert_eq!(config.storage_path, Some(path));
+        assert_eq!(config.storage_path, path);
         assert_eq!(config.validation_mode, ValidationMode::Basic);
 
         // Mempool settings
@@ -86,12 +86,6 @@ mod tests {
 
         assert!(!config.enable_filters);
         assert!(!config.enable_masternodes);
-    }
-
-    #[test]
-    fn test_validation_valid_config() {
-        let config = ClientConfig::default();
-        assert!(config.validate().is_ok());
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use dash_spv::{
     storage::{BlockHeaderStorage, DiskStorageManager, StorageManager},
-    Hash,
+    ClientConfig, Hash,
 };
 use dashcore::{block::Version, BlockHash, CompactTarget, Header};
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -34,7 +34,9 @@ fn bench_disk_storage(c: &mut Criterion) {
     c.bench_function("storage/disk/store", |b| {
         b.to_async(&rt).iter_batched(
             || async {
-                DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf()).await.unwrap()
+                let config =
+                    ClientConfig::testnet().with_storage_path(TempDir::new().unwrap().path());
+                DiskStorageManager::new(&config).await.unwrap()
             },
             |a| async {
                 let mut storage = a.await;
@@ -47,10 +49,10 @@ fn bench_disk_storage(c: &mut Criterion) {
         )
     });
 
-    let temp_dir = TempDir::new().unwrap();
+    let config = ClientConfig::testnet().with_storage_path(TempDir::new().unwrap().path());
 
     let mut storage = rt.block_on(async {
-        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await.unwrap();
+        let mut storage = DiskStorageManager::new(&config).await.unwrap();
 
         for chunk in headers.chunks(CHUNK_SIZE as usize) {
             storage.store_headers(chunk).await.unwrap();

@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a simple configuration
     let config = ClientConfig::mainnet()
+        .with_storage_path("./.tmp/simple-sync-example-storage")
         .without_filters() // Skip filter sync for this example
         .without_masternodes(); // Skip masternode sync for this example
 
@@ -24,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
-    let storage_manager = DiskStorageManager::new("./.tmp/simple-sync-example-storage").await?;
+    let storage_manager = DiskStorageManager::new(&config).await?;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));

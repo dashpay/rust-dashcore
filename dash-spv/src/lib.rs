@@ -26,11 +26,11 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create configuration for mainnet
 //!     let config = ClientConfig::mainnet()
-//!         .with_storage_path("/path/to/data".into());
+//!         .with_storage_path("./.tmp/example-storage");
 //!
 //!     // Create the required components
 //!     let network = PeerNetworkManager::new(&config).await?;
-//!     let storage = DiskStorageManager::new("./.tmp/example-storage").await?;
+//!     let storage = DiskStorageManager::new(&config).await?;
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 //!
 //!     // Create and start the client

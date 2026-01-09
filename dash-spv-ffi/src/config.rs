@@ -77,7 +77,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_data_dir(
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     match CStr::from_ptr(path).to_str() {
         Ok(path_str) => {
-            config.storage_path = Some(path_str.into());
+            config.storage_path = path_str.into();
             FFIErrorCode::Success as i32
         }
         Err(e) => {
@@ -331,13 +331,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
     }
 
     let config = unsafe { &*((*config).inner as *const ClientConfig) };
-    match &config.storage_path {
-        Some(dir) => FFIString::new(&dir.to_string_lossy()),
-        None => FFIString {
-            ptr: std::ptr::null_mut(),
-            length: 0,
-        },
-    }
+    FFIString::new(&config.storage_path.to_string_lossy())
 }
 
 /// Destroys an FFIClientConfig and frees its memory

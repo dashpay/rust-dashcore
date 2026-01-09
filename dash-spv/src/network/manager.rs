@@ -81,7 +81,7 @@ impl PeerNetworkManager {
         let (message_tx, message_rx) = mpsc::channel(1000);
 
         let discovery = DnsDiscovery::new().await?;
-        let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
+        let data_dir = config.storage_path.clone();
         let peer_store = PeerStore::new(config.network, data_dir.clone());
 
         let reputation_manager = Arc::new(PeerReputationManager::new());

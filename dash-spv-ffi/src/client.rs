@@ -147,35 +147,12 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
         }
     };
 
-    let mut client_config = config.clone_inner();
-
-    let storage_path = client_config.storage_path.clone().unwrap_or_else(|| {
-        // Create a unique temporary directory if none was provided
-        static PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-        let mut path = std::env::temp_dir();
-        path.push("dash-spv");
-        path.push(
-            format!(
-                "{:?}-{}-{}",
-                client_config.network,
-                std::process::id(),
-                PATH_COUNTER.fetch_add(1, Ordering::Relaxed)
-            )
-            .to_lowercase(),
-        );
-        tracing::warn!(
-            "dash-spv FFI config missing storage path, falling back to temp dir {:?}",
-            path
-        );
-        path
-    });
-    client_config.storage_path = Some(storage_path.clone());
+    let client_config = config.clone_inner();
 
     let client_result = runtime.block_on(async move {
         // Construct concrete implementations for generics
         let network = dash_spv::network::PeerNetworkManager::new(&client_config).await;
-        let storage = DiskStorageManager::new(storage_path.clone()).await;
+        let storage = DiskStorageManager::new(&client_config).await;
         let wallet = key_wallet_manager::wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
         >::new(client_config.network);
