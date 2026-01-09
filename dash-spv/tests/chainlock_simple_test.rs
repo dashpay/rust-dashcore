@@ -27,7 +27,6 @@ async fn test_chainlock_validation_flow() {
 
     // Create temp directory for storage
     let temp_dir = TempDir::new().unwrap();
-    let storage_path = temp_dir.path().to_path_buf();
 
     // Create client config with masternodes enabled
     let network = Network::Dash;
@@ -37,7 +36,7 @@ async fn test_chainlock_validation_flow() {
         enable_filters: false,
         enable_masternodes,
         validation_mode: ValidationMode::Basic,
-        storage_path: Some(storage_path),
+        storage_path: temp_dir.path().to_path_buf(),
         peers: vec!["127.0.0.1:9999".parse().unwrap()], // Dummy peer to satisfy config
         ..Default::default()
     };
@@ -46,8 +45,7 @@ async fn test_chainlock_validation_flow() {
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
-    let storage_manager =
-        DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
+    let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
@@ -78,7 +76,6 @@ async fn test_chainlock_manager_initialization() {
 
     // Create temp directory for storage
     let temp_dir = TempDir::new().unwrap();
-    let storage_path = temp_dir.path().to_path_buf();
 
     // Create client config
     let config = ClientConfig {
@@ -86,7 +83,7 @@ async fn test_chainlock_manager_initialization() {
         enable_filters: false,
         enable_masternodes: false,
         validation_mode: ValidationMode::Basic,
-        storage_path: Some(storage_path),
+        storage_path: temp_dir.path().to_path_buf(),
         peers: vec!["127.0.0.1:9999".parse().unwrap()], // Dummy peer to satisfy config
         ..Default::default()
     };
@@ -95,8 +92,7 @@ async fn test_chainlock_manager_initialization() {
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
-    let storage_manager =
-        DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
+    let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
