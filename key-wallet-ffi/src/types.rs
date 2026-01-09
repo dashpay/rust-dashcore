@@ -55,9 +55,11 @@ pub struct FFIBalance {
     pub confirmed: u64,
     /// Unconfirmed balance in duffs
     pub unconfirmed: u64,
-    /// Immature balance in duffs (e.g., mining rewards)
+    /// Immature balance in duffs (e.g., mining rewards not yet mature)
     pub immature: u64,
-    /// Total balance (confirmed + unconfirmed) in duffs
+    /// Locked balance in duffs (e.g., CoinJoin reserves)
+    pub locked: u64,
+    /// Total balance in duffs
     pub total: u64,
 }
 
@@ -66,7 +68,8 @@ impl From<key_wallet::WalletBalance> for FFIBalance {
         FFIBalance {
             confirmed: balance.spendable(),
             unconfirmed: balance.unconfirmed(),
-            immature: balance.locked(), // Map locked to immature for now
+            immature: balance.immature(),
+            locked: balance.locked(),
             total: balance.total(),
         }
     }

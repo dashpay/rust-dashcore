@@ -516,11 +516,15 @@ typedef struct {
      */
     uint64_t unconfirmed;
     /*
-     Immature balance in duffs (e.g., mining rewards)
+     Immature balance in duffs (e.g., mining rewards not yet mature)
      */
     uint64_t immature;
     /*
-     Total balance (confirmed + unconfirmed) in duffs
+     Locked balance in duffs (e.g., CoinJoin reserves)
+     */
+    uint64_t locked;
+    /*
+     Total balance in duffs
      */
     uint64_t total;
 } FFIBalance;
@@ -3069,13 +3073,14 @@ bool managed_wallet_get_bip_44_internal_address_range(FFIManagedWalletInfo *mana
 /*
  Get wallet balance from managed wallet info
 
- Returns the balance breakdown including confirmed, unconfirmed, locked, and total amounts.
+ Returns the balance breakdown including confirmed, unconfirmed, immature, locked, and total amounts.
 
  # Safety
 
  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
  - `confirmed_out` must be a valid pointer to store the confirmed balance
  - `unconfirmed_out` must be a valid pointer to store the unconfirmed balance
+ - `immature_out` must be a valid pointer to store the immature balance
  - `locked_out` must be a valid pointer to store the locked balance
  - `total_out` must be a valid pointer to store the total balance
  - `error` must be a valid pointer to an FFIError
@@ -3084,6 +3089,7 @@ bool managed_wallet_get_bip_44_internal_address_range(FFIManagedWalletInfo *mana
 bool managed_wallet_get_balance(const FFIManagedWalletInfo *managed_wallet,
                                 uint64_t *confirmed_out,
                                 uint64_t *unconfirmed_out,
+                                uint64_t *immature_out,
                                 uint64_t *locked_out,
                                 uint64_t *total_out,
                                 FFIError *error)

@@ -91,9 +91,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get immature transactions
     fn immature_transactions(&self) -> Vec<Transaction>;
 
-    /// Get immature balance
-    fn immature_balance(&self) -> u64;
-
     /// Create an unsigned payment transaction
     #[allow(clippy::too_many_arguments)]
     fn create_unsigned_payment_transaction(
@@ -242,14 +239,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
         transactions
     }
 
-    fn immature_balance(&self) -> u64 {
-        self.utxos()
-            .iter()
-            .filter(|utxo| utxo.is_coinbase && !utxo.is_mature(self.synced_height()))
-            .map(|utxo| utxo.value())
-            .sum()
-    }
-
     fn create_unsigned_payment_transaction(
         &mut self,
         wallet: &Wallet,
@@ -272,5 +261,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn update_synced_height(&mut self, current_height: u32) {
         self.metadata.synced_height = current_height;
+        // Update cached balance
+        self.update_balance();
     }
 }

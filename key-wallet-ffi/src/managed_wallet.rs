@@ -531,13 +531,14 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
 
 /// Get wallet balance from managed wallet info
 ///
-/// Returns the balance breakdown including confirmed, unconfirmed, locked, and total amounts.
+/// Returns the balance breakdown including confirmed, unconfirmed, immature, locked, and total amounts.
 ///
 /// # Safety
 ///
 /// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `confirmed_out` must be a valid pointer to store the confirmed balance
 /// - `unconfirmed_out` must be a valid pointer to store the unconfirmed balance
+/// - `immature_out` must be a valid pointer to store the immature balance
 /// - `locked_out` must be a valid pointer to store the locked balance
 /// - `total_out` must be a valid pointer to store the total balance
 /// - `error` must be a valid pointer to an FFIError
@@ -546,6 +547,7 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
     managed_wallet: *const FFIManagedWalletInfo,
     confirmed_out: *mut u64,
     unconfirmed_out: *mut u64,
+    immature_out: *mut u64,
     locked_out: *mut u64,
     total_out: *mut u64,
     error: *mut FFIError,
@@ -561,6 +563,7 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
 
     if confirmed_out.is_null()
         || unconfirmed_out.is_null()
+        || immature_out.is_null()
         || locked_out.is_null()
         || total_out.is_null()
     {
@@ -578,6 +581,7 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
     unsafe {
         *confirmed_out = balance.spendable();
         *unconfirmed_out = balance.unconfirmed();
+        *immature_out = balance.immature();
         *locked_out = balance.locked();
         *total_out = balance.total();
     }
@@ -1042,7 +1046,7 @@ mod tests {
         let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
 
         // Set some test balance values
-        managed_info.balance = WalletBalance::new(1000000, 50000, 25000);
+        managed_info.balance = WalletBalance::new(1000000, 50000, 10000, 25000);
 
         let ffi_managed = FFIManagedWalletInfo::new(managed_info);
         let ffi_managed_ptr = Box::into_raw(Box::new(ffi_managed));
@@ -1050,6 +1054,7 @@ mod tests {
         // Test getting balance
         let mut confirmed: u64 = 0;
         let mut unconfirmed: u64 = 0;
+        let mut immature: u64 = 0;
         let mut locked: u64 = 0;
         let mut total: u64 = 0;
 
@@ -1058,6 +1063,7 @@ mod tests {
                 ffi_managed_ptr,
                 &mut confirmed,
                 &mut unconfirmed,
+                &mut immature,
                 &mut locked,
                 &mut total,
                 &mut error,
@@ -1067,8 +1073,9 @@ mod tests {
         assert!(success);
         assert_eq!(confirmed, 1000000);
         assert_eq!(unconfirmed, 50000);
+        assert_eq!(immature, 10000);
         assert_eq!(locked, 25000);
-        assert_eq!(total, 1075000);
+        assert_eq!(total, 1085000);
 
         // Test with null managed wallet
         let success = unsafe {
@@ -1076,6 +1083,7 @@ mod tests {
                 ptr::null(),
                 &mut confirmed,
                 &mut unconfirmed,
+                &mut immature,
                 &mut locked,
                 &mut total,
                 &mut error,
@@ -1091,6 +1099,7 @@ mod tests {
                 ffi_managed_ptr,
                 ptr::null_mut(),
                 &mut unconfirmed,
+                &mut immature,
                 &mut locked,
                 &mut total,
                 &mut error,

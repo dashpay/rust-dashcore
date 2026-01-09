@@ -5,7 +5,6 @@
 
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
-use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{Utxo, Wallet};
 use async_trait::async_trait;
@@ -289,9 +288,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             // Update wallet metadata
             self.metadata.total_transactions += 1;
 
-            // Update cached balance
-            self.update_balance();
-
             // Log the detected transaction
             let wallet_net: i64 = (result.total_received as i64) - (result.total_sent as i64);
             let ctx = match context {
@@ -545,8 +541,6 @@ mod tests {
         };
 
         let block_height = 100000;
-        // Set synced_height to the block height where coinbase was received
-        managed_wallet.update_synced_height(block_height);
 
         // Test with InBlock context
         let context = TransactionContext::InBlock {
@@ -557,6 +551,8 @@ mod tests {
 
         let result =
             managed_wallet.check_transaction(&coinbase_tx, context, &mut wallet, true).await;
+        // Set synced_height to block where coinbase was received to trigger balance updates.
+        managed_wallet.update_synced_height(block_height);
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -580,7 +576,7 @@ mod tests {
         assert_eq!(immature_txs[0].txid(), coinbase_tx.txid());
 
         // Immature balance should reflect the coinbase value
-        assert_eq!(managed_wallet.immature_balance(), 5_000_000_000);
+        assert_eq!(managed_wallet.balance().immature(), 5_000_000_000);
 
         // Spendable UTXOs should be empty (coinbase not mature)
         assert!(
@@ -720,8 +716,6 @@ mod tests {
         };
 
         let block_height = 100000;
-        // Set synced_height to block where coinbase was received
-        managed_wallet.update_synced_height(block_height);
 
         let context = TransactionContext::InBlock {
             height: block_height,
@@ -732,6 +726,8 @@ mod tests {
         // Process the coinbase transaction
         let result =
             managed_wallet.check_transaction(&coinbase_tx, context, &mut wallet, true).await;
+        // Set synced_height to block where coinbase was received to trigger balance updates.
+        managed_wallet.update_synced_height(block_height);
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -754,10 +750,12 @@ mod tests {
         assert_eq!(immature_txs.len(), 1, "Should have one immature transaction");
 
         // Immature balance should reflect the coinbase value
-        let immature_balance = managed_wallet.immature_balance();
-        assert_eq!(
-            immature_balance, 5_000_000_000,
-            "Immature balance should reflect the coinbase value"
+        assert_eq!(managed_wallet.balance().immature(), 5_000_000_000);
+
+        // Spendable UTXOs should be empty (coinbase not mature yet)
+        assert!(
+            managed_wallet.get_spendable_utxos().is_empty(),
+            "No spendable UTXOs while coinbase is immature"
         );
 
         // Spendable UTXOs should be empty (coinbase not mature yet)
@@ -782,7 +780,7 @@ mod tests {
         assert!(immature_txs.is_empty(), "Matured coinbase should not be in immature transactions");
 
         // Immature balance should now be zero
-        let immature_balance = managed_wallet.immature_balance();
+        let immature_balance = managed_wallet.balance().immature();
         assert_eq!(immature_balance, 0, "Immature balance should be zero after maturity");
 
         // Spendable UTXOs should now contain the matured coinbase
