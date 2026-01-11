@@ -49,9 +49,6 @@ pub struct ClientConfig {
     /// Maximum number of peers to connect to.
     pub max_peers: u32,
 
-    /// Log level for tracing.
-    pub log_level: String,
-
     /// Optional user agent string to advertise in the P2P version message.
     /// If not set, a sensible default is used (includes crate version).
     pub user_agent: Option<String>,
@@ -66,9 +63,6 @@ pub struct ClientConfig {
     /// Maximum number of unconfirmed transactions to track.
     pub max_mempool_transactions: usize,
 
-    /// Time after which unconfirmed transactions are pruned (seconds).
-    pub mempool_timeout_secs: u64,
-
     /// Whether to fetch transactions from INV messages immediately.
     pub fetch_mempool_transactions: bool,
 
@@ -78,10 +72,6 @@ pub struct ClientConfig {
     /// Start syncing from a specific block height.
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
-
-    /// Wallet creation time as Unix timestamp.
-    /// Used to determine appropriate checkpoint for sync.
-    pub wallet_creation_time: Option<u32>,
 }
 
 impl Default for ClientConfig {
@@ -95,17 +85,14 @@ impl Default for ClientConfig {
             enable_filters: true,
             enable_masternodes: true,
             max_peers: 8,
-            log_level: "info".to_string(),
             user_agent: None,
             // Mempool defaults
             enable_mempool_tracking: true,
             mempool_strategy: MempoolStrategy::FetchAll,
             max_mempool_transactions: 1000,
-            mempool_timeout_secs: 3600, // 1 hour
             fetch_mempool_transactions: true,
             persist_mempool: false,
             start_from_height: None,
-            wallet_creation_time: None,
         }
     }
 }
@@ -172,12 +159,6 @@ impl ClientConfig {
         self
     }
 
-    /// Set log level.
-    pub fn with_log_level(mut self, level: &str) -> Self {
-        self.log_level = level.to_string();
-        self
-    }
-
     /// Set custom user agent string for the P2P handshake.
     /// The library will lightly validate and normalize it during handshake.
     pub fn with_user_agent(mut self, agent: impl Into<String>) -> Self {
@@ -195,12 +176,6 @@ impl ClientConfig {
     /// Set maximum number of mempool transactions to track.
     pub fn with_max_mempool_transactions(mut self, max: usize) -> Self {
         self.max_mempool_transactions = max;
-        self
-    }
-
-    /// Set mempool transaction timeout.
-    pub fn with_mempool_timeout(mut self, timeout_secs: u64) -> Self {
-        self.mempool_timeout_secs = timeout_secs;
         self
     }
 
@@ -225,16 +200,10 @@ impl ClientConfig {
         }
 
         // Mempool validation
-        if self.enable_mempool_tracking {
-            if self.max_mempool_transactions == 0 {
-                return Err(
-                    "max_mempool_transactions must be > 0 when mempool tracking is enabled"
-                        .to_string(),
-                );
-            }
-            if self.mempool_timeout_secs == 0 {
-                return Err("mempool_timeout_secs must be > 0".to_string());
-            }
+        if self.enable_mempool_tracking && self.max_mempool_transactions == 0 {
+            return Err(
+                "max_mempool_transactions must be > 0 when mempool tracking is enabled".to_string()
+            );
         }
 
         Ok(())

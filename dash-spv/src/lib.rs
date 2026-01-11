@@ -25,8 +25,7 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create configuration for mainnet
 //!     let config = ClientConfig::mainnet()
-//!         .with_storage_path("/path/to/data".into())
-//!         .with_log_level("info");
+//!         .with_storage_path("/path/to/data".into());
 //!
 //!     // Create the required components
 //!     let network = PeerNetworkManager::new(&config).await?;
