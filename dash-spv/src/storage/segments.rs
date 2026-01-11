@@ -55,12 +55,35 @@ impl Persistable for FilterHeader {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct CachedItem<I: Persistable> {
+    height: u32,
+    item: I,
+}
+
+impl<I: Persistable> CachedItem<I> {
+    pub fn new(height: u32, item: I) -> Self {
+        Self {
+            height,
+            item,
+        }
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn item(&self) -> &I {
+        &self.item
+    }
+}
+
 /// In-memory cache for all segments of items
 #[derive(Debug)]
 pub struct SegmentCache<I: Persistable> {
     segments: HashMap<u32, Segment<I>>,
     evicted: HashMap<u32, Segment<I>>,
-    tip_height: Option<u32>,
+    tip: Option<CachedItem<I>>,
     start_height: Option<u32>,
     segments_dir: PathBuf,
 }
@@ -116,7 +139,7 @@ impl<I: Persistable> SegmentCache<I> {
         let mut cache = Self {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
             evicted: HashMap::new(),
-            tip_height: None,
+            tip: None,
             start_height: None,
             segments_dir: segments_dir.clone(),
         };
@@ -143,11 +166,13 @@ impl<I: Persistable> SegmentCache<I> {
             }
 
             if let Some(segment_id) = max_seg_id {
-                let segment = cache.get_segment(&segment_id).await?;
+                let segment = cache.get_segment_mut(&segment_id).await?;
 
-                cache.tip_height = segment
-                    .last_valid_offset()
-                    .map(|offset| Self::segment_id_to_start_height(segment_id) + offset);
+                if let Some(offset) = segment.last_valid_offset() {
+                    let tip_height = Self::segment_id_to_start_height(segment_id) + offset;
+                    let tip_item = segment.get(offset..offset + 1)[0].clone();
+                    cache.tip = Some(CachedItem::new(tip_height, tip_item));
+                }
             }
 
             if let Some(segment_id) = min_seg_id {
@@ -318,12 +343,14 @@ impl<I: Persistable> SegmentCache<I> {
             height += 1;
         }
 
-        // Update cached tip height and start height
-        // if needed
-        self.tip_height = match self.tip_height {
-            Some(current) => Some(current.max(height - 1)),
-            None => Some(height - 1),
-        };
+        // Update cached tip if needed
+        let new_tip_height = height - 1;
+        let should_update = self.tip.as_ref().is_none_or(|t| new_tip_height > t.height());
+
+        if should_update {
+            let last_item = items.last().unwrap().clone();
+            self.tip = Some(CachedItem::new(new_tip_height, last_item));
+        }
 
         self.start_height = match self.start_height {
             Some(current) => Some(current.min(start_height)),
@@ -353,7 +380,12 @@ impl<I: Persistable> SegmentCache<I> {
 
     #[inline]
     pub fn tip_height(&self) -> Option<u32> {
-        self.tip_height
+        self.tip.as_ref().map(|t| t.height())
+    }
+
+    #[inline]
+    pub fn tip(&self) -> Option<&CachedItem<I>> {
+        self.tip.as_ref()
     }
 
     #[inline]
@@ -707,5 +739,78 @@ mod tests {
 
         assert_eq!(segment.last_valid_offset(), Some(10));
         assert_eq!(segment.get(0..11), &(0..11).map(FilterHeader::new_test).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn test_tip_tracking() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
+            .await
+            .expect("Failed to create new segment_cache");
+
+        // Initially no tip
+        assert!(cache.tip().is_none());
+        assert_eq!(cache.tip_height(), None);
+
+        // Store some items
+        let items: Vec<_> = (0..10).map(FilterHeader::new_test).collect();
+        cache.store_items(&items).await.expect("Failed to store items");
+
+        // Tip should now be the last item
+        assert!(cache.tip().is_some());
+        assert_eq!(cache.tip_height(), Some(9));
+        assert_eq!(cache.tip().unwrap().item(), &FilterHeader::new_test(9));
+        assert_eq!(cache.tip().unwrap().height(), 9);
+    }
+
+    #[tokio::test]
+    async fn test_tip_persisted_and_loaded() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Store items and persist
+        {
+            let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
+                .await
+                .expect("Failed to create new segment_cache");
+
+            let items: Vec<_> = (0..100).map(FilterHeader::new_test).collect();
+            cache.store_items(&items).await.expect("Failed to store items");
+
+            assert_eq!(cache.tip_height(), Some(99));
+            assert_eq!(cache.tip().unwrap().item(), &FilterHeader::new_test(99));
+
+            cache.persist(tmp_dir.path()).await;
+        }
+
+        // Reload and verify tip is restored
+        {
+            let cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
+                .await
+                .expect("Failed to load segment_cache");
+
+            assert_eq!(cache.tip_height(), Some(99));
+            assert_eq!(cache.tip().unwrap().item(), &FilterHeader::new_test(99));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tip_updated_on_append() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
+            .await
+            .expect("Failed to create new segment_cache");
+
+        // Store first batch
+        let items1: Vec<_> = (0..10).map(FilterHeader::new_test).collect();
+        cache.store_items(&items1).await.expect("Failed to store items");
+        assert_eq!(cache.tip_height(), Some(9));
+
+        // Store second batch (should update tip)
+        let items2: Vec<_> = (10..20).map(FilterHeader::new_test).collect();
+        cache.store_items(&items2).await.expect("Failed to store items");
+        assert_eq!(cache.tip_height(), Some(19));
+        assert_eq!(cache.tip().unwrap().item(), &FilterHeader::new_test(19));
     }
 }
