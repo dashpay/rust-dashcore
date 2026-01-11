@@ -4,16 +4,23 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use async_trait::async_trait;
-use dashcore::block::Header as BlockHeader;
-use dashcore::BlockHash;
-use tokio::sync::RwLock;
-
 use crate::error::StorageResult;
 use crate::storage::io::atomic_write;
 use crate::storage::segments::SegmentCache;
 use crate::storage::PersistentStorage;
 use crate::StorageError;
+use async_trait::async_trait;
+use dashcore::block::Header as BlockHeader;
+use dashcore::BlockHash;
+use tokio::sync::RwLock;
+
+/// Represents the current chain tip with height, header, and hash.
+#[derive(Debug, Clone)]
+pub struct HeaderTip {
+    pub height: u32,
+    pub header: BlockHeader,
+    pub hash: BlockHash,
+}
 
 #[async_trait]
 pub trait BlockHeaderStorage {
@@ -49,6 +56,8 @@ pub trait BlockHeaderStorage {
 
     async fn get_tip_height(&self) -> Option<u32>;
 
+    async fn get_header_tip(&self) -> Option<HeaderTip>;
+
     async fn get_start_height(&self) -> Option<u32>;
 
     async fn get_stored_headers_len(&self) -> u32;
@@ -62,6 +71,7 @@ pub trait BlockHeaderStorage {
 pub struct PersistentBlockHeaderStorage {
     block_headers: RwLock<SegmentCache<BlockHeader>>,
     header_hash_index: HashMap<BlockHash, u32>,
+    cached_tip: Option<HeaderTip>,
 }
 
 impl PersistentBlockHeaderStorage {
@@ -94,9 +104,25 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
             }
         };
 
+        // Initialize cached tip if headers exist
+        let cached_tip = if let Some(tip_height) = block_headers.tip_height() {
+            let headers = block_headers.get_items(tip_height..tip_height + 1).await?;
+            headers.first().map(|header| {
+                let hash = header.block_hash();
+                HeaderTip {
+                    height: tip_height,
+                    header: *header,
+                    hash,
+                }
+            })
+        } else {
+            None
+        };
+
         Ok(Self {
             block_headers: RwLock::new(block_headers),
             header_hash_index,
+            cached_tip,
         })
     }
 
@@ -127,15 +153,31 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         headers: &[BlockHeader],
         height: u32,
     ) -> StorageResult<()> {
-        let mut height = height;
+        if headers.is_empty() {
+            return Ok(());
+        }
+
+        let mut current_height = height;
 
         let hashes = headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>();
 
         self.block_headers.write().await.store_items_at_height(headers, height).await?;
 
-        for hash in hashes {
-            self.header_hash_index.insert(hash, height);
-            height += 1;
+        for hash in hashes.iter() {
+            self.header_hash_index.insert(*hash, current_height);
+            current_height += 1;
+        }
+
+        // Update cached tip if these headers extend the chain
+        let new_tip_height = current_height - 1;
+        if self.cached_tip.as_ref().map_or(true, |tip| new_tip_height > tip.height) {
+            let last_header = headers.last().unwrap();
+            let last_hash = hashes.last().unwrap();
+            self.cached_tip = Some(HeaderTip {
+                height: new_tip_height,
+                header: *last_header,
+                hash: *last_hash,
+            });
         }
 
         Ok(())
@@ -147,6 +189,10 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
 
     async fn get_tip_height(&self) -> Option<u32> {
         self.block_headers.read().await.tip_height()
+    }
+
+    async fn get_header_tip(&self) -> Option<HeaderTip> {
+        self.cached_tip.clone()
     }
 
     async fn get_start_height(&self) -> Option<u32> {
