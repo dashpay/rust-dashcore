@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
 use crate::storage::io::atomic_write;
-use crate::storage::segments::SegmentCache;
+use crate::storage::segments::{CachedItem, SegmentCache};
 use crate::storage::PersistentStorage;
 use crate::StorageError;
 
@@ -48,6 +48,8 @@ pub trait BlockHeaderStorage {
     }
 
     async fn get_tip_height(&self) -> Option<u32>;
+
+    async fn get_tip(&self) -> Option<CachedItem<BlockHeader>>;
 
     async fn get_start_height(&self) -> Option<u32>;
 
@@ -147,6 +149,10 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
 
     async fn get_tip_height(&self) -> Option<u32> {
         self.block_headers.read().await.tip_height()
+    }
+
+    async fn get_tip(&self) -> Option<CachedItem<BlockHeader>> {
+        self.block_headers.read().await.tip().cloned()
     }
 
     async fn get_start_height(&self) -> Option<u32> {

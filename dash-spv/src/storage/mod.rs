@@ -40,6 +40,7 @@ pub use crate::storage::filters::FilterHeaderStorage;
 pub use crate::storage::filters::FilterStorage;
 pub use crate::storage::masternode::MasternodeStateStorage;
 pub use crate::storage::metadata::MetadataStorage;
+pub use crate::storage::segments::CachedItem;
 pub use crate::storage::transactions::TransactionStorage;
 
 pub use types::*;
@@ -271,6 +272,10 @@ impl blocks::BlockHeaderStorage for DiskStorageManager {
 
     async fn get_tip_height(&self) -> Option<u32> {
         self.block_headers.read().await.get_tip_height().await
+    }
+
+    async fn get_tip(&self) -> Option<CachedItem<BlockHeader>> {
+        self.block_headers.read().await.get_tip().await
     }
 
     async fn get_start_height(&self) -> Option<u32> {
