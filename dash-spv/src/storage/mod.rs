@@ -87,7 +87,6 @@ pub struct DiskStorageManager {
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
     chainstate: Arc<RwLock<PersistentChainStateStorage>>,
     masternodestate: Arc<RwLock<PersistentMasternodeStateStorage>>,
-    peers: Arc<RwLock<PersistentPeerStorage>>,
 
     // Background worker
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -130,7 +129,6 @@ impl DiskStorageManager {
             masternodestate: Arc::new(RwLock::new(
                 PersistentMasternodeStateStorage::open(&storage_path).await?,
             )),
-            peers: Arc::new(RwLock::new(PersistentPeerStorage::open(&storage_path).await?)),
 
             worker_handle: None,
 
@@ -159,7 +157,6 @@ impl DiskStorageManager {
         let metadata = Arc::clone(&self.metadata);
         let chainstate = Arc::clone(&self.chainstate);
         let masternodestate = Arc::clone(&self.masternodestate);
-        let peers = Arc::clone(&self.peers);
 
         let storage_path = self.storage_path.clone();
 
@@ -176,7 +173,6 @@ impl DiskStorageManager {
                 let _ = metadata.write().await.persist(&storage_path).await;
                 let _ = chainstate.write().await.persist(&storage_path).await;
                 let _ = masternodestate.write().await.persist(&storage_path).await;
-                let _ = peers.write().await.persist(&storage_path).await;
             }
         });
 
@@ -200,7 +196,6 @@ impl DiskStorageManager {
         let _ = self.metadata.write().await.persist(storage_path).await;
         let _ = self.chainstate.write().await.persist(storage_path).await;
         let _ = self.masternodestate.write().await.persist(storage_path).await;
-        let _ = self.peers.write().await.persist(storage_path).await;
     }
 }
 
