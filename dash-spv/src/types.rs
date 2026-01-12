@@ -18,12 +18,14 @@
 use std::time::{Duration, Instant, SystemTime};
 
 use dashcore::{
-    block::Header as BlockHeader, hash_types::FilterHeader, network::constants::NetworkExt,
-    sml::masternode_list_engine::MasternodeListEngine, Amount, BlockHash, Network, Transaction,
-    Txid,
+    block::Header as BlockHeader,
+    consensus::{Decodable, Encodable},
+    hash_types::FilterHeader,
+    network::constants::NetworkExt,
+    sml::masternode_list_engine::MasternodeListEngine,
+    Amount, BlockHash, Network, Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// Shared, mutex-protected set of filter heights used across components.
 ///
@@ -50,8 +52,7 @@ pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collection
 pub struct CachedHeader {
     /// The block header
     header: BlockHeader,
-    /// Cached hash (computed lazily and stored in Arc for cheap clones)
-    hash: Arc<std::sync::OnceLock<BlockHash>>,
+    hash: BlockHash,
 }
 
 impl CachedHeader {
@@ -59,7 +60,14 @@ impl CachedHeader {
     pub fn new(header: BlockHeader) -> Self {
         Self {
             header,
-            hash: Arc::new(std::sync::OnceLock::new()),
+            hash: header.block_hash(),
+        }
+    }
+
+    pub fn new_with_hash(header: BlockHeader, hash: BlockHash) -> Self {
+        Self {
+            header,
+            hash,
         }
     }
 
@@ -70,7 +78,7 @@ impl CachedHeader {
 
     /// Get the cached block hash (computes once, returns cached value thereafter)
     pub fn block_hash(&self) -> BlockHash {
-        *self.hash.get_or_init(|| self.header.block_hash())
+        self.hash
     }
 
     /// Convert back to a plain BlockHeader
@@ -85,6 +93,12 @@ impl From<BlockHeader> for CachedHeader {
     }
 }
 
+impl From<&BlockHeader> for CachedHeader {
+    fn from(header: &BlockHeader) -> Self {
+        Self::new(*header)
+    }
+}
+
 impl AsRef<BlockHeader> for CachedHeader {
     fn as_ref(&self) -> &BlockHeader {
         &self.header
@@ -96,6 +110,34 @@ impl std::ops::Deref for CachedHeader {
 
     fn deref(&self) -> &Self::Target {
         &self.header
+    }
+}
+
+impl PartialEq for CachedHeader {
+    fn eq(&self, other: &Self) -> bool {
+        self.header == other.header
+    }
+}
+
+impl Encodable for CachedHeader {
+    #[inline]
+    fn consensus_encode<W: std::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, std::io::Error> {
+        Ok(self.header().consensus_encode(writer)? + self.block_hash().consensus_encode(writer)?)
+    }
+}
+
+impl Decodable for CachedHeader {
+    #[inline]
+    fn consensus_decode<R: std::io::Read + ?Sized>(
+        reader: &mut R,
+    ) -> Result<Self, dashcore::consensus::encode::Error> {
+        Ok(Self {
+            header: BlockHeader::consensus_decode(reader)?,
+            hash: BlockHash::consensus_decode(reader)?,
+        })
     }
 }
 

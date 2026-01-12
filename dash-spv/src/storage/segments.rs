@@ -17,7 +17,7 @@ use dashcore::{
 };
 use dashcore_hashes::Hash;
 
-use crate::{error::StorageResult, storage::io::atomic_write, StorageError};
+use crate::{error::StorageResult, storage::io::atomic_write, types::CachedHeader, StorageError};
 
 pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const SEGMENT_PREFIX: &'static str = "segment";
@@ -36,16 +36,18 @@ impl Persistable for Vec<u8> {
     }
 }
 
-impl Persistable for BlockHeader {
+impl Persistable for CachedHeader {
     fn sentinel() -> Self {
-        Self {
+        let header = BlockHeader {
             version: Version::from_consensus(i32::MAX), // Invalid version
             prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
             merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
             time: u32::MAX,                                  // Far future timestamp
             bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
             nonce: u32::MAX,
-        }
+        };
+
+        Self::new_with_hash(header, header.block_hash())
     }
 }
 
@@ -63,48 +65,6 @@ pub struct SegmentCache<I: Persistable> {
     tip_height: Option<u32>,
     start_height: Option<u32>,
     segments_dir: PathBuf,
-}
-
-impl SegmentCache<BlockHeader> {
-    pub async fn build_block_index_from_segments(
-        &mut self,
-    ) -> StorageResult<HashMap<BlockHash, u32>> {
-        let entries = fs::read_dir(&self.segments_dir)?;
-
-        let mut block_index = HashMap::new();
-
-        for entry in entries.flatten() {
-            let name = match entry.file_name().into_string() {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            if !name.starts_with(BlockHeader::SEGMENT_PREFIX) {
-                continue;
-            }
-
-            if !name.ends_with(&format!(".{}", BlockHeader::DATA_FILE_EXTENSION)) {
-                continue;
-            }
-
-            let segment_id = match name[8..12].parse::<u32>() {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-
-            let mut block_height = Self::segment_id_to_start_height(segment_id);
-
-            let segment = self.get_segment(&segment_id).await?;
-
-            for item in segment.items.iter() {
-                block_index.insert(item.block_hash(), block_height);
-
-                block_height += 1;
-            }
-        }
-
-        Ok(block_index)
-    }
 }
 
 impl<I: Persistable> SegmentCache<I> {

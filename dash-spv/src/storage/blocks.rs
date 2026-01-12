@@ -10,10 +10,9 @@ use dashcore::BlockHash;
 use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
-use crate::storage::io::atomic_write;
 use crate::storage::segments::SegmentCache;
 use crate::storage::PersistentStorage;
-use crate::StorageError;
+use crate::types::CachedHeader;
 
 #[async_trait]
 pub trait BlockHeaderStorage {
@@ -60,13 +59,12 @@ pub trait BlockHeaderStorage {
 }
 
 pub struct PersistentBlockHeaderStorage {
-    block_headers: RwLock<SegmentCache<BlockHeader>>,
+    block_headers: RwLock<SegmentCache<CachedHeader>>,
     header_hash_index: HashMap<BlockHash, u32>,
 }
 
 impl PersistentBlockHeaderStorage {
     const FOLDER_NAME: &str = "block_headers";
-    const INDEX_FILE_NAME: &str = "index.dat";
 }
 
 #[async_trait]
@@ -75,24 +73,19 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
         let storage_path = storage_path.into();
         let segments_folder = storage_path.join(Self::FOLDER_NAME);
 
-        let index_path = segments_folder.join(Self::INDEX_FILE_NAME);
+        let mut block_headers: SegmentCache<CachedHeader> =
+            SegmentCache::load_or_new(&segments_folder).await?;
 
-        let mut block_headers = SegmentCache::load_or_new(&segments_folder).await?;
+        let mut header_hash_index = HashMap::new();
 
-        let header_hash_index = match tokio::fs::read(&index_path)
-            .await
-            .ok()
-            .and_then(|content| bincode::deserialize(&content).ok())
+        if let (Some(start), Some(end)) = (block_headers.start_height(), block_headers.tip_height())
         {
-            Some(index) => index,
-            _ => {
-                if segments_folder.exists() {
-                    block_headers.build_block_index_from_segments().await?
-                } else {
-                    HashMap::new()
-                }
+            let headers = block_headers.get_items(start..end + 1).await?;
+            for (i, header) in headers.iter().enumerate() {
+                let height = start + i as u32;
+                header_hash_index.insert(header.block_hash(), height);
             }
-        };
+        }
 
         Ok(Self {
             block_headers: RwLock::new(block_headers),
@@ -102,16 +95,12 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
 
     async fn persist(&mut self, storage_path: impl Into<PathBuf> + Send) -> StorageResult<()> {
         let block_headers_folder = storage_path.into().join(Self::FOLDER_NAME);
-        let index_path = block_headers_folder.join(Self::INDEX_FILE_NAME);
 
         tokio::fs::create_dir_all(&block_headers_folder).await?;
 
         self.block_headers.write().await.persist(&block_headers_folder).await;
 
-        let data = bincode::serialize(&self.header_hash_index)
-            .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize index: {}", e)))?;
-
-        atomic_write(&index_path, &data).await
+        Ok(())
     }
 }
 
@@ -128,13 +117,12 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         height: u32,
     ) -> StorageResult<()> {
         let mut height = height;
+        let headers = headers.iter().map(CachedHeader::from).collect::<Vec<CachedHeader>>();
 
-        let hashes = headers.iter().map(|header| header.block_hash()).collect::<Vec<_>>();
+        self.block_headers.write().await.store_items_at_height(&headers, height).await?;
 
-        self.block_headers.write().await.store_items_at_height(headers, height).await?;
-
-        for hash in hashes {
-            self.header_hash_index.insert(hash, height);
+        for header in headers {
+            self.header_hash_index.insert(header.block_hash(), height);
             height += 1;
         }
 
@@ -142,7 +130,15 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
     }
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        self.block_headers.write().await.get_items(range).await
+        Ok(self
+            .block_headers
+            .write()
+            .await
+            .get_items(range)
+            .await?
+            .into_iter()
+            .map(|cached| cached.into_inner())
+            .collect())
     }
 
     async fn get_tip_height(&self) -> Option<u32> {
