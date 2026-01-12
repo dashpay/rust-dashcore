@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::PersistentStorage;
+    use crate::storage::{PersistentPeerStorage, PersistentStorage};
 
     use super::super::*;
     use std::net::SocketAddr;

@@ -778,7 +778,7 @@ impl PeerNetworkManager {
                     }
 
                     // Save reputation data periodically
-                    if let Err(e) = reputation_manager.save_to_storage(&peer_store).await {
+                    if let Err(e) = reputation_manager.save_to_storage(&*peer_store).await {
                         log::warn!("Failed to save reputation data: {}", e);
                     }
                 }
@@ -1070,7 +1070,7 @@ impl PeerNetworkManager {
         }
 
         // Save reputation data before shutdown
-        if let Err(e) = self.reputation_manager.save_to_storage(&self.peer_store).await {
+        if let Err(e) = self.reputation_manager.save_to_storage(&*self.peer_store).await {
             log::warn!("Failed to save reputation data on shutdown: {}", e);
         }
 

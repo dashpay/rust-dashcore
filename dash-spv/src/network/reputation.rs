@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-use crate::storage::{PeerStorage, PersistentPeerStorage};
+use crate::storage::PeerStorage;
 
 /// Misbehavior score thresholds for different violations
 pub mod misbehavior_scores {
@@ -451,14 +451,14 @@ impl PeerReputationManager {
     }
 
     /// Save reputation data to persistent storage
-    pub async fn save_to_storage(&self, storage: &PersistentPeerStorage) -> std::io::Result<()> {
+    pub async fn save_to_storage(&self, storage: &impl PeerStorage) -> std::io::Result<()> {
         let reputations = self.reputations.read().await;
 
         storage.save_peers_reputation(&reputations).await.map_err(std::io::Error::other)
     }
 
     /// Load reputation data from persistent storage
-    pub async fn load_from_storage(&self, storage: &PersistentPeerStorage) -> std::io::Result<()> {
+    pub async fn load_from_storage(&self, storage: &impl PeerStorage) -> std::io::Result<()> {
         let data = storage.load_peers_reputation().await.map_err(std::io::Error::other)?;
 
         let mut reputations = self.reputations.write().await;
