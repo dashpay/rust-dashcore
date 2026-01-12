@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod tests {
     use crate::chain::ChainLockManager;
-    use crate::client::{BlockProcessingTask, ClientConfig, MessageHandler};
+    use crate::client::{ClientConfig, MessageHandler};
     use crate::mempool_filter::MempoolFilter;
     use crate::network::mock::MockNetworkManager;
     use crate::network::NetworkManager;
@@ -32,7 +32,6 @@ mod tests {
         ClientConfig,
         Arc<RwLock<SpvStats>>,
         Option<FilterNotificationSender>,
-        mpsc::UnboundedSender<BlockProcessingTask>,
         Arc<RwLock<Wallet>>,
         Option<Arc<MempoolFilter>>,
         Arc<RwLock<MempoolState>>,
@@ -77,7 +76,6 @@ mod tests {
             config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             mempool_filter,
             mempool_state,
@@ -91,7 +89,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -121,7 +118,6 @@ mod tests {
             config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             mempool_filter,
             mempool_state,
@@ -135,7 +131,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -179,7 +174,6 @@ mod tests {
             config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             mempool_filter,
             mempool_state,
@@ -193,7 +187,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -223,7 +216,6 @@ mod tests {
             config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             mempool_filter,
             mempool_state,
@@ -237,7 +229,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -258,69 +249,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_block_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            block_processor_tx,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
-
-        // Set up block processor receiver
-        let (block_tx, mut block_rx) = mpsc::unbounded_channel();
-
-        let mut handler = MessageHandler::new(
-            &mut sync_manager,
-            &mut *storage,
-            &mut *network,
-            &config,
-            &stats,
-            &filter_processor,
-            &block_tx,
-            &wallet,
-            &mempool_filter,
-            &mempool_state,
-            &event_tx,
-        );
-
-        // Create a Block message
-        let block = Block {
-            header: BlockHeader {
-                version: dashcore::block::Version::from_consensus(1),
-                prev_blockhash: BlockHash::from([0u8; 32]),
-                merkle_root: dashcore::hash_types::TxMerkleNode::from([0u8; 32]),
-                time: 0,
-                bits: dashcore::CompactTarget::from_consensus(0),
-                nonce: 0,
-            },
-            txdata: vec![],
-        };
-        let message = NetworkMessage::Block(block.clone());
-
-        // Handle the message
-        let result = handler.handle_network_message(message).await;
-        assert!(result.is_ok());
-
-        // Verify block was sent to processor
-        match block_rx.recv().await {
-            Some(BlockProcessingTask::ProcessBlock {
-                block: received_block,
-                ..
-            }) => {
-                assert_eq!(received_block.header.block_hash(), block.header.block_hash());
-            }
-            _ => panic!("Expected block processing task"),
-        }
-    }
-
-    #[tokio::test]
     async fn test_handle_inv_message_with_mempool() {
         let (
             mut network,
@@ -329,7 +257,6 @@ mod tests {
             mut config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             _,
             mempool_state,
@@ -356,7 +283,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -384,7 +310,6 @@ mod tests {
             mut config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             _,
             mempool_state,
@@ -408,7 +333,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -444,7 +368,6 @@ mod tests {
             config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             mempool_filter,
             mempool_state,
@@ -458,7 +381,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -487,7 +409,6 @@ mod tests {
             config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             mempool_filter,
             mempool_state,
@@ -501,7 +422,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -524,7 +444,6 @@ mod tests {
             config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             mempool_filter,
             mempool_state,
@@ -538,7 +457,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
@@ -564,7 +482,6 @@ mod tests {
             config,
             stats,
             filter_processor,
-            block_processor_tx,
             wallet,
             mempool_filter,
             mempool_state,
@@ -578,7 +495,6 @@ mod tests {
             &config,
             &stats,
             &filter_processor,
-            &block_processor_tx,
             &wallet,
             &mempool_filter,
             &mempool_state,
