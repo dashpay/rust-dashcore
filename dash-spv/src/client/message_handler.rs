@@ -314,7 +314,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
     }
 
     /// Handle inventory messages - auto-request ChainLocks and other important data.
-    pub async fn handle_inventory(
+    async fn handle_inventory(
         &mut self,
         inv: Vec<dashcore::network::message_blockdata::Inventory>,
     ) -> Result<()> {
@@ -408,70 +408,6 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
         }
 
         Ok(())
-    }
-
-    /// Process new headers received from the network.
-    pub async fn process_new_headers(
-        &mut self,
-        headers: Vec<dashcore::block::Header>,
-    ) -> Result<()> {
-        if headers.is_empty() {
-            return Ok(());
-        }
-
-        // For sequential sync, new headers are handled by the sync manager's message handler
-        // We just need to send them through the unified message interface
-        let headers_msg = dashcore::network::message::NetworkMessage::Headers(headers);
-        self.sync_manager
-            .handle_message(&headers_msg, &mut *self.network, &mut *self.storage)
-            .await
-            .map_err(SpvError::Sync)?;
-
-        Ok(())
-    }
-
-    /// Process a new block hash detected from inventory.
-    pub async fn process_new_block_hash(&mut self, block_hash: dashcore::BlockHash) -> Result<()> {
-        tracing::info!("🔗 Processing new block hash: {}", block_hash);
-
-        // For sequential sync, handle through inventory message
-        let inv = vec![dashcore::network::message_blockdata::Inventory::Block(block_hash)];
-        self.sync_manager
-            .handle_inventory(inv, &mut *self.network, &mut *self.storage)
-            .await
-            .map_err(SpvError::Sync)?;
-
-        Ok(())
-    }
-
-    /// Process received filter headers.
-    pub async fn process_filter_headers(
-        &mut self,
-        cfheaders: dashcore::network::message_filter::CFHeaders,
-    ) -> Result<()> {
-        tracing::debug!("Processing filter headers for block {}", cfheaders.stop_hash);
-
-        tracing::info!(
-            "✅ Received filter headers for block {} (type: {}, count: {})",
-            cfheaders.stop_hash,
-            cfheaders.filter_type,
-            cfheaders.filter_hashes.len()
-        );
-
-        // For sequential sync, route through the message handler
-        let cfheaders_msg = dashcore::network::message::NetworkMessage::CFHeaders(cfheaders);
-        self.sync_manager
-            .handle_message(&cfheaders_msg, &mut *self.network, &mut *self.storage)
-            .await
-            .map_err(SpvError::Sync)?;
-
-        Ok(())
-    }
-
-    /// Helper method to find height for a block hash.
-    pub async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
-        // Use the efficient reverse index
-        self.storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
     }
 
     /// Handle new headers received after the initial sync is complete.

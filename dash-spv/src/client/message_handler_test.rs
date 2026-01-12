@@ -1,96 +1,66 @@
-// Tests temporarily disabled - need to be rewritten for new architecture without wallet module
-/*
 //! Unit tests for network message handling
 
 #[cfg(test)]
 mod tests {
-    use crate::chain::ChainLockManager;
     use crate::client::{ClientConfig, MessageHandler};
-    use crate::mempool_filter::MempoolFilter;
     use crate::network::mock::MockNetworkManager;
-    use crate::network::NetworkManager;
-    use crate::storage::StorageManager;
-    use crate::sync::filters::FilterNotificationSender;
+    use crate::storage::DiskStorageManager;
     use crate::sync::SyncManager;
-    use crate::types::{ChainState, MempoolState, SpvEvent, SpvStats};
-    use crate::validation::ValidationManager;
-    use crate::wallet::Wallet;
+    use crate::types::{MempoolState, SpvEvent, SpvStats};
+    use crate::ChainState;
     use dashcore::block::Header as BlockHeader;
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::{Block, BlockHash, Network, Transaction};
     use dashcore_hashes::Hash;
+    use key_wallet_manager::WalletManager;
     use std::collections::HashSet;
     use std::sync::Arc;
-    use std::sync::Mutex;
-    use tokio::sync::{mpsc, RwLock};
+    use tokio::sync::{mpsc, Mutex, RwLock};
 
     async fn setup_test_components() -> (
-        Box<dyn NetworkManager>,
-        Box<dyn StorageManager>,
-        SyncManager,
+        MockNetworkManager,
+        DiskStorageManager,
+        SyncManager<DiskStorageManager, MockNetworkManager, WalletManager>,
         ClientConfig,
-        Arc<RwLock<SpvStats>>,
-        Option<FilterNotificationSender>,
-        Arc<RwLock<Wallet>>,
-        Option<Arc<MempoolFilter>>,
         Arc<RwLock<MempoolState>>,
         mpsc::UnboundedSender<SpvEvent>,
     ) {
-        let network = Box::new(MockNetworkManager::new()) as Box<dyn NetworkManager>;
+        let network = MockNetworkManager::new();
         let storage =
-            Box::new(DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage")) as Box<dyn StorageManager>;
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let config = ClientConfig::default();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
-        let (block_tx, _block_rx) = mpsc::unbounded_channel();
-        let wallet_storage = Arc::new(RwLock::new(DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage")));
-        let wallet = Arc::new(RwLock::new(Wallet::new(wallet_storage)));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
+        let wallet = WalletManager::new(Network::Testnet);
+
         // Create sync manager
         let received_filter_heights = Arc::new(Mutex::new(HashSet::new()));
-        let sync_manager = SyncManager::new(&config, received_filter_heights).unwrap();
-
-        (
-            network,
-            storage,
-            sync_manager,
-            config,
+        let sync_manager = SyncManager::new(
+            &config,
+            received_filter_heights,
+            Arc::new(RwLock::new(wallet)),
+            Arc::new(RwLock::new(ChainState::new())),
             stats,
-            None,
-            block_tx,
-            wallet,
-            None,
-            mempool_state,
-            event_tx,
         )
+        .unwrap();
+
+        (network, storage, sync_manager, config, mempool_state, event_tx)
     }
 
     #[tokio::test]
     async fn test_handle_headers2_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -102,7 +72,7 @@ mod tests {
         let message = NetworkMessage::Headers2(headers2);
 
         // Handle the message
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
         assert!(result.is_ok());
 
         // Verify peer was marked as having sent headers2
@@ -111,28 +81,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mnlistdiff_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -161,34 +118,21 @@ mod tests {
         let message = NetworkMessage::MnListDiff(mnlistdiff);
 
         // Handle the message
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_handle_cfheaders_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -203,34 +147,21 @@ mod tests {
         let message = NetworkMessage::CFHeaders(cfheaders);
 
         // Handle the message
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_handle_cfilter_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -244,47 +175,59 @@ mod tests {
         let message = NetworkMessage::CFilter(cfilter);
 
         // Handle the message - should be passed to sync manager
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_handle_block_message() {
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
+
+        let mut handler = MessageHandler::new(
+            &mut sync_manager,
+            &mut storage,
+            &mut network,
+            &config,
+            &None,
+            &mempool_state,
+            &event_tx,
+        );
+
+        // Create a Block message
+        let block = Block {
+            header: BlockHeader {
+                version: dashcore::block::Version::from_consensus(1),
+                prev_blockhash: BlockHash::from([0u8; 32]),
+                merkle_root: dashcore::hash_types::TxMerkleNode::from([0u8; 32]),
+                time: 0,
+                bits: dashcore::CompactTarget::from_consensus(0),
+                nonce: 0,
+            },
+            txdata: vec![],
+        };
+        let message = NetworkMessage::Block(block.clone());
+
+        // Handle the message
+        let result = handler.handle_network_message(&message).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_handle_inv_message_with_mempool() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            mut config,
-            stats,
-            filter_processor,
-            wallet,
-            _,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
+        let (mut network, mut storage, mut sync_manager, mut config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         // Enable mempool tracking
         config.enable_mempool_tracking = true;
         config.fetch_mempool_transactions = true;
 
-        // Create mempool filter
-        let mempool_filter = Some(Arc::new(MempoolFilter::new(
-            crate::client::config::MempoolStrategy::Selective,
-            std::time::Duration::from_secs(60),
-            1000,
-            mempool_state.clone(),
-            vec![],
-        )));
-
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -294,7 +237,7 @@ mod tests {
         let message = NetworkMessage::Inv(inv);
 
         // Handle the message
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
         assert!(result.is_ok());
 
         // Should have requested the transaction
@@ -303,38 +246,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            mut config,
-            stats,
-            filter_processor,
-            wallet,
-            _,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
-
-        // Enable mempool tracking
-        config.enable_mempool_tracking = true;
-        let mempool_filter = Some(Arc::new(MempoolFilter::new(
-            crate::client::config::MempoolStrategy::Selective,
-            std::time::Duration::from_secs(60),
-            1000,
-            mempool_state.clone(),
-            vec![],
-        )));
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -350,7 +270,7 @@ mod tests {
         let message = NetworkMessage::Tx(tx.clone());
 
         // Handle the message
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
         assert!(result.is_ok());
 
         // Should have emitted transaction event
@@ -361,28 +281,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_chainlock_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -396,69 +303,21 @@ mod tests {
         let message = NetworkMessage::CLSig(chainlock);
 
         // Handle the message
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_handle_instantlock_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
-
-        let mut handler = MessageHandler::new(
-            &mut sync_manager,
-            &mut *storage,
-            &mut *network,
-            &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
-            &mempool_state,
-            &event_tx,
-        );
-
-        // Skip InstantLock test - message type varies by dashcore version
-        // TODO: Re-enable when InstantLock message type is stabilized
-        // let message = NetworkMessage::InstantLock(...);
-        // let result = handler.handle_network_message(message).await;
-        // assert!(result.is_ok());
-    }
-
-    #[tokio::test]
     async fn test_handle_ping_message() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -467,7 +326,7 @@ mod tests {
         let message = NetworkMessage::Ping(12345);
 
         // Handle the message
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
         assert!(result.is_ok());
 
         // Should respond with pong (MockNetworkManager would track this)
@@ -475,28 +334,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_propagation() {
-        let (
-            mut network,
-            mut storage,
-            mut sync_manager,
-            config,
-            stats,
-            filter_processor,
-            wallet,
-            mempool_filter,
-            mempool_state,
-            event_tx,
-        ) = setup_test_components().await;
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
+            setup_test_components().await;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
-            &mut *storage,
-            &mut *network,
+            &mut storage,
+            &mut network,
             &config,
-            &stats,
-            &filter_processor,
-            &wallet,
-            &mempool_filter,
+            &None,
             &mempool_state,
             &event_tx,
         );
@@ -509,9 +355,8 @@ mod tests {
         let message = NetworkMessage::Headers2(headers2);
 
         // Handle the message - error should be propagated
-        let result = handler.handle_network_message(message).await;
+        let result = handler.handle_network_message(&message).await;
         // The result depends on sync manager validation
         assert!(result.is_ok() || result.is_err());
     }
 }
-*/
