@@ -17,7 +17,9 @@ use dashcore::{
 };
 use dashcore_hashes::Hash;
 
-use crate::{error::StorageResult, storage::io::atomic_write, types::CachedHeader, StorageError};
+use crate::{
+    error::StorageResult, storage::io::atomic_write, types::HashedBlockHeader, StorageError,
+};
 
 pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const SEGMENT_PREFIX: &'static str = "segment";
@@ -36,7 +38,7 @@ impl Persistable for Vec<u8> {
     }
 }
 
-impl Persistable for CachedHeader {
+impl Persistable for HashedBlockHeader {
     fn sentinel() -> Self {
         let header = BlockHeader {
             version: Version::from_consensus(i32::MAX), // Invalid version
@@ -47,7 +49,7 @@ impl Persistable for CachedHeader {
             nonce: u32::MAX,
         };
 
-        Self::new_with_hash(header, header.block_hash())
+        Self::from(header)
     }
 }
 

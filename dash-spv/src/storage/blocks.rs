@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use crate::error::StorageResult;
 use crate::storage::segments::SegmentCache;
 use crate::storage::PersistentStorage;
-use crate::types::CachedHeader;
+use crate::types::HashedBlockHeader;
 
 #[async_trait]
 pub trait BlockHeaderStorage {
@@ -59,7 +59,7 @@ pub trait BlockHeaderStorage {
 }
 
 pub struct PersistentBlockHeaderStorage {
-    block_headers: RwLock<SegmentCache<CachedHeader>>,
+    block_headers: RwLock<SegmentCache<HashedBlockHeader>>,
     header_hash_index: HashMap<BlockHash, u32>,
 }
 
@@ -73,7 +73,7 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
         let storage_path = storage_path.into();
         let segments_folder = storage_path.join(Self::FOLDER_NAME);
 
-        let mut block_headers: SegmentCache<CachedHeader> =
+        let mut block_headers: SegmentCache<HashedBlockHeader> =
             SegmentCache::load_or_new(&segments_folder).await?;
 
         let mut header_hash_index = HashMap::new();
@@ -83,7 +83,7 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
             let headers = block_headers.get_items(start..end + 1).await?;
             for (i, header) in headers.iter().enumerate() {
                 let height = start + i as u32;
-                header_hash_index.insert(header.block_hash(), height);
+                header_hash_index.insert(*header.hash(), height);
             }
         }
 
@@ -117,12 +117,13 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         height: u32,
     ) -> StorageResult<()> {
         let mut height = height;
-        let headers = headers.iter().map(CachedHeader::from).collect::<Vec<CachedHeader>>();
+        let headers =
+            headers.iter().map(HashedBlockHeader::from).collect::<Vec<HashedBlockHeader>>();
 
         self.block_headers.write().await.store_items_at_height(&headers, height).await?;
 
         for header in headers {
-            self.header_hash_index.insert(header.block_hash(), height);
+            self.header_hash_index.insert(*header.hash(), height);
             height += 1;
         }
 
@@ -137,7 +138,7 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
             .get_items(range)
             .await?
             .into_iter()
-            .map(|cached| cached.into_inner())
+            .map(|cached| *cached.header())
             .collect())
     }
 

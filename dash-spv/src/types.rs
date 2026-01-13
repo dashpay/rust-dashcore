@@ -49,87 +49,57 @@ pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collection
 /// This wrapper caches the hash after first computation, providing ~4-6x reduction
 /// in X11 hashing operations per header.
 #[derive(Debug, Clone)]
-pub struct CachedHeader {
+pub struct HashedBlockHeader {
     /// The block header
     header: BlockHeader,
     hash: BlockHash,
 }
 
-impl CachedHeader {
-    /// Create a new cached header from a block header
-    pub fn new(header: BlockHeader) -> Self {
+impl HashedBlockHeader {
+    pub fn header(&self) -> &BlockHeader {
+        &self.header
+    }
+
+    pub fn hash(&self) -> &BlockHash {
+        &self.hash
+    }
+}
+
+impl From<BlockHeader> for HashedBlockHeader {
+    fn from(header: BlockHeader) -> Self {
         Self {
             header,
             hash: header.block_hash(),
         }
     }
+}
 
-    pub fn new_with_hash(header: BlockHeader, hash: BlockHash) -> Self {
+impl From<&BlockHeader> for HashedBlockHeader {
+    fn from(header: &BlockHeader) -> Self {
         Self {
-            header,
-            hash,
+            header: *header,
+            hash: header.block_hash(),
         }
     }
-
-    /// Get the block header
-    pub fn header(&self) -> &BlockHeader {
-        &self.header
-    }
-
-    /// Get the cached block hash (computes once, returns cached value thereafter)
-    pub fn block_hash(&self) -> BlockHash {
-        self.hash
-    }
-
-    /// Convert back to a plain BlockHeader
-    pub fn into_inner(self) -> BlockHeader {
-        self.header
-    }
 }
 
-impl From<BlockHeader> for CachedHeader {
-    fn from(header: BlockHeader) -> Self {
-        Self::new(header)
-    }
-}
-
-impl From<&BlockHeader> for CachedHeader {
-    fn from(header: &BlockHeader) -> Self {
-        Self::new(*header)
-    }
-}
-
-impl AsRef<BlockHeader> for CachedHeader {
-    fn as_ref(&self) -> &BlockHeader {
-        &self.header
-    }
-}
-
-impl std::ops::Deref for CachedHeader {
-    type Target = BlockHeader;
-
-    fn deref(&self) -> &Self::Target {
-        &self.header
-    }
-}
-
-impl PartialEq for CachedHeader {
+impl PartialEq for HashedBlockHeader {
     fn eq(&self, other: &Self) -> bool {
         self.header == other.header
     }
 }
 
-impl Encodable for CachedHeader {
+impl Encodable for HashedBlockHeader {
     #[inline]
     fn consensus_encode<W: std::io::Write + ?Sized>(
         &self,
         writer: &mut W,
     ) -> Result<usize, std::io::Error> {
-        Ok(self.header().consensus_encode(writer)? + self.block_hash().consensus_encode(writer)?)
+        Ok(self.header().consensus_encode(writer)? + self.hash().consensus_encode(writer)?)
     }
 }
 
-impl Decodable for CachedHeader {
+impl Decodable for HashedBlockHeader {
     #[inline]
     fn consensus_decode<R: std::io::Read + ?Sized>(
         reader: &mut R,
