@@ -18,12 +18,14 @@
 use std::time::{Duration, Instant, SystemTime};
 
 use dashcore::{
-    block::Header as BlockHeader, hash_types::FilterHeader, network::constants::NetworkExt,
-    sml::masternode_list_engine::MasternodeListEngine, Amount, BlockHash, Network, Transaction,
-    Txid,
+    block::Header as BlockHeader,
+    consensus::{Decodable, Encodable},
+    hash_types::FilterHeader,
+    network::constants::NetworkExt,
+    sml::masternode_list_engine::MasternodeListEngine,
+    Amount, BlockHash, Network, Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// Shared, mutex-protected set of filter heights used across components.
 ///
@@ -47,55 +49,65 @@ pub type SharedFilterHeights = std::sync::Arc<tokio::sync::Mutex<std::collection
 /// This wrapper caches the hash after first computation, providing ~4-6x reduction
 /// in X11 hashing operations per header.
 #[derive(Debug, Clone)]
-pub struct CachedHeader {
+pub struct HashedBlockHeader {
     /// The block header
     header: BlockHeader,
-    /// Cached hash (computed lazily and stored in Arc for cheap clones)
-    hash: Arc<std::sync::OnceLock<BlockHash>>,
+    hash: BlockHash,
 }
 
-impl CachedHeader {
-    /// Create a new cached header from a block header
-    pub fn new(header: BlockHeader) -> Self {
-        Self {
-            header,
-            hash: Arc::new(std::sync::OnceLock::new()),
-        }
-    }
-
-    /// Get the block header
+impl HashedBlockHeader {
     pub fn header(&self) -> &BlockHeader {
         &self.header
     }
 
-    /// Get the cached block hash (computes once, returns cached value thereafter)
-    pub fn block_hash(&self) -> BlockHash {
-        *self.hash.get_or_init(|| self.header.block_hash())
-    }
-
-    /// Convert back to a plain BlockHeader
-    pub fn into_inner(self) -> BlockHeader {
-        self.header
+    pub fn hash(&self) -> &BlockHash {
+        &self.hash
     }
 }
 
-impl From<BlockHeader> for CachedHeader {
+impl From<BlockHeader> for HashedBlockHeader {
     fn from(header: BlockHeader) -> Self {
-        Self::new(header)
+        Self {
+            header,
+            hash: header.block_hash(),
+        }
     }
 }
 
-impl AsRef<BlockHeader> for CachedHeader {
-    fn as_ref(&self) -> &BlockHeader {
-        &self.header
+impl From<&BlockHeader> for HashedBlockHeader {
+    fn from(header: &BlockHeader) -> Self {
+        Self {
+            header: *header,
+            hash: header.block_hash(),
+        }
     }
 }
 
-impl std::ops::Deref for CachedHeader {
-    type Target = BlockHeader;
+impl PartialEq for HashedBlockHeader {
+    fn eq(&self, other: &Self) -> bool {
+        self.header == other.header
+    }
+}
 
-    fn deref(&self) -> &Self::Target {
-        &self.header
+impl Encodable for HashedBlockHeader {
+    #[inline]
+    fn consensus_encode<W: std::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, std::io::Error> {
+        Ok(self.header().consensus_encode(writer)? + self.hash().consensus_encode(writer)?)
+    }
+}
+
+impl Decodable for HashedBlockHeader {
+    #[inline]
+    fn consensus_decode<R: std::io::Read + ?Sized>(
+        reader: &mut R,
+    ) -> Result<Self, dashcore::consensus::encode::Error> {
+        Ok(Self {
+            header: BlockHeader::consensus_decode(reader)?,
+            hash: BlockHash::consensus_decode(reader)?,
+        })
     }
 }
 
