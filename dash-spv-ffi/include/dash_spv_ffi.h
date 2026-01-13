@@ -764,18 +764,6 @@ int32_t dash_spv_ffi_config_set_max_mempool_transactions(struct FFIClientConfig 
 ;
 
 /**
- * Sets the mempool transaction timeout in seconds
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_mempool_timeout(struct FFIClientConfig *config,
-                                                uint64_t timeout_secs)
-;
-
-/**
  * Sets whether to fetch full mempool transaction data
  *
  * # Safety
@@ -829,18 +817,6 @@ enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FF
 
 int32_t dash_spv_ffi_config_set_start_from_height(struct FFIClientConfig *config,
                                                   uint32_t height)
-;
-
-/**
- * Sets the wallet creation timestamp for synchronization optimization
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_wallet_creation_time(struct FFIClientConfig *config,
-                                                     uint32_t timestamp)
 ;
 
  const char *dash_spv_ffi_get_last_error(void) ;

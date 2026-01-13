@@ -524,7 +524,6 @@ client/
 ├── events.rs (46 lines) - Event handling
 ├── queries.rs (173 lines) - Peer/masternode/balance queries
 ├── chainlock.rs (150 lines) - ChainLock processing
-├── block_processor.rs (649 lines) - Block processing
 ├── config.rs (484 lines) - Configuration
 ├── filter_sync.rs (171 lines) - Filter coordination
 ├── message_handler.rs (585 lines) - Message routing
@@ -556,31 +555,6 @@ client/
 - **GOOD**: Well-documented fields
 
 **Refactoring needed**: ❌ None - this is exemplary
-
-#### `src/client/block_processor.rs` (649 lines) ⚠️ COMPLEX
-
-**Purpose**: Processes full blocks downloaded after filter matches.
-
-**What it does**:
-- Downloads full blocks for filter matches
-- Extracts relevant transactions
-- Updates wallet state
-- Emits transaction events
-
-**Complex Types Used**:
-- `mpsc::UnboundedSender<BlockProcessingTask>` - **JUSTIFIED**: Task queue pattern
-- Async task spawning - **JUSTIFIED**: Parallel block processing
-
-**Analysis**:
-- **GOOD**: Proper separation from main client
-- **GOOD**: Async task management
-- **ISSUE**: Could benefit from retry logic for failed downloads
-- **ISSUE**: No priority queue (all blocks treated equally)
-
-**Refactoring needed**:
-- ⚠️ **MEDIUM**: Add retry logic with exponential backoff
-- ⚠️ **MEDIUM**: Add priority queue (recent blocks first)
-- ✅ **LOW**: Add timeout configuration
 
 #### `src/client/filter_sync.rs` (289 lines) ✅ GOOD
 

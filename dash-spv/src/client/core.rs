@@ -24,7 +24,7 @@ use crate::sync::SyncManager;
 use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
+use super::{ClientConfig, StatusDisplay};
 
 /// Main Dash SPV client with generic trait-based architecture.
 ///
@@ -137,7 +137,6 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     #[cfg(feature = "terminal-ui")]
     pub(super) terminal_ui: Option<Arc<TerminalUI>>,
     pub(super) filter_processor: Option<FilterNotificationSender>,
-    pub(super) block_processor_tx: mpsc::UnboundedSender<BlockProcessingTask>,
     pub(super) progress_sender: Option<mpsc::UnboundedSender<DetailedSyncProgress>>,
     pub(super) progress_receiver: Option<mpsc::UnboundedReceiver<DetailedSyncProgress>>,
     pub(super) event_tx: mpsc::UnboundedSender<SpvEvent>,

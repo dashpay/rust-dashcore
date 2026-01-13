@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::{storage::DiskStorageManager, types::ChainState};
-    use dashcore::Network;
+    use crate::{
+        storage::{BlockHeaderStorage, DiskStorageManager},
+        types::ChainState,
+    };
+    use dashcore::{constants::genesis_block, Network};
 
     #[tokio::test]
     async fn test_chainlock_processing() {
@@ -85,5 +88,58 @@ mod tests {
         assert!(!chainlock_manager.would_violate_chain_lock(500, 999)); // Before ChainLocks - OK
         assert!(chainlock_manager.would_violate_chain_lock(1500, 2500)); // Would reorg ChainLock at 2000
         assert!(!chainlock_manager.would_violate_chain_lock(3001, 4000)); // After ChainLocks - OK
+    }
+
+    #[tokio::test]
+    async fn test_chainlock_queue_and_process_flow() {
+        let chainlock_manager = ChainLockManager::new(true);
+
+        // Queue multiple ChainLocks
+        let chain_lock1 = ChainLock::dummy(100);
+        let chain_lock2 = ChainLock::dummy(200);
+        let chain_lock3 = ChainLock::dummy(300);
+
+        chainlock_manager.queue_pending_chainlock(chain_lock1).unwrap();
+        chainlock_manager.queue_pending_chainlock(chain_lock2).unwrap();
+        chainlock_manager.queue_pending_chainlock(chain_lock3).unwrap();
+
+        // Verify all are queued
+        {
+            // Note: pending_chainlocks is private, can't access directly
+            let pending = chainlock_manager.pending_chainlocks.read().unwrap();
+            assert_eq!(pending.len(), 3);
+            assert_eq!(pending[0].block_height, 100);
+            assert_eq!(pending[1].block_height, 200);
+            assert_eq!(pending[2].block_height, 300);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chainlock_manager_cache_operations() {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+
+        let chainlock_manager = ChainLockManager::new(true);
+
+        // Add test headers
+        let genesis = genesis_block(Network::Dash).header;
+        storage.store_headers_at_height(&[genesis], 0).await.unwrap();
+
+        // Create and process a ChainLock
+        let chain_lock = ChainLock::dummy(0);
+        let chain_state = ChainState::new();
+        let _ = chainlock_manager
+            .process_chain_lock(chain_lock.clone(), &chain_state, &mut storage)
+            .await;
+
+        // Test cache operations
+        assert!(chainlock_manager.has_chain_lock_at_height(0));
+
+        let entry = chainlock_manager.get_chain_lock_by_height(0);
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().chain_lock.block_height, 0);
+
+        let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&genesis.block_hash());
+        assert!(entry_by_hash.is_some());
+        assert_eq!(entry_by_hash.unwrap().chain_lock.block_height, 0);
     }
 }

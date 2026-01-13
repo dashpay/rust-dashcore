@@ -14,7 +14,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::headers::validate_headers;
 use crate::sync::headers2::Headers2StateManager;
-use crate::types::{CachedHeader, ChainState};
+use crate::types::{ChainState, HashedBlockHeader};
 use crate::ValidationMode;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -133,8 +133,7 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
 
         // Wrap headers in CachedHeader to avoid redundant X11 hashing
         // This prevents recomputing hashes during validation, logging, and storage
-        let cached_headers: Vec<CachedHeader> =
-            headers.iter().map(|h| CachedHeader::new(*h)).collect();
+        let cached_headers: Vec<_> = headers.iter().map(HashedBlockHeader::from).collect();
 
         // Step 2: Validate Batch
         let first_cached = &cached_headers[0];
@@ -154,10 +153,10 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
 
         // Check if the first header connects to our tip
         // Cache tip hash to avoid recomputing it
-        let tip_cached = CachedHeader::new(tip);
-        let tip_hash = tip_cached.block_hash();
+        let tip_cached = HashedBlockHeader::from(tip);
+        let tip_hash = tip_cached.hash();
 
-        if first_header.prev_blockhash != tip_hash {
+        if first_header.prev_blockhash != *tip_hash {
             tracing::warn!(
                 "Received header batch that does not connect to our tip. Expected prev_hash: {}, got: {}. Dropping message.",
                 tip_hash,
@@ -201,8 +200,8 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
         if !cached_headers.is_empty() {
             let last_cached = cached_headers.last().unwrap();
             // Use cached hashes to avoid redundant X11 computation
-            let first_hash = first_cached.block_hash();
-            let last_hash = last_cached.block_hash();
+            let first_hash = first_cached.hash();
+            let last_hash = last_cached.hash();
             tracing::debug!(
                 "Received headers batch: first.prev_hash={}, first.hash={}, last.hash={}, count={}",
                 first_header.prev_blockhash,
@@ -220,8 +219,8 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
 
             if self.reorg_config.enforce_checkpoints {
                 // Use cached hash to avoid redundant X11 computation in loop
-                let header_hash = cached_header.block_hash();
-                if !self.checkpoint_manager.validate_block(prospective_height, &header_hash) {
+                let header_hash = cached_header.hash();
+                if !self.checkpoint_manager.validate_block(prospective_height, header_hash) {
                     return Err(SyncError::Validation(format!(
                         "Block at height {} does not match checkpoint",
                         prospective_height
@@ -259,8 +258,8 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             // During sync mode - request next batch
             // Use the last cached header's hash to avoid redundant X11 computation
             if let Some(last_cached) = cached_headers.last() {
-                let hash = last_cached.block_hash();
-                self.request_headers(network, Some(hash), storage).await?;
+                let hash = last_cached.hash();
+                self.request_headers(network, Some(*hash), storage).await?;
             }
         }
 

@@ -23,7 +23,7 @@ use dashcore::network::constants::NetworkExt;
 use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::{BlockProcessor, ClientConfig, DashSpvClient};
+use super::{ClientConfig, DashSpvClient};
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
@@ -58,9 +58,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
 
-        // Create block processing channel
-        let (block_processor_tx, _block_processor_rx) = mpsc::unbounded_channel();
-
         // Create progress channels
         let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
 
@@ -83,7 +80,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             #[cfg(feature = "terminal-ui")]
             terminal_ui: None,
             filter_processor: None,
-            block_processor_tx,
             progress_sender: Some(progress_sender),
             progress_receiver: Some(progress_receiver),
             event_tx,
@@ -130,26 +126,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 }
             }
         }
-
-        // Spawn block processor worker now that all dependencies are ready
-        let (new_tx, block_processor_rx) = mpsc::unbounded_channel();
-        let old_tx = std::mem::replace(&mut self.block_processor_tx, new_tx);
-        drop(old_tx); // Drop the old sender to avoid confusion
-
-        // Use the shared wallet instance for the block processor
-        let block_processor = BlockProcessor::new(
-            block_processor_rx,
-            self.wallet.clone(),
-            self.storage.clone(),
-            self.stats.clone(),
-            self.event_tx.clone(),
-        );
-
-        tokio::spawn(async move {
-            tracing::info!("🏭 Starting block processor worker task");
-            block_processor.run().await;
-            tracing::info!("🏭 Block processor worker task completed");
-        });
 
         // For sequential sync, filter processor is handled internally
         if self.config.enable_filters && self.filter_processor.is_none() {

@@ -11,7 +11,7 @@
 //! This is the largest module as it handles all coordination between network,
 //! storage, and the sync manager.
 
-use super::{BlockProcessingTask, DashSpvClient, MessageHandler};
+use super::{DashSpvClient, MessageHandler};
 use crate::client::interface::DashSpvClientCommand;
 use crate::error::{Result, SpvError};
 use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
@@ -603,7 +603,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 &mut *storage,
                 &mut self.network,
                 &self.config,
-                &self.block_processor_tx,
                 &self.mempool_filter,
                 &self.mempool_state,
                 &self.event_tx,
@@ -643,30 +642,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
             Err(e) => Err(e),
         }
-    }
-
-    /// Process a new block.
-    #[allow(dead_code)]
-    pub(super) async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
-        let block_hash = block.block_hash();
-
-        tracing::info!("📦 Routing block {} to async block processor", block_hash);
-
-        // Send block to the background processor without waiting for completion
-        let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
-        let task = BlockProcessingTask::ProcessBlock {
-            block: Box::new(block),
-            response_tx,
-        };
-
-        if let Err(e) = self.block_processor_tx.send(task) {
-            tracing::error!("Failed to send block to processor: {}", e);
-            return Err(SpvError::Config("Block processor channel closed".to_string()));
-        }
-
-        // Return immediately - processing happens asynchronously in the background
-        tracing::debug!("Block {} queued for background processing", block_hash);
-        Ok(())
     }
 
     /// Report balance changes for watched addresses.

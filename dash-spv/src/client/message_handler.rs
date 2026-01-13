@@ -18,7 +18,6 @@ pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager, W: WalletInt
     storage: &'a mut S,
     network: &'a mut N,
     config: &'a ClientConfig,
-    block_processor_tx: &'a tokio::sync::mpsc::UnboundedSender<crate::client::BlockProcessingTask>,
     mempool_filter: &'a Option<Arc<MempoolFilter>>,
     mempool_state: &'a Arc<RwLock<MempoolState>>,
     event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
@@ -32,9 +31,6 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
         storage: &'a mut S,
         network: &'a mut N,
         config: &'a ClientConfig,
-        block_processor_tx: &'a tokio::sync::mpsc::UnboundedSender<
-            crate::client::BlockProcessingTask,
-        >,
         mempool_filter: &'a Option<Arc<MempoolFilter>>,
         mempool_state: &'a Arc<RwLock<MempoolState>>,
         event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
@@ -44,7 +40,6 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
             storage,
             network,
             config,
-            block_processor_tx,
             mempool_filter,
             mempool_state,
             event_tx,
@@ -150,25 +145,6 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                 {
                     tracing::error!("Sequential sync manager error handling message: {}", e);
                 }
-
-                // Additionally forward compact filters to the block processor so it can
-                // perform wallet matching and emit CompactFilterMatched events.
-                if let NetworkMessage::CFilter(ref cfilter_msg) = message {
-                    let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
-                    let task = crate::client::BlockProcessingTask::ProcessCompactFilter {
-                        filter: dashcore::bip158::BlockFilter {
-                            content: cfilter_msg.filter.clone(),
-                        },
-                        block_hash: cfilter_msg.block_hash,
-                        response_tx,
-                    };
-                    if let Err(e) = self.block_processor_tx.send(task) {
-                        tracing::warn!(
-                            "Failed to forward CFilter to block processor for event emission: {}",
-                            e
-                        );
-                    }
-                }
             }
             NetworkMessage::Block(_) => {
                 if self.sync_manager.is_in_downloading_blocks_phase() {
@@ -235,12 +211,6 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                         e
                     );
                     return Err(SpvError::Sync(e));
-                }
-
-                // 2) Always process the full block (privacy and correctness)
-                if let Err(e) = self.process_new_block(block).await {
-                    tracing::error!("❌ Failed to process new block {}: {}", block_hash, e);
-                    return Err(e);
                 }
             }
             NetworkMessage::Inv(inv) => {
@@ -344,7 +314,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
     }
 
     /// Handle inventory messages - auto-request ChainLocks and other important data.
-    pub async fn handle_inventory(
+    async fn handle_inventory(
         &mut self,
         inv: Vec<dashcore::network::message_blockdata::Inventory>,
     ) -> Result<()> {
@@ -437,93 +407,6 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
             }
         }
 
-        Ok(())
-    }
-
-    /// Process new headers received from the network.
-    pub async fn process_new_headers(
-        &mut self,
-        headers: Vec<dashcore::block::Header>,
-    ) -> Result<()> {
-        if headers.is_empty() {
-            return Ok(());
-        }
-
-        // For sequential sync, new headers are handled by the sync manager's message handler
-        // We just need to send them through the unified message interface
-        let headers_msg = dashcore::network::message::NetworkMessage::Headers(headers);
-        self.sync_manager
-            .handle_message(&headers_msg, &mut *self.network, &mut *self.storage)
-            .await
-            .map_err(SpvError::Sync)?;
-
-        Ok(())
-    }
-
-    /// Process a new block hash detected from inventory.
-    pub async fn process_new_block_hash(&mut self, block_hash: dashcore::BlockHash) -> Result<()> {
-        tracing::info!("🔗 Processing new block hash: {}", block_hash);
-
-        // For sequential sync, handle through inventory message
-        let inv = vec![dashcore::network::message_blockdata::Inventory::Block(block_hash)];
-        self.sync_manager
-            .handle_inventory(inv, &mut *self.network, &mut *self.storage)
-            .await
-            .map_err(SpvError::Sync)?;
-
-        Ok(())
-    }
-
-    /// Process received filter headers.
-    pub async fn process_filter_headers(
-        &mut self,
-        cfheaders: dashcore::network::message_filter::CFHeaders,
-    ) -> Result<()> {
-        tracing::debug!("Processing filter headers for block {}", cfheaders.stop_hash);
-
-        tracing::info!(
-            "✅ Received filter headers for block {} (type: {}, count: {})",
-            cfheaders.stop_hash,
-            cfheaders.filter_type,
-            cfheaders.filter_hashes.len()
-        );
-
-        // For sequential sync, route through the message handler
-        let cfheaders_msg = dashcore::network::message::NetworkMessage::CFHeaders(cfheaders);
-        self.sync_manager
-            .handle_message(&cfheaders_msg, &mut *self.network, &mut *self.storage)
-            .await
-            .map_err(SpvError::Sync)?;
-
-        Ok(())
-    }
-
-    /// Helper method to find height for a block hash.
-    pub async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
-        // Use the efficient reverse index
-        self.storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
-    }
-
-    /// Process a new block.
-    pub async fn process_new_block(&mut self, block: &dashcore::Block) -> Result<()> {
-        let block_hash = block.block_hash();
-
-        tracing::info!("📦 Routing block {} to async block processor", block_hash);
-
-        // Send block to the background processor without waiting for completion
-        let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
-        let task = crate::client::BlockProcessingTask::ProcessBlock {
-            block: Box::new(block.clone()),
-            response_tx,
-        };
-
-        if let Err(e) = self.block_processor_tx.send(task) {
-            tracing::error!("Failed to send block to processor: {}", e);
-            return Err(SpvError::Config("Block processor channel closed".to_string()));
-        }
-
-        // Return immediately - processing happens asynchronously in the background
-        tracing::debug!("Block {} queued for background processing", block_hash);
         Ok(())
     }
 
