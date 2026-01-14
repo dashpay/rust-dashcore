@@ -33,7 +33,7 @@ impl Header {
             merkle_root: TxMerkleNode::from_byte_array([0u8; 32]),
             time: height,
             bits: CompactTarget::from_consensus(0x1d00ffff),
-            nonce: 0,
+            nonce: height,
         }
     }
 
