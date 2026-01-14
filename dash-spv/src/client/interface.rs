@@ -1,11 +1,9 @@
-use crate::error::Error;
+use crate::error::{Error, Result};
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::QuorumHash;
 use std::fmt::Display;
 use tokio::sync::{mpsc, oneshot};
-
-pub type Result<T> = std::result::Result<T, Error>;
 
 pub type GetQuorumByHeightResult = Result<QualifiedQuorumEntry>;
 
