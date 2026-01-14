@@ -863,8 +863,8 @@ impl bincode::Encode for Address {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for Address {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> bincode::Decode<C> for Address {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         use core::str::FromStr;
@@ -876,8 +876,8 @@ impl bincode::Decode for Address {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for Address {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> bincode::BorrowDecode<'de, C> for Address {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         use core::str::FromStr;
@@ -899,8 +899,8 @@ impl bincode::Encode for AddressType {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for AddressType {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> bincode::Decode<C> for AddressType {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let val = u8::decode(decoder)?;
@@ -916,8 +916,8 @@ impl bincode::Decode for AddressType {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for AddressType {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> bincode::BorrowDecode<'de, C> for AddressType {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let val = u8::borrow_decode(decoder)?;
