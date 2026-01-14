@@ -53,9 +53,6 @@ pub enum NetworkError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 
-    #[error("Handshake failed: {0}")]
-    HandshakeFailed(String),
-
     #[error("Protocol error: {0}")]
     ProtocolError(String),
 
@@ -71,14 +68,8 @@ pub enum NetworkError {
     #[error("Message serialization error: {0}")]
     Serialization(#[from] dashcore::consensus::encode::Error),
 
-    #[error("IO error: {0}")]
-    Io(#[from] io::Error),
-
     #[error("Address parse error: {0}")]
     AddressParse(String),
-
-    #[error("System time error: {0}")]
-    SystemTime(String),
 }
 
 /// Storage-related errors.
@@ -101,9 +92,6 @@ pub enum StorageError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
-
-    #[error("Inconsistent state: {0}")]
-    InconsistentState(String),
 
     #[error("Lock poisoned: {0}")]
     LockPoisoned(String),
@@ -130,12 +118,6 @@ pub enum ValidationError {
     #[error("Invalid signature: {0}")]
     InvalidSignature(String),
 
-    #[error("Invalid filter header chain: {0}")]
-    InvalidFilterHeaderChain(String),
-
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-
     #[error("Masternode verification failed: {0}")]
     MasternodeVerification(String),
 
@@ -149,11 +131,6 @@ pub enum SyncError {
     /// Indicates that a sync operation is already in progress
     #[error("Sync already in progress")]
     SyncInProgress,
-
-    /// Deprecated: Use specific error variants instead
-    #[deprecated(note = "Use Network, Storage, Validation, or Timeout variants instead")]
-    #[error("Sync failed: {0}")]
-    SyncFailed(String),
 
     /// Indicates an invalid state in the sync process (e.g., unexpected phase transitions)
     /// Use this for sync state machine errors, not validation errors
