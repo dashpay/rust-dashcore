@@ -23,7 +23,7 @@ impl MockNetworkManager {
     /// Create a new mock network manager
     pub fn new() -> Self {
         Self {
-            connected: false,
+            connected: true,
             messages: VecDeque::new(),
             headers_chain: Vec::new(),
         }
