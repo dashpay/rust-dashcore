@@ -1,14 +1,13 @@
-use crate::error::{Error, Result};
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::QuorumHash;
 use std::fmt::Display;
 use tokio::sync::{mpsc, oneshot};
 
-pub type GetQuorumByHeightResult = Result<QualifiedQuorumEntry>;
+pub type GetQuorumByHeightResult = crate::Result<QualifiedQuorumEntry>;
 
-async fn receive<Type>(context: String, receiver: oneshot::Receiver<Type>) -> Result<Type> {
-    receiver.await.map_err(|error| Error::ChannelFailure(context, error.to_string()))
+async fn receive<Type>(context: String, receiver: oneshot::Receiver<Type>) -> crate::Result<Type> {
+    receiver.await.map_err(|error| crate::Error::ChannelFailure(context, error.to_string()))
 }
 
 pub enum DashSpvClientCommand {
@@ -25,8 +24,10 @@ impl DashSpvClientCommand {
         self,
         context: String,
         sender: mpsc::UnboundedSender<DashSpvClientCommand>,
-    ) -> Result<()> {
-        sender.send(self).map_err(|error| Error::ChannelFailure(context, error.to_string()))?;
+    ) -> crate::Result<()> {
+        sender
+            .send(self)
+            .map_err(|error| crate::Error::ChannelFailure(context, error.to_string()))?;
         Ok(())
     }
 }

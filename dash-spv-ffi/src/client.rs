@@ -379,7 +379,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_drain_events(client: *mut FFIDashSp
     FFIErrorCode::Success as i32
 }
 
-fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::Error> {
+fn stop_client_internal(client: &mut FFIDashSpvClient) -> dash_spv::Result<()> {
     client.shutdown_token.cancel();
 
     // Ensure callbacks are cleared so no further progress/completion notifications fire.
@@ -1222,7 +1222,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result: Result<(), dash_spv::Error> = client.runtime.block_on(async {
+    let result: dash_spv::Result<()> = client.runtime.block_on(async {
         let mut guard = inner.lock().unwrap();
         if let Some(ref mut _spv_client) = *guard {
             // TODO: rescan_from_height not yet implemented in dash-spv

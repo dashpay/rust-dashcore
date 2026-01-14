@@ -12,7 +12,6 @@
 
 use super::{DashSpvClient, MessageHandler};
 use crate::client::interface::DashSpvClientCommand;
-use crate::error::{Error, Result};
 use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -31,10 +30,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         &mut self,
         mut command_receiver: UnboundedReceiver<DashSpvClientCommand>,
         token: CancellationToken,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         let running = self.running.read().await;
         if !*running {
-            return Err(Error::Config("Client not running".to_string()));
+            return Err(crate::Error::Config("Client not running".to_string()));
         }
         drop(running);
 
@@ -431,13 +430,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
                                     // Categorize error severity
                                     match &e {
-                                        Error::Network(_) => {
+                                        crate::Error::Network(_) => {
                                             tracing::warn!("Network error during message handling - may recover automatically");
                                         }
-                                        Error::Storage(_) => {
+                                        crate::Error::Storage(_) => {
                                             tracing::error!("Storage error during message handling - this may affect data consistency");
                                         }
-                                        Error::Validation(_) => {
+                                        crate::Error::Validation(_) => {
                                             tracing::warn!("Validation error during message handling - message rejected");
                                         }
                                         _ => {
@@ -499,7 +498,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         mut self,
         command_receiver: UnboundedReceiver<DashSpvClientCommand>,
         shutdown_token: CancellationToken,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         let client_token = shutdown_token.clone();
 
         let client_task = tokio::spawn(async move {
@@ -522,10 +521,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         });
 
         let (client_result, _) = tokio::join!(client_task, shutdown_task);
-        client_result.map_err(|e| Error::General(format!("client_task panicked: {e}")))?
+        client_result.map_err(|e| crate::Error::General(format!("client_task panicked: {e}")))?
     }
 
-    async fn handle_command(&mut self, command: DashSpvClientCommand) -> Result<()> {
+    async fn handle_command(&mut self, command: DashSpvClientCommand) -> crate::Result<()> {
         match command {
             DashSpvClientCommand::GetQuorumByHeight {
                 height,
@@ -535,7 +534,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             } => {
                 let result = self.get_quorum_at_height(height, quorum_type, quorum_hash);
                 if sender.send(result).is_err() {
-                    return Err(Error::ChannelFailure(
+                    return Err(crate::Error::ChannelFailure(
                         format!("GetQuorumByHeight({height}, {quorum_type}, {quorum_hash})"),
                         "Failed to send quorum result".to_string(),
                     ));
@@ -549,7 +548,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub(super) async fn handle_network_message(
         &mut self,
         message: dashcore::network::message::NetworkMessage,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         // Check if this is a special message that needs client-level processing
         let needs_special_processing = matches!(
             &message,
@@ -614,7 +613,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         &self,
         balance_changes: &std::collections::HashMap<dashcore::Address, i64>,
         block_height: u32,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         tracing::info!("💰 Balance changes detected in block at height {}:", block_height);
 
         for (address, change_sat) in balance_changes {

@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::error::{Error, NetworkError};
 use crate::network::constants::{MAX_PEERS, MIN_PEERS};
 use crate::network::peer::Peer;
 
@@ -33,7 +32,7 @@ impl PeerPool {
     }
 
     /// Add a peer to the pool
-    pub async fn add_peer(&self, addr: SocketAddr, peer: Peer) -> Result<(), Error> {
+    pub async fn add_peer(&self, addr: SocketAddr, peer: Peer) -> crate::Result<()> {
         let mut peers = self.peers.write().await;
         let mut connecting = self.connecting.write().await;
 
@@ -42,7 +41,7 @@ impl PeerPool {
 
         // Check if we're at capacity
         if peers.len() >= MAX_PEERS {
-            return Err(Error::Network(NetworkError::ConnectionFailed(format!(
+            return Err(crate::Error::Network(crate::NetworkError::ConnectionFailed(format!(
                 "Maximum peers ({}) reached",
                 MAX_PEERS
             ))));
@@ -50,7 +49,7 @@ impl PeerPool {
 
         // Check if already connected
         if peers.contains_key(&addr) {
-            return Err(Error::Network(NetworkError::ConnectionFailed(format!(
+            return Err(crate::Error::Network(crate::NetworkError::ConnectionFailed(format!(
                 "Already connected to {}",
                 addr
             ))));

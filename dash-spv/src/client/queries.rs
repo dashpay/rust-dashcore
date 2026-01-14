@@ -6,7 +6,6 @@
 //! - Balance queries
 //! - Filter availability checks
 
-use crate::error::{Error, Result};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::AddressBalance;
@@ -38,14 +37,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Disconnect a specific peer.
-    pub async fn disconnect_peer(&self, addr: &std::net::SocketAddr, reason: &str) -> Result<()> {
+    pub async fn disconnect_peer(
+        &self,
+        addr: &std::net::SocketAddr,
+        reason: &str,
+    ) -> crate::Result<()> {
         // Cast network manager to PeerNetworkManager to access disconnect_peer
         let network = self
             .network
             .as_any()
             .downcast_ref::<crate::network::manager::PeerNetworkManager>()
             .ok_or_else(|| {
-                Error::Config("Network manager does not support peer disconnection".to_string())
+                crate::Error::Config(
+                    "Network manager does not support peer disconnection".to_string(),
+                )
             })?;
 
         network.disconnect_peer(addr, reason).await
@@ -72,7 +77,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         height: u32,
         quorum_type: LLMQType,
         quorum_hash: QuorumHash,
-    ) -> Result<QualifiedQuorumEntry> {
+    ) -> crate::Result<QualifiedQuorumEntry> {
         // First check if we have the masternode list at this height
         match self.get_masternode_list_at_height(height) {
             Some(ml) => {
@@ -95,7 +100,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                                                 hex::encode(quorum_hash),
                                                 quorums.len());
                             tracing::warn!(message);
-                            Err(Error::QuorumLookupError(message))
+                            Err(crate::Error::QuorumLookupError(message))
                         }
                     },
                     None => {
@@ -104,7 +109,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                             quorum_type,
                             height
                         );
-                        Err(Error::QuorumLookupError(format!(
+                        Err(crate::Error::QuorumLookupError(format!(
                             "No quorums of type {} found at height {}",
                             quorum_type, height
                         )))
@@ -116,7 +121,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     "No masternode list found at height {} - cannot retrieve quorum",
                     height
                 );
-                Err(Error::QuorumLookupError(format!(
+                Err(crate::Error::QuorumLookupError(format!(
                     "No masternode list found at height {}",
                     height
                 )))
@@ -132,10 +137,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub async fn get_address_balance(
         &self,
         _address: &dashcore::Address,
-    ) -> Result<AddressBalance> {
+    ) -> crate::Result<AddressBalance> {
         // This method requires wallet-specific functionality not in WalletInterface
         // The wallet should expose balance info through its own interface
-        Err(Error::Config(
+        Err(crate::Error::Config(
             "Address balance queries should be made directly to the wallet implementation"
                 .to_string(),
         ))
@@ -146,7 +151,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// This method is deprecated - use the wallet's balance query methods instead.
     pub async fn get_all_balances(
         &self,
-    ) -> Result<std::collections::HashMap<dashcore::Address, AddressBalance>> {
+    ) -> crate::Result<std::collections::HashMap<dashcore::Address, AddressBalance>> {
         // TODO: Get balances from wallet instead of tracking separately
         // Will be implemented when wallet integration is complete
         Ok(std::collections::HashMap::new())

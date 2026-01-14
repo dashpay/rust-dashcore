@@ -12,7 +12,6 @@ use tokio::time;
 
 use crate::client::config::MempoolStrategy;
 use crate::client::ClientConfig;
-use crate::error::{Error, NetworkError, NetworkResult};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
@@ -77,7 +76,7 @@ pub struct PeerNetworkManager {
 
 impl PeerNetworkManager {
     /// Create a new peer network manager
-    pub async fn new(config: &ClientConfig) -> Result<Self, Error> {
+    pub async fn new(config: &ClientConfig) -> Result<Self, crate::Error> {
         let (message_tx, message_rx) = mpsc::channel(1000);
 
         let discovery = DnsDiscovery::new().await?;
@@ -131,7 +130,7 @@ impl PeerNetworkManager {
     }
 
     /// Start the network manager
-    pub async fn start(&self) -> Result<(), Error> {
+    pub async fn start(&self) -> Result<(), crate::Error> {
         log::info!("Starting peer network manager for {:?}", self.network);
 
         let mut peer_addresses = self.initial_peers.clone();
@@ -394,7 +393,7 @@ impl PeerNetworkManager {
                                 if let Err(e) = peer_guard.handle_ping(*nonce).await {
                                     log::error!("Failed to handle ping from {}: {}", addr, e);
                                     // If we can't send pong, connection is likely broken
-                                    if matches!(e, NetworkError::ConnectionFailed(_)) {
+                                    if matches!(e, crate::NetworkError::ConnectionFailed(_)) {
                                         log::warn!("Breaking peer reader loop for {} - failed to send pong response (iteration {})", addr, loop_iteration);
                                         break;
                                     }
@@ -536,11 +535,11 @@ impl PeerNetworkManager {
                     }
                     Err(e) => {
                         match e {
-                            NetworkError::PeerDisconnected => {
+                            crate::NetworkError::PeerDisconnected => {
                                 log::info!("Peer {} disconnected", addr);
                                 break;
                             }
-                            NetworkError::Timeout => {
+                            crate::NetworkError::Timeout => {
                                 log::debug!("Timeout reading from {}, continuing...", addr);
                                 // Minor reputation penalty for timeout
                                 reputation_manager
@@ -556,7 +555,7 @@ impl PeerNetworkManager {
                                 log::error!("Fatal error reading from {}: {}", addr, e);
 
                                 // Check if this is a serialization error that might have context
-                                if let NetworkError::Serialization(ref decode_error) = e {
+                                if let crate::NetworkError::Serialization(ref decode_error) = e {
                                     let error_msg = decode_error.to_string();
                                     if error_msg.contains("unknown special transaction type") {
                                         log::warn!("Peer {} sent block with unsupported transaction type: {}", addr, decode_error);
@@ -820,11 +819,11 @@ impl PeerNetworkManager {
     }
 
     /// Send a message to a single peer (using sticky peer selection for sync consistency)
-    async fn send_to_single_peer(&self, message: NetworkMessage) -> NetworkResult<()> {
+    async fn send_to_single_peer(&self, message: NetworkMessage) -> crate::NetworkResult<()> {
         let peers = self.pool.get_all_peers().await;
 
         if peers.is_empty() {
-            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
+            return Err(crate::NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
 
         // For filter-related messages, we need a peer that supports compact filters
@@ -854,7 +853,7 @@ impl PeerNetworkManager {
                 }
                 None => {
                     log::warn!("No peers support compact filters, cannot send {}", message.cmd());
-                    return Err(NetworkError::ProtocolError(
+                    return Err(crate::NetworkError::ProtocolError(
                         "No peers support compact filters".to_string(),
                     ));
                 }
@@ -921,10 +920,9 @@ impl PeerNetworkManager {
         };
 
         // Find the peer for the selected address
-        let (addr, peer) = peers
-            .iter()
-            .find(|(a, _)| *a == selected_peer)
-            .ok_or_else(|| NetworkError::ConnectionFailed("Selected peer not found".to_string()))?;
+        let (addr, peer) = peers.iter().find(|(a, _)| *a == selected_peer).ok_or_else(|| {
+            crate::NetworkError::ConnectionFailed("Selected peer not found".to_string())
+        })?;
 
         // Upgrade GetHeaders to GetHeaders2 if this specific peer supports it and not disabled
         let peer_supports_headers2 = {
@@ -970,14 +968,13 @@ impl PeerNetworkManager {
         }
 
         let mut peer_guard = peer.write().await;
-        peer_guard
-            .send_message(message)
-            .await
-            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
+        peer_guard.send_message(message).await.map_err(|e| {
+            crate::NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e))
+        })
     }
 
     /// Broadcast a message to all connected peers
-    pub async fn broadcast(&self, message: NetworkMessage) -> Vec<Result<(), Error>> {
+    pub async fn broadcast(&self, message: NetworkMessage) -> Vec<Result<(), crate::Error>> {
         let peers = self.pool.get_all_peers().await;
         let mut handles = Vec::new();
 
@@ -996,7 +993,7 @@ impl PeerNetworkManager {
 
             let handle = tokio::spawn(async move {
                 let mut peer_guard = peer.write().await;
-                peer_guard.send_message(msg).await.map_err(Error::Network)
+                peer_guard.send_message(msg).await.map_err(crate::Error::Network)
             });
             handles.push(handle);
         }
@@ -1006,9 +1003,11 @@ impl PeerNetworkManager {
         for handle in handles {
             match handle.await {
                 Ok(result) => results.push(result),
-                Err(_) => results.push(Err(Error::Network(NetworkError::ConnectionFailed(
-                    "Task panicked during broadcast".to_string(),
-                )))),
+                Err(_) => {
+                    results.push(Err(crate::Error::Network(crate::NetworkError::ConnectionFailed(
+                        "Task panicked during broadcast".to_string(),
+                    ))))
+                }
             }
         }
 
@@ -1016,7 +1015,11 @@ impl PeerNetworkManager {
     }
 
     /// Disconnect a specific peer
-    pub async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
+    pub async fn disconnect_peer(
+        &self,
+        addr: &SocketAddr,
+        reason: &str,
+    ) -> Result<(), crate::Error> {
         log::info!("Disconnecting peer {} - reason: {}", addr, reason);
 
         // Remove the peer
@@ -1058,7 +1061,7 @@ impl PeerNetworkManager {
     }
 
     /// Ban a specific peer manually
-    pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
+    pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), crate::Error> {
         log::info!("Manually banning peer {} - reason: {}", addr, reason);
 
         // Disconnect the peer first
@@ -1151,16 +1154,16 @@ impl NetworkManager for PeerNetworkManager {
         self
     }
 
-    async fn connect(&mut self) -> NetworkResult<()> {
-        self.start().await.map_err(|e| NetworkError::ConnectionFailed(e.to_string()))
+    async fn connect(&mut self) -> crate::NetworkResult<()> {
+        self.start().await.map_err(|e| crate::NetworkError::ConnectionFailed(e.to_string()))
     }
 
-    async fn disconnect(&mut self) -> NetworkResult<()> {
+    async fn disconnect(&mut self) -> crate::NetworkResult<()> {
         self.shutdown().await;
         Ok(())
     }
 
-    async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
+    async fn send_message(&mut self, message: NetworkMessage) -> crate::NetworkResult<()> {
         // For sync messages that require consistent responses, send to only one peer
         match &message {
             NetworkMessage::GetHeaders(_)
@@ -1175,12 +1178,14 @@ impl NetworkManager for PeerNetworkManager {
 
                 // Return error if all sends failed
                 if results.is_empty() {
-                    return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
+                    return Err(crate::NetworkError::ConnectionFailed(
+                        "No connected peers".to_string(),
+                    ));
                 }
 
                 let successes = results.iter().filter(|r| r.is_ok()).count();
                 if successes == 0 {
-                    return Err(NetworkError::ProtocolError(
+                    return Err(crate::NetworkError::ProtocolError(
                         "Failed to send to any peer".to_string(),
                     ));
                 }
@@ -1194,7 +1199,7 @@ impl NetworkManager for PeerNetworkManager {
         &self,
         score_change: i32,
         reason: &str,
-    ) -> NetworkResult<()> {
+    ) -> crate::NetworkResult<()> {
         // Get the last peer that sent us a message
         if let Some(addr) = self.get_last_message_peer().await {
             self.reputation_manager.update_reputation(addr, score_change, reason).await;
@@ -1205,7 +1210,7 @@ impl NetworkManager for PeerNetworkManager {
     async fn penalize_last_message_peer_invalid_chainlock(
         &self,
         reason: &str,
-    ) -> NetworkResult<()> {
+    ) -> crate::NetworkResult<()> {
         if let Some(addr) = self.get_last_message_peer().await {
             match self.disconnect_peer(&addr, reason).await {
                 Ok(()) => {
@@ -1241,7 +1246,7 @@ impl NetworkManager for PeerNetworkManager {
     async fn penalize_last_message_peer_invalid_instantlock(
         &self,
         reason: &str,
-    ) -> NetworkResult<()> {
+    ) -> crate::NetworkResult<()> {
         if let Some(addr) = self.get_last_message_peer().await {
             // Apply misbehavior score and a short temporary ban
             self.reputation_manager
@@ -1274,7 +1279,7 @@ impl NetworkManager for PeerNetworkManager {
         Ok(())
     }
 
-    async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
+    async fn receive_message(&mut self) -> crate::NetworkResult<Option<NetworkMessage>> {
         let mut rx = self.message_rx.lock().await;
 
         // Use a timeout to prevent indefinite blocking when peers disconnect
@@ -1330,7 +1335,7 @@ impl NetworkManager for PeerNetworkManager {
         })
     }
 
-    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
+    async fn get_peer_best_height(&self) -> crate::NetworkResult<Option<u32>> {
         let peers = self.pool.get_all_peers().await;
 
         if peers.is_empty() {
@@ -1409,12 +1414,12 @@ impl NetworkManager for PeerNetworkManager {
         self.get_last_message_peer_id().await
     }
 
-    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
+    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> crate::NetworkResult<()> {
         // Get the last peer that sent us a message
         let peer_id = self.get_last_message_peer_id().await;
 
         if peer_id.0 == 0 {
-            return Err(NetworkError::ConnectionFailed("No peer to update".to_string()));
+            return Err(crate::NetworkError::ConnectionFailed("No peer to update".to_string()));
         }
 
         // Find the peer's address from the last message data
@@ -1428,7 +1433,7 @@ impl NetworkManager for PeerNetworkManager {
         Ok(())
     }
 
-    async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
+    async fn mark_peer_sent_headers2(&mut self) -> crate::NetworkResult<()> {
         // Get the last peer that sent us a message
         let last_msg_peer = self.last_message_peer.lock().await;
         if let Some(addr) = &*last_msg_peer {

@@ -6,7 +6,6 @@ use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::TokioResolver;
 use std::net::{IpAddr, SocketAddr};
 
-use crate::error::Error;
 use crate::network::constants::{MAINNET_DNS_SEEDS, TESTNET_DNS_SEEDS};
 
 /// DNS discovery for finding initial peers
@@ -16,7 +15,7 @@ pub struct DnsDiscovery {
 
 impl DnsDiscovery {
     /// Create a new DNS discovery instance
-    pub async fn new() -> Result<Self, Error> {
+    pub async fn new() -> Result<Self, crate::Error> {
         let resolver = hickory_resolver::Resolver::builder_with_config(
             ResolverConfig::default(),
             TokioConnectionProvider::default(),

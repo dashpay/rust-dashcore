@@ -15,7 +15,6 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use crate::terminal::TerminalUI;
 
 use crate::chain::ChainLockManager;
-use crate::error::{Error, Result};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -201,11 +200,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     // ============ Storage Operations ============
 
     /// Clear all persisted storage (headers, filters, state, sync state) and reset in-memory state.
-    pub async fn clear_storage(&mut self) -> Result<()> {
+    pub async fn clear_storage(&mut self) -> crate::Result<()> {
         // Wipe on-disk persistence fully
         {
             let mut storage = self.storage.lock().await;
-            storage.clear().await.map_err(Error::Storage)?;
+            storage.clear().await.map_err(crate::Error::Storage)?;
         }
 
         // Reset in-memory chain state to a clean baseline for the current network
@@ -267,13 +266,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     // ============ Configuration ============
 
     /// Update the client configuration.
-    pub async fn update_config(&mut self, new_config: ClientConfig) -> Result<()> {
+    pub async fn update_config(&mut self, new_config: ClientConfig) -> crate::Result<()> {
         // Validate new configuration
         new_config.validate()?;
 
         // Ensure network hasn't changed
         if new_config.network != self.config.network {
-            return Err(Error::Config("Cannot change network on running client".to_string()));
+            return Err(crate::Error::Config(
+                "Cannot change network on running client".to_string(),
+            ));
         }
 
         // Update configuration

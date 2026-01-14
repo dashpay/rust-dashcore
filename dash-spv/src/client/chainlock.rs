@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use crate::error::{Error, Result};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SpvEvent;
@@ -22,7 +21,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub async fn process_chainlock(
         &mut self,
         chainlock: dashcore::ephemerealdata::chain_lock::ChainLock,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         tracing::info!(
             "Processing ChainLock for block {} at height {}",
             chainlock.block_hash,
@@ -41,7 +40,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 // Penalize the peer that relayed the invalid ChainLock
                 let reason = format!("Invalid ChainLock: {}", e);
                 let _ = self.network.penalize_last_message_peer_invalid_chainlock(&reason).await;
-                return Err(Error::Validation(e));
+                return Err(crate::Error::Validation(e));
             }
         }
         drop(chain_state);
@@ -88,12 +87,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub(super) async fn process_instantsendlock(
         &mut self,
         islock: dashcore::ephemerealdata::instant_lock::InstantLock,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         tracing::info!("Processing InstantSendLock for tx {}", islock.txid);
 
         // Get the masternode engine from sync manager for proper quorum verification
         let masternode_engine = self.sync_manager.get_masternode_engine().ok_or_else(|| {
-            Error::Validation(crate::error::ValidationError::MasternodeVerification(
+            crate::Error::Validation(crate::ValidationError::MasternodeVerification(
                 "Masternode engine not available for InstantLock verification".to_string(),
             ))
         })?;
@@ -109,7 +108,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             // Ban the peer using the reputation system
             let _ = self.network.penalize_last_message_peer_invalid_instantlock(&reason).await;
 
-            return Err(Error::Validation(e));
+            return Err(crate::Error::Validation(e));
         }
 
         tracing::info!(
@@ -130,7 +129,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Update ChainLock validation with masternode engine after sync completes.
     /// This should be called when masternode sync finishes to enable full validation.
     /// Returns true if the engine was successfully set.
-    pub fn update_chainlock_validation(&self) -> Result<bool> {
+    pub fn update_chainlock_validation(&self) -> crate::Result<bool> {
         // Check if masternode sync has an engine available
         if let Some(engine) = self.sync_manager.get_masternode_engine() {
             // Clone the engine for the ChainLockManager
@@ -152,7 +151,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Validate all pending ChainLocks after masternode engine is available.
     /// This requires mutable access to self for storage access.
-    pub async fn validate_pending_chainlocks(&mut self) -> Result<()> {
+    pub async fn validate_pending_chainlocks(&mut self) -> crate::Result<()> {
         let chain_state = self.state.read().await;
 
         let mut storage = self.storage.lock().await;
@@ -164,7 +163,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
             Err(e) => {
                 tracing::error!("Failed to validate pending ChainLocks: {}", e);
-                Err(Error::Validation(e))
+                Err(crate::Error::Validation(e))
             }
         }
     }

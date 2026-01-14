@@ -109,21 +109,21 @@ mod tests {
         assert_eq!(FFIErrorCode::Unknown as i32, 99);
 
         // Test conversions from SpvError
-        use dash_spv::{Error, NetworkError, StorageError, SyncError, ValidationError};
+        use dash_spv::{NetworkError, StorageError, SyncError, ValidationError};
 
-        let net_err = Error::Network(NetworkError::ConnectionFailed("test".to_string()));
+        let net_err = dash_spv::Error::Network(NetworkError::ConnectionFailed("test".to_string()));
         assert_eq!(FFIErrorCode::from(net_err) as i32, FFIErrorCode::NetworkError as i32);
 
-        let storage_err = Error::Storage(StorageError::NotFound("test".to_string()));
+        let storage_err = dash_spv::Error::Storage(StorageError::NotFound("test".to_string()));
         assert_eq!(FFIErrorCode::from(storage_err) as i32, FFIErrorCode::StorageError as i32);
 
-        let val_err = Error::Validation(ValidationError::InvalidProofOfWork);
+        let val_err = dash_spv::Error::Validation(ValidationError::InvalidProofOfWork);
         assert_eq!(FFIErrorCode::from(val_err) as i32, FFIErrorCode::ValidationError as i32);
 
-        let sync_err = Error::Sync(SyncError::Timeout("Test timeout".to_string()));
+        let sync_err = dash_spv::Error::Sync(SyncError::Timeout("Test timeout".to_string()));
         assert_eq!(FFIErrorCode::from(sync_err) as i32, FFIErrorCode::SyncError as i32);
 
-        let config_err = Error::Config("test".to_string());
+        let config_err = dash_spv::Error::Config("test".to_string());
         assert_eq!(FFIErrorCode::from(config_err) as i32, FFIErrorCode::ConfigError as i32);
     }
 
