@@ -5,7 +5,7 @@ use thiserror::Error;
 
 /// Main error type for the Dash SPV client.
 #[derive(Debug, Error)]
-pub enum SpvError {
+pub enum Error {
     #[error("Channel failure for: {0} - Failure: {1}")]
     ChannelFailure(String, String),
 
@@ -187,8 +187,8 @@ pub enum SyncError {
     Headers2DecompressionFailed(String),
 }
 
-/// Type alias for Result with SpvError.
-pub type Result<T> = std::result::Result<T, SpvError>;
+/// Type alias for Result with dash_spv::Error.
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Type alias for network operation results.
 pub type NetworkResult<T> = std::result::Result<T, NetworkError>;

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::chain::ChainLockManager;
-use crate::error::{Result, SpvError};
+use crate::error::{Error, Result};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -53,7 +53,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             state.clone(),
             stats.clone(),
         )
-        .map_err(SpvError::Sync)?;
+        .map_err(Error::Sync)?;
 
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
@@ -94,7 +94,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         {
             let running = self.running.read().await;
             if *running {
-                return Err(SpvError::Config("Client already running".to_string()));
+                return Err(Error::Config("Client already running".to_string()));
             }
         }
 
@@ -318,7 +318,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             .config
             .network
             .known_genesis_block_hash()
-            .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
+            .ok_or_else(|| Error::Config("No known genesis hash for network".to_string()))?;
 
         tracing::info!(
             "Initializing genesis block for network {:?}: {}",
@@ -332,7 +332,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Verify the header produces the expected genesis hash
         let calculated_hash = genesis_header.block_hash();
         if calculated_hash != genesis_hash {
-            return Err(SpvError::Config(format!(
+            return Err(Error::Config(format!(
                 "Genesis header hash mismatch! Expected: {}, Calculated: {}",
                 genesis_hash, calculated_hash
             )));
@@ -344,7 +344,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let genesis_headers = vec![genesis_header];
         {
             let mut storage = self.storage.lock().await;
-            storage.store_headers(&genesis_headers).await.map_err(SpvError::Storage)?;
+            storage.store_headers(&genesis_headers).await.map_err(Error::Storage)?;
         }
 
         // Verify it was stored correctly

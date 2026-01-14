@@ -1,6 +1,6 @@
 //! Transaction-related client APIs (e.g., broadcasting)
 
-use crate::error::{Result, SpvError};
+use crate::error::{Error, Result};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use dashcore::network::message::NetworkMessage;
@@ -16,11 +16,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             .as_any()
             .downcast_ref::<crate::network::manager::PeerNetworkManager>()
             .ok_or_else(|| {
-                SpvError::Config("Network manager does not support broadcasting".to_string())
+                Error::Config("Network manager does not support broadcasting".to_string())
             })?;
 
         if network.peer_count() == 0 {
-            return Err(SpvError::Network(crate::error::NetworkError::NotConnected));
+            return Err(Error::Network(crate::error::NetworkError::NotConnected));
         }
 
         let message = NetworkMessage::Tx(tx.clone());
@@ -38,7 +38,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         if success {
             Ok(())
         } else {
-            Err(SpvError::Network(crate::error::NetworkError::ProtocolError(format!(
+            Err(Error::Network(crate::error::NetworkError::ProtocolError(format!(
                 "Broadcast failed: {}",
                 errors.join(", ")
             ))))

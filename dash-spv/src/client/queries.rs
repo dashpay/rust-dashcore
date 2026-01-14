@@ -6,7 +6,7 @@
 //! - Balance queries
 //! - Filter availability checks
 
-use crate::error::{Result, SpvError};
+use crate::error::{Error, Result};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::AddressBalance;
@@ -45,7 +45,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             .as_any()
             .downcast_ref::<crate::network::manager::PeerNetworkManager>()
             .ok_or_else(|| {
-                SpvError::Config("Network manager does not support peer disconnection".to_string())
+                Error::Config("Network manager does not support peer disconnection".to_string())
             })?;
 
         network.disconnect_peer(addr, reason).await
@@ -95,7 +95,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                                                 hex::encode(quorum_hash),
                                                 quorums.len());
                             tracing::warn!(message);
-                            Err(SpvError::QuorumLookupError(message))
+                            Err(Error::QuorumLookupError(message))
                         }
                     },
                     None => {
@@ -104,7 +104,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                             quorum_type,
                             height
                         );
-                        Err(SpvError::QuorumLookupError(format!(
+                        Err(Error::QuorumLookupError(format!(
                             "No quorums of type {} found at height {}",
                             quorum_type, height
                         )))
@@ -116,7 +116,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     "No masternode list found at height {} - cannot retrieve quorum",
                     height
                 );
-                Err(SpvError::QuorumLookupError(format!(
+                Err(Error::QuorumLookupError(format!(
                     "No masternode list found at height {}",
                     height
                 )))
@@ -135,7 +135,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     ) -> Result<AddressBalance> {
         // This method requires wallet-specific functionality not in WalletInterface
         // The wallet should expose balance info through its own interface
-        Err(SpvError::Config(
+        Err(Error::Config(
             "Address balance queries should be made directly to the wallet implementation"
                 .to_string(),
         ))

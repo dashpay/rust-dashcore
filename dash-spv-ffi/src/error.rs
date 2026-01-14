@@ -1,4 +1,4 @@
-use dash_spv::error::SpvError;
+use dash_spv::error::Error;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::sync::Mutex;
@@ -49,18 +49,18 @@ pub extern "C" fn dash_spv_ffi_clear_error() {
     clear_last_error();
 }
 
-impl From<SpvError> for FFIErrorCode {
-    fn from(err: SpvError) -> Self {
+impl From<Error> for FFIErrorCode {
+    fn from(err: Error) -> Self {
         match err {
-            SpvError::ChannelFailure(_, _) => FFIErrorCode::RuntimeError,
-            SpvError::Network(_) => FFIErrorCode::NetworkError,
-            SpvError::Storage(_) => FFIErrorCode::StorageError,
-            SpvError::Validation(_) => FFIErrorCode::ValidationError,
-            SpvError::Sync(_) => FFIErrorCode::SyncError,
-            SpvError::Config(_) => FFIErrorCode::ConfigError,
-            SpvError::Logging(_) => FFIErrorCode::RuntimeError,
-            SpvError::QuorumLookupError(_) => FFIErrorCode::ValidationError,
-            SpvError::General(_) => FFIErrorCode::Unknown,
+            Error::ChannelFailure(_, _) => FFIErrorCode::RuntimeError,
+            Error::Network(_) => FFIErrorCode::NetworkError,
+            Error::Storage(_) => FFIErrorCode::StorageError,
+            Error::Validation(_) => FFIErrorCode::ValidationError,
+            Error::Sync(_) => FFIErrorCode::SyncError,
+            Error::Config(_) => FFIErrorCode::ConfigError,
+            Error::Logging(_) => FFIErrorCode::RuntimeError,
+            Error::QuorumLookupError(_) => FFIErrorCode::ValidationError,
+            Error::General(_) => FFIErrorCode::Unknown,
         }
     }
 }

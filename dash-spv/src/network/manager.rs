@@ -12,7 +12,7 @@ use tokio::time;
 
 use crate::client::config::MempoolStrategy;
 use crate::client::ClientConfig;
-use crate::error::{NetworkError, NetworkResult, SpvError as Error};
+use crate::error::{Error, NetworkError, NetworkResult};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;

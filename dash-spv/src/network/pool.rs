@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::error::{NetworkError, SpvError as Error};
+use crate::error::{Error, NetworkError};
 use crate::network::constants::{MAX_PEERS, MIN_PEERS};
 use crate::network::peer::Peer;
 

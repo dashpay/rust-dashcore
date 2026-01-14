@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use crate::error::{Result, SpvError};
+use crate::error::{Error, Result};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SpvEvent;
@@ -41,7 +41,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 // Penalize the peer that relayed the invalid ChainLock
                 let reason = format!("Invalid ChainLock: {}", e);
                 let _ = self.network.penalize_last_message_peer_invalid_chainlock(&reason).await;
-                return Err(SpvError::Validation(e));
+                return Err(Error::Validation(e));
             }
         }
         drop(chain_state);
@@ -93,7 +93,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Get the masternode engine from sync manager for proper quorum verification
         let masternode_engine = self.sync_manager.get_masternode_engine().ok_or_else(|| {
-            SpvError::Validation(crate::error::ValidationError::MasternodeVerification(
+            Error::Validation(crate::error::ValidationError::MasternodeVerification(
                 "Masternode engine not available for InstantLock verification".to_string(),
             ))
         })?;
@@ -109,7 +109,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             // Ban the peer using the reputation system
             let _ = self.network.penalize_last_message_peer_invalid_instantlock(&reason).await;
 
-            return Err(SpvError::Validation(e));
+            return Err(Error::Validation(e));
         }
 
         tracing::info!(
@@ -164,7 +164,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
             Err(e) => {
                 tracing::error!("Failed to validate pending ChainLocks: {}", e);
-                Err(SpvError::Validation(e))
+                Err(Error::Validation(e))
             }
         }
     }

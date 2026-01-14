@@ -6,7 +6,7 @@ use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::TokioResolver;
 use std::net::{IpAddr, SocketAddr};
 
-use crate::error::SpvError as Error;
+use crate::error::Error;
 use crate::network::constants::{MAINNET_DNS_SEEDS, TESTNET_DNS_SEEDS};
 
 /// DNS discovery for finding initial peers

@@ -186,7 +186,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 DashSpvClient::new(client_config, network, storage, wallet).await
             }
             (Err(e), _) => Err(e),
-            (_, Err(e)) => Err(dash_spv::SpvError::Storage(e)),
+            (_, Err(e)) => Err(dash_spv::Error::Storage(e)),
         }
     });
 
@@ -379,7 +379,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_drain_events(client: *mut FFIDashSp
     FFIErrorCode::Success as i32
 }
 
-fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
+fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::Error> {
     client.shutdown_token.cancel();
 
     // Ensure callbacks are cleared so no further progress/completion notifications fire.
@@ -400,7 +400,7 @@ fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::S
             match guard.take() {
                 Some(client) => client,
                 None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    return Err(dash_spv::Error::Storage(dash_spv::StorageError::NotFound(
                         "Client not initialized".to_string(),
                     )))
                 }
@@ -440,9 +440,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
             let mut guard = client.inner.lock().unwrap();
             match guard.take() {
                 Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
+                None => return Err(dash_spv::Error::Config("Client not initialized".to_string())),
             }
         };
 
@@ -480,7 +478,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
             match guard.take() {
                 Some(client) => client,
                 None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    return Err(dash_spv::Error::Storage(dash_spv::StorageError::NotFound(
                         "Client not initialized".to_string(),
                     )))
                 }
@@ -558,9 +556,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
             let mut guard = client.inner.lock().unwrap();
             match guard.take() {
                 Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
+                None => return Err(dash_spv::Error::Config("Client not initialized".to_string())),
             }
         };
         tracing::info!("Starting test sync...");
@@ -596,7 +592,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
         } else {
             let msg = "No headers downloaded".to_string();
             tracing::error!("❌ {}", msg);
-            Err(dash_spv::SpvError::Sync(dash_spv::SyncError::Network(msg)))
+            Err(dash_spv::Error::Sync(dash_spv::SyncError::Network(msg)))
         };
 
         // put client back
@@ -765,7 +761,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                     match guard.take() {
                         Some(client) => client,
                         None => {
-                            return Err(dash_spv::SpvError::Config(
+                            return Err(dash_spv::Error::Config(
                                 "Client not initialized".to_string(),
                             ))
                         }
@@ -893,7 +889,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
             match guard.take() {
                 Some(c) => c,
                 None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    return Err(dash_spv::Error::Storage(dash_spv::StorageError::NotFound(
                         "Client not initialized".to_string(),
                     )))
                 }
@@ -933,7 +929,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_stats(
             match guard.take() {
                 Some(client) => client,
                 None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    return Err(dash_spv::Error::Storage(dash_spv::StorageError::NotFound(
                         "Client not initialized".to_string(),
                     )))
                 }
@@ -978,9 +974,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_hash(
             let mut guard = inner.lock().unwrap();
             match guard.take() {
                 Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
+                None => return Err(dash_spv::Error::Config("Client not initialized".to_string())),
             }
         };
         let tip = spv_client.tip_hash().await;
@@ -1031,9 +1025,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_height(
             let mut guard = inner.lock().unwrap();
             match guard.take() {
                 Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
+                None => return Err(dash_spv::Error::Config("Client not initialized".to_string())),
             }
         };
         let height = spv_client.tip_height().await;
@@ -1070,9 +1062,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
             let mut guard = inner.lock().unwrap();
             match guard.take() {
                 Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
+                None => return Err(dash_spv::Error::Config("Client not initialized".to_string())),
             }
         };
 
@@ -1232,13 +1222,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
+    let result: Result<(), dash_spv::Error> = client.runtime.block_on(async {
         let mut guard = inner.lock().unwrap();
         if let Some(ref mut _spv_client) = *guard {
             // TODO: rescan_from_height not yet implemented in dash-spv
-            Err(dash_spv::SpvError::Config("Not implemented".to_string()))
+            Err(dash_spv::Error::Config("Not implemented".to_string()))
         } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+            Err(dash_spv::Error::Storage(dash_spv::StorageError::NotFound(
                 "Client not initialized".to_string(),
             )))
         }
@@ -1275,7 +1265,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
             match guard.take() {
                 Some(client) => client,
                 None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    return Err(dash_spv::Error::Storage(dash_spv::StorageError::NotFound(
                         "Client not initialized".to_string(),
                     )))
                 }
@@ -1333,7 +1323,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
             match guard.take() {
                 Some(client) => client,
                 None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    return Err(dash_spv::Error::Storage(dash_spv::StorageError::NotFound(
                         "Client not initialized".to_string(),
                     )))
                 }

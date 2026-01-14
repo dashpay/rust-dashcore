@@ -75,7 +75,7 @@ pub mod validation;
 // Re-export main types for convenience
 pub use client::{ClientConfig, DashSpvClient};
 pub use error::{
-    LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
+    Error, LoggingError, LoggingResult, NetworkError, StorageError, SyncError, ValidationError,
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
 pub use tracing::level_filters::LevelFilter;
