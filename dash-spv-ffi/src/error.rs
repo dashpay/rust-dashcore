@@ -1,4 +1,4 @@
-use dash_spv::error::Error;
+use dash_spv::Error;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::sync::Mutex;

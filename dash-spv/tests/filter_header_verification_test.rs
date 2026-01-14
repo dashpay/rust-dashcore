@@ -10,11 +10,11 @@
 
 use dash_spv::{
     client::ClientConfig,
-    error::{NetworkError, NetworkResult, SyncError},
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::filters::FilterSyncManager,
     types::PeerInfo,
+    {NetworkError, NetworkResult, SyncError},
 };
 use dashcore::{
     block::{Header as BlockHeader, Version},
@@ -83,7 +83,7 @@ impl NetworkManager for MockNetworkManager {
         self
     }
 
-    async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
+    async fn get_peer_best_height(&self) -> dash_spv::NetworkResult<Option<u32>> {
         Ok(Some(100))
     }
 

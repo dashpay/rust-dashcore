@@ -59,9 +59,10 @@
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
+mod error;
+
 pub mod chain;
 pub mod client;
-pub mod error;
 pub mod logging;
 pub mod mempool_filter;
 pub mod network;
@@ -75,7 +76,8 @@ pub mod validation;
 // Re-export main types for convenience
 pub use client::{ClientConfig, DashSpvClient};
 pub use error::{
-    Error, LoggingError, LoggingResult, NetworkError, StorageError, SyncError, ValidationError,
+    Error, LoggingError, LoggingResult, NetworkError, NetworkResult, Result, StorageError,
+    StorageResult, SyncError, SyncResult, ValidationError, ValidationResult,
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
 pub use tracing::level_filters::LevelFilter;
