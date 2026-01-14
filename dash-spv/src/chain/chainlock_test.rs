@@ -5,7 +5,7 @@ mod tests {
         storage::{BlockHeaderStorage, DiskStorageManager},
         types::ChainState,
     };
-    use dashcore::{constants::genesis_block, Network};
+    use dashcore::{Header, Network};
 
     #[tokio::test]
     async fn test_chainlock_processing() {
@@ -121,8 +121,8 @@ mod tests {
         let chainlock_manager = ChainLockManager::new(true);
 
         // Add test headers
-        let genesis = genesis_block(Network::Dash).header;
-        storage.store_headers_at_height(&[genesis], 0).await.unwrap();
+        let header = Header::dummy(0);
+        storage.store_headers_at_height(&[header], 0).await.unwrap();
 
         // Create and process a ChainLock
         let chain_lock = ChainLock::dummy(0);
@@ -138,7 +138,7 @@ mod tests {
         assert!(entry.is_some());
         assert_eq!(entry.unwrap().chain_lock.block_height, 0);
 
-        let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&genesis.block_hash());
+        let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&header.block_hash());
         assert!(entry_by_hash.is_some());
         assert_eq!(entry_by_hash.unwrap().chain_lock.block_height, 0);
     }
