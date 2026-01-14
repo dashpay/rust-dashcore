@@ -1,7 +1,7 @@
 //! Network message handling for the Dash SPV client.
 
 use crate::client::ClientConfig;
-use crate::error::{Result, SpvError};
+use crate::error::Result;
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -70,27 +70,19 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                 }
 
                 // Move to sync manager without cloning
-                return self
-                    .sync_manager
+                self.sync_manager
                     .handle_message(message, &mut *self.network, &mut *self.storage)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Sequential sync manager error handling message: {}", e);
-                        SpvError::Sync(e)
-                    });
+                    .await?;
+                return Ok(());
             }
             NetworkMessage::MnListDiff(ref diff) => {
                 tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums",
                               diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
                 // Move to sync manager without cloning
-                return self
-                    .sync_manager
+                self.sync_manager
                     .handle_message(message, &mut *self.network, &mut *self.storage)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Sequential sync manager error handling message: {}", e);
-                        SpvError::Sync(e)
-                    });
+                    .await?;
+                return Ok(());
             }
             NetworkMessage::CFHeaders(ref cf_headers) => {
                 // Try to include the peer address for better diagnostics
@@ -111,14 +103,10 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                     }
                 }
                 // Move to sync manager without cloning
-                return self
-                    .sync_manager
+                self.sync_manager
                     .handle_message(message, &mut *self.network, &mut *self.storage)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Sequential sync manager error handling message: {}", e);
-                        SpvError::Sync(e)
-                    });
+                    .await?;
+                return Ok(());
             }
             NetworkMessage::QRInfo(ref qr_info) => {
                 tracing::info!(
@@ -127,14 +115,10 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                     qr_info.quorum_snapshot_list.len()
                 );
                 // Move to sync manager without cloning
-                return self
-                    .sync_manager
+                self.sync_manager
                     .handle_message(message, &mut *self.network, &mut *self.storage)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Sequential sync manager error handling QRInfo: {}", e);
-                        SpvError::Sync(e)
-                    });
+                    .await?;
+                return Ok(());
             }
             NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
                 // Headers and CFilters are relatively small, cloning is acceptable
@@ -200,18 +184,9 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                 // 1) Ensure header processing and chain tip update for this block
                 //    Route the header through the sequential sync manager as a Headers message
                 let headers_msg = NetworkMessage::Headers(vec![block.header]);
-                if let Err(e) = self
-                    .sync_manager
+                self.sync_manager
                     .handle_message(&headers_msg, &mut *self.network, &mut *self.storage)
-                    .await
-                {
-                    tracing::error!(
-                        "❌ Failed to process header for block {} via sync manager: {}",
-                        block_hash,
-                        e
-                    );
-                    return Err(SpvError::Sync(e));
-                }
+                    .await?
             }
             NetworkMessage::Inv(inv) => {
                 tracing::debug!("Received inventory message with {} items", inv.len());
@@ -384,14 +359,14 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
         if !chainlocks_to_request.is_empty() {
             tracing::info!("Requesting {} ChainLocks", chainlocks_to_request.len());
             let getdata = NetworkMessage::GetData(chainlocks_to_request);
-            self.network.send_message(getdata).await.map_err(SpvError::Network)?;
+            self.network.send_message(getdata).await?;
         }
 
         // Auto-request InstantLocks (only when synced and masternodes available; gated above)
         if !islocks_to_request.is_empty() {
             tracing::info!("Requesting {} InstantLocks", islocks_to_request.len());
             let getdata = NetworkMessage::GetData(islocks_to_request);
-            self.network.send_message(getdata).await.map_err(SpvError::Network)?;
+            self.network.send_message(getdata).await?;
         }
 
         // For blocks announced via inventory during tip sync, request full blocks for privacy
@@ -433,8 +408,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
         // request filter headers and filters as needed
         self.sync_manager
             .handle_new_headers(headers, &mut *self.network, &mut *self.storage)
-            .await
-            .map_err(SpvError::Sync)?;
+            .await?;
 
         Ok(())
     }

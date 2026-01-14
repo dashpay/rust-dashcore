@@ -114,14 +114,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
             // Load mempool state from storage if persistence is enabled
             if self.config.persist_mempool {
-                if let Some(state) = self
-                    .storage
-                    .lock()
-                    .await
-                    .load_mempool_state()
-                    .await
-                    .map_err(SpvError::Storage)?
-                {
+                if let Some(state) = self.storage.lock().await.load_mempool_state().await? {
                     *self.mempool_state.write().await = state;
                 }
             }
@@ -162,8 +155,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             let (header_height, filter_height) = {
                 let storage = self.storage.lock().await;
                 let h_height = storage.get_tip_height().await.unwrap_or(0);
-                let f_height =
-                    storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
+                let f_height = storage.get_filter_tip_height().await?.unwrap_or(0);
                 (h_height, f_height)
             };
 
@@ -297,10 +289,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                             storage
                                 .store_headers_at_height(&[checkpoint_header], checkpoint.height)
                                 .await?;
-                            storage
-                                .store_chain_state(&chain_state_for_storage)
-                                .await
-                                .map_err(SpvError::Storage)?;
+                            storage.store_chain_state(&chain_state_for_storage).await?;
                         }
 
                         // Don't store the checkpoint header itself - we'll request headers from peers
