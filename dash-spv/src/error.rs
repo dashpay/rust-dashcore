@@ -30,33 +30,11 @@ pub enum SpvError {
     #[error("General error: {0}")]
     General(String),
 
-    #[error("Parse error: {0}")]
-    Parse(#[from] ParseError),
-
     #[error("Logging error: {0}")]
     Logging(#[from] LoggingError),
 
-    #[error("Wallet error: {0}")]
-    Wallet(#[from] WalletError),
-
     #[error("Quorum lookup error: {0}")]
     QuorumLookupError(String),
-}
-
-/// Parse-related errors.
-#[derive(Debug, Error)]
-pub enum ParseError {
-    #[error("Invalid network address: {0}")]
-    InvalidAddress(String),
-
-    #[error("Invalid network name: {0}")]
-    InvalidNetwork(String),
-
-    #[error("Missing required argument: {0}")]
-    MissingArgument(String),
-
-    #[error("Invalid argument value for {0}: {1}")]
-    InvalidArgument(String, String),
 }
 
 /// Logging-related errors.
@@ -229,37 +207,3 @@ pub type SyncResult<T> = std::result::Result<T, SyncError>;
 
 /// Type alias for logging operation results.
 pub type LoggingResult<T> = std::result::Result<T, LoggingError>;
-
-/// Wallet-related errors.
-#[derive(Debug, Error)]
-pub enum WalletError {
-    #[error("Balance calculation overflow")]
-    BalanceOverflow,
-
-    #[error("Unsupported address type: {0}")]
-    UnsupportedAddressType(String),
-
-    #[error("UTXO not found: {0}")]
-    UtxoNotFound(dashcore::OutPoint),
-
-    #[error("Invalid script pubkey")]
-    InvalidScriptPubkey,
-
-    #[error("Wallet not initialized")]
-    NotInitialized,
-
-    #[error("Transaction validation failed: {0}")]
-    TransactionValidation(String),
-
-    #[error("Invalid transaction output at index {0}")]
-    InvalidOutput(usize),
-
-    #[error("Address error: {0}")]
-    AddressError(String),
-
-    #[error("Script error: {0}")]
-    ScriptError(String),
-}
-
-/// Type alias for wallet operation results.
-pub type WalletResult<T> = std::result::Result<T, WalletError>;

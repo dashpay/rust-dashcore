@@ -269,7 +269,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Update the client configuration.
     pub async fn update_config(&mut self, new_config: ClientConfig) -> Result<()> {
         // Validate new configuration
-        new_config.validate().map_err(SpvError::Config)?;
+        new_config.validate()?;
 
         // Ensure network hasn't changed
         if new_config.network != self.config.network {

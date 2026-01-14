@@ -34,7 +34,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         wallet: Arc<RwLock<W>>,
     ) -> Result<Self> {
         // Validate configuration
-        config.validate().map_err(SpvError::Config)?;
+        config.validate()?;
 
         // Initialize state for the network
         let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));

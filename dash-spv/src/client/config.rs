@@ -7,6 +7,7 @@ use dashcore::Network;
 // Serialization removed due to complex Address types
 
 use crate::types::ValidationMode;
+use crate::SpvError;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,18 +193,18 @@ impl ClientConfig {
     }
 
     /// Validate the configuration.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), SpvError> {
         // Note: Empty peers list is now valid - DNS discovery will be used automatically
 
         if self.max_peers == 0 {
-            return Err("max_peers must be > 0".to_string());
+            return Err(SpvError::Config(String::from("max_peers must be > 0")));
         }
 
         // Mempool validation
         if self.enable_mempool_tracking && self.max_mempool_transactions == 0 {
-            return Err(
-                "max_mempool_transactions must be > 0 when mempool tracking is enabled".to_string()
-            );
+            return Err(SpvError::Config(String::from(
+                "max_mempool_transactions must be > 0 when mempool tracking is enabled",
+            )));
         }
 
         Ok(())
