@@ -9,6 +9,15 @@ pub enum SpvError {
     #[error("Channel failure for: {0} - Failure: {1}")]
     ChannelFailure(String, String),
 
+    #[error("Configuration error: {0}")]
+    Config(String),
+
+    #[error("Quorum lookup error: {0}")]
+    QuorumLookupError(String),
+
+    #[error("General error: {0}")]
+    General(String),
+
     #[error("Network error: {0}")]
     Network(#[from] NetworkError),
 
@@ -21,20 +30,8 @@ pub enum SpvError {
     #[error("Sync error: {0}")]
     Sync(#[from] SyncError),
 
-    #[error("Configuration error: {0}")]
-    Config(String),
-
-    #[error("IO error: {0}")]
-    Io(#[from] io::Error),
-
-    #[error("General error: {0}")]
-    General(String),
-
     #[error("Logging error: {0}")]
     Logging(#[from] LoggingError),
-
-    #[error("Quorum lookup error: {0}")]
-    QuorumLookupError(String),
 }
 
 /// Logging-related errors.
