@@ -9,7 +9,8 @@ use tokio::sync::Mutex;
 use dashcore::block::Block;
 
 use dash_spv::{
-    client::ClientConfig, storage::DiskStorageManager, sync::FilterSyncManager, types::FilterMatch,
+    client::ClientConfig, storage::DiskStorageManager, sync::legacy::FilterSyncManager,
+    types::FilterMatch,
 };
 
 fn create_test_config() -> ClientConfig {

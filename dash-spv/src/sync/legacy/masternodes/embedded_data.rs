@@ -7,11 +7,11 @@ use dashcore::{consensus::deserialize, network::message_sml::MnListDiff, Network
 
 // Embed the mainnet MNListDiff from height 0 to 2227096
 const MAINNET_MNLIST_DIFF_0_2227096: &[u8] =
-    include_bytes!("../../../../dash/artifacts/mn_list_diff_0_2227096.bin");
+    include_bytes!("../../../../../dash/artifacts/mn_list_diff_0_2227096.bin");
 
 // Embed the testnet MNListDiff from height 0 to 1296600
 const TESTNET_MNLIST_DIFF_0_1296600: &[u8] =
-    include_bytes!("../../../../dash/artifacts/mn_list_diff_testnet_0_1296600.bin");
+    include_bytes!("../../../../../dash/artifacts/mn_list_diff_testnet_0_1296600.bin");
 
 /// Information about an embedded MNListDiff
 pub struct EmbeddedDiff {

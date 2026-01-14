@@ -4,7 +4,7 @@
 mod tests {
     use crate::client::{ClientConfig, MessageHandler};
     use crate::storage::DiskStorageManager;
-    use crate::sync::SyncManager;
+    use crate::sync::legacy::SyncManager;
     use crate::test_utils::MockNetworkManager;
     use crate::types::{MempoolState, SpvEvent, SpvStats};
     use crate::ChainState;

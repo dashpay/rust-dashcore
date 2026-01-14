@@ -8,7 +8,7 @@
 use crate::error::Result;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::SyncPhase;
+use crate::sync::legacy::SyncPhase;
 use crate::types::{SpvStats, SyncProgress, SyncStage};
 use key_wallet_manager::wallet_interface::WalletInterface;
 

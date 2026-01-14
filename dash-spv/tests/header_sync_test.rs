@@ -4,7 +4,7 @@ use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
     storage::{BlockHeaderStorage, ChainStateStorage, DiskStorageManager},
-    sync::{HeaderSyncManager, ReorgConfig},
+    sync::legacy::{HeaderSyncManager, ReorgConfig},
     types::{ChainState, ValidationMode},
 };
 use dashcore::{block::Header as BlockHeader, block::Version, Network};

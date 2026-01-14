@@ -13,7 +13,7 @@ use dash_spv::{
     error::{NetworkError, NetworkResult, SyncError},
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
-    sync::filters::FilterSyncManager,
+    sync::legacy::filters::FilterSyncManager,
     types::PeerInfo,
 };
 use dashcore::{

@@ -16,34 +16,8 @@
 //! 3. network (via send_message)
 //!
 //! # Module Structure
-//! - `manager` - Core SyncManager struct
-//! - `phase_execution` - Phase execution, transitions, and timeout handling
-//! - `message_handlers` - Handlers for sync phase messages
-//! - `post_sync` - Handlers for post-sync messages (after initial sync complete)
-//! - `phases` - SyncPhase enum and phase-related types
-//! - `transitions` - Phase transition management
-//! - `filters` - BIP157 Compact Block Filter synchronization
-//! - `headers` - Header synchronization with fork detection
+//! - `legacy` - Original sequential sync implementation
 //! - `headers2` - Headers2 compressed header state management
-//! - `masternodes` - Masternode synchronization
 
-// Core sync modules
-pub mod filters;
-pub mod headers;
-pub mod masternodes;
-
-// Sequential sync pipeline modules
-pub mod manager;
-pub mod message_handlers;
-pub mod phase_execution;
-pub mod phases;
-pub mod post_sync;
-pub mod transitions;
-
-// Re-exports
-pub use filters::FilterSyncManager;
-pub use headers::{HeaderSyncManager, ReorgConfig};
-pub use manager::SyncManager;
-pub use masternodes::MasternodeSyncManager;
-pub use phases::{PhaseTransition, SyncPhase};
-pub use transitions::TransitionManager;
+// Legacy sync modules (moved to legacy/ subdirectory)
+pub mod legacy;

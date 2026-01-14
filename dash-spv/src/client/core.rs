@@ -19,8 +19,8 @@ use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::filters::FilterNotificationSender;
-use crate::sync::SyncManager;
+use crate::sync::legacy::filters::FilterNotificationSender;
+use crate::sync::legacy::SyncManager;
 use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
 use key_wallet_manager::wallet_interface::WalletInterface;
 

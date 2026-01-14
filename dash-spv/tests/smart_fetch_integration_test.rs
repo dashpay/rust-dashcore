@@ -35,7 +35,7 @@ async fn test_smart_fetch_state_initialization() {
     // Need to specify generic types for MasternodeSyncManager
     use dash_spv::network::PeerNetworkManager;
     use dash_spv::storage::DiskStorageManager;
-    let _sync_manager = dash_spv::sync::masternodes::MasternodeSyncManager::<
+    let _sync_manager = dash_spv::sync::legacy::masternodes::MasternodeSyncManager::<
         DiskStorageManager,
         PeerNetworkManager,
     >::new(&config);
