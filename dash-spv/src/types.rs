@@ -459,9 +459,6 @@ pub struct FilterMatch {
 
     /// Block height.
     pub height: u32,
-
-    /// Whether we requested the full block.
-    pub block_requested: bool,
 }
 
 // WatchItem has been removed in favor of using key-wallet-manager's address tracking

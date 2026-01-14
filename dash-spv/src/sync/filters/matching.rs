@@ -221,11 +221,9 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
             if let Some(pos) =
                 self.pending_block_downloads.iter().position(|m| m.block_hash == block_hash)
             {
-                let mut filter_match =
-                    self.pending_block_downloads.remove(pos).ok_or_else(|| {
-                        SyncError::InvalidState("filter match should exist at position".to_string())
-                    })?;
-                filter_match.block_requested = true;
+                let filter_match = self.pending_block_downloads.remove(pos).ok_or_else(|| {
+                    SyncError::InvalidState("filter match should exist at position".to_string())
+                })?;
 
                 tracing::debug!(
                     "Removed block {} from download queue (remaining: {})",
@@ -252,7 +250,6 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
                 let filter_match = crate::types::FilterMatch {
                     block_hash,
                     height: 0, // Height unknown for processing thread requests
-                    block_requested: true,
                 };
 
                 return Ok(Some(filter_match));

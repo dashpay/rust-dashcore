@@ -148,7 +148,6 @@ fn create_test_filter_match(block_hash: BlockHash, height: u32) -> FilterMatch {
     FilterMatch {
         block_hash,
         height,
-        block_requested: false,
     }
 }
 
@@ -246,7 +245,6 @@ async fn test_handle_downloaded_block() {
     let returned_match = result.unwrap();
     assert_eq!(returned_match.block_hash, block_hash);
     assert_eq!(returned_match.height, 100);
-    assert!(returned_match.block_requested);
 
     // Should no longer have pending downloads
     assert!(!filter_sync.has_pending_downloads());
