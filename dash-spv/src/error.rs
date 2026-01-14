@@ -137,22 +137,6 @@ pub enum StorageError {
     DirectoryLocked(String),
 }
 
-impl Clone for StorageError {
-    fn clone(&self) -> Self {
-        match self {
-            StorageError::Corruption(s) => StorageError::Corruption(s.clone()),
-            StorageError::NotFound(s) => StorageError::NotFound(s.clone()),
-            StorageError::WriteFailed(s) => StorageError::WriteFailed(s.clone()),
-            StorageError::ReadFailed(s) => StorageError::ReadFailed(s.clone()),
-            StorageError::Io(err) => StorageError::Io(io::Error::new(err.kind(), err.to_string())),
-            StorageError::Serialization(s) => StorageError::Serialization(s.clone()),
-            StorageError::InconsistentState(s) => StorageError::InconsistentState(s.clone()),
-            StorageError::LockPoisoned(s) => StorageError::LockPoisoned(s.clone()),
-            StorageError::DirectoryLocked(s) => StorageError::DirectoryLocked(s.clone()),
-        }
-    }
-}
-
 /// Validation-related errors.
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -228,24 +212,6 @@ pub enum SyncError {
     Headers2DecompressionFailed(String),
 }
 
-impl SyncError {
-    /// Returns a static string representing the error category based on the variant
-    pub fn category(&self) -> &'static str {
-        match self {
-            SyncError::SyncInProgress | SyncError::InvalidState(_) => "state",
-            SyncError::Timeout(_) => "timeout",
-            SyncError::Validation(_) => "validation",
-            SyncError::MissingDependency(_) => "dependency",
-            SyncError::Network(_) => "network",
-            SyncError::Storage(_) => "storage",
-            SyncError::Headers2DecompressionFailed(_) => "headers2",
-            // Deprecated variant - should not be used
-            #[allow(deprecated)]
-            SyncError::SyncFailed(_) => "unknown",
-        }
-    }
-}
-
 /// Type alias for Result with SpvError.
 pub type Result<T> = std::result::Result<T, SpvError>;
 
@@ -297,38 +263,3 @@ pub enum WalletError {
 
 /// Type alias for wallet operation results.
 pub type WalletResult<T> = std::result::Result<T, WalletError>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sync_error_category() {
-        // Test explicit variant categories
-        assert_eq!(SyncError::Timeout("test".to_string()).category(), "timeout");
-        assert_eq!(SyncError::Network("test".to_string()).category(), "network");
-        assert_eq!(SyncError::Validation("test".to_string()).category(), "validation");
-        assert_eq!(SyncError::Storage("test".to_string()).category(), "storage");
-
-        // Test existing variant categories
-        assert_eq!(SyncError::SyncInProgress.category(), "state");
-        assert_eq!(SyncError::InvalidState("test".to_string()).category(), "state");
-        assert_eq!(SyncError::MissingDependency("test".to_string()).category(), "dependency");
-
-        // Test deprecated SyncFailed always returns "unknown"
-        #[allow(deprecated)]
-        {
-            assert_eq!(
-                SyncError::SyncFailed("connection timeout".to_string()).category(),
-                "unknown"
-            );
-            assert_eq!(SyncError::SyncFailed("network error".to_string()).category(), "unknown");
-            assert_eq!(
-                SyncError::SyncFailed("validation failed".to_string()).category(),
-                "unknown"
-            );
-            assert_eq!(SyncError::SyncFailed("disk full".to_string()).category(), "unknown");
-            assert_eq!(SyncError::SyncFailed("something else".to_string()).category(), "unknown");
-        }
-    }
-}
