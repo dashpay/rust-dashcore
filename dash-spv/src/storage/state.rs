@@ -123,12 +123,13 @@ impl DiskStorageManager {
         chain_lock: &dashcore::ChainLock,
     ) -> StorageResult<()> {
         let path = self.base_path.join("chainlocks").join(format!("chainlock_{:08}.bin", height));
-        let data = bincode::serialize(chain_lock).map_err(|e| {
-            crate::error::StorageError::WriteFailed(format!(
-                "Failed to serialize chain lock: {}",
-                e
-            ))
-        })?;
+        let data =
+            bincode::encode_to_vec(chain_lock, bincode::config::standard()).map_err(|e| {
+                crate::error::StorageError::WriteFailed(format!(
+                    "Failed to serialize chain lock: {}",
+                    e
+                ))
+            })?;
 
         atomic_write(&path, &data).await?;
         tracing::debug!("Stored chain lock at height {}", height);
@@ -144,14 +145,15 @@ impl DiskStorageManager {
         }
 
         let data = tokio::fs::read(&path).await?;
-        let chain_lock = bincode::deserialize(&data).map_err(|e| {
-            crate::error::StorageError::ReadFailed(format!(
-                "Failed to deserialize chain lock: {}",
-                e
-            ))
-        })?;
+        let chain_lock =
+            bincode::decode_from_slice(&data, bincode::config::standard()).map_err(|e| {
+                crate::error::StorageError::ReadFailed(format!(
+                    "Failed to deserialize chain lock: {}",
+                    e
+                ))
+            })?;
 
-        Ok(Some(chain_lock))
+        Ok(Some(chain_lock.0))
     }
 
     /// Get ChainLocks in a height range.
@@ -181,7 +183,9 @@ impl DiskStorageManager {
                     if height >= start_height && height <= end_height {
                         let path = entry.path();
                         let data = tokio::fs::read(&path).await?;
-                        if let Ok(chain_lock) = bincode::deserialize(&data) {
+                        if let Ok((chain_lock, _)) =
+                            bincode::decode_from_slice(&data, bincode::config::standard())
+                        {
                             chain_locks.push((height, chain_lock));
                         }
                     }

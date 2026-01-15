@@ -170,8 +170,8 @@ impl Encode for RootExtendedPrivKey {
 }
 
 #[cfg(feature = "bincode")]
-impl Decode for RootExtendedPrivKey {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> Decode<C> for RootExtendedPrivKey {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         // Decode the private key bytes
@@ -192,13 +192,13 @@ impl Decode for RootExtendedPrivKey {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> BorrowDecode<'de> for RootExtendedPrivKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> BorrowDecode<'de, C> for RootExtendedPrivKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         // For borrowed decode, we still need to copy the data since secp256k1::SecretKey
         // doesn't support borrowing from the decoder
-        Self::decode(decoder)
+        <Self as Decode<C>>::decode(decoder)
     }
 }
 
@@ -306,8 +306,8 @@ impl Encode for RootExtendedPubKey {
 }
 
 #[cfg(feature = "bincode")]
-impl Decode for RootExtendedPubKey {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> Decode<C> for RootExtendedPubKey {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         // Decode the public key bytes
@@ -327,13 +327,13 @@ impl Decode for RootExtendedPubKey {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> BorrowDecode<'de> for RootExtendedPubKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> BorrowDecode<'de, C> for RootExtendedPubKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         // For borrowed decode, we still need to copy the data since secp256k1::PublicKey
         // doesn't support borrowing from the decoder
-        Self::decode(decoder)
+        <Self as Decode<C>>::decode(decoder)
     }
 }
 

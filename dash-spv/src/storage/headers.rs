@@ -58,7 +58,8 @@ pub(super) async fn load_block_index(
     let index_path = manager.base_path.join("headers/index.dat");
 
     if let Ok(content) = tokio::fs::read(&index_path).await {
-        bincode::deserialize(&content)
+        bincode::decode_from_slice(&content, bincode::config::standard())
+            .map(|(index, _)| index)
             .map_err(|e| StorageError::ReadFailed(format!("Failed to deserialize index: {}", e)))
     } else {
         manager.block_headers.write().await.build_block_index_from_segments().await
@@ -70,7 +71,7 @@ pub(super) async fn save_index_to_disk(
     path: &Path,
     index: &HashMap<BlockHash, u32>,
 ) -> StorageResult<()> {
-    let data = bincode::serialize(index)
+    let data = bincode::encode_to_vec(index, bincode::config::standard())
         .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize index: {}", e)))?;
 
     atomic_write(path, &data).await
