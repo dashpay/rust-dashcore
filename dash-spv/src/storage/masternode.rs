@@ -46,7 +46,7 @@ impl MasternodeStateStorage for PersistentMasternodeStateStorage {
         tokio::fs::create_dir_all(masternodestate_folder).await?;
 
         let json = serde_json::to_string_pretty(state).map_err(|e| {
-            crate::error::StorageError::Serialization(format!(
+            crate::StorageError::Serialization(format!(
                 "Failed to serialize masternode state: {}",
                 e
             ))
@@ -65,7 +65,7 @@ impl MasternodeStateStorage for PersistentMasternodeStateStorage {
 
         let content = tokio::fs::read_to_string(path).await?;
         let state = serde_json::from_str(&content).map_err(|e| {
-            crate::error::StorageError::Serialization(format!(
+            crate::StorageError::Serialization(format!(
                 "Failed to deserialize masternode state: {}",
                 e
             ))

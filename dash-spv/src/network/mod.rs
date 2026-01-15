@@ -15,7 +15,7 @@ mod tests;
 
 use async_trait::async_trait;
 
-use crate::error::NetworkResult;
+use crate::NetworkResult;
 use dashcore::network::message::NetworkMessage;
 use dashcore::BlockHash;
 

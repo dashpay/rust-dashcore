@@ -5,7 +5,6 @@
 //! - Phase-to-stage mapping
 //! - Statistics gathering
 
-use crate::error::Result;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncPhase;
@@ -16,13 +15,13 @@ use super::DashSpvClient;
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Get current sync progress.
-    pub async fn sync_progress(&self) -> Result<SyncProgress> {
+    pub async fn sync_progress(&self) -> crate::Result<SyncProgress> {
         let display = self.create_status_display().await;
         display.sync_progress().await
     }
 
     /// Get current statistics.
-    pub async fn stats(&self) -> Result<SpvStats> {
+    pub async fn stats(&self) -> crate::Result<SpvStats> {
         let display = self.create_status_display().await;
         let mut stats = display.stats().await?;
 

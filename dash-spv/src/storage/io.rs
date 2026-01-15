@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::error::{StorageError, StorageResult};
+use crate::{StorageError, StorageResult};
 use tokio::io::AsyncWriteExt;
 
 /// Get the temporary file path for atomic writes.

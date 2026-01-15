@@ -19,7 +19,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             })?;
 
         if network.peer_count() == 0 {
-            return Err(crate::Error::Network(crate::error::NetworkError::NotConnected));
+            return Err(crate::Error::Network(crate::NetworkError::NotConnected));
         }
 
         let message = NetworkMessage::Tx(tx.clone());
@@ -37,7 +37,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         if success {
             Ok(())
         } else {
-            Err(crate::Error::Network(crate::error::NetworkError::ProtocolError(format!(
+            Err(crate::Error::Network(crate::NetworkError::ProtocolError(format!(
                 "Broadcast failed: {}",
                 errors.join(", ")
             ))))

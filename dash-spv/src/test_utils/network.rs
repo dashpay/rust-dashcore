@@ -8,9 +8,9 @@ use dashcore::{
 };
 use dashcore_hashes::Hash;
 
-use crate::error::{NetworkError, NetworkResult};
 use crate::network::NetworkManager;
 use crate::types::PeerInfo;
+use crate::{NetworkError, NetworkResult};
 
 /// Mock network manager for testing
 pub struct MockNetworkManager {

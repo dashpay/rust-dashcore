@@ -7,9 +7,9 @@
 //! - Sync progress timeout detection
 
 use super::types::*;
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::{SyncError, SyncResult};
 use dashcore::BlockHash;
 
 impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {

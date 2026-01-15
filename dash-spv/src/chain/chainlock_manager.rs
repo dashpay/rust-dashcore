@@ -9,9 +9,9 @@ use indexmap::IndexMap;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::error::{StorageError, StorageResult, ValidationError, ValidationResult};
 use crate::storage::StorageManager;
 use crate::types::ChainState;
+use crate::{StorageError, StorageResult, ValidationError, ValidationResult};
 
 /// Maximum number of pending ChainLocks to queue
 const MAX_PENDING_CHAINLOCKS: usize = 100;

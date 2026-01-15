@@ -11,8 +11,8 @@ use dashcore::Network;
 // Hash trait not needed in current implementation
 
 use crate::client::config::MempoolStrategy;
-use crate::error::{NetworkError, NetworkResult};
 use crate::network::peer::Peer;
+use crate::{NetworkError, NetworkResult};
 
 /// Handshake state.
 #[derive(Debug, Clone, PartialEq, Eq)]

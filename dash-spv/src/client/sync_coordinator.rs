@@ -453,7 +453,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         },
                         Err(err) => {
                             // Handle specific network error types
-                            if let crate::error::NetworkError::ConnectionFailed(msg) = &err {
+                            if let crate::NetworkError::ConnectionFailed(msg) = &err {
                                 if msg.contains("No connected peers") || self.network.peer_count() == 0 {
                                     tracing::warn!("All peers disconnected during monitoring, checking connection health");
 

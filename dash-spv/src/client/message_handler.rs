@@ -1,7 +1,6 @@
 //! Network message handling for the Dash SPV client.
 
 use crate::client::ClientConfig;
-use crate::error::Result;
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -50,7 +49,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
     pub async fn handle_network_message(
         &mut self,
         message: &dashcore::network::message::NetworkMessage,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         use dashcore::network::message::NetworkMessage;
 
         tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(message));
@@ -292,7 +291,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
     async fn handle_inventory(
         &mut self,
         inv: Vec<dashcore::network::message_blockdata::Inventory>,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         use dashcore::network::message::NetworkMessage;
         use dashcore::network::message_blockdata::Inventory;
 
@@ -390,7 +389,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
     pub async fn handle_post_sync_headers(
         &mut self,
         headers: &[dashcore::block::Header],
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         if !self.config.enable_filters {
             tracing::debug!(
                 "Filters not enabled, skipping post-sync filter requests for {} headers",

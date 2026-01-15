@@ -15,9 +15,9 @@ use dashcore::{
     BlockHash, ScriptBuf,
 };
 
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::{SyncError, SyncResult};
 
 impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     pub async fn check_filter_for_matches<

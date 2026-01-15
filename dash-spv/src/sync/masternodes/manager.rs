@@ -15,9 +15,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::client::ClientConfig;
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::{SyncError, SyncResult};
 
 /// Simplified masternode synchronization following dash-evo-tool pattern.
 pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
