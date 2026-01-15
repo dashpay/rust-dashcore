@@ -2,6 +2,7 @@
 
 use std::io;
 use thiserror::Error;
+use tokio::task::JoinError;
 
 /// Main error type for the Dash SPV client.
 #[derive(Debug, Error)]
@@ -18,8 +19,8 @@ pub enum Error {
     #[error("Quorum lookup error: {0}")]
     QuorumLookupError(String),
 
-    #[error("General error: {0}")]
-    General(String),
+    #[error("Tokio task failed: {0}")]
+    TaskFailed(#[from] JoinError),
 
     #[error("Network error: {0}")]
     Network(#[from] NetworkError),

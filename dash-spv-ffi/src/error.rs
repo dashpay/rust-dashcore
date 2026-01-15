@@ -59,8 +59,8 @@ impl From<dash_spv::Error> for FFIErrorCode {
             dash_spv::Error::Config(_) => FFIErrorCode::ConfigError,
             dash_spv::Error::Logging(_) => FFIErrorCode::RuntimeError,
             dash_spv::Error::QuorumLookupError(_) => FFIErrorCode::ValidationError,
-            dash_spv::Error::General(_) => FFIErrorCode::Unknown,
             dash_spv::Error::UninitializedClient => FFIErrorCode::RuntimeError,
+            dash_spv::Error::TaskFailed(_) => FFIErrorCode::RuntimeError,
         }
     }
 }

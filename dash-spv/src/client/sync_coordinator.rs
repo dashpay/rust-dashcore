@@ -521,7 +521,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         });
 
         let (client_result, _) = tokio::join!(client_task, shutdown_task);
-        client_result.map_err(|e| crate::Error::General(format!("client_task panicked: {e}")))?
+        client_result?
     }
 
     async fn handle_command(&mut self, command: DashSpvClientCommand) -> crate::Result<()> {
