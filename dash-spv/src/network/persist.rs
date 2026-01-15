@@ -62,7 +62,7 @@ impl PeerStore {
             crate::Error::Storage(crate::StorageError::Serialization(e.to_string()))
         })?;
 
-        atomic_write(&self.path, json.as_bytes()).await.map_err(crate::Error::Storage)?;
+        atomic_write(&self.path, json.as_bytes()).await?;
 
         log::debug!("Saved {} peers to {:?}", saved.peers.len(), self.path);
         Ok(())

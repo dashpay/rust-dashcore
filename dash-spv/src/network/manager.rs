@@ -968,9 +968,7 @@ impl PeerNetworkManager {
         }
 
         let mut peer_guard = peer.write().await;
-        peer_guard.send_message(message).await.map_err(|e| {
-            crate::NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e))
-        })
+        peer_guard.send_message(message).await
     }
 
     /// Broadcast a message to all connected peers

@@ -9,6 +9,9 @@ pub enum Error {
     #[error("Channel failure for: {0} - Failure: {1}")]
     ChannelFailure(String, String),
 
+    #[error("Client is not initialized")]
+    UninitializedClient,
+
     #[error("Configuration error: {0}")]
     Config(String),
 

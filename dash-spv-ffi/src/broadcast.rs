@@ -50,11 +50,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
             let mut guard = inner.lock().unwrap();
             match guard.take() {
                 Some(client) => client,
-                None => {
-                    return Err(dash_spv::Error::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
+                None => return Err(dash_spv::Error::UninitializedClient),
             }
         };
 

@@ -204,7 +204,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Wipe on-disk persistence fully
         {
             let mut storage = self.storage.lock().await;
-            storage.clear().await.map_err(crate::Error::Storage)?;
+            storage.clear().await?;
         }
 
         // Reset in-memory chain state to a clean baseline for the current network
