@@ -15,7 +15,6 @@
 //!
 //! ## Already Extracted Modules
 //!
-//! - `block_processor.rs` (649 lines) - Block processing and validation
 //! - `config.rs` (484 lines) - Client configuration
 //! - `message_handler.rs` (585 lines) - Network message handling
 //! - `status_display.rs` (242 lines) - Status display formatting
@@ -32,7 +31,6 @@
 //! Never acquire locks in reverse order or deadlock will occur!
 
 // Existing extracted modules
-pub mod block_processor;
 pub mod config;
 pub mod interface;
 pub mod message_handler;
@@ -50,7 +48,6 @@ mod sync_coordinator;
 mod transactions;
 
 // Re-export public types from extracted modules
-pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
 pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
@@ -60,9 +57,6 @@ pub use core::DashSpvClient;
 
 #[cfg(test)]
 mod config_test;
-
-#[cfg(test)]
-mod block_processor_test;
 
 #[cfg(test)]
 mod message_handler_test;

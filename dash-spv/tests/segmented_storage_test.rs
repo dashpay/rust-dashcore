@@ -1,6 +1,9 @@
 //! Tests for segmented disk storage implementation.
 
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{
+    BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage, FilterStorage, MetadataStorage,
+    StorageManager,
+};
 use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::hash_types::FilterHeader;
 use dashcore::pow::CompactTarget;
@@ -46,7 +49,7 @@ async fn test_segmented_storage_basic_operations() {
     }
 
     // Verify we can read them back
-    assert_eq!(storage.get_tip_height().await.unwrap(), Some(99_999));
+    assert_eq!(storage.get_tip_height().await, Some(99_999));
 
     // Check individual headers
     assert_eq!(storage.get_header(0).await.unwrap().unwrap().time, 0);
@@ -76,7 +79,7 @@ async fn test_segmented_storage_persistence() {
         let mut storage = DiskStorageManager::new(path.clone()).await.unwrap();
 
         // Verify storage starts empty
-        assert_eq!(storage.get_tip_height().await.unwrap(), None, "Storage should start empty");
+        assert_eq!(storage.get_tip_height().await, None, "Storage should start empty");
 
         let headers: Vec<BlockHeader> = (0..75_000).map(create_test_header).collect();
         storage.store_headers(&headers).await.unwrap();
@@ -91,7 +94,7 @@ async fn test_segmented_storage_persistence() {
     {
         let storage = DiskStorageManager::new(path).await.unwrap();
 
-        let actual_tip = storage.get_tip_height().await.unwrap();
+        let actual_tip = storage.get_tip_height().await;
         if actual_tip != Some(74_999) {
             println!("Expected tip 74,999 but got {:?}", actual_tip);
             // Try to understand what's stored
@@ -265,7 +268,7 @@ async fn test_background_save_timing() {
     // Verify data was saved
     {
         let storage = DiskStorageManager::new(path).await.unwrap();
-        assert_eq!(storage.get_tip_height().await.unwrap(), Some(19_999));
+        assert_eq!(storage.get_tip_height().await, Some(19_999));
         assert_eq!(storage.get_header(15_000).await.unwrap().unwrap().time, 15_000);
     }
 }
@@ -279,13 +282,13 @@ async fn test_clear_storage() {
     let headers: Vec<BlockHeader> = (0..10_000).map(create_test_header).collect();
     storage.store_headers(&headers).await.unwrap();
 
-    assert_eq!(storage.get_tip_height().await.unwrap(), Some(9_999));
+    assert_eq!(storage.get_tip_height().await, Some(9_999));
 
     // Clear storage
     storage.clear().await.unwrap();
 
     // Verify everything is cleared
-    assert_eq!(storage.get_tip_height().await.unwrap(), None);
+    assert_eq!(storage.get_tip_height().await, None);
     assert_eq!(storage.get_header_height_by_hash(&headers[0].block_hash()).await.unwrap(), None);
 }
 
@@ -311,7 +314,7 @@ async fn test_mixed_operations() {
     storage.store_metadata("test_key", b"test_value").await.unwrap();
 
     // Verify everything
-    assert_eq!(storage.get_tip_height().await.unwrap(), Some(74_999));
+    assert_eq!(storage.get_tip_height().await, Some(74_999));
     assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(74_999));
 
     let filters = storage.load_filters(1000..1001).await.unwrap();

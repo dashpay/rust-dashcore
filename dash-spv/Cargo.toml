@@ -65,6 +65,7 @@ tokio-test = "0.4"
 env_logger = "0.10"
 hex = "0.4"
 test-case = "3.3"
+dashcore-test-utils = { path = "../test-utils" }
 
 [[bench]]
 name = "storage"
@@ -80,8 +81,5 @@ name = "dash_spv"
 path = "src/lib.rs"
 
 [features]
-# Gate incomplete mock-dependent tests to avoid "unexpected cfg" warnings.
-skip_mock_implementation_incomplete = []
-
 # Terminal UI feature (off by default, for use by binary only)
 terminal-ui = ["dep:crossterm"]

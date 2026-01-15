@@ -29,6 +29,8 @@ mod address_tests {
         let is_valid = unsafe { address_validate(ptr::null(), FFINetwork::Testnet, error) };
         assert!(!is_valid);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -43,6 +45,8 @@ mod address_tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
         // Returns 0 for P2PKH
         assert_eq!(addr_type, 0);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -55,6 +59,8 @@ mod address_tests {
             unsafe { address_validate(addr_str.as_ptr(), FFINetwork::Testnet, &mut error) };
 
         assert!(is_valid);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -68,6 +74,8 @@ mod address_tests {
 
         assert!(!is_valid);
         assert_eq!(error.code, FFIErrorCode::InvalidAddress);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -78,6 +86,8 @@ mod address_tests {
 
         assert!(!is_valid);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -97,6 +107,8 @@ mod address_tests {
             assert!(addr_type <= 2);
             assert_eq!(error.code, FFIErrorCode::Success);
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -110,6 +122,8 @@ mod address_tests {
         // Should return 255 (u8::MAX) for invalid
         assert_eq!(addr_type, 255);
         assert_eq!(error.code, FFIErrorCode::InvalidAddress);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -121,6 +135,8 @@ mod address_tests {
         // Should return 255 (u8::MAX) for null input
         assert_eq!(addr_type, 255);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -177,6 +193,8 @@ mod address_tests {
                 let is_valid = address_validate(addr_str.as_ptr(), FFINetwork::Testnet, &mut error);
                 assert!(!is_valid);
             }
+
+            error.free_message();
         }
     }
 
@@ -200,6 +218,8 @@ mod address_tests {
                 // Should return a valid type (0, 1, 2) or 255 for error
                 assert!(addr_type <= 2 || addr_type == 255);
             }
+
+            error.free_message();
         }
     }
 }

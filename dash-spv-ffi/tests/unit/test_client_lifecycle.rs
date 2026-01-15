@@ -142,8 +142,11 @@ mod tests {
                 assert!(!client.is_null());
 
                 // Do some operations
-                let _ = dash_spv_ffi_client_get_sync_progress(client);
-                let _ = dash_spv_ffi_client_get_stats(client);
+                let progress = dash_spv_ffi_client_get_sync_progress(client);
+                let stats = dash_spv_ffi_client_get_stats(client);
+
+                dash_spv_ffi_sync_progress_destroy(progress);
+                dash_spv_ffi_spv_stats_destroy(stats);
 
                 dash_spv_ffi_client_destroy(client);
                 dash_spv_ffi_config_destroy(config);

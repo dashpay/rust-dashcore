@@ -403,6 +403,7 @@ fn test_managed_account_collection_null_safety() {
             managed_wallet_get_account_collection(ptr::null(), ptr::null(), &mut error);
         assert!(collection.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
+        error.free_message();
 
         // Test with null collection for various functions
         assert_eq!(managed_account_collection_count(ptr::null()), 0);

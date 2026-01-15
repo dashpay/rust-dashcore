@@ -125,9 +125,14 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
 
 /// Adds a peer address to the configuration
 ///
-/// Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`)
-/// or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only
-/// string is given, the default P2P port for the configured network is used.
+/// Accepts socket addresses with or without port. When no port is specified,
+/// the default P2P port for the configured network is used.
+///
+/// Supported formats:
+/// - IP with port: `192.168.1.1:9999`, `[::1]:19999`
+/// - IP without port: `127.0.0.1`, `2001:db8::1`
+/// - Hostname with port: `node.example.com:9999`
+/// - Hostname without port: `node.example.com`
 ///
 /// # Safety
 /// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
@@ -158,26 +163,26 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
         }
     };
 
-    // 1) Try parsing as full SocketAddr first (handles IPv6 [::1]:port forms)
-    if let Ok(sock) = addr_str.parse::<SocketAddr>() {
-        cfg.peers.push(sock);
-        return FFIErrorCode::Success as i32;
-    }
-
-    // 2) If that fails, try parsing as bare IP address and apply default port
+    // Try parsing as bare IP address and apply default port
     if let Ok(ip) = addr_str.parse::<IpAddr>() {
         let sock = SocketAddr::new(ip, default_port);
         cfg.peers.push(sock);
         return FFIErrorCode::Success as i32;
     }
 
-    // 3) Optionally attempt DNS name with explicit port only; if no port, reject
-    if !addr_str.contains(':') {
-        set_last_error("Missing port for hostname; supply 'host:port' or IP only");
+    // If not, must be a hostname - reject empty or missing hostname
+    if addr_str.is_empty() || addr_str.starts_with(':') {
+        set_last_error("Empty or missing hostname");
         return FFIErrorCode::InvalidArgument as i32;
     }
 
-    match addr_str.to_socket_addrs() {
+    let addr_with_port = if addr_str.contains(':') {
+        addr_str.to_string()
+    } else {
+        format!("{}:{}", addr_str, default_port)
+    };
+
+    match addr_with_port.to_socket_addrs() {
         Ok(mut iter) => match iter.next() {
             Some(sock) => {
                 cfg.peers.push(sock);
@@ -431,23 +436,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
     FFIErrorCode::Success as i32
 }
 
-/// Sets the mempool transaction timeout in seconds
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_timeout(
-    config: *mut FFIClientConfig,
-    timeout_secs: u64,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.mempool_timeout_secs = timeout_secs;
-    FFIErrorCode::Success as i32
-}
-
 /// Sets whether to fetch full mempool transaction data
 ///
 /// # Safety
@@ -532,22 +520,5 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.start_from_height = Some(height);
-    FFIErrorCode::Success as i32
-}
-
-/// Sets the wallet creation timestamp for synchronization optimization
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_wallet_creation_time(
-    config: *mut FFIClientConfig,
-    timestamp: u32,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.wallet_creation_time = Some(timestamp);
     FFIErrorCode::Success as i32
 }

@@ -23,14 +23,9 @@ use dashcore::network::constants::NetworkExt;
 use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::{BlockProcessor, ClientConfig, DashSpvClient};
+use super::{ClientConfig, DashSpvClient};
 
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
     pub async fn new(
         config: ClientConfig,
@@ -63,9 +58,6 @@ impl<
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
 
-        // Create block processing channel
-        let (block_processor_tx, _block_processor_rx) = mpsc::unbounded_channel();
-
         // Create progress channels
         let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
 
@@ -88,7 +80,6 @@ impl<
             #[cfg(feature = "terminal-ui")]
             terminal_ui: None,
             filter_processor: None,
-            block_processor_tx,
             progress_sender: Some(progress_sender),
             progress_receiver: Some(progress_receiver),
             event_tx,
@@ -136,26 +127,6 @@ impl<
             }
         }
 
-        // Spawn block processor worker now that all dependencies are ready
-        let (new_tx, block_processor_rx) = mpsc::unbounded_channel();
-        let old_tx = std::mem::replace(&mut self.block_processor_tx, new_tx);
-        drop(old_tx); // Drop the old sender to avoid confusion
-
-        // Use the shared wallet instance for the block processor
-        let block_processor = BlockProcessor::new(
-            block_processor_rx,
-            self.wallet.clone(),
-            self.storage.clone(),
-            self.stats.clone(),
-            self.event_tx.clone(),
-        );
-
-        tokio::spawn(async move {
-            tracing::info!("🏭 Starting block processor worker task");
-            block_processor.run().await;
-            tracing::info!("🏭 Block processor worker task completed");
-        });
-
         // For sequential sync, filter processor is handled internally
         if self.config.enable_filters && self.filter_processor.is_none() {
             tracing::info!("📊 Sequential sync mode: filter processing handled internally");
@@ -168,30 +139,12 @@ impl<
         // This ensures the ChainState has headers loaded for both checkpoint and normal sync
         let tip_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
+            storage.get_tip_height().await.unwrap_or(0)
         };
         if tip_height > 0 {
             tracing::info!("Found {} headers in storage, loading into sync manager...", tip_height);
-            let loaded_count = {
-                let storage = self.storage.lock().await;
-                self.sync_manager.load_headers_from_storage(&storage).await
-            };
-
-            match loaded_count {
-                Ok(loaded_count) => {
-                    tracing::info!("✅ Sync manager loaded {} headers from storage", loaded_count);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load headers into sync manager: {}", e);
-                    // For checkpoint sync, this is critical
-                    let state = self.state.read().await;
-                    if state.synced_from_checkpoint() {
-                        return Err(SpvError::Sync(e));
-                    }
-                    // For normal sync, we can continue as headers will be re-synced
-                    tracing::warn!("Continuing without pre-loaded headers for normal sync");
-                }
-            }
+            let storage = self.storage.lock().await;
+            self.sync_manager.load_headers_from_storage(&storage).await
         }
 
         // Connect to network
@@ -208,8 +161,7 @@ impl<
             // Get initial header count from storage
             let (header_height, filter_height) = {
                 let storage = self.storage.lock().await;
-                let h_height =
-                    storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
+                let h_height = storage.get_tip_height().await.unwrap_or(0);
                 let f_height =
                     storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
                 (h_height, f_height)
@@ -243,7 +195,7 @@ impl<
         // Shutdown storage to ensure all data is persisted
         {
             let mut storage = self.storage.lock().await;
-            storage.shutdown().await.map_err(SpvError::Storage)?;
+            storage.shutdown().await;
             tracing::info!("Storage shutdown completed - all data persisted");
         }
 
@@ -270,7 +222,7 @@ impl<
         // Check if we already have any headers in storage
         let current_tip = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?
+            storage.get_tip_height().await
         };
 
         if current_tip.is_some() {
@@ -343,12 +295,14 @@ impl<
 
                         // Clone the chain state for storage
                         let chain_state_for_storage = (*chain_state).clone();
-                        let headers_len = chain_state_for_storage.headers.len() as u32;
                         drop(chain_state);
 
                         // Update storage with chain state including sync_base_height
                         {
                             let mut storage = self.storage.lock().await;
+                            storage
+                                .store_headers_at_height(&[checkpoint_header], checkpoint.height)
+                                .await?;
                             storage
                                 .store_chain_state(&chain_state_for_storage)
                                 .await
@@ -365,7 +319,7 @@ impl<
                         );
 
                         // Update the sync manager's cached flags from the checkpoint-initialized state
-                        self.sync_manager.update_chain_state_cache(checkpoint.height, headers_len);
+                        self.sync_manager.update_chain_state_cache(checkpoint.height);
                         tracing::info!(
                             "Updated sync manager with checkpoint-initialized chain state"
                         );
@@ -413,7 +367,7 @@ impl<
         // Verify it was stored correctly
         let stored_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?
+            storage.get_tip_height().await
         };
         tracing::info!(
             "✅ Genesis block initialized at height 0, storage reports tip height: {:?}",

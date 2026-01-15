@@ -703,8 +703,8 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
     match result {
         Ok(balance) => {
             unsafe {
-                *confirmed_out = balance.confirmed;
-                *unconfirmed_out = balance.unconfirmed;
+                *confirmed_out = balance.spendable();
+                *unconfirmed_out = balance.unconfirmed();
             }
             FFIError::set_success(error);
             true
@@ -778,42 +778,13 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     let manager_ref = unsafe { &mut *manager };
 
     // Process the transaction using async runtime
-    let relevant_wallets = manager_ref.runtime.block_on(async {
+    let result = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
         manager_guard.check_transaction_in_all_wallets(&tx, context, update_state_if_found).await
     });
 
     FFIError::set_success(error);
-    !relevant_wallets.is_empty()
-}
-
-/// Update block height for a network
-///
-/// # Safety
-///
-/// - `manager` must be a valid pointer to an FFIWalletManager
-/// - `error` must be a valid pointer to an FFIError structure or null
-/// - The caller must ensure all pointers remain valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn wallet_manager_update_height(
-    manager: *mut FFIWalletManager,
-    height: c_uint,
-    error: *mut FFIError,
-) -> bool {
-    if manager.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
-        return false;
-    }
-
-    let manager_ref = &*manager;
-
-    manager_ref.runtime.block_on(async {
-        let mut manager_guard = manager_ref.manager.write().await;
-        manager_guard.update_height(height);
-    });
-
-    FFIError::set_success(error);
-    true
+    !result.affected_wallets.is_empty()
 }
 
 /// Get the network for this wallet manager

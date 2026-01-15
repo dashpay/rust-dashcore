@@ -1,0 +1,41 @@
+# cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+ignore = [
+    # serde_cbor is unmaintained but only used in fuzz targets
+    "RUSTSEC-2021-0127",
+    # bincode is unmaintained but used throughout the codebase, need to find a solution here.
+    # https://rustsec.org/advisories/RUSTSEC-2025-0141.html
+    "RUSTSEC-2025-0141",
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unlicense",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "MITNFA",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

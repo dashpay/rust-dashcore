@@ -211,4 +211,6 @@ fn test_error_handling() {
     };
     assert!(wallet.is_null());
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+    unsafe { (*error).free_message() };
 }

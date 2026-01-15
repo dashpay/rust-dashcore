@@ -412,7 +412,7 @@ mod test {
         Block {
             header: block::Header {
                 version: block::Version::ONE,
-                prev_blockhash: BlockHash::hash(&[0]),
+                prev_blockhash: BlockHash::from_byte_array([0; 32]),
                 merkle_root: TxMerkleNode::hash(&[1]),
                 time: 2,
                 bits: CompactTarget::from_consensus(3),

@@ -50,14 +50,15 @@ async fn test_handshake_with_mainnet_peer() {
 
 #[tokio::test]
 async fn test_handshake_timeout() {
-    // Test connecting to a non-routable IP to verify timeout behavior
-    // Using a non-routable IP that will cause the connection to hang
-    let peer_addr: SocketAddr = "10.255.255.1:9999".parse().expect("Valid peer address");
+    // Test connection timeout behavior using TEST-NET-1 from RFC 5737.
+    // https://datatracker.ietf.org/doc/html/rfc5737
+    // This IP range is reserved for documentation and will never respond.
+    let peer_addr: SocketAddr = "192.0.2.1:9999".parse().expect("Valid peer address");
     let start = std::time::Instant::now();
     let result = Peer::connect(peer_addr, 2, Network::Dash).await;
     let elapsed = start.elapsed();
 
-    assert!(result.is_err(), "Connection should fail for non-routable peer");
+    assert!(result.is_err(), "Connection should fail for unreachable peer");
     assert!(
         elapsed >= Duration::from_secs(1),
         "Should respect timeout duration (elapsed: {:?})",

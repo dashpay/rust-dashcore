@@ -61,29 +61,29 @@ mod tests {
     fn test_ffi_array_different_sizes() {
         // Test empty array
         let empty: Vec<u32> = vec![];
-        let empty_array = FFIArray::new(empty);
+        let mut empty_array = FFIArray::new(empty);
         assert_eq!(empty_array.len, 0);
         assert!(!empty_array.data.is_null()); // Even empty vec has allocated pointer
         unsafe {
             let slice = empty_array.as_slice::<u32>();
             assert_eq!(slice.len(), 0);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(empty_array)));
+            dash_spv_ffi_array_destroy(&mut empty_array as *mut FFIArray);
         }
 
         // Test single element
         let single = vec![42u32];
-        let single_array = FFIArray::new(single);
+        let mut single_array = FFIArray::new(single);
         assert_eq!(single_array.len, 1);
         unsafe {
             let slice = single_array.as_slice::<u32>();
             assert_eq!(slice.len(), 1);
             assert_eq!(slice[0], 42);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(single_array)));
+            dash_spv_ffi_array_destroy(&mut single_array as *mut FFIArray);
         }
 
         // Test large array
         let large: Vec<u32> = (0..10000).collect();
-        let large_array = FFIArray::new(large.clone());
+        let mut large_array = FFIArray::new(large.clone());
         assert_eq!(large_array.len, 10000);
         unsafe {
             let slice = large_array.as_slice::<u32>();
@@ -91,7 +91,7 @@ mod tests {
             for (i, &val) in slice.iter().enumerate() {
                 assert_eq!(val, i as u32);
             }
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(large_array)));
+            dash_spv_ffi_array_destroy(&mut large_array as *mut FFIArray);
         }
     }
 
@@ -99,22 +99,22 @@ mod tests {
     fn test_ffi_array_memory_alignment() {
         // Test with u8
         let bytes: Vec<u8> = vec![1, 2, 3, 4];
-        let byte_array = FFIArray::new(bytes);
+        let mut byte_array = FFIArray::new(bytes);
         unsafe {
             let slice = byte_array.as_slice::<u8>();
             assert_eq!(slice, &[1, 2, 3, 4]);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(byte_array)));
+            dash_spv_ffi_array_destroy(&mut byte_array as *mut FFIArray);
         }
 
         // Test with u64 (requires 8-byte alignment)
         let longs: Vec<u64> = vec![u64::MAX, 0, 42];
-        let long_array = FFIArray::new(longs);
+        let mut long_array = FFIArray::new(longs);
         unsafe {
             let slice = long_array.as_slice::<u64>();
             assert_eq!(slice[0], u64::MAX);
             assert_eq!(slice[1], 0);
             assert_eq!(slice[2], 42);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(long_array)));
+            dash_spv_ffi_array_destroy(&mut long_array as *mut FFIArray);
         }
     }
 
@@ -163,7 +163,6 @@ mod tests {
     #[test]
     fn test_chain_state_none_values() {
         let state = dash_spv::ChainState {
-            headers: vec![],
             last_chainlock_height: None,
             last_chainlock_hash: None,
             current_filter_tip: None,
@@ -173,7 +172,7 @@ mod tests {
         };
 
         let ffi_state = FFIChainState::from(state);
-        assert_eq!(ffi_state.header_height, 0);
+
         assert_eq!(ffi_state.masternode_height, 0);
         assert_eq!(ffi_state.last_chainlock_height, 0);
         assert_eq!(ffi_state.current_filter_tip, 0);

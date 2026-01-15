@@ -13,12 +13,7 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::DashSpvClient;
 
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Take the event receiver for external consumption.
     pub fn take_event_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<SpvEvent>> {
         self.event_rx.take()

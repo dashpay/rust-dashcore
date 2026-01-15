@@ -24,7 +24,7 @@ use crate::sync::SyncManager;
 use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
+use super::{ClientConfig, StatusDisplay};
 
 /// Main Dash SPV client with generic trait-based architecture.
 ///
@@ -137,7 +137,6 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     #[cfg(feature = "terminal-ui")]
     pub(super) terminal_ui: Option<Arc<TerminalUI>>,
     pub(super) filter_processor: Option<FilterNotificationSender>,
-    pub(super) block_processor_tx: mpsc::UnboundedSender<BlockProcessingTask>,
     pub(super) progress_sender: Option<mpsc::UnboundedSender<DetailedSyncProgress>>,
     pub(super) progress_receiver: Option<mpsc::UnboundedReceiver<DetailedSyncProgress>>,
     pub(super) event_tx: mpsc::UnboundedSender<SpvEvent>,
@@ -146,12 +145,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) mempool_filter: Option<Arc<MempoolFilter>>,
 }
 
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     // ============ Simple Getters ============
 
     /// Get a reference to the wallet.
@@ -189,14 +183,17 @@ impl<
 
     /// Returns the current chain tip hash if available.
     pub async fn tip_hash(&self) -> Option<dashcore::BlockHash> {
-        let state = self.state.read().await;
-        state.tip_hash()
+        let storage = self.storage.lock().await;
+
+        let tip_height = storage.get_tip_height().await?;
+        let header = storage.get_header(tip_height).await.ok()??;
+
+        Some(header.block_hash())
     }
 
     /// Returns the current chain tip height (absolute), accounting for checkpoint base.
     pub async fn tip_height(&self) -> u32 {
-        let state = self.state.read().await;
-        state.tip_height()
+        self.storage.lock().await.get_tip_height().await.unwrap_or(0)
     }
 
     /// Get current chain state (read-only).

@@ -51,9 +51,7 @@ pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
     mnlistdiff_retry_count: u8,
 }
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    MasternodeSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
     /// Create a new masternode sync manager.
     pub fn new(config: &ClientConfig) -> Self {
         let (engine, mnlist_diffs) = if config.enable_masternodes {
@@ -391,11 +389,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.mnlistdiff_retry_count = 0; // Reset retry counter for new sync
 
         // Get current chain tip
-        let tip_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
-            .unwrap_or(0);
+        let tip_height = storage.get_tip_height().await.unwrap_or(0);
 
         let tip_header = storage
             .get_header(tip_height)
@@ -464,7 +458,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                 // Persist masternode state so phase manager can detect completion
                 match storage.get_tip_height().await {
-                    Ok(Some(tip_height)) => {
+                    Some(tip_height) => {
                         let state = crate::storage::MasternodeState {
                             last_height: tip_height,
                             engine_state: Vec::new(),
@@ -477,15 +471,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             tracing::warn!("⚠️ Failed to store masternode state: {}", e);
                         }
                     }
-                    Ok(None) => {
+                    None => {
                         tracing::warn!(
                             "⚠️ Storage returned no tip height when persisting masternode state"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "⚠️ Failed to read tip height to persist masternode state: {}",
-                            e
                         );
                     }
                 }
@@ -518,13 +506,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                         // Restart by re-initiating the sync
                         // Get current chain tip for the retry
-                        let tip_height = storage
-                            .get_tip_height()
-                            .await
-                            .map_err(|e| {
-                                SyncError::Storage(format!("Failed to get tip height: {}", e))
-                            })?
-                            .unwrap_or(0);
+                        let tip_height = storage.get_tip_height().await.unwrap_or(0);
 
                         let tip_header = storage
                             .get_header(tip_height)
@@ -576,7 +558,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         self.error = Some("MnListDiff requests timed out after retry".to_string());
 
                         // Still persist what we have
-                        if let Ok(Some(tip_height)) = storage.get_tip_height().await {
+                        if let Some(tip_height) = storage.get_tip_height().await {
                             let state = crate::storage::MasternodeState {
                                 last_height: tip_height,
                                 engine_state: Vec::new(),
@@ -675,7 +657,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
             // Persist masternode state so phase manager can detect completion
             match storage.get_tip_height().await {
-                Ok(Some(tip_height)) => {
+                Some(tip_height) => {
                     let state = crate::storage::MasternodeState {
                         last_height: tip_height,
                         engine_state: Vec::new(),
@@ -688,15 +670,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         tracing::warn!("⚠️ Failed to store masternode state: {}", e);
                     }
                 }
-                Ok(None) => {
+                None => {
                     tracing::warn!(
                         "⚠️ Storage returned no tip height when persisting masternode state"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "⚠️ Failed to read tip height to persist masternode state: {}",
-                        e
                     );
                 }
             }

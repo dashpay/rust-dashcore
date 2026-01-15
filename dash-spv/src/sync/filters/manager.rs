@@ -3,15 +3,15 @@
 //! This module contains the FilterSyncManager struct and high-level coordination logic
 //! that delegates to specialized sub-modules for headers, downloads, matching, etc.
 
-use dashcore::{hash_types::FilterHeader, network::message_filter::CFHeaders, BlockHash};
-use dashcore_hashes::{sha256d, Hash};
-use std::collections::{HashMap, HashSet, VecDeque};
-
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SharedFilterHeights;
+use dashcore::{hash_types::FilterHeader, network::message_filter::CFHeaders, BlockHash};
+use dashcore_hashes::{sha256d, Hash};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Duration;
 
 // Import types and constants from the types module
 use super::types::*;
@@ -86,9 +86,7 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     pub(super) cfheader_request_timeout: std::time::Duration,
 }
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    FilterSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> FilterSyncManager<S, N> {
     /// Verify that the received compact filter hashes to the expected filter header
     pub fn new(config: &ClientConfig, received_filter_heights: SharedFilterHeights) -> Self {
         Self {
@@ -112,15 +110,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             pending_cfheader_requests: VecDeque::new(),
             active_cfheader_requests: HashMap::new(),
             cfheader_retry_counts: HashMap::new(),
-            max_cfheader_retries: config.max_cfheaders_retries,
+            max_cfheader_retries: 3,
             received_cfheader_batches: HashMap::new(),
             next_cfheader_height_to_process: 0,
-            max_concurrent_cfheader_requests: config.max_concurrent_cfheaders_requests_parallel,
-            cfheader_request_timeout: std::time::Duration::from_secs(
-                config.cfheaders_request_timeout_secs,
-            ),
+            max_concurrent_cfheader_requests: 50,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
+            cfheader_request_timeout: Duration::from_secs(30),
         }
     }
 

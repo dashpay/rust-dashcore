@@ -3,9 +3,9 @@
 //! This trait allows WalletManager to work with different wallet info implementations
 
 use super::managed_account_operations::ManagedAccountOperations;
+use crate::account::ManagedAccountTrait;
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::WalletTransactionChecker;
-use crate::wallet::immature_transaction::{ImmatureTransaction, ImmatureTransactionCollection};
 use crate::wallet::managed_wallet_info::fee::FeeLevel;
 use crate::wallet::managed_wallet_info::transaction_building::{
     AccountTypePreference, TransactionError,
@@ -16,7 +16,7 @@ use crate::{Network, Utxo, Wallet, WalletBalance};
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address as DashAddress, Address, Transaction};
+use dashcore::{Address as DashAddress, Address, Transaction, Txid};
 
 /// Trait that wallet info types must implement to work with WalletManager
 pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccountOperations {
@@ -61,6 +61,9 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Update last synced timestamp
     fn update_last_synced(&mut self, timestamp: u64);
 
+    /// Get the synced height
+    fn synced_height(&self) -> CoreBlockHeight;
+
     /// Get all monitored addresses
     fn monitored_addresses(&self) -> Vec<DashAddress>;
 
@@ -85,17 +88,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get accounts (immutable)
     fn accounts(&self) -> &ManagedAccountCollection;
 
-    /// Process matured transactions for a given chain height
-    fn process_matured_transactions(&mut self, current_height: u32) -> Vec<ImmatureTransaction>;
-
-    /// Add an immature transaction
-    fn add_immature_transaction(&mut self, tx: ImmatureTransaction);
-
     /// Get immature transactions
-    fn immature_transactions(&self) -> &ImmatureTransactionCollection;
-
-    /// Get immature balance
-    fn immature_balance(&self) -> u64;
+    fn immature_transactions(&self) -> Vec<Transaction>;
 
     /// Create an unsigned payment transaction
     #[allow(clippy::too_many_arguments)]
@@ -111,7 +105,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
-    fn update_chain_height(&mut self, current_height: u32);
+    fn update_synced_height(&mut self, current_height: u32);
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -156,6 +150,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.metadata.birth_height = height;
     }
 
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.metadata.synced_height
+    }
+
     fn first_loaded_at(&self) -> u64 {
         self.metadata.first_loaded_at
     }
@@ -184,10 +182,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         utxos
     }
     fn get_spendable_utxos(&self) -> BTreeSet<&Utxo> {
-        self.utxos()
-            .into_iter()
-            .filter(|utxo| !utxo.is_locked && (utxo.is_confirmed || utxo.is_instantlocked))
-            .collect()
+        self.utxos().into_iter().filter(|utxo| utxo.is_spendable(self.synced_height())).collect()
     }
 
     fn balance(&self) -> WalletBalance {
@@ -195,26 +190,13 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn update_balance(&mut self) {
-        let mut confirmed = 0u64;
-        let mut unconfirmed = 0u64;
-        let mut locked = 0u64;
-
-        for account in self.accounts.all_accounts() {
-            for utxo in account.utxos.values() {
-                let value = utxo.txout.value;
-                if utxo.is_locked {
-                    locked += value;
-                } else if utxo.is_confirmed {
-                    confirmed += value;
-                } else {
-                    unconfirmed += value;
-                }
-            }
+        let mut balance = WalletBalance::default();
+        let synced_height = self.synced_height();
+        for account in self.accounts.all_accounts_mut() {
+            account.update_balance(synced_height);
+            balance += *account.balance();
         }
-
-        // Update balance, ignoring overflow errors as we're recalculating from scratch
-        self.balance = WalletBalance::new(confirmed, unconfirmed, locked)
-            .unwrap_or_else(|_| WalletBalance::default());
+        self.balance = balance;
     }
 
     fn transaction_history(&self) -> Vec<&TransactionRecord> {
@@ -233,73 +215,28 @@ impl WalletInfoInterface for ManagedWalletInfo {
         &self.accounts
     }
 
-    fn process_matured_transactions(&mut self, current_height: u32) -> Vec<ImmatureTransaction> {
-        let matured = self.immature_transactions.remove_matured(current_height);
+    fn immature_transactions(&self) -> Vec<Transaction> {
+        let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
 
-        // Update accounts with matured transactions
-        for tx in &matured {
-            // Process BIP44 accounts
-            for &index in &tx.affected_accounts.bip44_accounts {
-                if let Some(account) = self.accounts.standard_bip44_accounts.get_mut(&index) {
-                    let tx_record = TransactionRecord::new_confirmed(
-                        tx.transaction.clone(),
-                        tx.height,
-                        tx.block_hash,
-                        tx.timestamp,
-                        tx.total_received as i64,
-                        false,
-                    );
-                    account.transactions.insert(tx.txid, tx_record);
-                }
-            }
-
-            // Process BIP32 accounts
-            for &index in &tx.affected_accounts.bip32_accounts {
-                if let Some(account) = self.accounts.standard_bip32_accounts.get_mut(&index) {
-                    let tx_record = TransactionRecord::new_confirmed(
-                        tx.transaction.clone(),
-                        tx.height,
-                        tx.block_hash,
-                        tx.timestamp,
-                        tx.total_received as i64,
-                        false,
-                    );
-                    account.transactions.insert(tx.txid, tx_record);
-                }
-            }
-
-            // Process CoinJoin accounts
-            for &index in &tx.affected_accounts.coinjoin_accounts {
-                if let Some(account) = self.accounts.coinjoin_accounts.get_mut(&index) {
-                    let tx_record = TransactionRecord::new_confirmed(
-                        tx.transaction.clone(),
-                        tx.height,
-                        tx.block_hash,
-                        tx.timestamp,
-                        tx.total_received as i64,
-                        false,
-                    );
-                    account.transactions.insert(tx.txid, tx_record);
+        // Find txids of immature coinbase UTXOs
+        for account in self.accounts.all_accounts() {
+            for utxo in account.utxos.values() {
+                if utxo.is_coinbase && !utxo.is_mature(self.synced_height()) {
+                    immature_txids.insert(utxo.outpoint.txid);
                 }
             }
         }
 
-        // Update balance after processing matured transactions
-        self.update_balance();
-
-        matured
-    }
-
-    fn add_immature_transaction(&mut self, tx: ImmatureTransaction) {
-        self.immature_transactions.insert(tx);
-    }
-
-    fn immature_transactions(&self) -> &ImmatureTransactionCollection {
-        &self.immature_transactions
-    }
-
-    fn immature_balance(&self) -> u64 {
-        self.immature_transactions.total_immature_balance()
+        // Get the actual transactions
+        let mut transactions = Vec::new();
+        for account in self.accounts.all_accounts() {
+            for (txid, record) in &account.transactions {
+                if immature_txids.contains(txid) {
+                    transactions.push(record.transaction.clone());
+                }
+            }
+        }
+        transactions
     }
 
     fn create_unsigned_payment_transaction(
@@ -322,16 +259,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
         )
     }
 
-    fn update_chain_height(&mut self, current_height: u32) {
-        let matured = self.process_matured_transactions(current_height);
-
-        if !matured.is_empty() {
-            tracing::info!(
-                network = ?self.network,
-                current_height = current_height,
-                matured_count = matured.len(),
-                "Processed matured coinbase transactions"
-            );
-        }
+    fn update_synced_height(&mut self, current_height: u32) {
+        self.metadata.synced_height = current_height;
+        // Update cached balance
+        self.update_balance();
     }
 }

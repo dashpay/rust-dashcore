@@ -175,7 +175,11 @@ impl ChainLockManager {
         }
 
         // Verify the block exists in our chain
-        if let Some(header) = chain_state.header_at_height(chain_lock.block_height) {
+        if let Some(header) = storage
+            .get_header(chain_lock.block_height)
+            .await
+            .map_err(ValidationError::StorageError)?
+        {
             let header_hash = header.block_hash();
             if header_hash != chain_lock.block_hash {
                 return Err(ValidationError::InvalidChainLock(format!(
@@ -333,7 +337,7 @@ impl ChainLockManager {
         }
 
         // Store persistently
-        let key = format!("chainlock:{}", chain_lock.block_height);
+        let key = format!("chainlock_{}", chain_lock.block_height);
         let data = bincode::serialize(&chain_lock)
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
         storage.store_metadata(&key, &data).await?;
@@ -414,7 +418,7 @@ impl ChainLockManager {
         let mut chain_locks = Vec::new();
 
         for height in start_height..=end_height {
-            let key = format!("chainlock:{}", height);
+            let key = format!("chainlock_{}", height);
             if let Some(data) = storage.load_metadata(&key).await? {
                 match bincode::deserialize::<ChainLock>(&data) {
                     Ok(chain_lock) => {

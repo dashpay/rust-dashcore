@@ -32,7 +32,7 @@ fn test_transaction_62364518_net_amount_calculation() {
     let output_to_other = 20008i64; // 0.00020008 BTC to different address
     let output_to_watched = 44110147903i64; // 441.10147903 BTC back to watched address (change)
 
-    // Simulate the balance change calculation as done in block_processor.rs
+    // Simulate the balance change calculation
     let mut balance_changes: HashMap<Address, i64> = HashMap::new();
 
     // Process inputs (subtract from balance - spending UTXOs)

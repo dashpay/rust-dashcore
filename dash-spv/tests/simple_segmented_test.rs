@@ -1,6 +1,6 @@
 //! Simple test without background saving.
 
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager};
 use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::pow::CompactTarget;
 use dashcore::BlockHash;
@@ -28,7 +28,7 @@ async fn test_simple_storage() {
     let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await.unwrap();
 
     println!("Testing get_tip_height before storing anything...");
-    let initial_tip = storage.get_tip_height().await.unwrap();
+    let initial_tip = storage.get_tip_height().await;
     println!("Initial tip: {:?}", initial_tip);
     assert_eq!(initial_tip, None);
 
@@ -40,7 +40,7 @@ async fn test_simple_storage() {
     println!("Single header stored");
 
     println!("Checking tip height...");
-    let tip = storage.get_tip_height().await.unwrap();
+    let tip = storage.get_tip_height().await;
     println!("Tip height after storing one header: {:?}", tip);
     assert_eq!(tip, Some(0));
 

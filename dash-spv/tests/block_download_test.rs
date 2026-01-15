@@ -1,11 +1,4 @@
 //! Tests for block downloading on filter match functionality.
-//!
-//! NOTE: This test file is currently disabled due to incomplete mock NetworkManager implementation.
-//! TODO: Re-enable once NetworkManager trait methods are fully implemented.
-
-#![cfg(feature = "skip_mock_implementation_incomplete")]
-
-//! Tests for block downloading on filter match functionality.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -125,7 +118,6 @@ fn create_test_config() -> ClientConfig {
     ClientConfig::testnet()
         .without_masternodes()
         .with_validation_mode(dash_spv::types::ValidationMode::None)
-        .with_connection_timeout(std::time::Duration::from_secs(10))
 }
 
 // fn create_test_address() -> Address {
@@ -160,7 +152,6 @@ fn create_test_filter_match(block_hash: BlockHash, height: u32) -> FilterMatch {
     }
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_filter_sync_manager_creation() {
     let config = create_test_config();
@@ -172,7 +163,6 @@ async fn test_filter_sync_manager_creation() {
     assert_eq!(filter_sync.pending_download_count(), 0);
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_request_block_download() {
     let config = create_test_config();
@@ -210,7 +200,6 @@ async fn test_request_block_download() {
     assert_eq!(filter_sync.pending_download_count(), 1);
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_duplicate_block_request_prevention() {
     let config = create_test_config();
@@ -234,7 +223,6 @@ async fn test_duplicate_block_request_prevention() {
     assert_eq!(filter_sync.pending_download_count(), 1);
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_handle_downloaded_block() {
     let config = create_test_config();
@@ -265,7 +253,6 @@ async fn test_handle_downloaded_block() {
     assert_eq!(filter_sync.pending_download_count(), 0);
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_handle_unexpected_block() {
     let config = create_test_config();
@@ -282,7 +269,6 @@ async fn test_handle_unexpected_block() {
     assert!(result.is_none());
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_process_multiple_filter_matches() {
     let config = create_test_config();
@@ -333,11 +319,9 @@ async fn test_process_multiple_filter_matches() {
     assert_eq!(filter_sync.pending_download_count(), 3);
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_sync_manager_integration() {}
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_filter_match_and_download_workflow() {
     let config = create_test_config();
@@ -370,7 +354,6 @@ async fn test_filter_match_and_download_workflow() {
     assert!(filter_sync.has_pending_downloads());
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_reset_clears_download_state() {
     let config = create_test_config();

@@ -10,13 +10,11 @@ pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;
 pub mod transaction_building;
-pub mod utxo;
 pub mod wallet_info_interface;
 
 pub use managed_account_operations::ManagedAccountOperations;
 
 use super::balance::WalletBalance;
-use super::immature_transaction::ImmatureTransactionCollection;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::Network;
@@ -45,8 +43,6 @@ pub struct ManagedWalletInfo {
     pub metadata: WalletMetadata,
     /// All managed accounts
     pub accounts: ManagedAccountCollection,
-    /// Immature transactions
-    pub immature_transactions: ImmatureTransactionCollection,
     /// Cached wallet balance - should be updated when accounts change
     pub balance: WalletBalance,
 }
@@ -61,7 +57,6 @@ impl ManagedWalletInfo {
             description: None,
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::new(),
-            immature_transactions: ImmatureTransactionCollection::new(),
             balance: WalletBalance::default(),
         }
     }
@@ -75,7 +70,6 @@ impl ManagedWalletInfo {
             description: None,
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::new(),
-            immature_transactions: ImmatureTransactionCollection::new(),
             balance: WalletBalance::default(),
         }
     }
@@ -89,7 +83,6 @@ impl ManagedWalletInfo {
             description: None,
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::from_account_collection(&wallet.accounts),
-            immature_transactions: ImmatureTransactionCollection::new(),
             balance: WalletBalance::default(),
         }
     }
@@ -120,30 +113,6 @@ impl ManagedWalletInfo {
     /// Increment the transaction count
     pub fn increment_transactions(&mut self) {
         self.metadata.total_transactions += 1;
-    }
-
-    /// Get total wallet balance by recalculating from all accounts (for verification)
-    pub fn calculate_balance(&self) -> WalletBalance {
-        let mut confirmed = 0u64;
-        let mut unconfirmed = 0u64;
-        let mut locked = 0u64;
-
-        // Sum balances from all accounts across all networks
-        for account in self.accounts.all_accounts() {
-            for utxo in account.utxos.values() {
-                let value = utxo.txout.value;
-                if utxo.is_locked {
-                    locked += value;
-                } else if utxo.is_confirmed {
-                    confirmed += value;
-                } else {
-                    unconfirmed += value;
-                }
-            }
-        }
-
-        WalletBalance::new(confirmed, unconfirmed, locked)
-            .unwrap_or_else(|_| WalletBalance::default())
     }
 }
 

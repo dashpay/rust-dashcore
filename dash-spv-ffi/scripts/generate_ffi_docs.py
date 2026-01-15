@@ -29,7 +29,7 @@ def extract_ffi_functions(file_path: Path) -> List[FFIFunction]:
     """
     functions: List[FFIFunction] = []
 
-    with open(file_path, 'r') as f:
+    with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
     # Iterate over all #[no_mangle] attribute occurrences
@@ -370,7 +370,7 @@ def main():
 
     # Write to file
     output_file = Path(__file__).parent.parent / "FFI_API.md"
-    with open(output_file, 'w') as f:
+    with open(output_file, 'w', encoding='utf-8') as f:
         f.write(markdown)
 
     print(f"Generated FFI documentation with {len(all_functions)} functions")

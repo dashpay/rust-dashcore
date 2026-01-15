@@ -347,7 +347,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static>(
+async fn run_client<S: dash_spv::storage::StorageManager>(
     config: ClientConfig,
     network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
@@ -451,7 +451,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                     _ = tokio::time::sleep(snapshot_interval) => {
                         // Log snapshot if interval has elapsed
                         if last_snapshot.elapsed() >= snapshot_interval {
-                            let (tx_count, confirmed, unconfirmed, locked, total) = {
+                            let (tx_count, wallet_balance) = {
                                 let mgr = wallet_for_logger.read().await;
 
                                 // Count wallet-affecting transactions from wallet transaction history
@@ -461,20 +461,16 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                                     .unwrap_or(0);
 
                                 // Read wallet balance from the managed wallet info
-                                let wb = mgr.get_wallet_balance(&wallet_id_for_logger).ok();
-                                let (c, u, l, t) = wb.map(|b| (b.confirmed, b.unconfirmed, b.locked, b.total)).unwrap_or((0, 0, 0, 0));
+                                let wallet_balance = mgr.get_wallet_balance(&wallet_id_for_logger).unwrap_or_default();
 
-                                (tx_count, c, u, l, t)
+                                (tx_count, wallet_balance)
                             };
                             tracing::info!(
-                                "Wallet tx summary: tx_count={} (blocks={} + mempool={}), balances: confirmed={} unconfirmed={} locked={} total={}",
+                                "Wallet tx summary: tx_count={} (blocks={} + mempool={}), balances: {}",
                                 tx_count,
                                 total_detected_block_txs,
                                 total_detected_mempool_txs,
-                                confirmed,
-                                unconfirmed,
-                                locked,
-                                total,
+                                wallet_balance,
                             );
                             last_snapshot = std::time::Instant::now();
                         }

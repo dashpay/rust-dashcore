@@ -86,6 +86,15 @@ impl Utxo {
         }
     }
 
+    /// Get the number of confirmations for this UTXO
+    pub fn confirmations(&self, current_height: u32) -> u32 {
+        if self.is_confirmed && current_height >= self.height {
+            current_height - self.height + 1
+        } else {
+            0
+        }
+    }
+
     /// Lock this UTXO to prevent it from being selected
     pub fn lock(&mut self) {
         self.is_locked = true;
@@ -307,42 +316,11 @@ impl Default for UtxoSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Network;
-    use dashcore::blockdata::script::ScriptBuf;
-    use dashcore::Txid;
-    use dashcore_hashes::{sha256d, Hash};
-
-    fn test_utxo(value: u64, height: u32) -> Utxo {
-        test_utxo_with_vout(value, height, 0)
-    }
-
-    fn test_utxo_with_vout(value: u64, height: u32, vout: u32) -> Utxo {
-        let outpoint = OutPoint {
-            txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
-            vout,
-        };
-
-        let txout = TxOut {
-            value,
-            script_pubkey: ScriptBuf::new(),
-        };
-
-        let address = Address::p2pkh(
-            &dashcore::PublicKey::from_slice(&[
-                0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
-                0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
-                0x88, 0x7e, 0x5b, 0x23, 0x52,
-            ])
-            .unwrap(),
-            Network::Testnet,
-        );
-
-        Utxo::new(outpoint, txout, address, height, false)
-    }
+    use test_case::test_case;
 
     #[test]
     fn test_utxo_spendability() {
-        let mut utxo = test_utxo(100000, 100);
+        let mut utxo = Utxo::new_test(0, 100000, 100, false, false);
 
         // Unconfirmed UTXO should not be spendable
         assert!(!utxo.is_spendable(200));
@@ -360,8 +338,8 @@ mod tests {
     fn test_utxo_set_operations() {
         let mut set = UtxoSet::new();
 
-        let utxo1 = test_utxo_with_vout(100000, 100, 0);
-        let utxo2 = test_utxo_with_vout(200000, 150, 1); // Different vout to ensure unique OutPoint
+        let utxo1 = Utxo::new_test(0, 100000, 100, false, false);
+        let utxo2 = Utxo::new_test(1, 200000, 150, false, false);
 
         set.add(utxo1.clone());
         set.add(utxo2.clone());
@@ -381,5 +359,20 @@ mod tests {
         assert!(removed.is_some());
         assert_eq!(set.len(), 1);
         assert_eq!(set.total_balance(), 200000);
+    }
+
+    #[test_case(false, 0, 500, 0 ; "unconfirmed utxo has 0 confirmations")]
+    #[test_case(true, 0, 500, 501 ; "confirmed utxo at genesis height has 501 confirmations")]
+    #[test_case(true, 1000, 500, 0 ; "utxo height greater than current height has 0 confirmations")]
+    #[test_case(true, 500, 500, 1 ; "utxo at current height has 1 confirmation")]
+    #[test_case(true, 100, 500, 401 ; "normal case has current_height minus utxo_height plus 1 confirmations")]
+    fn test_confirmations(
+        is_confirmed: bool,
+        utxo_height: u32,
+        current_height: u32,
+        expected: u32,
+    ) {
+        let utxo = Utxo::new_test(0, 100000, utxo_height, false, is_confirmed);
+        assert_eq!(utxo.confirmations(current_height), expected);
     }
 }

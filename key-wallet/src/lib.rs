@@ -12,6 +12,9 @@ extern crate core;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 #[cfg(test)]
 #[macro_use]
 mod test_macros;
@@ -65,10 +68,7 @@ pub use managed_account::managed_account_type::ManagedAccountType;
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
 pub use utxo::{Utxo, UtxoSet};
-pub use wallet::{
-    balance::{BalanceError, WalletBalance},
-    Wallet,
-};
+pub use wallet::{balance::WalletBalance, Wallet};
 
 /// Re-export commonly used types
 pub mod prelude {

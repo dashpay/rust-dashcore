@@ -13,12 +13,7 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 use super::manager::{SyncManager, CHAINLOCK_VALIDATION_MASTERNODE_OFFSET};
 use super::phases::SyncPhase;
 
-impl<
-        S: StorageManager + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        W: WalletInterface,
-    > SyncManager<S, N, W>
-{
+impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N, W> {
     /// Handle inventory messages for sequential sync
     pub async fn handle_inventory(
         &mut self,

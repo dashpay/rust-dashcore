@@ -22,8 +22,6 @@ fn create_test_config(network: Network, data_dir: Option<TempDir>) -> ClientConf
     config.enable_filters = false;
     config.enable_masternodes = false;
     config.max_peers = 3;
-    config.connection_timeout = Duration::from_secs(10);
-    config.message_timeout = Duration::from_secs(30);
     config.peers = vec![]; // Will be populated by DNS discovery
     config
 }
@@ -190,7 +188,7 @@ async fn test_max_peer_limit() {
 
     // Create storage manager
     let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 

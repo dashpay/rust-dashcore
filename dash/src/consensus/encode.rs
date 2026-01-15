@@ -411,7 +411,7 @@ pub trait Decodable: Sized {
     /// Like `consensus_decode` but relies on the reader being limited in the amount of data it
     /// returns, e.g. by being wrapped in [`std::io::Take`].
     ///
-    /// Failling to obide to this requirement might lead to memory exhaustion caused by malicious
+    /// Failing to obide to this requirement might lead to memory exhaustion caused by malicious
     /// inputs.
     ///
     /// Users should default to `consensus_decode`, but when data to be decoded is already in a byte

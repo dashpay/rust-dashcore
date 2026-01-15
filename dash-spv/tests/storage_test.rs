@@ -1,7 +1,7 @@
 //! Integration tests for storage layer functionality.
 
 use dash_spv::error::StorageError;
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager, StorageManager};
 use dashcore::{block::Header as BlockHeader, block::Version};
 use dashcore_hashes::Hash;
 use tempfile::TempDir;
@@ -57,7 +57,7 @@ async fn test_disk_storage_reopen_after_clean_shutdown() {
     assert!(storage.is_ok(), "Should reopen after clean shutdown");
 
     let storage = storage.unwrap();
-    let tip = storage.get_tip_height().await.unwrap();
+    let tip = storage.get_tip_height().await;
     assert_eq!(tip, Some(4), "Data should persist across reopen");
 }
 
@@ -80,21 +80,25 @@ async fn test_disk_storage_concurrent_access_blocked() {
         }
         other => panic!("Expected DirectoryLocked error, got: {:?}", other),
     }
-
-    // First storage manager should still be usable
-    assert!(_storage1.get_tip_height().await.is_ok());
 }
 
 #[tokio::test]
 async fn test_disk_storage_lock_file_lifecycle() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let path = temp_dir.path().to_path_buf();
-    let lock_path = path.join(".lock");
+    let lock_path = {
+        let mut lock_file = path.clone();
+        lock_file.set_extension("lock");
+        lock_file
+    };
 
     // Lock file created when storage opens
     {
-        let _storage = DiskStorageManager::new(path.clone()).await.unwrap();
+        let mut storage = DiskStorageManager::new(path.clone()).await.unwrap();
         assert!(lock_path.exists(), "Lock file should exist while storage is open");
+
+        storage.clear().await.expect("Failed to clear the storage");
+        assert!(lock_path.exists(), "Lock file should exist after storage is cleared");
     }
 
     // Lock file removed when storage drops

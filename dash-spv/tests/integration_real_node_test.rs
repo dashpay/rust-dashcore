@@ -6,10 +6,11 @@
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use dash_spv::storage::BlockHeaderStorage;
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::{NetworkManager, PeerNetworkManager},
-    storage::{DiskStorageManager, StorageManager},
+    storage::DiskStorageManager,
     types::ValidationMode,
 };
 use dashcore::Network;
@@ -36,8 +37,7 @@ async fn create_test_client(
 
     // Create storage manager
     let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await?;
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path()).await?;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
@@ -73,9 +73,7 @@ async fn test_real_node_connectivity() {
 
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().expect("Valid peer address");
 
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(15));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     // Add the peer to the configuration
     config.peers.push(peer_addr);
@@ -117,9 +115,7 @@ async fn test_real_header_sync_genesis_to_1000() {
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
     // Create client with memory storage for this test
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     // Add the real peer
     config.peers.push(peer_addr);
@@ -192,21 +188,18 @@ async fn test_real_header_sync_up_to_10k() {
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
     // Create client configuration optimized for bulk sync
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic) // Use basic validation
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     // Add the real peer
     config.peers.push(peer_addr);
 
     // Create fresh storage and client
-    let storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await
-            .expect("Failed to create tmp storage");
+    let storage = DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
+        .await
+        .expect("Failed to create tmp storage");
 
     // Verify starting from empty state
-    assert_eq!(storage.get_tip_height().await.unwrap(), None);
+    assert_eq!(storage.get_tip_height().await, None);
 
     let mut client = create_test_client(config.clone()).await.expect("Failed to create SPV client");
 
@@ -346,9 +339,7 @@ async fn test_real_header_validation_with_node() {
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
     // Test with Full validation mode to ensure headers are properly validated
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Full)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Full);
 
     config.peers.push(peer_addr);
 
@@ -408,16 +399,13 @@ async fn test_real_header_chain_continuity() {
 
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     config.peers.push(peer_addr);
 
-    let storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await
-            .expect("Failed to create tmp storage");
+    let storage = DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
+        .await
+        .expect("Failed to create tmp storage");
 
     let mut client = create_test_client(config).await.expect("Failed to create SPV client");
 
@@ -484,9 +472,7 @@ async fn test_real_node_sync_resumption() {
 
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     config.peers.push(peer_addr);
 
@@ -550,9 +536,7 @@ async fn test_real_node_performance_benchmarks() {
 
     let peer_addr: SocketAddr = DASH_NODE_ADDR.parse().unwrap();
 
-    let mut config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_connection_timeout(Duration::from_secs(30));
+    let mut config = ClientConfig::new(Network::Dash).with_validation_mode(ValidationMode::Basic);
 
     config.peers.push(peer_addr);
 

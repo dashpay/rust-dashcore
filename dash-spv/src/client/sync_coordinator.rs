@@ -11,7 +11,7 @@
 //! This is the largest module as it handles all coordination between network,
 //! storage, and the sync manager.
 
-use super::{BlockProcessingTask, DashSpvClient, MessageHandler};
+use super::{DashSpvClient, MessageHandler};
 use crate::client::interface::DashSpvClientCommand;
 use crate::error::{Result, SpvError};
 use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
@@ -23,12 +23,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Synchronize to the tip of the blockchain.
     pub async fn sync_to_tip(&mut self) -> Result<SyncProgress> {
         let running = self.running.read().await;
@@ -42,7 +37,7 @@ impl<
         let result = SyncProgress {
             header_height: {
                 let storage = self.storage.lock().await;
-                storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
+                storage.get_tip_height().await.unwrap_or(0)
             },
             filter_header_height: {
                 let storage = self.storage.lock().await;
@@ -241,7 +236,7 @@ impl<
                     // Storage tip now represents the absolute blockchain height.
                     let current_tip_height = {
                         let storage = self.storage.lock().await;
-                        storage.get_tip_height().await.ok().flatten().unwrap_or(0)
+                        storage.get_tip_height().await.unwrap_or(0)
                     };
                     let current_height = current_tip_height;
                     let peer_best = self
@@ -315,7 +310,7 @@ impl<
                 // Emit filter headers progress only when heights change
                 let (abs_header_height, filter_header_height) = {
                     let storage = self.storage.lock().await;
-                    let storage_tip = storage.get_tip_height().await.ok().flatten().unwrap_or(0);
+                    let storage_tip = storage.get_tip_height().await.unwrap_or(0);
                     let filter_tip =
                         storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
                     (storage_tip, filter_tip)
@@ -394,7 +389,7 @@ impl<
             // Check for sync timeouts and handle recovery (only periodically, not every loop)
             if last_timeout_check.elapsed() >= timeout_check_interval {
                 let mut storage = self.storage.lock().await;
-                let _ = self.sync_manager.check_timeout(&mut self.network, &mut *storage).await;
+                self.sync_manager.check_timeout(&mut self.network, &mut *storage).await?;
                 drop(storage);
             }
 
@@ -608,7 +603,6 @@ impl<
                 &mut *storage,
                 &mut self.network,
                 &self.config,
-                &self.block_processor_tx,
                 &self.mempool_filter,
                 &self.mempool_state,
                 &self.event_tx,
@@ -648,30 +642,6 @@ impl<
             }
             Err(e) => Err(e),
         }
-    }
-
-    /// Process a new block.
-    #[allow(dead_code)]
-    pub(super) async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
-        let block_hash = block.block_hash();
-
-        tracing::info!("📦 Routing block {} to async block processor", block_hash);
-
-        // Send block to the background processor without waiting for completion
-        let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
-        let task = BlockProcessingTask::ProcessBlock {
-            block: Box::new(block),
-            response_tx,
-        };
-
-        if let Err(e) = self.block_processor_tx.send(task) {
-            tracing::error!("Failed to send block to processor: {}", e);
-            return Err(SpvError::Config("Block processor channel closed".to_string()));
-        }
-
-        // Return immediately - processing happens asynchronously in the background
-        tracing::debug!("Block {} queued for background processing", block_hash);
-        Ok(())
     }
 
     /// Report balance changes for watched addresses.

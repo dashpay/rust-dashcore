@@ -8,8 +8,6 @@ mod tests {
     use std::net::SocketAddr;
     use std::path::PathBuf;
 
-    use std::time::Duration;
-
     #[test]
     fn test_default_config() {
         let config = ClientConfig::default();
@@ -17,24 +15,14 @@ mod tests {
         assert_eq!(config.network, Network::Dash);
         assert!(config.peers.is_empty());
         assert_eq!(config.validation_mode, ValidationMode::Full);
-        assert_eq!(config.filter_checkpoint_interval, 1000);
-        assert_eq!(config.max_headers_per_message, 2000);
-        assert_eq!(config.connection_timeout, Duration::from_secs(30));
-        assert_eq!(config.message_timeout, Duration::from_secs(60));
-        assert_eq!(config.sync_timeout, Duration::from_secs(300));
         assert!(config.enable_filters);
         assert!(config.enable_masternodes);
         assert_eq!(config.max_peers, 8);
-        assert!(config.enable_persistence);
-        assert_eq!(config.log_level, "info");
-        assert_eq!(config.max_concurrent_filter_requests, 16);
-        assert_eq!(config.filter_request_delay_ms, 0);
 
         // Mempool defaults
         assert!(config.enable_mempool_tracking);
         assert_eq!(config.mempool_strategy, MempoolStrategy::FetchAll);
         assert_eq!(config.max_mempool_transactions, 1000);
-        assert_eq!(config.mempool_timeout_secs, 3600);
         assert!(config.fetch_mempool_transactions);
         assert!(!config.persist_mempool);
     }
@@ -62,29 +50,18 @@ mod tests {
         let config = ClientConfig::mainnet()
             .with_storage_path(path.clone())
             .with_validation_mode(ValidationMode::Basic)
-            .with_connection_timeout(Duration::from_secs(10))
-            .with_log_level("debug")
-            .with_max_concurrent_filter_requests(32)
-            .with_filter_request_delay(100)
             .with_mempool_tracking(MempoolStrategy::BloomFilter)
             .with_max_mempool_transactions(500)
-            .with_mempool_timeout(7200)
             .with_mempool_persistence(true)
             .with_start_height(100000);
 
         assert_eq!(config.storage_path, Some(path));
-        assert!(config.enable_persistence);
         assert_eq!(config.validation_mode, ValidationMode::Basic);
-        assert_eq!(config.connection_timeout, Duration::from_secs(10));
-        assert_eq!(config.log_level, "debug");
-        assert_eq!(config.max_concurrent_filter_requests, 32);
-        assert_eq!(config.filter_request_delay_ms, 100);
 
         // Mempool settings
         assert!(config.enable_mempool_tracking);
         assert_eq!(config.mempool_strategy, MempoolStrategy::BloomFilter);
         assert_eq!(config.max_mempool_transactions, 500);
-        assert_eq!(config.mempool_timeout_secs, 7200);
         assert!(config.persist_mempool);
         assert_eq!(config.start_from_height, Some(100000));
     }
@@ -118,30 +95,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_invalid_max_headers() {
-        let config = ClientConfig {
-            max_headers_per_message: 0,
-            ..Default::default()
-        };
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "max_headers_per_message must be > 0");
-    }
-
-    #[test]
-    fn test_validation_invalid_filter_checkpoint_interval() {
-        let config = ClientConfig {
-            filter_checkpoint_interval: 0,
-            ..Default::default()
-        };
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "filter_checkpoint_interval must be > 0");
-    }
-
-    #[test]
     fn test_validation_invalid_max_peers() {
         let config = ClientConfig {
             max_peers: 0,
@@ -151,18 +104,6 @@ mod tests {
         let result = config.validate();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "max_peers must be > 0");
-    }
-
-    #[test]
-    fn test_validation_invalid_max_concurrent_filter_requests() {
-        let config = ClientConfig {
-            max_concurrent_filter_requests: 0,
-            ..Default::default()
-        };
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "max_concurrent_filter_requests must be > 0");
     }
 
     #[test]
@@ -178,56 +119,5 @@ mod tests {
         assert!(result.unwrap_err().contains("max_mempool_transactions must be > 0"));
     }
 
-    #[test]
-    fn test_validation_invalid_mempool_timeout() {
-        let config = ClientConfig {
-            enable_mempool_tracking: true,
-            mempool_timeout_secs: 0,
-            ..Default::default()
-        };
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "mempool_timeout_secs must be > 0");
-    }
-
     // Removed selective strategy validation test; Selective variant no longer exists
-
-    #[test]
-    fn test_request_control_defaults() {
-        let config = ClientConfig::default();
-
-        assert!(config.max_concurrent_headers_requests.is_none());
-        assert!(config.max_concurrent_mnlist_requests.is_none());
-        assert!(config.max_concurrent_cfheaders_requests.is_none());
-        assert!(config.max_concurrent_block_requests.is_none());
-        assert!(config.headers_request_rate_limit.is_none());
-        assert!(config.mnlist_request_rate_limit.is_none());
-        assert!(config.cfheaders_request_rate_limit.is_none());
-        assert!(config.filters_request_rate_limit.is_none());
-        assert!(config.blocks_request_rate_limit.is_none());
-    }
-
-    #[test]
-    fn test_wallet_creation_time() {
-        let config = ClientConfig {
-            wallet_creation_time: Some(1234567890),
-            ..Default::default()
-        };
-
-        assert_eq!(config.wallet_creation_time, Some(1234567890));
-    }
-
-    #[test]
-    fn test_clone_config() {
-        let mut original = ClientConfig::mainnet();
-        original.max_peers = 16;
-        original = original.with_log_level("debug");
-
-        let cloned = original.clone();
-
-        assert_eq!(cloned.network, original.network);
-        assert_eq!(cloned.max_peers, original.max_peers);
-        assert_eq!(cloned.log_level, original.log_level);
-    }
 }

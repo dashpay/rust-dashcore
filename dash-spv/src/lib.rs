@@ -25,12 +25,11 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create configuration for mainnet
 //!     let config = ClientConfig::mainnet()
-//!         .with_storage_path("/path/to/data".into())
-//!         .with_log_level("info");
+//!         .with_storage_path("/path/to/data".into());
 //!
 //!     // Create the required components
 //!     let network = PeerNetworkManager::new(&config).await?;
-//!     let storage = DiskStorageManager::new("./.tmp/example-storage".into()).await?;
+//!     let storage = DiskStorageManager::new("./.tmp/example-storage").await?;
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 //!
 //!     // Create and start the client
@@ -58,7 +57,6 @@
 //! - **Persistent storage**: Save and restore state between runs
 //! - **Extensive logging**: Built-in tracing support for debugging
 
-pub mod bloom;
 pub mod chain;
 pub mod client;
 pub mod error;

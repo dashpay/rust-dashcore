@@ -3,17 +3,32 @@
 //! This module defines the trait that SPV clients use to interact with wallets.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use async_trait::async_trait;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Block, Transaction, Txid};
+use dashcore::{Address, Block, Transaction, Txid};
+
+/// Result of processing a block through the wallet
+#[derive(Debug, Default, Clone)]
+pub struct BlockProcessingResult {
+    /// Transaction IDs that were relevant to the wallet
+    pub relevant_txids: Vec<Txid>,
+    /// New addresses generated during gap limit maintenance
+    pub new_addresses: Vec<Address>,
+}
 
 /// Trait for wallet implementations to receive SPV events
 #[async_trait]
-pub trait WalletInterface: Send + Sync {
-    /// Called when a new block is received that may contain relevant transactions
-    /// Returns transaction IDs that were relevant to the wallet
-    async fn process_block(&mut self, block: &Block, height: CoreBlockHeight) -> Vec<Txid>;
+pub trait WalletInterface: Send + Sync + 'static {
+    /// Called when a new block is received that may contain relevant transactions.
+    /// Returns processing result including relevant transactions and any new addresses
+    /// generated during gap limit maintenance.
+    async fn process_block(
+        &mut self,
+        block: &Block,
+        height: CoreBlockHeight,
+    ) -> BlockProcessingResult;
 
     /// Called when a transaction is seen in the mempool
     async fn process_mempool_transaction(&mut self, tx: &Transaction);

@@ -33,5 +33,6 @@ hex = "0.4"
 cbindgen = "0.29"
 
 [dev-dependencies]
+key-wallet = { path = "../key-wallet", default-features = false, features = ["std", "test-utils"] }
 tempfile = "3.0"
 hex = "0.4"

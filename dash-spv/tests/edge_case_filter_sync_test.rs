@@ -1,11 +1,4 @@
 //! Tests for edge case handling in filter header sync, particularly at the tip.
-//!
-//! NOTE: This test file is currently disabled due to incomplete mock NetworkManager implementation.
-//! TODO: Re-enable once NetworkManager trait methods are fully implemented.
-
-#![cfg(feature = "skip_mock_implementation_incomplete")]
-
-//! Tests for edge case handling in filter header sync, particularly at the tip.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,7 +9,7 @@ use dash_spv::{
     client::ClientConfig,
     error::NetworkResult,
     network::NetworkManager,
-    storage::{DiskStorageManager, StorageManager},
+    storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::filters::FilterSyncManager,
 };
 use dashcore::{
@@ -114,7 +107,6 @@ impl NetworkManager for MockNetworkManager {
     }
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_filter_sync_at_tip_edge_case() {
     let config = ClientConfig::new(Network::Dash);
@@ -144,7 +136,7 @@ async fn test_filter_sync_at_tip_edge_case() {
     storage.store_filter_headers(&filter_headers).await.unwrap();
 
     // Verify initial state
-    let tip_height = storage.get_tip_height().await.unwrap().unwrap();
+    let tip_height = storage.get_tip_height().await.unwrap();
     let filter_tip_height = storage.get_filter_tip_height().await.unwrap().unwrap();
     assert_eq!(tip_height, height - 1); // 0-indexed
     assert_eq!(filter_tip_height, height - 1); // 0-indexed
@@ -159,7 +151,6 @@ async fn test_filter_sync_at_tip_edge_case() {
     assert_eq!(sent_messages.len(), 0, "Should not send any messages when at tip");
 }
 
-#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_no_invalid_getcfheaders_at_tip() {
     let config = ClientConfig::new(Network::Dash);

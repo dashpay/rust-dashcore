@@ -609,9 +609,14 @@ int32_t dash_spv_ffi_config_set_max_peers(struct FFIClientConfig *config,
 /**
  * Adds a peer address to the configuration
  *
- * Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`)
- * or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only
- * string is given, the default P2P port for the configured network is used.
+ * Accepts socket addresses with or without port. When no port is specified,
+ * the default P2P port for the configured network is used.
+ *
+ * Supported formats:
+ * - IP with port: `192.168.1.1:9999`, `[::1]:19999`
+ * - IP without port: `127.0.0.1`, `2001:db8::1`
+ * - Hostname with port: `node.example.com:9999`
+ * - Hostname without port: `node.example.com`
  *
  * # Safety
  * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
@@ -759,18 +764,6 @@ int32_t dash_spv_ffi_config_set_max_mempool_transactions(struct FFIClientConfig 
 ;
 
 /**
- * Sets the mempool transaction timeout in seconds
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_mempool_timeout(struct FFIClientConfig *config,
-                                                uint64_t timeout_secs)
-;
-
-/**
  * Sets whether to fetch full mempool transaction data
  *
  * # Safety
@@ -824,18 +817,6 @@ enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FF
 
 int32_t dash_spv_ffi_config_set_start_from_height(struct FFIClientConfig *config,
                                                   uint32_t height)
-;
-
-/**
- * Sets the wallet creation timestamp for synchronization optimization
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_wallet_creation_time(struct FFIClientConfig *config,
-                                                     uint32_t timestamp)
 ;
 
  const char *dash_spv_ffi_get_last_error(void) ;

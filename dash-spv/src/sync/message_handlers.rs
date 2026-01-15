@@ -16,12 +16,7 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 use super::manager::SyncManager;
 use super::phases::SyncPhase;
 
-impl<
-        S: StorageManager + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        W: WalletInterface,
-    > SyncManager<S, N, W>
-{
+impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N, W> {
     /// Handle incoming network messages with phase filtering
     pub async fn handle_message(
         &mut self,
@@ -345,7 +340,7 @@ impl<
         storage: &mut S,
         transition_reason: &str,
     ) -> SyncResult<()> {
-        let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
+        let blockchain_height = self.get_blockchain_height_from_storage(storage).await;
 
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
@@ -750,18 +745,18 @@ impl<
             .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
             .unwrap_or(0);
 
-        let relevant_txids = wallet.process_block(block, block_height).await;
+        let result = wallet.process_block(block, block_height).await;
 
         drop(wallet);
 
-        if !relevant_txids.is_empty() {
+        if !result.relevant_txids.is_empty() {
             tracing::info!(
                 "💰 Found {} relevant transactions in block {} at height {}",
-                relevant_txids.len(),
+                result.relevant_txids.len(),
                 block_hash,
                 block_height
             );
-            for txid in &relevant_txids {
+            for txid in &result.relevant_txids {
                 tracing::debug!("  - Transaction: {}", txid);
             }
         }

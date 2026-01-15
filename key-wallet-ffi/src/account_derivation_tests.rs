@@ -59,6 +59,7 @@ mod tests {
             extended_private_key_free(master_xpriv);
             account_free(account);
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -97,6 +98,8 @@ mod tests {
             );
             assert_eq!(error.code, FFIErrorCode::InvalidInput);
         }
+
+        unsafe { error.free_message() };
     }
 
     #[test]
@@ -134,6 +137,7 @@ mod tests {
             extended_private_key_free(master_xpriv);
             account_free(account);
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 
@@ -213,6 +217,7 @@ mod tests {
         unsafe {
             account_free(account);
             wallet::wallet_free(wallet);
+            error.free_message();
         }
     }
 

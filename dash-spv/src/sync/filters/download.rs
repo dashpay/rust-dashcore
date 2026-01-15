@@ -21,9 +21,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SyncProgress;
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    super::manager::FilterSyncManager<S, N>
-{
+impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     pub async fn verify_cfilter_against_headers(
         &self,
         filter_data: &[u8],

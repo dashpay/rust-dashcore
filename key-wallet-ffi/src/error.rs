@@ -48,23 +48,48 @@ impl FFIError {
         }
     }
 
-    /// Set error on a mutable pointer if it's not null
+    /// Set error on a mutable pointer if it's not null.
+    /// Frees any previous error message before setting the new one.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_error(error_ptr: *mut FFIError, code: FFIErrorCode, msg: String) {
         if !error_ptr.is_null() {
             unsafe {
+                // Free previous message if present
+                let prev = &mut *error_ptr;
+                if !prev.message.is_null() {
+                    let _ = CString::from_raw(prev.message);
+                }
                 *error_ptr = Self::error(code, msg);
             }
         }
     }
 
-    /// Set success on a mutable pointer if it's not null
+    /// Set success on a mutable pointer if it's not null.
+    /// Frees any previous error message before setting success.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_success(error_ptr: *mut FFIError) {
         if !error_ptr.is_null() {
             unsafe {
+                // Free previous message if present
+                let prev = &mut *error_ptr;
+                if !prev.message.is_null() {
+                    let _ = CString::from_raw(prev.message);
+                }
                 *error_ptr = Self::success();
             }
+        }
+    }
+
+    /// Free the error message if present.
+    /// Use this in tests to prevent memory leaks.
+    ///
+    /// # Safety
+    ///
+    /// The message pointer must have been allocated by this library.
+    pub unsafe fn free_message(&mut self) {
+        if !self.message.is_null() {
+            let _ = CString::from_raw(self.message);
+            self.message = ptr::null_mut();
         }
     }
 }
@@ -83,13 +108,19 @@ pub unsafe extern "C" fn error_message_free(message: *mut c_char) {
     }
 }
 
-/// Helper macro to convert any error that implements `Into<FFIError>` and set it on the error pointer
+/// Helper macro to convert any error that implements `Into<FFIError>` and set it on the error pointer.
+/// Frees any previous error message before setting the new one.
 #[macro_export]
 macro_rules! ffi_error_set {
     ($error_ptr:expr, $err:expr) => {{
         let ffi_error: $crate::error::FFIError = $err.into();
         if !$error_ptr.is_null() {
             unsafe {
+                // Free previous message if present
+                let prev = &mut *$error_ptr;
+                if !prev.message.is_null() {
+                    let _ = std::ffi::CString::from_raw(prev.message);
+                }
                 *$error_ptr = ffi_error;
             }
         }

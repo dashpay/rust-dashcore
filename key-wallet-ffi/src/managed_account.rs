@@ -513,10 +513,11 @@ pub unsafe extern "C" fn managed_account_get_balance(
     let balance = &account.inner().balance;
 
     *balance_out = crate::types::FFIBalance {
-        confirmed: balance.confirmed,
-        unconfirmed: balance.unconfirmed,
-        immature: 0, // WalletBalance doesn't have immature field
-        total: balance.total,
+        confirmed: balance.spendable(),
+        unconfirmed: balance.unconfirmed(),
+        immature: balance.immature(),
+        locked: balance.locked(),
+        total: balance.total(),
     };
 
     true
@@ -1236,6 +1237,7 @@ mod tests {
                 confirmed: 999,
                 unconfirmed: 999,
                 immature: 999,
+                locked: 999,
                 total: 999,
             };
             let success = managed_account_get_balance(account, &mut balance_out);
@@ -1244,6 +1246,7 @@ mod tests {
             assert_eq!(balance_out.confirmed, 0);
             assert_eq!(balance_out.unconfirmed, 0);
             assert_eq!(balance_out.immature, 0);
+            assert_eq!(balance_out.locked, 0);
             assert_eq!(balance_out.total, 0);
 
             // Test get_transaction_count

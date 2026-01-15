@@ -1,4 +1,4 @@
-use dash_spv::storage::{DiskStorageManager, StorageManager};
+use dash_spv::storage::{BlockHeaderStorage, DiskStorageManager, StorageManager};
 use dashcore::block::Header as BlockHeader;
 use dashcore_hashes::Hash;
 use std::path::PathBuf;
@@ -28,9 +28,6 @@ async fn test_reverse_index_disk_storage() {
             assert_eq!(height, Some(i as u32), "Height mismatch for header {}", i);
         }
 
-        // Add a small delay to ensure background worker processes save commands
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
         storage.shutdown().await;
     }
 
@@ -52,7 +49,7 @@ async fn test_reverse_index_disk_storage() {
 #[tokio::test]
 async fn test_clear_clears_index() {
     let mut storage =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
+        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path())
             .await
             .expect("Failed to create tmp storage");
 

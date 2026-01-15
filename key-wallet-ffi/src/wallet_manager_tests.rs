@@ -33,6 +33,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -67,6 +68,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -141,9 +143,8 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
-        }
-        unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -202,36 +203,8 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
-        }
-        unsafe {
             wallet_manager::wallet_manager_free(manager);
-        }
-    }
-
-    #[test]
-    fn test_height_management() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
-        assert!(!manager.is_null());
-
-        // Get initial height
-        let height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
-        assert_eq!(height, 0);
-
-        // Update height
-        let success =
-            unsafe { wallet_manager::wallet_manager_update_height(manager, 100000, error) };
-        assert!(success);
-
-        // Verify height was updated
-        let height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
-        assert_eq!(height, 100000);
-
-        // Clean up
-        unsafe {
-            wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -266,6 +239,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -298,6 +272,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -349,9 +324,8 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
-        }
-        unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -410,9 +384,8 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
-        }
-        unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -455,6 +428,8 @@ mod tests {
             )
         };
         assert!(!success);
+
+        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -466,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wallet_manager_height_operations() {
+    fn test_wallet_manager_current_height() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
@@ -474,12 +449,17 @@ mod tests {
         assert!(!manager.is_null());
 
         // Get initial height
-        let _height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
+        let height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
+        assert_eq!(height, 0);
 
         // Update height
         let new_height = 12345;
         unsafe {
-            wallet_manager::wallet_manager_update_height(manager, new_height, error);
+            let manager_ref = &*manager;
+            manager_ref.runtime.block_on(async {
+                let mut manager_guard = manager_ref.manager.write().await;
+                manager_guard.update_height(new_height);
+            });
         }
 
         // Get updated height
@@ -490,6 +470,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -609,6 +590,7 @@ mod tests {
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -768,6 +750,7 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -813,69 +796,70 @@ mod tests {
         let wallet_id_slice = unsafe { slice::from_raw_parts(wallet_ids, 32) };
 
         // Test getting the wallet
-        let wallet = unsafe {
+        let valid_wallet = unsafe {
             wallet_manager::wallet_manager_get_wallet(manager, wallet_id_slice.as_ptr(), error)
         };
-        assert!(!wallet.is_null());
+        assert!(!valid_wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Test getting the managed wallet info
-        let wallet_info = unsafe {
+        let valid_wallet_info = unsafe {
             wallet_manager::wallet_manager_get_managed_wallet_info(
                 manager,
                 wallet_id_slice.as_ptr(),
                 error,
             )
         };
-        assert!(!wallet_info.is_null());
+        assert!(!valid_wallet_info.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Test with invalid wallet ID (all zeros)
         let invalid_wallet_id = [0u8; 32];
 
-        let wallet = unsafe {
+        let invalid_wallet = unsafe {
             wallet_manager::wallet_manager_get_wallet(manager, invalid_wallet_id.as_ptr(), error)
         };
-        assert!(wallet.is_null());
+        assert!(invalid_wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::NotFound);
 
-        let wallet_info = unsafe {
+        let invalid_wallet_info = unsafe {
             wallet_manager::wallet_manager_get_managed_wallet_info(
                 manager,
                 invalid_wallet_id.as_ptr(),
                 error,
             )
         };
-        assert!(wallet_info.is_null());
+        assert!(invalid_wallet_info.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::NotFound);
 
         // Test with null manager
-        let wallet = unsafe {
+        let null_wallet = unsafe {
             wallet_manager::wallet_manager_get_wallet(ptr::null(), wallet_id_slice.as_ptr(), error)
         };
-        assert!(wallet.is_null());
+        assert!(null_wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
-        let wallet_info = unsafe {
+        let null_wallet_info = unsafe {
             wallet_manager::wallet_manager_get_managed_wallet_info(
                 ptr::null(),
                 wallet_id_slice.as_ptr(),
                 error,
             )
         };
-        assert!(wallet_info.is_null());
+        assert!(null_wallet_info.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Clean up
         unsafe {
-            // Free the wallet (cast from const to mut for free)
-            wallet::wallet_free(wallet as *mut _);
-            // Free the managed wallet info
-            crate::managed_wallet::managed_wallet_info_free(wallet_info);
+            // Free the valid wallet (cast from const to mut for free)
+            wallet::wallet_free(valid_wallet as *mut _);
+            // Free the valid managed wallet info
+            crate::managed_wallet::managed_wallet_info_free(valid_wallet_info);
             // Free the wallet IDs
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             // Free the manager
             wallet_manager::wallet_manager_free(manager);
+            (*error).free_message();
         }
     }
 
@@ -1073,6 +1057,7 @@ mod tests {
             crate::wallet_manager::wallet_manager_free(manager);
             crate::wallet_manager::wallet_manager_free(manager4);
             crate::wallet_manager::wallet_manager_free(manager5);
+            (*error).free_message();
         }
     }
 
@@ -1167,11 +1152,13 @@ mod tests {
 
         // Clean up
         unsafe {
+            wallet::wallet_free(wallet as *mut _);
             crate::wallet_manager::wallet_manager_free_wallet_bytes(
                 wallet_bytes_out,
                 wallet_bytes_len_out,
             );
             crate::wallet_manager::wallet_manager_free(manager2);
+            (*error).free_message();
         }
     }
 }
