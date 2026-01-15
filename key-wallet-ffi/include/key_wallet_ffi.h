@@ -4108,6 +4108,17 @@ bool wallet_manager_process_transaction(FFIWalletManager *manager,
 ;
 
 /*
+ Get the network for this wallet manager
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The caller must ensure all pointers remain valid for the duration of this call
+ */
+ FFINetwork wallet_manager_network(const FFIWalletManager *manager, FFIError *error) ;
+
+/*
  Get current height for a network
 
  # Safety
