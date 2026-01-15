@@ -459,6 +459,19 @@ impl From<FFIAddressType> for key_wallet::AddressType {
     }
 }
 
+/// FFI specification for a PlatformPayment account to create
+///
+/// PlatformPayment accounts (DIP-17) use the derivation path:
+/// `m/9'/coin_type'/17'/account'/key_class'/index`
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FFIPlatformPaymentAccountSpec {
+    /// Account index (hardened) - the account' level in the derivation path
+    pub account: u32,
+    /// Key class (hardened) - defaults to 0', 1' is reserved for change-like segregation
+    pub key_class: u32,
+}
+
 /// FFI Account Creation Option Type
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -498,6 +511,10 @@ pub struct FFIWalletAccountCreationOptions {
     pub topup_indices: *const u32,
     pub topup_count: usize,
 
+    /// Array of PlatformPayment account specs to create
+    pub platform_payment_specs: *const FFIPlatformPaymentAccountSpec,
+    pub platform_payment_count: usize,
+
     /// For SpecificAccounts: Additional special account types to create
     /// (e.g., IdentityRegistration, ProviderKeys, etc.)
     /// This is an array of FFIAccountType values
@@ -518,6 +535,8 @@ impl FFIWalletAccountCreationOptions {
             coinjoin_count: 0,
             topup_indices: std::ptr::null(),
             topup_count: 0,
+            platform_payment_specs: std::ptr::null(),
+            platform_payment_count: 0,
             special_account_types: std::ptr::null(),
             special_account_types_count: 0,
         }
@@ -550,6 +569,8 @@ impl FFIWalletAccountCreationOptions {
                 WalletAccountCreationOptions::BIP44AccountsOnly(bip44_set)
             }
             FFIAccountCreationOptionType::AllAccounts => {
+                use key_wallet::wallet::initialization::PlatformPaymentAccountSpec;
+
                 let mut bip44_set = BTreeSet::new();
                 if !self.bip44_indices.is_null() && self.bip44_count > 0 {
                     let slice = std::slice::from_raw_parts(self.bip44_indices, self.bip44_count);
@@ -573,6 +594,20 @@ impl FFIWalletAccountCreationOptions {
                 if !self.topup_indices.is_null() && self.topup_count > 0 {
                     let slice = std::slice::from_raw_parts(self.topup_indices, self.topup_count);
                     topup_set.extend(slice.iter().copied());
+                }
+
+                let mut platform_payment_set = BTreeSet::new();
+                if !self.platform_payment_specs.is_null() && self.platform_payment_count > 0 {
+                    let slice = std::slice::from_raw_parts(
+                        self.platform_payment_specs,
+                        self.platform_payment_count,
+                    );
+                    for spec in slice {
+                        platform_payment_set.insert(PlatformPaymentAccountSpec {
+                            account: spec.account,
+                            key_class: spec.key_class,
+                        });
+                    }
                 }
 
                 WalletAccountCreationOptions::AllAccounts(
@@ -580,9 +615,12 @@ impl FFIWalletAccountCreationOptions {
                     bip32_set,
                     coinjoin_set,
                     topup_set,
+                    platform_payment_set,
                 )
             }
             FFIAccountCreationOptionType::SpecificAccounts => {
+                use key_wallet::wallet::initialization::PlatformPaymentAccountSpec;
+
                 let mut bip44_set = BTreeSet::new();
                 if !self.bip44_indices.is_null() && self.bip44_count > 0 {
                     let slice = std::slice::from_raw_parts(self.bip44_indices, self.bip44_count);
@@ -606,6 +644,20 @@ impl FFIWalletAccountCreationOptions {
                 if !self.topup_indices.is_null() && self.topup_count > 0 {
                     let slice = std::slice::from_raw_parts(self.topup_indices, self.topup_count);
                     topup_set.extend(slice.iter().copied());
+                }
+
+                let mut platform_payment_set = BTreeSet::new();
+                if !self.platform_payment_specs.is_null() && self.platform_payment_count > 0 {
+                    let slice = std::slice::from_raw_parts(
+                        self.platform_payment_specs,
+                        self.platform_payment_count,
+                    );
+                    for spec in slice {
+                        platform_payment_set.insert(PlatformPaymentAccountSpec {
+                            account: spec.account,
+                            key_class: spec.key_class,
+                        });
+                    }
                 }
 
                 // Convert special account types if provided
@@ -630,6 +682,7 @@ impl FFIWalletAccountCreationOptions {
                     bip32_set,
                     coinjoin_set,
                     topup_set,
+                    platform_payment_set,
                     special_accounts,
                 )
             }

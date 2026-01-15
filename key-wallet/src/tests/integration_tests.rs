@@ -129,6 +129,7 @@ fn test_wallet_with_all_account_types() {
             [0].into(),
             [0, 1].into(),
             [0, 1].into(),
+            std::collections::BTreeSet::new(), // PlatformPayment accounts
         ),
     )
     .unwrap();

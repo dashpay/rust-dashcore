@@ -167,6 +167,15 @@ impl Wallet {
 
                 // Create all special purpose accounts
                 self.create_special_purpose_accounts()?;
+
+                // Create default PlatformPayment account (account=0, key_class=0)
+                self.add_account(
+                    AccountType::PlatformPayment {
+                        account: 0,
+                        key_class: 0,
+                    },
+                    None,
+                )?;
             }
 
             WalletAccountCreationOptions::AllAccounts(
@@ -174,6 +183,7 @@ impl Wallet {
                 bip32_indices,
                 coinjoin_indices,
                 top_up_accounts,
+                platform_payment_specs,
             ) => {
                 // Create specified BIP44 accounts
                 for index in bip44_indices {
@@ -186,7 +196,7 @@ impl Wallet {
                     )?;
                 }
 
-                // Create specified BIP44 accounts
+                // Create specified BIP32 accounts
                 for index in bip32_indices {
                     self.add_account(
                         AccountType::Standard {
@@ -207,11 +217,22 @@ impl Wallet {
                     )?;
                 }
 
-                // Create specified CoinJoin accounts
+                // Create specified IdentityTopUp accounts
                 for registration_index in top_up_accounts {
                     self.add_account(
                         AccountType::IdentityTopUp {
                             registration_index,
+                        },
+                        None,
+                    )?;
+                }
+
+                // Create specified PlatformPayment accounts
+                for spec in platform_payment_specs {
+                    self.add_account(
+                        AccountType::PlatformPayment {
+                            account: spec.account,
+                            key_class: spec.key_class,
                         },
                         None,
                     )?;
@@ -239,6 +260,7 @@ impl Wallet {
                 bip32_indices,
                 coinjoin_indices,
                 topup_indices,
+                platform_payment_specs,
                 special_accounts,
             ) => {
                 // Create specified BIP44 accounts
@@ -278,6 +300,17 @@ impl Wallet {
                     self.add_account(
                         AccountType::IdentityTopUp {
                             registration_index,
+                        },
+                        None,
+                    )?;
+                }
+
+                // Create specified PlatformPayment accounts
+                for spec in platform_payment_specs {
+                    self.add_account(
+                        AccountType::PlatformPayment {
+                            account: spec.account,
+                            key_class: spec.key_class,
                         },
                         None,
                     )?;
@@ -340,6 +373,15 @@ impl Wallet {
 
                 // Create all special purpose accounts
                 self.create_special_purpose_accounts_with_passphrase(passphrase)?;
+
+                // Create default PlatformPayment account (account=0, key_class=0)
+                self.add_account_with_passphrase(
+                    AccountType::PlatformPayment {
+                        account: 0,
+                        key_class: 0,
+                    },
+                    passphrase,
+                )?;
             }
 
             WalletAccountCreationOptions::AllAccounts(
@@ -347,6 +389,7 @@ impl Wallet {
                 bip32_indices,
                 coinjoin_indices,
                 top_up_accounts,
+                platform_payment_specs,
             ) => {
                 // Create specified BIP44 accounts
                 for index in bip44_indices {
@@ -380,11 +423,22 @@ impl Wallet {
                     )?;
                 }
 
-                // Create specified CoinJoin accounts
+                // Create specified IdentityTopUp accounts
                 for registration_index in top_up_accounts {
                     self.add_account_with_passphrase(
                         AccountType::IdentityTopUp {
                             registration_index,
+                        },
+                        passphrase,
+                    )?;
+                }
+
+                // Create specified PlatformPayment accounts
+                for spec in platform_payment_specs {
+                    self.add_account_with_passphrase(
+                        AccountType::PlatformPayment {
+                            account: spec.account,
+                            key_class: spec.key_class,
                         },
                         passphrase,
                     )?;
@@ -412,6 +466,7 @@ impl Wallet {
                 bip32_indices,
                 coinjoin_indices,
                 topup_indices,
+                platform_payment_specs,
                 special_accounts,
             ) => {
                 // Create specified BIP44 accounts
@@ -451,6 +506,17 @@ impl Wallet {
                     self.add_account_with_passphrase(
                         AccountType::IdentityTopUp {
                             registration_index,
+                        },
+                        passphrase,
+                    )?;
+                }
+
+                // Create specified PlatformPayment accounts
+                for spec in platform_payment_specs {
+                    self.add_account_with_passphrase(
+                        AccountType::PlatformPayment {
+                            account: spec.account,
+                            key_class: spec.key_class,
                         },
                         passphrase,
                     )?;

@@ -26,6 +26,30 @@ pub type WalletAccountCreationCoinjoinAccounts = BTreeSet<u32>;
 /// Set of identity top-up account registration indices to create
 pub type WalletAccountCreationTopUpAccounts = BTreeSet<u32>;
 
+/// Specification for a PlatformPayment account to create
+///
+/// PlatformPayment accounts (DIP-17) use the derivation path:
+/// `m/9'/coin_type'/17'/account'/key_class'/index`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PlatformPaymentAccountSpec {
+    /// Account index (hardened) - the account' level in the derivation path
+    pub account: u32,
+    /// Key class (hardened) - defaults to 0', 1' is reserved for change-like segregation
+    pub key_class: u32,
+}
+
+impl Default for PlatformPaymentAccountSpec {
+    fn default() -> Self {
+        Self {
+            account: 0,
+            key_class: 0,
+        }
+    }
+}
+
+/// Set of PlatformPayment account specs to create
+pub type WalletAccountCreationPlatformPaymentAccounts = BTreeSet<PlatformPaymentAccountSpec>;
+
 /// Options for specifying which accounts to create when initializing a wallet
 #[derive(Debug, Clone, Default)]
 pub enum WalletAccountCreationOptions {
@@ -42,11 +66,13 @@ pub enum WalletAccountCreationOptions {
     /// * Second parameter: Set of BIP32 account indices to create
     /// * Third parameter: Set of CoinJoin account indices to create
     /// * Fourth parameter: Set of identity top-up registration indices to create
+    /// * Fifth parameter: Set of PlatformPayment account specs to create
     AllAccounts(
         WalletAccountCreationBIP44Accounts,
         WalletAccountCreationBIP32Accounts,
         WalletAccountCreationCoinjoinAccounts,
         WalletAccountCreationTopUpAccounts,
+        WalletAccountCreationPlatformPaymentAccounts,
     ),
 
     /// Create only BIP44 accounts (no CoinJoin or special accounts), with optional
@@ -63,12 +89,14 @@ pub enum WalletAccountCreationOptions {
     /// * Second: Set of BIP32 account indices
     /// * Third: Set of CoinJoin account indices
     /// * Fourth: Set of identity top-up registration indices
-    /// * Fifth: Additional special account type to create (e.g., IdentityRegistration)
+    /// * Fifth: Set of PlatformPayment account specs to create
+    /// * Sixth: Additional special account types to create (e.g., IdentityRegistration)
     SpecificAccounts(
         WalletAccountCreationBIP44Accounts,
         WalletAccountCreationBIP32Accounts,
         WalletAccountCreationCoinjoinAccounts,
         WalletAccountCreationTopUpAccounts,
+        WalletAccountCreationPlatformPaymentAccounts,
         Option<Vec<AccountType>>,
     ),
 

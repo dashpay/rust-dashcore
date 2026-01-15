@@ -389,6 +389,8 @@ mod tests {
             coinjoin_count: 0,
             topup_indices: ptr::null(),
             topup_count: 0,
+            platform_payment_specs: ptr::null(),
+            platform_payment_count: 0,
             special_account_types: ptr::null(),
             special_account_types_count: 0,
         };
