@@ -26,11 +26,12 @@ mod tests {
         assert!(result.is_ok(), "ChainLock processing should succeed");
 
         // Verify it was stored
-        assert!(chainlock_manager.has_chain_lock_at_height(1000));
+        assert!(chainlock_manager.has_chain_lock_at_height(1000).await);
 
         // Verify we can retrieve it
         let entry = chainlock_manager
             .get_chain_lock_by_height(1000)
+            .await
             .expect("ChainLock should be retrievable after storing");
         assert_eq!(entry.chain_lock.block_height, 1000);
         assert_eq!(entry.chain_lock.block_hash, chainlock.block_hash);
@@ -58,11 +59,11 @@ mod tests {
             .expect("Second ChainLock should process successfully");
 
         // Verify both are stored
-        assert!(chainlock_manager.has_chain_lock_at_height(1000));
-        assert!(chainlock_manager.has_chain_lock_at_height(2000));
+        assert!(chainlock_manager.has_chain_lock_at_height(1000).await);
+        assert!(chainlock_manager.has_chain_lock_at_height(2000).await);
 
         // Get highest ChainLock
-        let highest = chainlock_manager.get_highest_chain_locked_height();
+        let highest = chainlock_manager.get_highest_chain_locked_height().await;
         assert_eq!(highest, Some(2000));
     }
 
@@ -85,9 +86,9 @@ mod tests {
         }
 
         // Test reorganization protection
-        assert!(!chainlock_manager.would_violate_chain_lock(500, 999)); // Before ChainLocks - OK
-        assert!(chainlock_manager.would_violate_chain_lock(1500, 2500)); // Would reorg ChainLock at 2000
-        assert!(!chainlock_manager.would_violate_chain_lock(3001, 4000)); // After ChainLocks - OK
+        assert!(!chainlock_manager.would_violate_chain_lock(500, 999).await); // Before ChainLocks - OK
+        assert!(chainlock_manager.would_violate_chain_lock(1500, 2500).await); // Would reorg ChainLock at 2000
+        assert!(!chainlock_manager.would_violate_chain_lock(3001, 4000).await); // After ChainLocks - OK
     }
 
     #[tokio::test]
@@ -99,14 +100,14 @@ mod tests {
         let chain_lock2 = ChainLock::dummy(200);
         let chain_lock3 = ChainLock::dummy(300);
 
-        chainlock_manager.queue_pending_chainlock(chain_lock1).unwrap();
-        chainlock_manager.queue_pending_chainlock(chain_lock2).unwrap();
-        chainlock_manager.queue_pending_chainlock(chain_lock3).unwrap();
+        chainlock_manager.queue_pending_chainlock(chain_lock1).await;
+        chainlock_manager.queue_pending_chainlock(chain_lock2).await;
+        chainlock_manager.queue_pending_chainlock(chain_lock3).await;
 
         // Verify all are queued
         {
             // Note: pending_chainlocks is private, can't access directly
-            let pending = chainlock_manager.pending_chainlocks.read().unwrap();
+            let pending = chainlock_manager.pending_chainlocks.read().await;
             assert_eq!(pending.len(), 3);
             assert_eq!(pending[0].block_height, 100);
             assert_eq!(pending[1].block_height, 200);
@@ -132,13 +133,13 @@ mod tests {
             .await;
 
         // Test cache operations
-        assert!(chainlock_manager.has_chain_lock_at_height(0));
+        assert!(chainlock_manager.has_chain_lock_at_height(0).await);
 
-        let entry = chainlock_manager.get_chain_lock_by_height(0);
+        let entry = chainlock_manager.get_chain_lock_by_height(0).await;
         assert!(entry.is_some());
         assert_eq!(entry.unwrap().chain_lock.block_height, 0);
 
-        let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&header.block_hash());
+        let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&header.block_hash()).await;
         assert!(entry_by_hash.is_some());
         assert_eq!(entry_by_hash.unwrap().chain_lock.block_height, 0);
     }

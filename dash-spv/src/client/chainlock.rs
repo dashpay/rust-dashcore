@@ -129,12 +129,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Update ChainLock validation with masternode engine after sync completes.
     /// This should be called when masternode sync finishes to enable full validation.
     /// Returns true if the engine was successfully set.
-    pub fn update_chainlock_validation(&self) -> crate::Result<bool> {
+    pub async fn update_chainlock_validation(&self) -> crate::Result<bool> {
         // Check if masternode sync has an engine available
         if let Some(engine) = self.sync_manager.get_masternode_engine() {
             // Clone the engine for the ChainLockManager
             let engine_arc = Arc::new(engine.clone());
-            self.chainlock_manager.set_masternode_engine(engine_arc);
+            self.chainlock_manager.set_masternode_engine(engine_arc).await;
 
             tracing::info!("Updated ChainLockManager with masternode engine for full validation");
 

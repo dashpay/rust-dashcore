@@ -97,9 +97,6 @@ pub enum StorageError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
-    #[error("Lock poisoned: {0}")]
-    LockPoisoned(String),
-
     #[error("Data directory locked: {0}")]
     DirectoryLocked(String),
 }

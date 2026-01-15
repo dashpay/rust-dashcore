@@ -376,7 +376,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             // Check if masternode sync has completed and update ChainLock validation
             if !masternode_engine_updated && self.config.enable_masternodes {
                 // Check if we have a masternode engine available now
-                if let Ok(has_engine) = self.update_chainlock_validation() {
+                if let Ok(has_engine) = self.update_chainlock_validation().await {
                     if has_engine {
                         masternode_engine_updated = true;
                         tracing::info!(
