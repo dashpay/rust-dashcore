@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 242
+**Total Functions**: 243
 
 ## Table of Contents
 
@@ -42,7 +42,7 @@ Functions: 3
 
 ### Wallet Manager
 
-Functions: 18
+Functions: 19
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -62,6 +62,7 @@ Functions: 18
 | `wallet_manager_get_wallet_balance` | Get wallet balance  Returns the confirmed and unconfirmed balance for a... | wallet_manager |
 | `wallet_manager_get_wallet_ids` | Get wallet IDs  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
 | `wallet_manager_import_wallet_from_bytes` | No description | wallet_manager |
+| `wallet_manager_network` | Get the network for this wallet manager  # Safety  - `manager` must be a... | wallet_manager |
 | `wallet_manager_process_transaction` | Process a transaction through all wallets  Checks a transaction against all... | wallet_manager |
 | `wallet_manager_wallet_count` | Get wallet count  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
 
@@ -645,6 +646,22 @@ Get wallet IDs  # Safety  - `manager` must be a valid pointer to an FFIWalletMan
 ```c
 wallet_manager_import_wallet_from_bytes(manager: *mut FFIWalletManager, wallet_bytes: *const u8, wallet_bytes_len: usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
 ```
+
+**Module:** `wallet_manager`
+
+---
+
+#### `wallet_manager_network`
+
+```c
+wallet_manager_network(manager: *const FFIWalletManager, error: *mut FFIError,) -> FFINetwork
+```
+
+**Description:**
+Get the network for this wallet manager  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+
+**Safety:**
+- `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
