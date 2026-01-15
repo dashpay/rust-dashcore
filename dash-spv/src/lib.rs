@@ -60,7 +60,6 @@
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
-pub mod bloom;
 pub mod chain;
 pub mod client;
 pub mod error;
