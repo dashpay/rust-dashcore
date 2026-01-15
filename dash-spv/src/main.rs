@@ -24,7 +24,6 @@ async fn main() {
                 dash_spv::Error::Storage(_) => 2,
                 dash_spv::Error::Validation(_) => 3,
                 dash_spv::Error::Config(_) => 4,
-                dash_spv::Error::Parse(_) => 5,
                 _ => 255,
             }
         } else {
