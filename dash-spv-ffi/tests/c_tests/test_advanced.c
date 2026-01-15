@@ -299,24 +299,8 @@ void test_callbacks_with_operations() {
     FFIDashSpvClient* client = dash_spv_ffi_client_new(config);
     TEST_ASSERT(client != NULL);
 
-    CallbackData callback_data = {0};
-
-    FFICallbacks callbacks = {0};
-    callbacks.on_progress = real_progress_callback;
-    callbacks.on_completion = real_completion_callback;
-    callbacks.on_data = NULL;
-    callbacks.user_data = &callback_data;
-
-    // Start sync operation
-    int32_t result = dash_spv_ffi_client_sync_to_tip(client, callbacks);
-
     // Wait a bit for callbacks
     usleep(100000); // 100ms
-
-    // Callbacks might or might not be called depending on network
-    printf("Progress callbacks: %d, Completion: %d\n",
-           callback_data.progress_count,
-           callback_data.completion_called);
 
     dash_spv_ffi_client_destroy(client);
     dash_spv_ffi_config_destroy(config);

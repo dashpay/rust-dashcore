@@ -38,11 +38,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting SPV client...");
     client.start().await?;
 
-    // Sync to the tip of the blockchain
-    println!("Syncing to blockchain tip...");
-    let progress = client.sync_to_tip().await?;
-    println!("Synced to height: {}", progress.header_height);
-
     // The wallet will automatically be notified of:
     // - New blocks via process_block()
     // - Mempool transactions via process_mempool_transaction()

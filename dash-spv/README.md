@@ -62,11 +62,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = DashSpvClient::new(config).await?;
     client.start().await?;
 
-    // Synchronize to tip
-    let progress = client.sync_to_tip().await?;
-    println!("Synced to height {}", progress.header_height);
+    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let shutdown_token = CancellationToken::new();
 
-    client.stop().await?;
+    client.run(command_receiver, shutdown_token).await?;
+    
     Ok(())
 }
 ```

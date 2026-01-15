@@ -323,35 +323,6 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
  int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client) ;
 
 /**
- * Sync the SPV client to the chain tip.
- *
- * # Safety
- *
- * This function is unsafe because:
- * - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
- * - `user_data` must satisfy thread safety requirements:
- *   - If non-null, it must point to data that is safe to access from multiple threads
- *   - The caller must ensure proper synchronization if the data is mutable
- *   - The data must remain valid for the entire duration of the sync operation
- * - `completion_callback` must be thread-safe and can be called from any thread
- *
- * # Parameters
- *
- * - `client`: Pointer to the SPV client
- * - `completion_callback`: Optional callback invoked on completion
- * - `user_data`: Optional user data pointer passed to callbacks
- *
- * # Returns
- *
- * 0 on success, error code on failure
- */
-
-int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
-                                        void (*completion_callback)(bool, const char*, void*),
-                                        void *user_data)
-;
-
-/**
  * Performs a test synchronization of the SPV client
  *
  * # Parameters
