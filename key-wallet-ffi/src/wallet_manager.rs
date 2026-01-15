@@ -816,6 +816,28 @@ pub unsafe extern "C" fn wallet_manager_update_height(
     true
 }
 
+/// Get the network for this wallet manager
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn wallet_manager_network(
+    manager: *const FFIWalletManager,
+    error: *mut FFIError,
+) -> FFINetwork {
+    if manager.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
+        return FFINetwork::Dash; // Default fallback
+    }
+
+    let manager_ref = &*manager;
+    FFIError::set_success(error);
+    manager_ref.network()
+}
+
 /// Get current height for a network
 ///
 /// # Safety
