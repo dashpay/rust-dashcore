@@ -1,5 +1,5 @@
-use dash_spv::client::config::MempoolStrategy;
 use dash_spv::types::{DetailedSyncProgress, MempoolRemovalReason, SyncStage};
+use dash_spv::MempoolStrategy;
 use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};

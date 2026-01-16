@@ -237,7 +237,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                         drop(state);
 
                         // Store in storage if persistence is enabled
-                        if self.config.persist_mempool {
+                        if self.config.persist_mempool() {
                             if let Err(e) =
                                 self.storage.store_mempool_transaction(&txid, &unconfirmed_tx).await
                             {
@@ -354,7 +354,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
 
                     // Check if we should fetch this transaction
                     if let Some(filter) = self.mempool_filter {
-                        if self.config.fetch_mempool_transactions
+                        if self.config.fetch_mempool_transactions()
                             && filter.should_fetch_transaction(&txid).await
                         {
                             tracing::info!("📥 Requesting transaction {}", txid);
@@ -366,7 +366,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                         } else {
                             tracing::debug!("Not fetching transaction {} (fetch_mempool_transactions={}, should_fetch={})",
                                 txid,
-                                self.config.fetch_mempool_transactions,
+                                self.config.fetch_mempool_transactions(),
                                 filter.should_fetch_transaction(&txid).await
                             );
                         }
@@ -416,7 +416,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
         &mut self,
         headers: &[dashcore::block::Header],
     ) -> Result<()> {
-        if !self.config.enable_filters {
+        if !self.config.enable_filters() {
             tracing::debug!(
                 "Filters not enabled, skipping post-sync filter requests for {} headers",
                 headers.len()

@@ -155,7 +155,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Get the network configuration.
     pub fn network(&self) -> dashcore::Network {
-        self.config.network
+        self.config.network()
     }
 
     /// Get access to storage manager (requires locking).
@@ -211,7 +211,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Reset in-memory chain state to a clean baseline for the current network
         {
             let mut state = self.state.write().await;
-            *state = ChainState::new_for_network(self.config.network);
+            *state = ChainState::new_for_network(self.config.network());
         }
 
         // Reset sync manager filter state (headers/filters progress trackers)
@@ -268,11 +268,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Update the client configuration.
     pub async fn update_config(&mut self, new_config: Config) -> Result<()> {
-        // Validate new configuration
-        new_config.validate().map_err(SpvError::Config)?;
-
         // Ensure network hasn't changed
-        if new_config.network != self.config.network {
+        if new_config.network() != self.config.network() {
             return Err(SpvError::Config("Cannot change network on running client".to_string()));
         }
 

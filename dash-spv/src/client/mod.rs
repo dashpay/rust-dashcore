@@ -30,14 +30,12 @@
 //!
 //! Never acquire locks in reverse order or deadlock will occur!
 
-// Existing extracted modules
-pub mod config;
 pub mod interface;
 pub mod message_handler;
 pub mod status_display;
 
-// New refactored modules
 mod chainlock;
+mod config;
 mod core;
 mod events;
 mod lifecycle;
@@ -48,7 +46,7 @@ mod sync_coordinator;
 mod transactions;
 
 // Re-export public types from extracted modules
-pub use config::Config;
+pub use config::{Config, ConfigBuilder, MempoolStrategy};
 pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
 
@@ -60,8 +58,8 @@ mod message_handler_test;
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, DashSpvClient};
-    use crate::client::config::MempoolStrategy;
+    use super::DashSpvClient;
+    use crate::client::config::{ConfigBuilder, MempoolStrategy};
     use crate::storage::DiskStorageManager;
     use crate::{test_utils::MockNetworkManager, types::UnconfirmedTransaction};
     use dashcore::{Address, Amount, Transaction, TxOut};
@@ -79,16 +77,20 @@ mod tests {
 
     #[tokio::test]
     async fn client_exposes_shared_wallet_manager() {
-        let config = Config::mainnet()
-            .without_filters()
-            .without_masternodes()
-            .with_mempool_tracking(MempoolStrategy::FetchAll)
-            .with_storage_path(TempDir::new().unwrap().path());
+        let config = ConfigBuilder::mainnet()
+            .enable_filters(false)
+            .enable_masternodes(false)
+            .enable_mempool_tracking(true)
+            .mempool_strategy(MempoolStrategy::FetchAll)
+            .storage_path(TempDir::new().unwrap().path())
+            .build()
+            .expect("Valid configuration");
 
         let network_manager = MockNetworkManager::new();
         let storage =
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
-        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let wallet =
+            Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
         let client = DashSpvClient::new(config, network_manager, storage, wallet)
             .await
@@ -105,27 +107,25 @@ mod tests {
         // This test validates the get_mempool_balance logic by directly testing
         // the balance calculation code using a mocked mempool state.
 
-        let config = Config::testnet()
-            .without_filters()
-            .without_masternodes()
-            .with_mempool_tracking(MempoolStrategy::FetchAll)
-            .with_storage_path(TempDir::new().unwrap().path());
+        let config = ConfigBuilder::testnet()
+            .enable_filters(false)
+            .enable_masternodes(false)
+            .enable_mempool_tracking(true)
+            .mempool_strategy(MempoolStrategy::FetchAll)
+            .storage_path(TempDir::new().unwrap().path())
+            .build()
+            .expect("Valid configuration");
 
         let network_manager = MockNetworkManager::new();
         let storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
-        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let wallet =
+            Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
-        let test_address = Address::dummy(config.network, 0);
+        let test_address = Address::dummy(config.network(), 0);
 
-        let mut client = DashSpvClient::new(config, network_manager, storage, wallet)
+        let client = DashSpvClient::new(config, network_manager, storage, wallet)
             .await
             .expect("client construction must succeed");
-
-        // Enable mempool tracking to initialize mempool_filter
-        client
-            .enable_mempool_tracking(crate::client::config::MempoolStrategy::BloomFilter)
-            .await
-            .expect("enable mempool tracking must succeed");
 
         // Create a transaction that sends 10 Dash to the test address
         let tx = Transaction {

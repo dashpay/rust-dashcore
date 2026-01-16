@@ -233,7 +233,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     // Update peer count with the latest network information.
                     sync_progress.peer_count = peer_count;
                     sync_progress.header_height = current_height;
-                    sync_progress.filter_sync_available = self.config.enable_filters;
+                    sync_progress.filter_sync_available = self.config.enable_filters();
 
                     let sync_stage =
                         Self::map_phase_to_stage(&phase_snapshot, &sync_progress, peer_best);
@@ -306,7 +306,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     let peer_count = self.network.peer_count() as u32;
                     sync_progress.peer_count = peer_count;
                     sync_progress.header_height = abs_header_height;
-                    sync_progress.filter_sync_available = self.config.enable_filters;
+                    sync_progress.filter_sync_available = self.config.enable_filters();
 
                     let filters_downloaded = sync_progress.filters_downloaded;
                     let current_phase_name = phase_snapshot.name().to_string();
@@ -375,7 +375,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
 
             // Check if masternode sync has completed and update ChainLock validation
-            if !masternode_engine_updated && self.config.enable_masternodes {
+            if !masternode_engine_updated && self.config.enable_masternodes() {
                 // Check if we have a masternode engine available now
                 if let Ok(has_engine) = self.update_chainlock_validation() {
                     if has_engine {

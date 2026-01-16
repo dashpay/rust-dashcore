@@ -10,8 +10,13 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinSet;
 use tokio::time;
 
-use crate::client::config::MempoolStrategy;
-use crate::client::Config;
+use crate::Config;
+use crate::MempoolStrategy;
+use dashcore::network::constants::ServiceFlags;
+use dashcore::network::message::NetworkMessage;
+use dashcore::Network;
+use tokio_util::sync::CancellationToken;
+
 use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
@@ -24,11 +29,7 @@ use crate::network::reputation::{
 use crate::network::{HandshakeManager, NetworkManager, Peer};
 use crate::types::PeerInfo;
 use async_trait::async_trait;
-use dashcore::network::constants::ServiceFlags;
-use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::CompressionState;
-use dashcore::Network;
-use tokio_util::sync::CancellationToken;
 
 /// Peer network manager
 pub struct PeerNetworkManager {
@@ -81,8 +82,8 @@ impl PeerNetworkManager {
         let (message_tx, message_rx) = mpsc::channel(1000);
 
         let discovery = DnsDiscovery::new().await?;
-        let data_dir = config.storage_path.clone();
-        let peer_store = PeerStore::new(config.network, data_dir.clone());
+        let data_dir = config.storage_path().clone();
+        let peer_store = PeerStore::new(config.network(), data_dir.clone());
 
         let reputation_manager = Arc::new(PeerReputationManager::new());
 
@@ -103,7 +104,7 @@ impl PeerNetworkManager {
         }
 
         // Determine exclusive mode: either explicitly requested or peers were provided
-        let exclusive_mode = config.restrict_to_configured_peers || !config.peers.is_empty();
+        let exclusive_mode = config.restrict_to_configured_peers() || !config.peers().is_empty();
 
         Ok(Self {
             pool: Arc::new(PeerPool::new()),
@@ -111,19 +112,19 @@ impl PeerNetworkManager {
             addrv2_handler: Arc::new(AddrV2Handler::new()),
             peer_store: Arc::new(peer_store),
             reputation_manager,
-            network: config.network,
+            network: config.network(),
             shutdown_token: CancellationToken::new(),
             message_tx,
             message_rx: Arc::new(Mutex::new(message_rx)),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
-            initial_peers: config.peers.clone(),
+            initial_peers: config.peers().clone(),
             peer_search_started: Arc::new(Mutex::new(None)),
             current_sync_peer: Arc::new(Mutex::new(None)),
             data_dir,
-            mempool_strategy: config.mempool_strategy,
+            mempool_strategy: config.mempool_strategy(),
             last_message_peer: Arc::new(Mutex::new(None)),
             peers_sent_headers2: Arc::new(Mutex::new(HashSet::new())),
-            user_agent: config.user_agent.clone(),
+            user_agent: config.user_agent().clone(),
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),

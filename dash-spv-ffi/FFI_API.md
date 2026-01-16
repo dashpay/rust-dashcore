@@ -52,7 +52,7 @@ Functions: 25
 | `dash_spv_ffi_config_set_filter_load` | Sets whether to load bloom filters  # Safety - `config` must be a valid... | config |
 | `dash_spv_ffi_config_set_masternode_sync_enabled` | Enables or disables masternode synchronization  # Safety - `config` must be... | config |
 | `dash_spv_ffi_config_set_max_mempool_transactions` | Sets the maximum number of mempool transactions to track  # Safety -... | config |
-| `dash_spv_ffi_config_set_max_peers` | Sets the maximum number of peers to connect to  # Safety - `config` must be... | config |
+| `dash_spv_ffi_config_builder_set_max_peers` | Sets the maximum number of peers to connect to  # Safety - `config` must be... | config |
 | `dash_spv_ffi_config_set_mempool_strategy` | Sets the mempool synchronization strategy  # Safety - `config` must be a... | config |
 | `dash_spv_ffi_config_set_mempool_tracking` | Enables or disables mempool tracking  # Safety - `config` must be a valid... | config |
 | `dash_spv_ffi_config_set_persist_mempool` | Sets whether to persist mempool state to disk  # Safety - `config` must be a... | config |
@@ -60,8 +60,8 @@ Functions: 25
 | `dash_spv_ffi_config_set_restrict_to_configured_peers` | Restrict connections strictly to configured peers (disable DNS discovery and... | config |
 | `dash_spv_ffi_config_set_start_from_height` | Sets the starting block height for synchronization  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_set_user_agent` | Sets the user agent string to advertise in the P2P handshake  # Safety -... | config |
-| `dash_spv_ffi_config_set_validation_mode` | Sets the validation mode for the SPV client  # Safety - `config` must be a... | config |
-| `dash_spv_ffi_config_set_worker_threads` | Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  #... | config |
+| `dash_spv_ffi_config_builder_set_validation_mode` | Sets the validation mode for the SPV client  # Safety - `config` must be a... | config |
+| `dash_spv_ffi_config_builder_set_worker_threads` | Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  #... | config |
 | `dash_spv_ffi_config_testnet` | No description | config |
 
 ### Synchronization
@@ -440,10 +440,10 @@ Sets the maximum number of mempool transactions to track  # Safety - `config` mu
 
 ---
 
-#### `dash_spv_ffi_config_set_max_peers`
+#### `dash_spv_ffi_config_builder_set_max_peers`
 
 ```c
-dash_spv_ffi_config_set_max_peers(config: *mut FFIClientConfig, max_peers: u32,) -> i32
+dash_spv_ffi_config_builder_set_max_peers(config: *mut FFIClientConfig, max_peers: u32,) -> i32
 ```
 
 **Description:**
@@ -568,10 +568,10 @@ Sets the user agent string to advertise in the P2P handshake  # Safety - `config
 
 ---
 
-#### `dash_spv_ffi_config_set_validation_mode`
+#### `dash_spv_ffi_config_builder_set_validation_mode`
 
 ```c
-dash_spv_ffi_config_set_validation_mode(config: *mut FFIClientConfig, mode: FFIValidationMode,) -> i32
+dash_spv_ffi_config_builder_set_validation_mode(config: *mut FFIClientConfig, mode: FFIValidationMode,) -> i32
 ```
 
 **Description:**
@@ -584,10 +584,10 @@ Sets the validation mode for the SPV client  # Safety - `config` must be a valid
 
 ---
 
-#### `dash_spv_ffi_config_set_worker_threads`
+#### `dash_spv_ffi_config_builder_set_worker_threads`
 
 ```c
-dash_spv_ffi_config_set_worker_threads(config: *mut FFIClientConfig, threads: u32,) -> i32
+dash_spv_ffi_config_builder_set_worker_threads(config: *mut FFIClientConfig, threads: u32,) -> i32
 ```
 
 **Description:**

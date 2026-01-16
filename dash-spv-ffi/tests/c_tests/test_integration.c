@@ -59,8 +59,8 @@ void test_full_workflow() {
 
     // Configure client
     dash_spv_ffi_config_set_data_dir(ctx.config, "/tmp/dash-spv-integration");
-    dash_spv_ffi_config_set_validation_mode(ctx.config, FFIValidationMode_Basic);
-    dash_spv_ffi_config_set_max_peers(ctx.config, 8);
+    dash_spv_ffi_config_builder_set_validation_mode(ctx.config, FFIValidationMode_Basic);
+    dash_spv_ffi_config_builder_set_max_peers(ctx.config, 8);
 
     // Add some test peers
     dash_spv_ffi_config_add_peer(ctx.config, "127.0.0.1:19999");

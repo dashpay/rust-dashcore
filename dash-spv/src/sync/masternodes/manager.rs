@@ -54,12 +54,12 @@ pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
 impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
     /// Create a new masternode sync manager.
     pub fn new(config: &Config) -> Self {
-        let (engine, mnlist_diffs) = if config.enable_masternodes {
+        let (engine, mnlist_diffs) = if config.enable_masternodes() {
             // Try to load embedded MNListDiff data for faster initial sync
-            if let Some(embedded) = super::embedded_data::get_embedded_diff(config.network) {
+            if let Some(embedded) = super::embedded_data::get_embedded_diff(config.network()) {
                 tracing::info!(
                     "📦 Using embedded MNListDiff for {} - starting from height {}",
-                    config.network,
+                    config.network(),
                     embedded.target_height
                 );
 
@@ -67,7 +67,7 @@ impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
                 match MasternodeListEngine::initialize_with_diff_to_height(
                     embedded.diff.clone(),
                     embedded.target_height,
-                    config.network,
+                    config.network(),
                 ) {
                     Ok(engine) => {
                         // Store the embedded diff in our cache
@@ -80,9 +80,10 @@ impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
                             "Failed to initialize engine with embedded diff: {}. Falling back to default.",
                             e
                         );
-                        let mut engine = MasternodeListEngine::default_for_network(config.network);
+                        let mut engine =
+                            MasternodeListEngine::default_for_network(config.network());
                         // Feed genesis block hash at height 0
-                        if let Some(genesis_hash) = config.network.known_genesis_block_hash() {
+                        if let Some(genesis_hash) = config.network().known_genesis_block_hash() {
                             engine.feed_block_height(0, genesis_hash);
                         }
                         (Some(engine), HashMap::new())
@@ -91,11 +92,11 @@ impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
             } else {
                 tracing::info!(
                     "No embedded MNListDiff available for {} - starting from genesis",
-                    config.network
+                    config.network()
                 );
-                let mut engine = MasternodeListEngine::default_for_network(config.network);
+                let mut engine = MasternodeListEngine::default_for_network(config.network());
                 // Feed genesis block hash at height 0
-                if let Some(genesis_hash) = config.network.known_genesis_block_hash() {
+                if let Some(genesis_hash) = config.network().known_genesis_block_hash() {
                     engine.feed_block_height(0, genesis_hash);
                 }
                 (Some(engine), HashMap::new())
@@ -194,7 +195,7 @@ impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
         storage: &S,
     ) -> Result<u32, String> {
         // Special case: Handle genesis block which isn't stored when syncing from checkpoints
-        if let Some(genesis_hash) = self.config.network.known_genesis_block_hash() {
+        if let Some(genesis_hash) = self.config.network().known_genesis_block_hash() {
             if *block_hash == genesis_hash {
                 return Ok(0);
             }
@@ -408,7 +409,7 @@ impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
         } else {
             // First time - use genesis block
             let genesis_hash =
-                self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                self.config.network().known_genesis_block_hash().ok_or_else(|| {
                     SyncError::InvalidState("Genesis hash not available".to_string())
                 })?;
             tracing::debug!("Using genesis block as base: {}", genesis_hash);
@@ -523,7 +524,7 @@ impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
                         {
                             last_qrinfo_hash
                         } else {
-                            self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                            self.config.network().known_genesis_block_hash().ok_or_else(|| {
                                 SyncError::InvalidState("Genesis hash not available".to_string())
                             })?
                         };

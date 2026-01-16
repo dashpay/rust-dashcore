@@ -55,11 +55,11 @@ void test_config_setters() {
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     // Test setting validation mode
-    result = dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode_Basic);
+    result = dash_spv_ffi_config_builder_set_validation_mode(config, FFIValidationMode_Basic);
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     // Test setting max peers
-    result = dash_spv_ffi_config_set_max_peers(config, 16);
+    result = dash_spv_ffi_config_builder_set_max_peers(config, 16);
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     // Test adding peers
@@ -222,8 +222,8 @@ void test_null_pointer_handling() {
 
     // Config functions
     TEST_ASSERT(dash_spv_ffi_config_set_data_dir(NULL, NULL) == FFIErrorCode_NullPointer);
-    TEST_ASSERT(dash_spv_ffi_config_set_validation_mode(NULL, FFIValidationMode_Basic) == FFIErrorCode_NullPointer);
-    TEST_ASSERT(dash_spv_ffi_config_set_max_peers(NULL, 10) == FFIErrorCode_NullPointer);
+    TEST_ASSERT(dash_spv_ffi_config_builder_set_validation_mode(NULL, FFIValidationMode_Basic) == FFIErrorCode_NullPointer);
+    TEST_ASSERT(dash_spv_ffi_config_builder_set_max_peers(NULL, 10) == FFIErrorCode_NullPointer);
     TEST_ASSERT(dash_spv_ffi_config_add_peer(NULL, NULL) == FFIErrorCode_NullPointer);
 
     // Client functions

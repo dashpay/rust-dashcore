@@ -33,11 +33,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         storage: S,
         wallet: Arc<RwLock<W>>,
     ) -> Result<Self> {
-        // Validate configuration
-        config.validate().map_err(SpvError::Config)?;
-
         // Initialize state for the network
-        let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
+        let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network())));
         let stats = Arc::new(RwLock::new(SpvStats::default()));
 
         // Wrap storage in Arc<Mutex>
@@ -102,18 +99,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.load_wallet_data().await?;
 
         // Initialize mempool filter if mempool tracking is enabled
-        if self.config.enable_mempool_tracking {
+        if self.config.enable_mempool_tracking() {
             // TODO: Get monitored addresses from wallet
             self.mempool_filter = Some(Arc::new(MempoolFilter::new(
-                self.config.mempool_strategy,
-                self.config.max_mempool_transactions,
+                self.config.mempool_strategy(),
+                self.config.max_mempool_transactions(),
                 self.mempool_state.clone(),
                 HashSet::new(), // Will be populated from wallet's monitored addresses
-                self.config.network,
+                self.config.network(),
             )));
 
             // Load mempool state from storage if persistence is enabled
-            if self.config.persist_mempool {
+            if self.config.persist_mempool() {
                 if let Some(state) = self
                     .storage
                     .lock()
@@ -128,7 +125,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // For sequential sync, filter processor is handled internally
-        if self.config.enable_filters && self.filter_processor.is_none() {
+        if self.config.enable_filters() && self.filter_processor.is_none() {
             tracing::info!("📊 Sequential sync mode: filter processing handled internally");
         }
 
@@ -226,9 +223,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Check if we should use a checkpoint instead of genesis
-        if let Some(start_height) = self.config.start_from_height {
+        if let Some(start_height) = self.config.start_from_height() {
             // Get checkpoints for this network
-            let checkpoints = match self.config.network {
+            let checkpoints = match self.config.network() {
                 dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
                 dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
                 _ => vec![],
@@ -284,7 +281,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         chain_state.init_from_checkpoint(
                             checkpoint.height,
                             checkpoint_header,
-                            self.config.network,
+                            self.config.network(),
                         );
 
                         // Clone the chain state for storage
@@ -327,18 +324,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Get the genesis block hash for this network
         let genesis_hash = self
             .config
-            .network
+            .network()
             .known_genesis_block_hash()
             .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
 
         tracing::info!(
             "Initializing genesis block for network {:?}: {}",
-            self.config.network,
+            self.config.network(),
             genesis_hash
         );
 
         let genesis_header =
-            dashcore::blockdata::constants::genesis_block(self.config.network).header;
+            dashcore::blockdata::constants::genesis_block(self.config.network()).header;
 
         // Verify the header produces the expected genesis hash
         let calculated_hash = genesis_header.block_hash();

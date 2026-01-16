@@ -80,8 +80,8 @@ dash_spv_ffi_config_destroy(config);
 - `dash_spv_ffi_config_mainnet()` - Create mainnet config
 - `dash_spv_ffi_config_testnet()` - Create testnet config
 - `dash_spv_ffi_config_set_data_dir(config, path)` - Set data directory
-- `dash_spv_ffi_config_set_validation_mode(config, mode)` - Set validation mode
-- `dash_spv_ffi_config_set_max_peers(config, max)` - Set maximum peers
+- `dash_spv_ffi_config_builder_set_validation_mode(config, mode)` - Set validation mode
+- `dash_spv_ffi_config_builder_set_max_peers(config, max)` - Set maximum peers
 - `dash_spv_ffi_config_add_peer(config, addr)` - Add a peer address. Accepts `"ip:port"`, `[ipv6]:port`, or IP-only (defaults to the network port).
 - `dash_spv_ffi_config_destroy(config)` - Free config memory
 

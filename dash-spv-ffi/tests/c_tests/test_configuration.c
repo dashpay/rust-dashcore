@@ -33,7 +33,7 @@ void test_worker_threads_basic() {
     TEST_ASSERT(config != NULL);
 
     // Test setting worker threads to 0 (auto mode)
-    int result = dash_spv_ffi_config_set_worker_threads(config, 0);
+    int result = dash_spv_ffi_config_builder_set_worker_threads(config, 0);
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     // Test setting specific worker thread counts
@@ -41,7 +41,7 @@ void test_worker_threads_basic() {
     size_t num_counts = sizeof(thread_counts) / sizeof(thread_counts[0]);
 
     for (size_t i = 0; i < num_counts; i++) {
-        result = dash_spv_ffi_config_set_worker_threads(config, thread_counts[i]);
+        result = dash_spv_ffi_config_builder_set_worker_threads(config, thread_counts[i]);
         TEST_ASSERT(result == FFIErrorCode_Success);
     }
 
@@ -53,7 +53,7 @@ void test_worker_threads_null_config() {
     TEST_START("test_worker_threads_null_config");
 
     // Test with null config pointer
-    int result = dash_spv_ffi_config_set_worker_threads(NULL, 4);
+    int result = dash_spv_ffi_config_builder_set_worker_threads(NULL, 4);
     TEST_ASSERT(result == FFIErrorCode_NullPointer);
 
     // Check error was set
@@ -71,15 +71,15 @@ void test_worker_threads_extreme_values() {
     TEST_ASSERT(config != NULL);
 
     // Test large worker thread count
-    int result = dash_spv_ffi_config_set_worker_threads(config, 1000);
+    int result = dash_spv_ffi_config_builder_set_worker_threads(config, 1000);
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     // Test maximum value
-    result = dash_spv_ffi_config_set_worker_threads(config, UINT32_MAX);
+    result = dash_spv_ffi_config_builder_set_worker_threads(config, UINT32_MAX);
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     // Test back to reasonable value
-    result = dash_spv_ffi_config_set_worker_threads(config, 4);
+    result = dash_spv_ffi_config_builder_set_worker_threads(config, 4);
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     dash_spv_ffi_config_destroy(config);
@@ -98,7 +98,7 @@ void test_worker_threads_with_client_creation() {
         TEST_ASSERT(config != NULL);
 
         // Set worker threads
-        int result = dash_spv_ffi_config_set_worker_threads(config, thread_counts[i]);
+        int result = dash_spv_ffi_config_builder_set_worker_threads(config, thread_counts[i]);
         TEST_ASSERT(result == FFIErrorCode_Success);
 
         // Set up config for client creation
@@ -107,7 +107,7 @@ void test_worker_threads_with_client_creation() {
         result = dash_spv_ffi_config_set_data_dir(config, temp_path);
         TEST_ASSERT(result == FFIErrorCode_Success);
 
-        result = dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode_None);
+        result = dash_spv_ffi_config_builder_set_validation_mode(config, FFIValidationMode_None);
         TEST_ASSERT(result == FFIErrorCode_Success);
 
         // Create client - should succeed regardless of worker thread count
@@ -141,7 +141,7 @@ void test_worker_threads_multiple_configs() {
 
     for (size_t i = 0; i < num_pairs; i++) {
         TEST_ASSERT(pairs[i].config != NULL);
-        int result = dash_spv_ffi_config_set_worker_threads(pairs[i].config, pairs[i].thread_count);
+        int result = dash_spv_ffi_config_builder_set_worker_threads(pairs[i].config, pairs[i].thread_count);
         TEST_ASSERT(result == FFIErrorCode_Success);
     }
 
@@ -161,7 +161,7 @@ void test_worker_threads_repeated_setting() {
 
     // Test repeated setting of worker threads
     for (int i = 0; i < 10; i++) {
-        int result = dash_spv_ffi_config_set_worker_threads(config, 4);
+        int result = dash_spv_ffi_config_builder_set_worker_threads(config, 4);
         TEST_ASSERT(result == FFIErrorCode_Success);
     }
 
@@ -170,7 +170,7 @@ void test_worker_threads_repeated_setting() {
     size_t sequence_len = sizeof(sequence) / sizeof(sequence[0]);
 
     for (size_t i = 0; i < sequence_len; i++) {
-        int result = dash_spv_ffi_config_set_worker_threads(config, sequence[i]);
+        int result = dash_spv_ffi_config_builder_set_worker_threads(config, sequence[i]);
         TEST_ASSERT(result == FFIErrorCode_Success);
     }
 
@@ -190,7 +190,7 @@ void test_worker_threads_performance() {
 
     for (int i = 0; i < num_calls; i++) {
         uint32_t thread_count = (i % 8) + 1; // 1-8 threads
-        int result = dash_spv_ffi_config_set_worker_threads(config, thread_count);
+        int result = dash_spv_ffi_config_builder_set_worker_threads(config, thread_count);
         TEST_ASSERT(result == FFIErrorCode_Success);
     }
 
@@ -219,11 +219,11 @@ void test_worker_threads_edge_cases() {
         TEST_ASSERT(config != NULL);
 
         // Set worker threads
-        int result = dash_spv_ffi_config_set_worker_threads(config, 2);
+        int result = dash_spv_ffi_config_builder_set_worker_threads(config, 2);
         TEST_ASSERT(result == FFIErrorCode_Success);
 
         // Test setting to 0 (auto)
-        result = dash_spv_ffi_config_set_worker_threads(config, 0);
+        result = dash_spv_ffi_config_builder_set_worker_threads(config, 0);
         TEST_ASSERT(result == FFIErrorCode_Success);
 
         dash_spv_ffi_config_destroy(config);
@@ -245,7 +245,7 @@ void test_worker_threads_memory_safety() {
         size_t num_counts = sizeof(counts) / sizeof(counts[0]);
 
         for (size_t i = 0; i < num_counts; i++) {
-            int result = dash_spv_ffi_config_set_worker_threads(config, counts[i]);
+            int result = dash_spv_ffi_config_builder_set_worker_threads(config, counts[i]);
             TEST_ASSERT(result == FFIErrorCode_Success);
         }
 
@@ -256,7 +256,7 @@ void test_worker_threads_memory_safety() {
 }
 
 int main() {
-    printf("=== C Tests for dash_spv_ffi_config_set_worker_threads ===\n");
+    printf("=== C Tests for dash_spv_ffi_config_builder_set_worker_threads ===\n");
 
     test_worker_threads_basic();
     test_worker_threads_null_config();

@@ -50,7 +50,7 @@ mod tests {
             // Config functions
             assert_eq!(dash_spv_ffi_config_set_data_dir(ptr::null_mut(), ptr::null()),
                       FFIErrorCode::NullPointer as i32);
-            assert_eq!(dash_spv_ffi_config_set_validation_mode(ptr::null_mut(), FFIValidationMode::Basic),
+            assert_eq!(dash_spv_ffi_config_builder_set_validation_mode(ptr::null_mut(), FFIValidationMode::Basic),
                       FFIErrorCode::NullPointer as i32);
             assert_eq!(dash_spv_ffi_config_add_peer(ptr::null_mut(), ptr::null()),
                       FFIErrorCode::NullPointer as i32);
@@ -93,7 +93,7 @@ mod tests {
             dash_spv_ffi_config_destroy(config);
 
             // Using config after free should fail
-            let result = dash_spv_ffi_config_set_max_peers(config, 10);
+            let result = dash_spv_ffi_config_builder_set_max_peers(config, 10);
             assert_ne!(result, FFIErrorCode::Success as i32);
         }
     }
@@ -106,7 +106,7 @@ mod tests {
             let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
 
             // Test setting max peers to u32::MAX
-            let result = dash_spv_ffi_config_set_max_peers(config, u32::MAX);
+            let result = dash_spv_ffi_config_builder_set_max_peers(config, u32::MAX);
             assert_eq!(result, FFIErrorCode::Success as i32);
 
             // Test large array allocation

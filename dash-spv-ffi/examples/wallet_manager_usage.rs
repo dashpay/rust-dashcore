@@ -10,7 +10,8 @@ use key_wallet_ffi::{wallet_manager_wallet_count, FFIError};
 fn main() {
     unsafe {
         // Create a config for testnet
-        let config = dash_spv_ffi_config_testnet();
+        let config = dash_spv_ffi_config_builder_testnet();
+        let config = dash_spv_ffi_config_builder_build(config);
         if config.is_null() {
             panic!("Failed to create config");
         }

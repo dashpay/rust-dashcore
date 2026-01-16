@@ -10,18 +10,20 @@ int main() {
     }
 
     // Create a configuration for testnet
-    FFIClientConfig* config = dash_spv_ffi_config_testnet();
-    if (config == NULL) {
-        fprintf(stderr, "Failed to create config\n");
+    FFIConfig* builder = dash_spv_ffi_config_builder_testnet();
+    if (builder == NULL) {
+        fprintf(stderr, "Failed to create config builder\n");
         return 1;
     }
 
     // Set data directory
-    if (dash_spv_ffi_config_set_data_dir(config, "/tmp/dash-spv-test") != 0) {
+    if (dash_spv_ffi_config_builder_set_storage_path(builder, "/tmp/dash-spv-test") != 0) {
         fprintf(stderr, "Failed to set data dir\n");
-        dash_spv_ffi_config_destroy(config);
+        dash_spv_ffi_config_builder_destroy(builder);
         return 1;
     }
+
+    FFIConfig* config = dash_spv_ffi_config_builder_build(builder);
 
     // Create the client
     FFIDashSpvClient* client = dash_spv_ffi_client_new(config);

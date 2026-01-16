@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CStr;
     use std::sync::{Arc, Barrier};
@@ -162,7 +161,10 @@ mod tests {
         // Test null_check! macro behavior
         unsafe {
             // Test with config functions
-            let result = dash_spv_ffi_config_set_data_dir(std::ptr::null_mut(), std::ptr::null());
+            let result = dash_spv_ffi_config_builder_set_storage_path(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            );
             assert_eq!(result, FFIErrorCode::NullPointer as i32);
 
             // Check error was set
@@ -178,7 +180,8 @@ mod tests {
         // Use a valid enum value to avoid UB in Rust tests. If invalid raw inputs
         // need to be tested, do so from a C test or add a raw-int FFI entrypoint.
         unsafe {
-            let config = dash_spv_ffi_config_new(FFINetwork::Dash);
+            let builder = dash_spv_ffi_config_builder_mainnet();
+            let config = dash_spv_ffi_config_builder_build(builder);
             assert!(!config.is_null());
             dash_spv_ffi_config_destroy(config);
         }

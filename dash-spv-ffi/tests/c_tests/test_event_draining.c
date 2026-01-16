@@ -37,7 +37,7 @@ FFIDashSpvClient* create_simple_test_client() {
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     // Set validation mode to none for faster testing
-    result = dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode_None);
+    result = dash_spv_ffi_config_builder_set_validation_mode(config, FFIValidationMode_None);
     TEST_ASSERT(result == FFIErrorCode_Success);
 
     // Create client

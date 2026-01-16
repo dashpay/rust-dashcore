@@ -148,7 +148,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             .map_err(|e| SyncError::Storage(format!("Failed to store headers: {}", e)))?;
 
         // First, check if we need to catch up on masternode lists for ChainLock validation
-        if self.config.enable_masternodes && !headers.is_empty() {
+        if self.config.enable_masternodes() && !headers.is_empty() {
             // Get the current masternode state to check for gaps
             let mn_state = storage.load_masternode_state().await.map_err(|e| {
                 SyncError::Storage(format!("Failed to load masternode state: {}", e))
@@ -243,7 +243,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             tracing::info!("📦 New block at height {}: {}", blockchain_height, header.block_hash());
 
             // If we have masternodes enabled, request masternode list updates for ChainLock validation
-            if self.config.enable_masternodes {
+            if self.config.enable_masternodes() {
                 // Use the latest persisted masternode state height as base to guarantee base < stop
                 let base_height = match storage.load_masternode_state().await {
                     Ok(Some(state)) => state.last_height,
@@ -267,7 +267,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                             ))?
                     } else {
                         // Genesis block case
-                        dashcore::blockdata::constants::genesis_block(self.config.network)
+                        dashcore::blockdata::constants::genesis_block(self.config.network())
                             .block_hash()
                     };
 
@@ -299,7 +299,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             }
 
             // If we have filters enabled, request filter headers for the new blocks
-            if self.config.enable_filters {
+            if self.config.enable_filters() {
                 // Determine stop as the previous block to avoid peer race on newly announced tip
                 let stop_hash = if height > 0 {
                     storage
@@ -316,7 +316,8 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                             "Previous block not found for CFHeaders stop".to_string(),
                         ))?
                 } else {
-                    dashcore::blockdata::constants::genesis_block(self.config.network).block_hash()
+                    dashcore::blockdata::constants::genesis_block(self.config.network())
+                        .block_hash()
                 };
 
                 // Resolve the absolute blockchain height for stop_hash

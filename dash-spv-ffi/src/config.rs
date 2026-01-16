@@ -1,5 +1,5 @@
 use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy, FFIString};
-use dash_spv::{Config, ValidationMode};
+use dash_spv::{Config, ConfigBuilder, ValidationMode};
 use key_wallet_ffi::FFINetwork;
 use std::ffi::CStr;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -23,61 +23,79 @@ impl From<FFIValidationMode> for ValidationMode {
 }
 
 #[repr(C)]
-pub struct FFIClientConfig {
+pub struct FFIConfig {
     // Opaque pointer to avoid exposing internal ClientConfig in generated C headers
     inner: *mut std::ffi::c_void,
     // Tokio runtime worker thread count (0 = auto)
     pub worker_threads: u32,
 }
 
-#[no_mangle]
-pub extern "C" fn dash_spv_ffi_config_new(network: FFINetwork) -> *mut FFIClientConfig {
-    let config = Config::new(network.into());
-    let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
-    Box::into_raw(Box::new(FFIClientConfig {
-        inner,
-        worker_threads: 0,
-    }))
+impl From<Config> for FFIConfig {
+    fn from(config: Config) -> Self {
+        let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
+        Self {
+            inner,
+            worker_threads: 0,
+        }
+    }
+}
+
+#[repr(C)]
+pub struct FFIConfigBuilder {
+    // Opaque pointer to avoid exposing internal ClientConfigBuilder in generated C headers
+    inner: *mut std::ffi::c_void,
+    // Tokio runtime worker thread count (0 = auto)
+    pub worker_threads: u32,
+}
+
+impl From<ConfigBuilder> for FFIConfigBuilder {
+    fn from(builder: ConfigBuilder) -> Self {
+        let inner = Box::into_raw(Box::new(builder)) as *mut std::ffi::c_void;
+        Self {
+            inner,
+            worker_threads: 0,
+        }
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn dash_spv_ffi_config_mainnet() -> *mut FFIClientConfig {
-    let config = Config::mainnet();
-    let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
-    Box::into_raw(Box::new(FFIClientConfig {
-        inner,
-        worker_threads: 0,
-    }))
+pub extern "C" fn dash_spv_ffi_config_builder_mainnet() -> *mut FFIConfigBuilder {
+    Box::into_raw(Box::new(ConfigBuilder::mainnet().into()))
 }
 
 #[no_mangle]
-pub extern "C" fn dash_spv_ffi_config_testnet() -> *mut FFIClientConfig {
-    let config = Config::testnet();
-    let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
-    Box::into_raw(Box::new(FFIClientConfig {
-        inner,
-        worker_threads: 0,
-    }))
+pub extern "C" fn dash_spv_ffi_config_builder_testnet() -> *mut FFIConfigBuilder {
+    Box::into_raw(Box::new(ConfigBuilder::testnet().into()))
+}
+
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_config_builder_devnet() -> *mut FFIConfigBuilder {
+    Box::into_raw(Box::new(ConfigBuilder::devnet().into()))
+}
+
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_config_builder_regtest() -> *mut FFIConfigBuilder {
+    Box::into_raw(Box::new(ConfigBuilder::regtest().into()))
 }
 
 /// Sets the data directory for storing blockchain data
 ///
 /// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
 /// - `path` must be a valid null-terminated C string
 /// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_data_dir(
-    config: *mut FFIClientConfig,
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_storage_path(
+    builder: *mut FFIConfigBuilder,
     path: *const c_char,
 ) -> i32 {
-    null_check!(config);
+    null_check!(builder);
     null_check!(path);
 
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
     match CStr::from_ptr(path).to_str() {
         Ok(path_str) => {
-            config.storage_path = path_str.into();
+            builder.storage_path(path_str);
             FFIErrorCode::Success as i32
         }
         Err(e) => {
@@ -90,38 +108,290 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_data_dir(
 /// Sets the validation mode for the SPV client
 ///
 /// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
 /// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_validation_mode(
-    config: *mut FFIClientConfig,
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_validation_mode(
+    builder: *mut FFIConfigBuilder,
     mode: FFIValidationMode,
 ) -> i32 {
-    null_check!(config);
+    null_check!(builder);
 
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.validation_mode = mode.into();
+    let config = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    config.validation_mode(mode.into());
     FFIErrorCode::Success as i32
 }
 
 /// Sets the maximum number of peers to connect to
 ///
 /// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
 /// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
-    config: *mut FFIClientConfig,
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_max_peers(
+    builder: *mut FFIConfigBuilder,
     max_peers: u32,
 ) -> i32 {
-    null_check!(config);
+    null_check!(builder);
 
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.max_peers = max_peers;
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.max_peers(max_peers);
     FFIErrorCode::Success as i32
 }
 
-// Note: dash-spv doesn't have min_peers, only max_peers
+/// Sets the user agent string to advertise in the P2P handshake
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - `user_agent` must be a valid null-terminated C string
+/// - The caller must ensure both pointers remain valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_user_agent(
+    builder: *mut FFIConfigBuilder,
+    user_agent: *const c_char,
+) -> i32 {
+    null_check!(builder);
+    null_check!(user_agent);
+
+    // Validate the user_agent string
+    match CStr::from_ptr(user_agent).to_str() {
+        Ok(agent_str) => {
+            // Store as-is; normalization/length capping is applied at handshake build time
+            let cfg = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+            cfg.user_agent(agent_str.to_string());
+            FFIErrorCode::Success as i32
+        }
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in user agent: {}", e));
+            FFIErrorCode::InvalidArgument as i32
+        }
+    }
+}
+
+/// Sets whether to relay transactions (currently a no-op)
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_relay_transactions(
+    builder: *mut FFIConfigBuilder,
+    _relay: bool,
+) -> i32 {
+    null_check!(builder);
+
+    let _builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    // relay_transactions not directly settable in current ClientConfig
+    FFIErrorCode::Success as i32
+}
+
+/// Sets whether to load bloom filters
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_filter_load(
+    builder: *mut FFIConfigBuilder,
+    load_filters: bool,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.enable_filters(load_filters);
+    FFIErrorCode::Success as i32
+}
+
+/// Restrict connections strictly to configured peers (disable DNS discovery and peer store)
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_restrict_to_configured_peers(
+    builder: *mut FFIConfigBuilder,
+    restrict_peers: bool,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.restrict_to_configured_peers(restrict_peers);
+    FFIErrorCode::Success as i32
+}
+
+/// Enables or disables masternode synchronization
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_masternode_sync_enabled(
+    builder: *mut FFIConfigBuilder,
+    enable: bool,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.enable_masternodes(enable);
+    FFIErrorCode::Success as i32
+}
+
+/// Sets the number of Tokio worker threads for the FFI runtime (0 = auto)
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIConfig
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_worker_threads(
+    builder: *mut FFIConfigBuilder,
+    threads: u32,
+) -> i32 {
+    null_check!(builder);
+    let cfg = &mut *builder;
+    cfg.worker_threads = threads;
+    FFIErrorCode::Success as i32
+}
+
+/// Enables or disables mempool tracking
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_mempool_tracking(
+    builder: *mut FFIConfigBuilder,
+    enable: bool,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.enable_mempool_tracking(enable);
+    FFIErrorCode::Success as i32
+}
+
+/// Sets the mempool synchronization strategy
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_mempool_strategy(
+    builder: *mut FFIConfigBuilder,
+    strategy: FFIMempoolStrategy,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.mempool_strategy(strategy.into());
+    FFIErrorCode::Success as i32
+}
+
+/// Sets the maximum number of mempool transactions to track
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_max_mempool_transactions(
+    builder: *mut FFIConfigBuilder,
+    max_transactions: u32,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.max_mempool_transactions(max_transactions as usize);
+    FFIErrorCode::Success as i32
+}
+
+/// Sets whether to fetch full mempool transaction data
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_fetch_mempool_transactions(
+    builder: *mut FFIConfigBuilder,
+    fetch: bool,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.fetch_mempool_transactions(fetch);
+    FFIErrorCode::Success as i32
+}
+
+/// Sets whether to persist mempool state to disk
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_persist_mempool(
+    builder: *mut FFIConfigBuilder,
+    persist: bool,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.persist_mempool(persist);
+    FFIErrorCode::Success as i32
+}
+
+/// Sets the starting block height for synchronization
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_set_start_from_height(
+    builder: *mut FFIConfigBuilder,
+    height: u32,
+) -> i32 {
+    null_check!(builder);
+
+    let builder = unsafe { &mut *((*builder).inner as *mut ConfigBuilder) };
+    builder.start_from_height(height);
+    FFIErrorCode::Success as i32
+}
+
+/// Gets ownership of the builder and returns the built configuration destroying the builder in the process
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder or null
+/// - If null, returns default configuration
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_build(
+    builder: *mut FFIConfigBuilder,
+) -> *mut FFIConfig {
+    if builder.is_null() {
+        return Box::into_raw(Box::new(Config::default().into()));
+    }
+
+    let ffi_builder = Box::from_raw(builder);
+    let builder = Box::from_raw(ffi_builder.inner as *mut ConfigBuilder);
+
+    match builder.build() {
+        Ok(config) => Box::into_raw(Box::new(config.into())),
+        Err(err) => {
+            set_last_error(&format!("Failed to build config: {}", err));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Destroys an FFIConfigBuilder and frees its memory
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder, or null
+/// - After calling this function, the config pointer becomes invalid and must not be used
+/// - This function should only be called once per config builder instance if `built()` was not called
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_builder_destroy(builder: *mut FFIConfigBuilder) {
+    if !builder.is_null() {
+        let builder = Box::from_raw(builder);
+        if !builder.inner.is_null() {
+            let _ = Box::from_raw(builder.inner as *mut ConfigBuilder);
+        }
+    }
+}
 
 /// Adds a peer address to the configuration
 ///
@@ -135,19 +405,19 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
 /// - Hostname without port: `node.example.com`
 ///
 /// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - `config` must be a valid pointer to an FFIConfig
 /// - `addr` must be a valid null-terminated C string containing a socket address or IP-only string
 /// - The caller must ensure both pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
-    config: *mut FFIClientConfig,
+    config: *mut FFIConfig,
     addr: *const c_char,
 ) -> i32 {
     null_check!(config);
     null_check!(addr);
 
     let cfg = unsafe { &mut *((*config).inner as *mut Config) };
-    let default_port = match cfg.network {
+    let default_port = match cfg.network() {
         dashcore::Network::Dash => 9999,
         dashcore::Network::Testnet => 19999,
         dashcore::Network::Regtest => 19899,
@@ -166,7 +436,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     // Try parsing as bare IP address and apply default port
     if let Ok(ip) = addr_str.parse::<IpAddr>() {
         let sock = SocketAddr::new(ip, default_port);
-        cfg.peers.push(sock);
+        cfg.add_peer(sock);
         return FFIErrorCode::Success as i32;
     }
 
@@ -185,7 +455,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     match addr_with_port.to_socket_addrs() {
         Ok(mut iter) => match iter.next() {
             Some(sock) => {
-                cfg.peers.push(sock);
+                cfg.add_peer(sock);
                 FFIErrorCode::Success as i32
             }
             None => {
@@ -200,129 +470,29 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     }
 }
 
-/// Sets the user agent string to advertise in the P2P handshake
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - `user_agent` must be a valid null-terminated C string
-/// - The caller must ensure both pointers remain valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_user_agent(
-    config: *mut FFIClientConfig,
-    user_agent: *const c_char,
-) -> i32 {
-    null_check!(config);
-    null_check!(user_agent);
-
-    // Validate the user_agent string
-    match CStr::from_ptr(user_agent).to_str() {
-        Ok(agent_str) => {
-            // Store as-is; normalization/length capping is applied at handshake build time
-            let cfg = unsafe { &mut *((*config).inner as *mut Config) };
-            cfg.user_agent = Some(agent_str.to_string());
-            FFIErrorCode::Success as i32
-        }
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in user agent: {}", e));
-            FFIErrorCode::InvalidArgument as i32
-        }
-    }
-}
-
-/// Sets whether to relay transactions (currently a no-op)
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_relay_transactions(
-    config: *mut FFIClientConfig,
-    _relay: bool,
-) -> i32 {
-    null_check!(config);
-
-    let _config = unsafe { &mut *((*config).inner as *mut Config) };
-    // relay_transactions not directly settable in current ClientConfig
-    FFIErrorCode::Success as i32
-}
-
-/// Sets whether to load bloom filters
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_filter_load(
-    config: *mut FFIClientConfig,
-    load_filters: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.enable_filters = load_filters;
-    FFIErrorCode::Success as i32
-}
-
-/// Restrict connections strictly to configured peers (disable DNS discovery and peer store)
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_restrict_to_configured_peers(
-    config: *mut FFIClientConfig,
-    restrict_peers: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.restrict_to_configured_peers = restrict_peers;
-    FFIErrorCode::Success as i32
-}
-
-/// Enables or disables masternode synchronization
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_masternode_sync_enabled(
-    config: *mut FFIClientConfig,
-    enable: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.enable_masternodes = enable;
-    FFIErrorCode::Success as i32
-}
-
 /// Gets the network type from the configuration
 ///
 /// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig or null
+/// - `config` must be a valid pointer to an FFIConfig or null
 /// - If null, returns FFINetwork::Dash as default
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_get_network(
-    config: *const FFIClientConfig,
-) -> FFINetwork {
+pub unsafe extern "C" fn dash_spv_ffi_config_get_network(config: *const FFIConfig) -> FFINetwork {
     if config.is_null() {
         return FFINetwork::Dash;
     }
 
     let config = unsafe { &*((*config).inner as *const Config) };
-    config.network.into()
+    config.network().into()
 }
 
 /// Gets the data directory path from the configuration
 ///
 /// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig or null
+/// - `config` must be a valid pointer to an FFIConfig or null
 /// - If null or no data directory is set, returns an FFIString with null pointer
 /// - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
-    config: *const FFIClientConfig,
-) -> FFIString {
+pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(config: *const FFIConfig) -> FFIString {
     if config.is_null() {
         return FFIString {
             ptr: std::ptr::null_mut(),
@@ -331,17 +501,51 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
     }
 
     let config = unsafe { &*((*config).inner as *const Config) };
-    FFIString::new(&config.storage_path.to_string_lossy())
+    FFIString::new(&config.storage_path().to_string_lossy())
 }
 
-/// Destroys an FFIClientConfig and frees its memory
+/// Gets whether mempool tracking is enabled
 ///
 /// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet, or null
+/// - `config` must be a valid pointer to an FFIConfig or null
+/// - If null, returns false as default
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
+    config: *const FFIConfig,
+) -> bool {
+    if config.is_null() {
+        return false;
+    }
+
+    let config = unsafe { &*((*config).inner as *const Config) };
+    config.enable_mempool_tracking()
+}
+
+/// Gets the mempool synchronization strategy
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIConfig or null
+/// - If null, returns FFIMempoolStrategy::FetchAll as default
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
+    config: *const FFIConfig,
+) -> FFIMempoolStrategy {
+    if config.is_null() {
+        return FFIMempoolStrategy::FetchAll;
+    }
+
+    let config = unsafe { &*((*config).inner as *const Config) };
+    config.mempool_strategy().into()
+}
+
+/// Destroys an FFIConfig and frees its memory
+///
+/// # Safety
+/// - `builder` must be a valid pointer to an FFIConfigBuilder, or null
 /// - After calling this function, the config pointer becomes invalid and must not be used
 /// - This function should only be called once per config instance
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_destroy(config: *mut FFIClientConfig) {
+pub unsafe extern "C" fn dash_spv_ffi_config_destroy(config: *mut FFIConfig) {
     if !config.is_null() {
         // Reclaim outer struct
         let cfg = Box::from_raw(config);
@@ -352,7 +556,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_destroy(config: *mut FFIClientConfi
     }
 }
 
-impl FFIClientConfig {
+impl FFIConfig {
     pub fn get_inner(&self) -> &Config {
         unsafe { &*(self.inner as *const Config) }
     }
@@ -360,159 +564,4 @@ impl FFIClientConfig {
     pub fn clone_inner(&self) -> Config {
         unsafe { (*(self.inner as *const Config)).clone() }
     }
-}
-
-/// Sets the number of Tokio worker threads for the FFI runtime (0 = auto)
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_worker_threads(
-    config: *mut FFIClientConfig,
-    threads: u32,
-) -> i32 {
-    null_check!(config);
-    let cfg = &mut *config;
-    cfg.worker_threads = threads;
-    FFIErrorCode::Success as i32
-}
-
-// Mempool configuration functions
-
-/// Enables or disables mempool tracking
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_tracking(
-    config: *mut FFIClientConfig,
-    enable: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.enable_mempool_tracking = enable;
-    FFIErrorCode::Success as i32
-}
-
-/// Sets the mempool synchronization strategy
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_strategy(
-    config: *mut FFIClientConfig,
-    strategy: FFIMempoolStrategy,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.mempool_strategy = strategy.into();
-    FFIErrorCode::Success as i32
-}
-
-/// Sets the maximum number of mempool transactions to track
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
-    config: *mut FFIClientConfig,
-    max_transactions: u32,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.max_mempool_transactions = max_transactions as usize;
-    FFIErrorCode::Success as i32
-}
-
-/// Sets whether to fetch full mempool transaction data
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
-    config: *mut FFIClientConfig,
-    fetch: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.fetch_mempool_transactions = fetch;
-    FFIErrorCode::Success as i32
-}
-
-/// Sets whether to persist mempool state to disk
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
-    config: *mut FFIClientConfig,
-    persist: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.persist_mempool = persist;
-    FFIErrorCode::Success as i32
-}
-
-/// Gets whether mempool tracking is enabled
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig or null
-/// - If null, returns false as default
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
-    config: *const FFIClientConfig,
-) -> bool {
-    if config.is_null() {
-        return false;
-    }
-
-    let config = unsafe { &*((*config).inner as *const Config) };
-    config.enable_mempool_tracking
-}
-
-/// Gets the mempool synchronization strategy
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig or null
-/// - If null, returns FFIMempoolStrategy::FetchAll as default
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
-    config: *const FFIClientConfig,
-) -> FFIMempoolStrategy {
-    if config.is_null() {
-        return FFIMempoolStrategy::FetchAll;
-    }
-
-    let config = unsafe { &*((*config).inner as *const Config) };
-    config.mempool_strategy.into()
-}
-
-// Checkpoint sync configuration functions
-
-/// Sets the starting block height for synchronization
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
-    config: *mut FFIClientConfig,
-    height: u32,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut Config) };
-    config.start_from_height = Some(height);
-    FFIErrorCode::Success as i32
 }

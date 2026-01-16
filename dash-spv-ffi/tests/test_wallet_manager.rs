@@ -18,16 +18,17 @@ mod tests {
     fn test_get_wallet_manager() {
         unsafe {
             // Create a config
-            let config = dash_spv_ffi_config_testnet();
-            assert!(!config.is_null());
+            let builder = dash_spv_ffi_config_builder_testnet();
+            assert!(!builder.is_null());
 
             let temp_dir = TempDir::new().unwrap();
-            dash_spv_ffi_config_set_data_dir(
-                config,
+            dash_spv_ffi_config_builder_set_storage_path(
+                builder,
                 CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
             );
 
             // Create a client
+            let config = dash_spv_ffi_config_builder_build(builder);
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null());
 
@@ -55,15 +56,16 @@ mod tests {
     #[test]
     fn test_wallet_manager_shared_via_client_imports_wallet() {
         unsafe {
-            let config = dash_spv_ffi_config_testnet();
-            assert!(!config.is_null());
+            let builder = dash_spv_ffi_config_builder_testnet();
+            assert!(!builder.is_null());
 
             let temp_dir = TempDir::new().unwrap();
-            dash_spv_ffi_config_set_data_dir(
-                config,
+            dash_spv_ffi_config_builder_set_storage_path(
+                builder,
                 CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
             );
 
+            let config = dash_spv_ffi_config_builder_build(builder);
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null());
 
@@ -74,7 +76,7 @@ mod tests {
 
             // Prepare a serialized wallet using the native manager so we can import it
             let mut native_manager =
-                WalletManager::<ManagedWalletInfo>::new((*config).get_inner().network);
+                WalletManager::<ManagedWalletInfo>::new((*config).get_inner().network());
             let (serialized_wallet, expected_wallet_id) = native_manager
                 .create_wallet_from_mnemonic_return_serialized_bytes(
                     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",

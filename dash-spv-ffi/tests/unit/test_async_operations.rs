@@ -2,7 +2,6 @@
 mod tests {
     use crate::types::FFIDetailedSyncProgress;
     use crate::*;
-    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};
@@ -59,15 +58,17 @@ mod tests {
         }
     }
 
-    fn create_test_client() -> (*mut FFIDashSpvClient, *mut FFIClientConfig, TempDir) {
+    fn create_test_client() -> (*mut FFIDashSpvClient, *mut FFIConfig, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         unsafe {
-            let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
-            assert!(!config.is_null(), "Failed to create config");
+            let builder = dash_spv_ffi_config_builder_regtest();
+            assert!(!builder.is_null(), "Failed to create config");
 
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-            dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-            dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+            dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+            dash_spv_ffi_config_builder_set_validation_mode(builder, FFIValidationMode::None);
+
+            let config = dash_spv_ffi_config_builder_build(builder);
 
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null(), "Failed to create client");

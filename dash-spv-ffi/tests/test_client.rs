@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
-    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
     use std::os::raw::c_void;
@@ -33,15 +32,16 @@ mod tests {
         *data.completion_called.lock().unwrap() = true;
     }
 
-    fn create_test_config() -> (*mut FFIClientConfig, TempDir) {
+    fn create_test_config() -> (*mut FFIConfig, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+        let builder = dash_spv_ffi_config_builder_regtest();
 
-        unsafe {
+        let config = unsafe {
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-            dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-            dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
-        }
+            dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+            dash_spv_ffi_config_builder_set_validation_mode(builder, FFIValidationMode::None);
+            dash_spv_ffi_config_builder_build(builder)
+        };
 
         (config, temp_dir)
     }
@@ -155,10 +155,11 @@ mod tests {
             }
 
             // Create testnet config for the diagnostic test
-            let config = dash_spv_ffi_config_testnet();
+            let builder = dash_spv_ffi_config_builder_testnet();
             let temp_dir = TempDir::new().unwrap();
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-            dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+            dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+            let config = dash_spv_ffi_config_builder_build(builder);
 
             // Enable test mode to use deterministic peers
             dash_spv_ffi_enable_test_mode();

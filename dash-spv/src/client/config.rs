@@ -39,11 +39,12 @@ pub struct Config {
     /// When true, the client will not use DNS discovery or peer persistence and
     /// will only attempt to connect to addresses provided in `peers`.
     /// If no peers are configured, no outbound connections will be made.
-    #[getset(get = "pub")]
+    #[getset(get_copy = "pub")]
     restrict_to_configured_peers: bool,
 
     /// Path for persistent storage. Defaults to ./dash-spv-storage
     #[getset(get = "pub")]
+    #[builder(setter(into))]
     storage_path: PathBuf,
 
     /// Validation mode.
@@ -143,7 +144,7 @@ impl ConfigBuilder {
         builder
     }
 
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> Result<(), String> {
         match self.max_peers {
             Some(max_peers) if max_peers == 0 => {
                 return Err("max_peers must be > 0".to_string());

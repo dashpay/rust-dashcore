@@ -8,17 +8,19 @@ use tokio::sync::RwLock;
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
-use dash_spv::{Config, DashSpvClient};
+use dash_spv::{ConfigBuilder, DashSpvClient};
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
 ) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager> {
-    let config = Config::testnet()
-        .without_filters()
-        .with_storage_path(TempDir::new().unwrap().path())
-        .without_masternodes();
+    let config = ConfigBuilder::testnet()
+        .enable_filters(false)
+        .storage_path(TempDir::new().unwrap().path())
+        .enable_masternodes(true)
+        .build()
+        .expect("Valid config");
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
@@ -27,7 +29,7 @@ async fn create_test_client(
     let storage_manager = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
     DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap()
 }
