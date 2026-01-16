@@ -492,7 +492,9 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_network(config: *const FFIConfi
 /// - If null or no data directory is set, returns an FFIString with null pointer
 /// - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(config: *const FFIConfig) -> FFIString {
+pub unsafe extern "C" fn dash_spv_ffi_config_get_storage_path(
+    config: *const FFIConfig,
+) -> FFIString {
     if config.is_null() {
         return FFIString {
             ptr: std::ptr::null_mut(),

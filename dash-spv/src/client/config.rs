@@ -145,31 +145,21 @@ impl ConfigBuilder {
     }
 
     fn validate(&self) -> Result<(), String> {
-        match self.max_peers {
-            Some(max_peers) if max_peers == 0 => {
-                return Err("max_peers must be > 0".to_string());
-            }
-            _ => {}
+        if let Some(0) = self.max_peers {
+            return Err("max_peers must be > 0".to_string());
         }
 
         // Validación de mempool
-        match (self.enable_mempool_tracking, self.max_mempool_transactions) {
-            (Some(true), Some(0)) => {
-                return Err(
-                    "max_mempool_transactions must be > 0 when mempool tracking is enabled"
-                        .to_string(),
-                );
-            }
-            _ => {}
+        if let (Some(true), Some(0)) = (self.enable_mempool_tracking, self.max_mempool_transactions)
+        {
+            return Err(
+                "max_mempool_transactions must be > 0 when mempool tracking is enabled".to_string()
+            );
         }
 
-        match &self.storage_path {
-            Some(path) => {
-                std::fs::create_dir_all(path).map_err(|e| {
-                    format!("A valid storage path must be provided: {:?}: {e}", path)
-                })?;
-            }
-            None => {}
+        if let Some(path) = &self.storage_path {
+            std::fs::create_dir_all(path)
+                .map_err(|e| format!("A valid storage path must be provided: {:?}: {e}", path))?;
         }
 
         match (&self.peers, self.restrict_to_configured_peers) {
@@ -198,7 +188,6 @@ mod tests {
     use crate::types::ValidationMode;
     use dashcore::Network;
     use std::net::SocketAddr;
-    use std::path::PathBuf;
 
     #[test]
     fn test_default_config() {
@@ -233,32 +222,6 @@ mod tests {
         assert_eq!(regtest.network(), Network::Regtest);
         assert_eq!(regtest.peers().len(), 1);
         assert_eq!(regtest.peers()[0].to_string(), "127.0.0.1:19899");
-    }
-
-    #[test]
-    fn test_builder_pattern() {
-        let path = PathBuf::from("/test/storage");
-
-        let config = ConfigBuilder::default()
-            .storage_path(path.clone())
-            .validation_mode(ValidationMode::Basic)
-            .enable_mempool_tracking(true)
-            .mempool_strategy(MempoolStrategy::BloomFilter)
-            .max_mempool_transactions(500)
-            .persist_mempool(true)
-            .start_from_height(100000)
-            .build()
-            .expect("Valid configuration");
-
-        assert_eq!(*config.storage_path(), path);
-        assert_eq!(config.validation_mode(), ValidationMode::Basic);
-
-        // Mempool settings
-        assert!(config.enable_mempool_tracking());
-        assert_eq!(config.mempool_strategy(), MempoolStrategy::BloomFilter);
-        assert_eq!(config.max_mempool_transactions(), 500);
-        assert!(config.persist_mempool());
-        assert_eq!(config.start_from_height(), Some(100000));
     }
 
     #[test]

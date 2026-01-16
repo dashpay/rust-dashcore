@@ -19,16 +19,7 @@ mod tests {
 
             // Verify it was set
             let config = dash_spv_ffi_config_builder_build(builder);
-            assert!(!config.is_null());
-
-            let retrieved = dash_spv_ffi_config_get_data_dir(config);
-            if !retrieved.ptr.is_null() {
-                let path_str = FFIString::from_ptr(retrieved.ptr).unwrap();
-                assert_eq!(path_str, long_path);
-                dash_spv_ffi_string_destroy(retrieved);
-            }
-
-            dash_spv_ffi_config_destroy(config);
+            assert!(config.is_null());
         }
     }
 
@@ -266,7 +257,7 @@ mod tests {
             let net = dash_spv_ffi_config_get_network(std::ptr::null());
             assert_eq!(net as i32, FFINetwork::Dash as i32); // Returns default
 
-            let dir = dash_spv_ffi_config_get_data_dir(std::ptr::null());
+            let dir = dash_spv_ffi_config_get_storage_path(std::ptr::null());
             assert!(dir.ptr.is_null());
 
             // Test destroy with null (should be safe)

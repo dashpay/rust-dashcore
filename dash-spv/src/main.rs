@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use clap::{Arg, Command};
 use dash_spv::terminal::TerminalGuard;
-use dash_spv::{Config, DashSpvClient, LevelFilter, Network};
+use dash_spv::{ConfigBuilder, DashSpvClient, LevelFilter};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use tokio_util::sync::CancellationToken;
@@ -169,10 +169,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parse network
     let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
-    let network = match network_str.as_str() {
-        "mainnet" => Network::Dash,
-        "testnet" => Network::Testnet,
-        "regtest" => Network::Regtest,
+    let mut cfg_builder = match network_str.as_str() {
+        "mainnet" => ConfigBuilder::mainnet(),
+        "testnet" => ConfigBuilder::testnet(),
+        "regtest" => ConfigBuilder::regtest(),
         n => return Err(format!("Invalid network: {}", n).into()),
     };
 
@@ -244,18 +244,50 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _logging_guard = dash_spv::init_logging(logging_config)?;
 
     tracing::info!("Starting Dash SPV client");
-    tracing::info!("Network: {:?}", network);
+    tracing::info!("Network: {:?}", network_str);
     tracing::info!("Data directory: {}", data_dir.display());
     tracing::info!("Validation mode: {:?}", validation_mode);
 
     // Create configuration
-    let mut config = Config::new(network)
-        .with_storage_path(data_dir.clone())
-        .with_validation_mode(validation_mode);
+    let config = cfg_builder.storage_path(data_dir.clone()).validation_mode(validation_mode);
+
+    // Configure features
+    if matches.get_flag("no-filters") {
+        config.enable_filters(false);
+    }
+    if matches.get_flag("no-masternodes") {
+        config.enable_masternodes(false);
+    }
+    if matches.get_flag("no-mempool") {
+        config.enable_mempool_tracking(false);
+    }
+
+    // Set start height if specified
+    if let Some(start_height_str) = matches.get_one::<String>("start-height") {
+        if start_height_str == "now" {
+            // Use a very high number to get the latest checkpoint
+            config.start_from_height(u32::MAX);
+            tracing::info!("Will start syncing from the latest available checkpoint");
+        } else {
+            let start_height = start_height_str
+                .parse::<u32>()
+                .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
+            config.start_from_height(start_height);
+            tracing::info!("Will start syncing from height: {}", start_height);
+        }
+    }
+
+    // Validate configuration
+    let mut config = match config.build() {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::error!("Configuration error: {}", e);
+            process::exit(1);
+        }
+    };
 
     // Add custom peers if specified
     if let Some(peers) = matches.get_many::<String>("peer") {
-        config.peers.clear();
         for peer in peers {
             match peer.parse() {
                 Ok(addr) => config.add_peer(addr),
@@ -267,42 +299,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Configure features
-    if matches.get_flag("no-filters") {
-        config = config.without_filters();
-    }
-    if matches.get_flag("no-masternodes") {
-        config = config.without_masternodes();
-    }
-    if matches.get_flag("no-mempool") {
-        config.enable_mempool_tracking = false;
-    }
-
-    // Set start height if specified
-    if let Some(start_height_str) = matches.get_one::<String>("start-height") {
-        if start_height_str == "now" {
-            // Use a very high number to get the latest checkpoint
-            config.start_from_height = Some(u32::MAX);
-            tracing::info!("Will start syncing from the latest available checkpoint");
-        } else {
-            let start_height = start_height_str
-                .parse::<u32>()
-                .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
-            config.start_from_height = Some(start_height);
-            tracing::info!("Will start syncing from height: {}", start_height);
-        }
-    }
-
-    // Validate configuration
-    if let Err(e) = config.validate() {
-        tracing::error!("Configuration error: {}", e);
-        process::exit(1);
-    }
-
     tracing::info!("Sync strategy: Sequential");
 
     // Create the wallet manager
-    let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
+    let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network());
     let wallet_id = wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
         "",
@@ -342,7 +342,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_client<S: dash_spv::storage::StorageManager>(
-    config: Config,
+    config: dash_spv::Config,
     network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
@@ -375,7 +375,7 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
             match TerminalGuard::new(ui.clone()) {
                 Ok(guard) => {
                     // Initial update with network info
-                    let network_name = format!("{:?}", config.network);
+                    let network_name = format!("{:?}", config.network());
                     let _ = ui
                         .update_status(|status| {
                             status.network = network_name;
@@ -481,7 +481,7 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
         for addr_str in addresses {
             match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
                 Ok(addr) => {
-                    let network = config.network;
+                    let network = config.network();
                     let checked_addr = addr.require_network(network).map_err(|_| {
                         format!("Address '{}' is not valid for network {:?}", addr_str, network)
                     });
@@ -508,7 +508,7 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
 
     // Add example addresses for testing if requested
     if matches.get_flag("add-example-addresses") {
-        let network = config.network;
+        let network = config.network();
         let example_addresses = match network {
             dashcore::Network::Dash => vec![
                 // Some example mainnet addresses (these are from block explorers/faucets)

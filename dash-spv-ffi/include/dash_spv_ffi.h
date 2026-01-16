@@ -774,7 +774,7 @@ void dash_spv_ffi_config_builder_destroy(struct FFIConfigBuilder *builder)
  * - If null or no data directory is set, returns an FFIString with null pointer
  * - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
  */
- struct FFIString dash_spv_ffi_config_get_data_dir(const struct FFIConfig *config) ;
+ struct FFIString dash_spv_ffi_config_get_storage_path(const struct FFIConfig *config) ;
 
 /**
  * Gets whether mempool tracking is enabled

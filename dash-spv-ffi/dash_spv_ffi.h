@@ -698,7 +698,7 @@ int32_t dash_spv_ffi_config_set_masternode_sync_enabled(struct FFIClientConfig *
  * - If null or no data directory is set, returns an FFIString with null pointer
  * - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
  */
- struct FFIString dash_spv_ffi_config_get_data_dir(const struct FFIClientConfig *config) ;
+ struct FFIString dash_spv_ffi_config_get_storage_path(const struct FFIClientConfig *config) ;
 
 /**
  * Destroys an FFIClientConfig and frees its memory

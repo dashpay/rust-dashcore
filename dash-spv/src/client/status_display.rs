@@ -234,7 +234,7 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
                         status.filter_headers = filter_height;
                         status.chainlock_height = latest_chainlock;
                         status.peer_count = 1; // TODO: Get actual peer count
-                        status.network = format!("{:?}", self.config.network);
+                        status.network = format!("{:?}", self.config.network());
                     })
                     .await;
                 return;

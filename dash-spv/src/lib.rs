@@ -12,7 +12,7 @@
 //! # Quick Start
 //!
 //! ```no_run
-//! use dash_spv::{DashSpvClient, ClientConfig};
+//! use dash_spv::{DashSpvClient, ConfigBuilder};
 //! use dash_spv::network::PeerNetworkManager;
 //! use dash_spv::storage::DiskStorageManager;
 //! use dashcore::Network;
@@ -25,13 +25,15 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create configuration for mainnet
-//!     let config = ClientConfig::mainnet()
-//!         .with_storage_path("./.tmp/example-storage");
+//!     let config = ConfigBuilder::mainnet()
+//!         .storage_path("./.tmp/example-storage")
+//!         .build()
+//!         .unwrap();
 //!
 //!     // Create the required components
 //!     let network = PeerNetworkManager::new(&config).await?;
 //!     let storage = DiskStorageManager::new(&config).await?;
-//!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+//!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 //!
 //!     // Create and start the client
 //!     let mut client = DashSpvClient::new(config.clone(), network, storage, wallet).await?;

@@ -100,7 +100,7 @@ void test_config_getters() {
     TEST_ASSERT(network == FFINetwork_Testnet);
 
     // Test getting data directory
-    FFIString data_dir = dash_spv_ffi_config_get_data_dir(config);
+    FFIString data_dir = dash_spv_ffi_config_get_storage_path(config);
     if (data_dir.ptr != NULL) {
         TEST_ASSERT(strcmp(data_dir.ptr, "/tmp/test-dir") == 0);
         dash_spv_ffi_string_destroy(data_dir);
