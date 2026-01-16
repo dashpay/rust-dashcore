@@ -30,21 +30,12 @@ pub type WalletAccountCreationTopUpAccounts = BTreeSet<u32>;
 ///
 /// PlatformPayment accounts (DIP-17) use the derivation path:
 /// `m/9'/coin_type'/17'/account'/key_class'/index`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PlatformPaymentAccountSpec {
     /// Account index (hardened) - the account' level in the derivation path
     pub account: u32,
     /// Key class (hardened) - defaults to 0', 1' is reserved for change-like segregation
     pub key_class: u32,
-}
-
-impl Default for PlatformPaymentAccountSpec {
-    fn default() -> Self {
-        Self {
-            account: 0,
-            key_class: 0,
-        }
-    }
 }
 
 /// Set of PlatformPayment account specs to create
