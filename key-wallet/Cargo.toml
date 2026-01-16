@@ -16,7 +16,7 @@ bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dash-network/bincode",
 bip38 = ["scrypt", "aes", "bs58", "rand"]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
-test-utils = []
+test-utils = ["dashcore/test-utils"]
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
@@ -47,6 +47,7 @@ tracing = "0.1"
 async-trait = "0.1"
 
 [dev-dependencies]
+dashcore = { path="../dash", features = ["test-utils"] }
 hex = "0.4"
 key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
 tokio = { version = "1", features = ["macros", "rt"] }

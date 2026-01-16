@@ -5,17 +5,7 @@ mod tests {
         storage::{BlockHeaderStorage, DiskStorageManager},
         types::ChainState,
     };
-    use dashcore::{constants::genesis_block, ChainLock, Network};
-    use dashcore_test_utils::fixtures::test_block_hash;
-
-    /// Create a test ChainLock with minimal valid data
-    fn create_test_chainlock(height: u32, block_hash: BlockHash) -> ChainLock {
-        ChainLock {
-            block_height: height,
-            block_hash,
-            signature: dashcore::bls_sig_utils::BLSSignature::from([0u8; 96]), // BLS signature placeholder
-        }
-    }
+    use dashcore::{Header, Network};
 
     #[tokio::test]
     async fn test_chainlock_processing() {
@@ -25,12 +15,7 @@ mod tests {
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
 
-        // Create a test ChainLock
-        let chainlock = ChainLock {
-            block_height: 1000,
-            block_hash: test_block_hash(1),
-            signature: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
-        };
+        let chainlock = ChainLock::dummy(1000);
 
         // Process the ChainLock
         let result = chainlock_manager
@@ -58,20 +43,15 @@ mod tests {
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
 
-        // Process first ChainLock at height 1000
-        let chainlock1 = create_test_chainlock(1000, test_block_hash(1));
+        let chainlock1 = ChainLock::dummy(1000);
 
         chainlock_manager
             .process_chain_lock(chainlock1.clone(), &chain_state, &mut storage)
             .await
             .expect("First ChainLock should process successfully");
 
-        // Process second ChainLock at height 2000
-        let chainlock2 = ChainLock {
-            block_height: 2000,
-            block_hash: test_block_hash(2),
-            signature: dashcore::bls_sig_utils::BLSSignature::from([1; 96]),
-        };
+        let chainlock2 = ChainLock::dummy(2000);
+
         chainlock_manager
             .process_chain_lock(chainlock2.clone(), &chain_state, &mut storage)
             .await
@@ -95,11 +75,7 @@ mod tests {
 
         // Add ChainLocks at heights 1000, 2000, 3000
         for height in [1000, 2000, 3000] {
-            let chainlock = ChainLock {
-                block_height: height,
-                block_hash: test_block_hash(height),
-                signature: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
-            };
+            let chainlock = ChainLock::dummy(height);
             chainlock_manager
                 .process_chain_lock(chainlock, &chain_state, &mut storage)
                 .await
@@ -119,9 +95,9 @@ mod tests {
         let chainlock_manager = ChainLockManager::new(true);
 
         // Queue multiple ChainLocks
-        let chain_lock1 = create_test_chainlock(100, BlockHash::from([1u8; 32]));
-        let chain_lock2 = create_test_chainlock(200, BlockHash::from([2u8; 32]));
-        let chain_lock3 = create_test_chainlock(300, BlockHash::from([3u8; 32]));
+        let chain_lock1 = ChainLock::dummy(100);
+        let chain_lock2 = ChainLock::dummy(200);
+        let chain_lock3 = ChainLock::dummy(300);
 
         chainlock_manager.queue_pending_chainlock(chain_lock1).unwrap();
         chainlock_manager.queue_pending_chainlock(chain_lock2).unwrap();
@@ -145,11 +121,11 @@ mod tests {
         let chainlock_manager = ChainLockManager::new(true);
 
         // Add test headers
-        let genesis = genesis_block(Network::Dash).header;
-        storage.store_headers_at_height(&[genesis], 0).await.unwrap();
+        let header = Header::dummy(0);
+        storage.store_headers_at_height(&[header], 0).await.unwrap();
 
         // Create and process a ChainLock
-        let chain_lock = create_test_chainlock(0, genesis.block_hash());
+        let chain_lock = ChainLock::dummy(0);
         let chain_state = ChainState::new();
         let _ = chainlock_manager
             .process_chain_lock(chain_lock.clone(), &chain_state, &mut storage)
@@ -162,7 +138,7 @@ mod tests {
         assert!(entry.is_some());
         assert_eq!(entry.unwrap().chain_lock.block_height, 0);
 
-        let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&genesis.block_hash());
+        let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&header.block_hash());
         assert!(entry_by_hash.is_some());
         assert_eq!(entry_by_hash.unwrap().chain_lock.block_height, 0);
     }

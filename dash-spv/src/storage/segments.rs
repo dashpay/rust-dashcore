@@ -495,23 +495,9 @@ impl<I: Persistable> Segment<I> {
 
 #[cfg(test)]
 mod tests {
-    use dashcore_hashes::Hash;
     use tempfile::TempDir;
 
     use super::*;
-
-    trait TestStruct {
-        fn new_test(id: u32) -> Self;
-    }
-
-    impl TestStruct for FilterHeader {
-        fn new_test(id: u32) -> Self {
-            let mut bytes = [0u8; 32];
-            bytes[0] = 1;
-            bytes[1..5].copy_from_slice(&id.to_le_bytes());
-            FilterHeader::from_raw_hash(dashcore_hashes::sha256d::Hash::from_byte_array(bytes))
-        }
-    }
 
     #[tokio::test]
     async fn test_segment_cache_eviction() {
@@ -533,7 +519,7 @@ mod tests {
             let segment = cache.get_segment_mut(&i).await.expect("Failed to create a new segment");
             assert!(segment.state == SegmentState::Dirty);
 
-            segment.insert(FilterHeader::new_test(i), 0);
+            segment.insert(FilterHeader::dummy(i), 0);
         }
 
         for i in 0..=MAX_SEGMENTS {
@@ -541,7 +527,7 @@ mod tests {
 
             let segment = cache.get_segment_mut(&i).await.expect("Failed to load segment");
 
-            assert_eq!(segment.get(0..1), [FilterHeader::new_test(i)]);
+            assert_eq!(segment.get(0..1), [FilterHeader::dummy(i)]);
         }
     }
 
@@ -549,7 +535,7 @@ mod tests {
     async fn test_segment_cache_persist_load() {
         let tmp_dir = TempDir::new().unwrap();
 
-        let items: Vec<_> = (0..10).map(FilterHeader::new_test).collect();
+        let items = FilterHeader::dummy_batch(0..10);
 
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path())
             .await
@@ -579,25 +565,7 @@ mod tests {
             .await
             .expect("Failed to create new segment_cache");
 
-        let items: Vec<_> = (0..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2)
-            .map(FilterHeader::new_test)
-            .collect();
-
-        cache.store_items(&items).await.expect("Failed to store items");
-
-        assert_eq!(
-            items[0..ITEMS_PER_SEGMENT as usize],
-            cache.get_items(0..ITEMS_PER_SEGMENT).await.expect("Failed to get items")
-        );
-
-        assert_eq!(
-            items[0..(ITEMS_PER_SEGMENT - 1) as usize],
-            cache.get_items(0..ITEMS_PER_SEGMENT - 1).await.expect("Failed to get items")
-        );
-
-        let items: Vec<_> = (0..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2)
-            .map(FilterHeader::new_test)
-            .collect();
+        let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2);
 
         cache.store_items(&items).await.expect("Failed to store items");
 
@@ -626,7 +594,7 @@ mod tests {
         const MAX_ITEMS: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
 
         // Testing with half full segment
-        let items: Vec<_> = (0..MAX_ITEMS / 2).map(FilterHeader::new_test).collect();
+        let items = FilterHeader::dummy_batch(0..MAX_ITEMS / 2);
         let mut segment = Segment::new(segment_id, items.clone(), SegmentState::Dirty);
 
         assert_eq!(segment.first_valid_offset(), Some(0));
@@ -634,7 +602,7 @@ mod tests {
         assert_eq!(segment.get(0..MAX_ITEMS / 2), &items[0..MAX_ITEMS as usize / 2]);
         assert_eq!(
             segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
-            [FilterHeader::new_test(MAX_ITEMS / 2 - 1)]
+            [FilterHeader::dummy(MAX_ITEMS / 2 - 1)]
         );
 
         assert_eq!(segment.state, SegmentState::Dirty);
@@ -649,7 +617,7 @@ mod tests {
         assert_eq!(loaded_segment.get(0..MAX_ITEMS / 2), &items[0..MAX_ITEMS as usize / 2]);
         assert_eq!(
             loaded_segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
-            [FilterHeader::new_test(MAX_ITEMS / 2 - 1)]
+            [FilterHeader::dummy(MAX_ITEMS / 2 - 1)]
         );
     }
 
@@ -657,17 +625,17 @@ mod tests {
     fn test_segment_insert_get() {
         let segment_id = 10;
 
-        let items = (0..10).map(FilterHeader::new_test).collect();
+        let items = FilterHeader::dummy_batch(0..10);
 
         let mut segment = Segment::new(segment_id, items, SegmentState::Dirty);
 
         assert_eq!(segment.first_valid_offset(), Some(0));
         assert_eq!(segment.last_valid_offset(), Some(9));
-        assert_eq!(segment.get(0..10), &(0..10).map(FilterHeader::new_test).collect::<Vec<_>>());
+        assert_eq!(segment.get(0..10), &(0..10).map(FilterHeader::dummy).collect::<Vec<_>>());
 
-        segment.insert(FilterHeader::new_test(10), 10);
+        segment.insert(FilterHeader::dummy(10), 10);
 
         assert_eq!(segment.last_valid_offset(), Some(10));
-        assert_eq!(segment.get(0..11), &(0..11).map(FilterHeader::new_test).collect::<Vec<_>>());
+        assert_eq!(segment.get(0..11), &(0..11).map(FilterHeader::dummy).collect::<Vec<_>>());
     }
 }

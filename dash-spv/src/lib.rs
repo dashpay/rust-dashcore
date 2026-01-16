@@ -57,6 +57,9 @@
 //! - **Persistent storage**: Save and restore state between runs
 //! - **Extensive logging**: Built-in tracing support for debugging
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 pub mod chain;
 pub mod client;
 pub mod error;

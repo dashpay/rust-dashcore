@@ -86,6 +86,9 @@ pub use ed25519_dalek;
 extern crate serde;
 extern crate core;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 #[cfg(test)]
 #[macro_use]
 mod test_macros;

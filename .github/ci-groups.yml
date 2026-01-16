@@ -25,7 +25,6 @@ groups:
     - dashcore-rpc-json
 
   tools:
-    - dashcore-test-utils
     - dash-fuzz
 
 # Crates intentionally not tested (with reason)

@@ -1,19 +1,21 @@
+use dashcore::Network;
+
 use crate::account::StandardAccountType;
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::ManagedAccount;
-use crate::{DerivationPath, Network};
+use crate::DerivationPath;
 
 impl ManagedAccount {
     /// Create a test managed account with a standard BIP44 type and empty address pools
-    pub fn new_test_bip44(network: Network) -> Self {
+    pub fn dummy_bip44() -> Self {
         let base_path = DerivationPath::master();
 
         let external_pool = AddressPool::new(
             base_path.clone(),
             AddressPoolType::External,
             20,
-            network,
+            Network::Regtest,
             &KeySource::NoKeySource,
         )
         .expect("Failed to create external address pool");
@@ -22,7 +24,7 @@ impl ManagedAccount {
             base_path,
             AddressPoolType::Internal,
             20,
-            network,
+            Network::Regtest,
             &KeySource::NoKeySource,
         )
         .expect("Failed to create internal address pool");
@@ -34,6 +36,6 @@ impl ManagedAccount {
             internal_addresses: internal_pool,
         };
 
-        ManagedAccount::new(account_type, network, false)
+        ManagedAccount::new(account_type, Network::Regtest, false)
     }
 }

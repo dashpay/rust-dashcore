@@ -1,70 +1,16 @@
 //! Integration tests for SPV wallet functionality
 
-use dashcore::bip158::{BlockFilter, BlockFilterWriter};
-use dashcore::blockdata::block::{Block, Header, Version};
-use dashcore::blockdata::script::ScriptBuf;
+use dashcore::bip158::BlockFilter;
+use dashcore::blockdata::block::Block;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::constants::COINBASE_MATURITY;
-use dashcore::pow::CompactTarget;
-use dashcore::{BlockHash, OutPoint, TxIn, TxOut, Txid};
-use dashcore_hashes::Hash;
-use dashcore_test_utils::create_transaction_to_address;
+use dashcore::Address;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::WalletManager;
-
-/// Create a test transaction
-fn create_test_transaction(value: u64) -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value,
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    }
-}
-
-/// Create a test block
-fn create_test_block(height: u32, transactions: Vec<Transaction>) -> Block {
-    Block {
-        header: Header {
-            version: Version::ONE,
-            prev_blockhash: BlockHash::from_byte_array([0u8; 32]),
-            merkle_root: dashcore::TxMerkleNode::from_byte_array([0u8; 32]),
-            time: height,
-            bits: CompactTarget::from_consensus(0x1d00ffff),
-            nonce: 0,
-        },
-        txdata: transactions,
-    }
-}
-
-/// Create a mock filter that matches everything (for testing)
-fn create_mock_filter(block: &Block) -> BlockFilter {
-    let mut content = Vec::new();
-    let mut writer = BlockFilterWriter::new(&mut content, block);
-
-    // Add output scripts from the block
-    writer.add_output_scripts();
-
-    // Finish writing and construct the filter
-    writer.finish().expect("Failed to finish filter");
-    BlockFilter::new(&content)
-}
 
 #[tokio::test]
 async fn test_filter_checking() {
@@ -78,9 +24,9 @@ async fn test_filter_checking() {
         .expect("Failed to create wallet");
 
     // Create a test block with a transaction
-    let tx = create_test_transaction(100000);
-    let block = create_test_block(100, vec![tx]);
-    let filter = create_mock_filter(&block);
+    let tx = Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[100000]);
+    let block = Block::dummy(100, vec![tx]);
+    let filter = BlockFilter::dummy(&block);
     let block_hash = block.block_hash();
 
     // Check the filter
@@ -105,19 +51,15 @@ async fn test_block_processing() {
 
     let addresses = manager.monitored_addresses();
     assert!(!addresses.is_empty());
-    let external = dashcore::Address::p2pkh(
-        &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("valid pubkey"),
-        Network::Testnet,
-    );
+    let external = Address::dummy(Network::Testnet, 0);
 
     let addresses_before = manager.monitored_addresses();
     assert!(!addresses_before.is_empty());
+    let tx1 = Transaction::dummy(&addresses[0], 0..0, &[100_000]);
+    let tx2 = Transaction::dummy(&addresses[1], 0..0, &[200_000]);
+    let tx3 = Transaction::dummy(&external, 0..0, &[300_000]);
 
-    let tx1 = create_transaction_to_address(&addresses[0], 100_000);
-    let tx2 = create_transaction_to_address(&addresses[1], 200_000);
-    let tx3 = create_transaction_to_address(&external, 300_000);
-
-    let block = create_test_block(100, vec![tx1.clone(), tx2.clone(), tx3.clone()]);
+    let block = Block::dummy(100, vec![tx1.clone(), tx2.clone(), tx3.clone()]);
     let result = manager.process_block(&block, 100).await;
 
     assert_eq!(result.relevant_txids.len(), 2);
@@ -142,14 +84,11 @@ async fn test_block_processing_result_empty() {
         .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
-    let external = dashcore::Address::p2pkh(
-        &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("valid pubkey"),
-        Network::Testnet,
-    );
-    let tx1 = create_transaction_to_address(&external, 100_000);
-    let tx2 = create_transaction_to_address(&external, 200_000);
+    let external = Address::dummy(Network::Testnet, 0);
+    let tx1 = Transaction::dummy(&external, 0..0, &[100_000]);
+    let tx2 = Transaction::dummy(&external, 0..0, &[200_000]);
 
-    let block = create_test_block(100, vec![tx1, tx2]);
+    let block = Block::dummy(100, vec![tx1, tx2]);
     let result = manager.process_block(&block, 100).await;
 
     assert!(result.relevant_txids.is_empty());
@@ -166,11 +105,13 @@ async fn test_filter_caching() {
         .expect("Failed to create wallet");
 
     // Create multiple blocks with different hashes
-    let block1 = create_test_block(100, vec![create_test_transaction(1000)]);
-    let block2 = create_test_block(101, vec![create_test_transaction(2000)]);
+    let tx1 = Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[1000]);
+    let tx2 = Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[2000]);
+    let block1 = Block::dummy(100, vec![tx1]);
+    let block2 = Block::dummy(101, vec![tx2]);
 
-    let filter1 = create_mock_filter(&block1);
-    let filter2 = create_mock_filter(&block2);
+    let filter1 = BlockFilter::dummy(&block1);
+    let filter2 = BlockFilter::dummy(&block2);
 
     let hash1 = block1.block_hash();
     let hash2 = block2.block_hash();
@@ -200,29 +141,6 @@ fn assert_wallet_heights(manager: &WalletManager<ManagedWalletInfo>, expected_he
     }
 }
 
-/// Create a coinbase transaction paying to the given script
-/// TODO: Unify with other `create_coinbase_transaction` helpers into `dashcore` crate.
-fn create_coinbase_transaction(script_pubkey: ScriptBuf, value: u64) -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::all_zeros(),
-                vout: 0xffffffff,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value,
-            script_pubkey,
-        }],
-        special_transaction_payload: None,
-    }
-}
-
 /// Test that the wallet heights are updated after block processing.
 #[tokio::test]
 async fn test_height_updated_after_block_processing() {
@@ -237,7 +155,8 @@ async fn test_height_updated_after_block_processing() {
     assert_wallet_heights(&manager, 0);
 
     for height in [1000, 2000, 3000] {
-        let block = create_test_block(height, vec![create_test_transaction(1000)]);
+        let tx = Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[100000]);
+        let block = Block::dummy(height, vec![tx]);
         manager.process_block(&block, height).await;
         assert_wallet_heights(&manager, height);
     }
@@ -270,11 +189,11 @@ async fn test_immature_balance_matures_during_block_processing() {
 
     // Create a coinbase transaction paying to our wallet
     let coinbase_value = 100;
-    let coinbase_tx = create_coinbase_transaction(receive_address.script_pubkey(), coinbase_value);
+    let coinbase_tx = Transaction::dummy_coinbase(&receive_address, coinbase_value);
 
     // Process the coinbase at height 1000
     let coinbase_height = 1000;
-    let coinbase_block = create_test_block(coinbase_height, vec![coinbase_tx.clone()]);
+    let coinbase_block = Block::dummy(coinbase_height, vec![coinbase_tx.clone()]);
     manager.process_block(&coinbase_block, coinbase_height).await;
 
     // Verify the coinbase is detected and stored as immature
@@ -291,8 +210,9 @@ async fn test_immature_balance_matures_during_block_processing() {
 
     // Process 99 more blocks up to just before maturity
     let maturity_height = coinbase_height + COINBASE_MATURITY;
+    let tx = Transaction::dummy(&Address::dummy(Network::Regtest, 0), 0..0, &[1000]);
     for height in (coinbase_height + 1)..maturity_height {
-        let block = create_test_block(height, vec![create_test_transaction(1000)]);
+        let block = Block::dummy(height, vec![tx.clone()]);
         manager.process_block(&block, height).await;
     }
 
@@ -305,7 +225,7 @@ async fn test_immature_balance_matures_during_block_processing() {
     );
 
     // Process the maturity block
-    let maturity_block = create_test_block(maturity_height, vec![create_test_transaction(1000)]);
+    let maturity_block = Block::dummy(maturity_height, vec![tx.clone()]);
     manager.process_block(&maturity_block, maturity_height).await;
 
     // Verify the coinbase has matured

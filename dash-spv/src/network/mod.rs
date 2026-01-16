@@ -13,9 +13,6 @@ pub mod reputation;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-pub mod mock;
-
 use async_trait::async_trait;
 
 use crate::error::NetworkResult;

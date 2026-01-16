@@ -835,7 +835,6 @@ impl std::error::Error for BuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::test_address;
     use crate::Network;
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore_hashes::{sha256d, Hash};
@@ -843,9 +842,9 @@ mod tests {
 
     #[test]
     fn test_transaction_builder_basic() {
-        let utxo = Utxo::new_test(0, 100000, 100, false, true);
-        let destination = test_address();
-        let change = test_address();
+        let utxo = Utxo::dummy(0, 100000, 100, false, true);
+        let destination = Address::dummy(Network::Testnet, 0);
+        let change = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
             .add_input(utxo, None)
@@ -862,8 +861,8 @@ mod tests {
 
     #[test]
     fn test_insufficient_funds() {
-        let utxo = Utxo::new_test(0, 10000, 100, false, true);
-        let destination = test_address();
+        let utxo = Utxo::dummy(0, 10000, 100, false, true);
+        let destination = Address::dummy(Network::Testnet, 0);
 
         let result = TransactionBuilder::new()
             .add_input(utxo, None)
@@ -929,12 +928,12 @@ mod tests {
     fn test_transaction_size_estimation() {
         // Test that transaction size estimation is accurate
         let utxos = vec![
-            Utxo::new_test(0, 100000, 100, false, true),
-            Utxo::new_test(0, 200000, 100, false, true),
+            Utxo::dummy(0, 100000, 100, false, true),
+            Utxo::dummy(0, 200000, 100, false, true),
         ];
 
-        let recipient_address = test_address();
-        let change_address = test_address();
+        let recipient_address = Address::dummy(Network::Testnet, 0);
+        let change_address = Address::dummy(Network::Testnet, 0);
 
         let builder = TransactionBuilder::new()
             .set_fee_level(FeeLevel::Normal)
@@ -965,10 +964,10 @@ mod tests {
     #[test]
     fn test_fee_calculation() {
         // Test that fees are calculated correctly
-        let utxos = vec![Utxo::new_test(0, 1000000, 100, false, true)];
+        let utxos = vec![Utxo::dummy(0, 1000000, 100, false, true)];
 
-        let recipient_address = test_address();
-        let change_address = test_address();
+        let recipient_address = Address::dummy(Network::Testnet, 0);
+        let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
             .set_fee_level(FeeLevel::Normal) // 1 duff per byte
@@ -992,10 +991,10 @@ mod tests {
     #[test]
     fn test_exact_change_no_change_output() {
         // Test when the exact amount is used (no change output needed)
-        let utxos = vec![Utxo::new_test(0, 150226, 100, false, true)]; // Exact amount for output + fee
+        let utxos = vec![Utxo::dummy(0, 150226, 100, false, true)]; // Exact amount for output + fee
 
-        let recipient_address = test_address();
-        let change_address = test_address();
+        let recipient_address = Address::dummy(Network::Testnet, 0);
+        let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
             .set_fee_level(FeeLevel::Normal)
@@ -1014,9 +1013,9 @@ mod tests {
     #[test]
     fn test_special_payload_size_calculations() {
         // Test that special payload sizes are calculated correctly
-        let utxo = Utxo::new_test(0, 100000, 100, false, true);
-        let destination = test_address();
-        let change = test_address();
+        let utxo = Utxo::dummy(0, 100000, 100, false, true);
+        let destination = Address::dummy(Network::Testnet, 0);
+        let change = Address::dummy(Network::Testnet, 0);
 
         // Test with AssetLock payload
         let credit_outputs = vec![
@@ -1079,9 +1078,9 @@ mod tests {
     #[test]
     fn test_build_with_payload_override() {
         // Test that build_with_payload overrides set_special_payload
-        let utxo = Utxo::new_test(0, 100000, 100, false, true);
-        let destination = test_address();
-        let change = test_address();
+        let utxo = Utxo::dummy(0, 100000, 100, false, true);
+        let destination = Address::dummy(Network::Testnet, 0);
+        let change = Address::dummy(Network::Testnet, 0);
 
         let credit_outputs = vec![TxOut {
             value: 50000,
@@ -1125,8 +1124,8 @@ mod tests {
     #[test]
     fn test_bip69_output_ordering() {
         // Test that outputs are sorted according to BIP-69
-        let utxo = Utxo::new_test(0, 1000000, 100, false, true);
-        let address1 = test_address();
+        let utxo = Utxo::dummy(0, 1000000, 100, false, true);
+        let address1 = Address::dummy(Network::Testnet, 0);
         let address2 = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[
                 0x02, 0x60, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
@@ -1136,7 +1135,7 @@ mod tests {
             .unwrap(),
             Network::Testnet,
         );
-        let change_address = test_address();
+        let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
             .set_fee_level(FeeLevel::Normal)
@@ -1172,7 +1171,7 @@ mod tests {
                 value: 100000,
                 script_pubkey: ScriptBuf::new(),
             },
-            test_address(),
+            Address::dummy(Network::Testnet, 0),
             100,
             false,
         );
@@ -1186,7 +1185,7 @@ mod tests {
                 value: 200000,
                 script_pubkey: ScriptBuf::new(),
             },
-            test_address(),
+            Address::dummy(Network::Testnet, 0),
             100,
             false,
         );
@@ -1200,13 +1199,13 @@ mod tests {
                 value: 300000,
                 script_pubkey: ScriptBuf::new(),
             },
-            test_address(),
+            Address::dummy(Network::Testnet, 0),
             100,
             false,
         );
 
-        let destination = test_address();
-        let change = test_address();
+        let destination = Address::dummy(Network::Testnet, 0);
+        let change = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
             .set_fee_level(FeeLevel::Normal)
@@ -1245,13 +1244,13 @@ mod tests {
     fn test_coin_selection_with_special_payload() {
         // Test that coin selection considers special payload size
         let utxos = vec![
-            Utxo::new_test(0, 50000, 100, false, true),
-            Utxo::new_test(0, 60000, 100, false, true),
-            Utxo::new_test(0, 70000, 100, false, true),
+            Utxo::dummy(0, 50000, 100, false, true),
+            Utxo::dummy(0, 60000, 100, false, true),
+            Utxo::dummy(0, 70000, 100, false, true),
         ];
 
-        let recipient_address = test_address();
-        let change_address = test_address();
+        let recipient_address = Address::dummy(Network::Testnet, 0);
+        let change_address = Address::dummy(Network::Testnet, 0);
 
         // Create a large special payload that affects fee calculation
         let credit_outputs = vec![
