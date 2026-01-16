@@ -454,14 +454,6 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             }
         };
 
-        // Log compression statistics
-        let stats = self.headers2_state.get_stats();
-        tracing::info!(
-            "📊 Headers2 compression stats: {:.1}% bandwidth saved, {:.1}% compression ratio",
-            stats.bandwidth_savings,
-            stats.compression_ratio * 100.0
-        );
-
         let headers_count = headers.len();
 
         // Process decompressed headers through the normal flow

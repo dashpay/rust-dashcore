@@ -44,7 +44,7 @@ pub mod transitions;
 // Re-exports
 pub use filters::FilterSyncManager;
 pub use headers::{HeaderSyncManager, ReorgConfig};
-pub use headers2::{Headers2StateManager, Headers2Stats, ProcessError};
+pub use headers2::{Headers2StateManager, ProcessError};
 pub use manager::SyncManager;
 pub use masternodes::MasternodeSyncManager;
 pub use phases::{PhaseTransition, SyncPhase};
