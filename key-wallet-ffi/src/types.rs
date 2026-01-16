@@ -184,7 +184,9 @@ pub enum FFIAccountType {
     ProviderOperatorKeys = 9,
     /// Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/\[key_index\]
     ProviderPlatformKeys = 10,
+    /// DashPay incoming funds account using 256-bit derivation
     DashpayReceivingFunds = 11,
+    /// DashPay external (watch-only) account using 256-bit derivation
     DashpayExternalAccount = 12,
     /// Platform Payment address (DIP-17) - Path: m/9'/5'/17'/account'/key_class'/index
     PlatformPayment = 13,
