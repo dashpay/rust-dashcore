@@ -101,13 +101,6 @@ DO_LINT=true ./contrib/test.sh
 DO_FMT=true ./contrib/test.sh
 ```
 
-### Integration Tests
-```bash
-# Run with real Dash node (requires DASH_SPV_IP environment variable)
-cd dash-spv
-cargo test --test integration_real_node_test -- --nocapture
-```
-
 ## Development Commands
 
 ### Linting and Formatting

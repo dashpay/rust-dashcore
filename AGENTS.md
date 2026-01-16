@@ -9,7 +9,6 @@
 - MSRV: 1.89. Build all: `cargo build --workspace --all-features`
 - Test all: `cargo test --workspace --all-features` or `./contrib/test.sh` (set `DO_COV=true`, `DO_LINT=true`, `DO_FMT=true` as needed)
 - Targeted tests: `cargo test -p dash-spv --all-features`
-- Integration RPC: `cd dash-spv && DASH_SPV_IP=<node-ip> cargo test --test integration_real_node_test -- --nocapture`
 - FFI iOS builds: `cd key-wallet-ffi && ./build-ios.sh`
 - Lint/format: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all`
 - Docs: `cargo doc --workspace` (add `--open` locally)
