@@ -27,6 +27,8 @@ fn test_account_collection_comprehensive() {
             coinjoin_count: 2,
             topup_indices: [0, 1, 2].as_ptr(),
             topup_count: 3,
+            platform_payment_specs: ptr::null(),
+            platform_payment_count: 0,
             special_account_types: ptr::null(),
             special_account_types_count: 0,
         };

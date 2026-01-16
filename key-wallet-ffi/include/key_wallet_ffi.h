@@ -80,7 +80,13 @@ typedef enum {
      Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/\[key_index\]
      */
     PROVIDER_PLATFORM_KEYS = 10,
+    /*
+     DashPay incoming funds account using 256-bit derivation
+     */
     DASHPAY_RECEIVING_FUNDS = 11,
+    /*
+     DashPay external (watch-only) account using 256-bit derivation
+     */
     DASHPAY_EXTERNAL_ACCOUNT = 12,
     /*
      Platform Payment address (DIP-17) - Path: m/9'/5'/17'/account'/key_class'/index
@@ -722,6 +728,23 @@ typedef struct {
 } FFIUTXO;
 
 /*
+ FFI specification for a PlatformPayment account to create
+
+ PlatformPayment accounts (DIP-17) use the derivation path:
+ `m/9'/coin_type'/17'/account'/key_class'/index`
+ */
+typedef struct {
+    /*
+     Account index (hardened) - the account' level in the derivation path
+     */
+    uint32_t account;
+    /*
+     Key class (hardened) - defaults to 0', 1' is reserved for change-like segregation
+     */
+    uint32_t key_class;
+} FFIPlatformPaymentAccountSpec;
+
+/*
  FFI structure for wallet account creation options
  This single struct represents all possible account creation configurations
  */
@@ -750,6 +773,11 @@ typedef struct {
      */
     const uint32_t *topup_indices;
     size_t topup_count;
+    /*
+     Array of PlatformPayment account specs to create
+     */
+    const FFIPlatformPaymentAccountSpec *platform_payment_specs;
+    size_t platform_payment_count;
     /*
      For SpecificAccounts: Additional special account types to create
      (e.g., IdentityRegistration, ProviderKeys, etc.)
