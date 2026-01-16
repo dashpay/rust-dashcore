@@ -10,7 +10,6 @@ use dashcore::network::message_blockdata::Inventory;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::types::PeerId;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::manager::SyncManager;
@@ -69,18 +68,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             ) => {
                 self.handle_headers_message(headers, network, storage).await?;
             }
-
-            (
-                SyncPhase::DownloadingHeaders {
-                    ..
-                },
-                NetworkMessage::Headers2(headers2),
-            ) => {
-                // Get the actual peer ID from the network manager
-                let peer_id = network.get_last_message_peer_id().await;
-                self.handle_headers2_message(headers2, peer_id, network, storage).await?;
-            }
-
             (
                 SyncPhase::DownloadingMnList {
                     ..
@@ -116,17 +103,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                 NetworkMessage::Headers(headers),
             ) => {
                 self.handle_new_headers(headers, network, storage).await?;
-            }
-
-            // Handle compressed headers when fully synced
-            (
-                SyncPhase::FullySynced {
-                    ..
-                },
-                NetworkMessage::Headers2(headers2),
-            ) => {
-                let peer_id = network.get_last_message_peer_id().await;
-                self.handle_headers2_message(headers2, peer_id, network, storage).await?;
             }
 
             // Handle filter headers when fully synced
@@ -197,12 +173,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                 NetworkMessage::Headers(_),
             ) => true,
             (
-                SyncPhase::DownloadingHeaders {
-                    ..
-                },
-                NetworkMessage::Headers2(_),
-            ) => true,
-            (
                 SyncPhase::DownloadingMnList {
                     ..
                 },
@@ -249,12 +219,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                 SyncPhase::FullySynced {
                     ..
                 },
-                NetworkMessage::Headers2(_),
-            ) => true,
-            (
-                SyncPhase::FullySynced {
-                    ..
-                },
                 NetworkMessage::CFHeaders(_),
             ) => true,
             (
@@ -277,38 +241,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             ) => true, // Allow QRInfo when fully synced
             _ => false,
         }
-    }
-
-    pub(super) async fn handle_headers2_message(
-        &mut self,
-        headers2: &dashcore::network::message_headers2::Headers2Message,
-        peer_id: PeerId,
-        network: &mut N,
-        storage: &mut S,
-    ) -> SyncResult<()> {
-        let (continue_sync, headers_count) = match self
-            .header_sync
-            .handle_headers2_message(headers2, peer_id, storage, network)
-            .await
-        {
-            Ok(result) => result,
-            Err(SyncError::Headers2DecompressionFailed(e)) => {
-                // Headers2 decompression failed - we should fall back to regular headers
-                tracing::warn!("Headers2 decompression failed: {} - peer may not properly support headers2 or connection issue", e);
-                // For now, just return the error. In the future, we could trigger a fallback here
-                return Err(SyncError::Headers2DecompressionFailed(e));
-            }
-            Err(e) => return Err(e),
-        };
-
-        self.finalize_headers_sync(
-            continue_sync,
-            headers_count as u32,
-            network,
-            storage,
-            "Headers sync complete via Headers2",
-        )
-        .await
     }
 
     pub(super) async fn handle_headers_message(
