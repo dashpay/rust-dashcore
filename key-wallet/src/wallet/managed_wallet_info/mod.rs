@@ -14,7 +14,7 @@ pub mod wallet_info_interface;
 
 pub use managed_account_operations::ManagedAccountOperations;
 
-use super::balance::WalletBalance;
+use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::Network;
@@ -43,8 +43,8 @@ pub struct ManagedWalletInfo {
     pub metadata: WalletMetadata,
     /// All managed accounts
     pub accounts: ManagedAccountCollection,
-    /// Cached wallet balance - should be updated when accounts change
-    pub balance: WalletBalance,
+    /// Cached wallet core balance - should be updated when accounts change
+    pub balance: WalletCoreBalance,
 }
 
 impl ManagedWalletInfo {
@@ -57,7 +57,7 @@ impl ManagedWalletInfo {
             description: None,
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::new(),
-            balance: WalletBalance::default(),
+            balance: WalletCoreBalance::default(),
         }
     }
 
@@ -70,7 +70,7 @@ impl ManagedWalletInfo {
             description: None,
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::new(),
-            balance: WalletBalance::default(),
+            balance: WalletCoreBalance::default(),
         }
     }
 
@@ -83,7 +83,7 @@ impl ManagedWalletInfo {
             description: None,
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::from_account_collection(&wallet.accounts),
-            balance: WalletBalance::default(),
+            balance: WalletCoreBalance::default(),
         }
     }
 

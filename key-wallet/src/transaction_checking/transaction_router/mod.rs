@@ -162,7 +162,10 @@ impl TransactionRouter {
     }
 }
 
-/// Account types that can be checked for transactions
+/// Core account types that can be checked for transactions
+///
+/// Note: Platform Payment accounts (DIP-17) are NOT included here as they
+/// operate on Dash Platform, not the Core chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountTypeToCheck {
     StandardBIP44,
@@ -178,9 +181,6 @@ pub enum AccountTypeToCheck {
     ProviderPlatformKeys,
     DashpayReceivingFunds,
     DashpayExternalAccount,
-    /// Platform Payment accounts (DIP-17).
-    /// Note: These are NOT checked for Core chain transactions as they operate on Dash Platform.
-    PlatformPayment,
 }
 
 impl From<ManagedAccountType> for AccountTypeToCheck {
@@ -232,7 +232,11 @@ impl From<ManagedAccountType> for AccountTypeToCheck {
             } => AccountTypeToCheck::DashpayExternalAccount,
             ManagedAccountType::PlatformPayment {
                 ..
-            } => AccountTypeToCheck::PlatformPayment,
+            } => {
+                // Platform Payment accounts (DIP-17) operate on Dash Platform, not the Core chain.
+                // They should never be converted to AccountTypeToCheck.
+                panic!("PlatformPayment accounts cannot be converted to AccountTypeToCheck")
+            }
         }
     }
 }
@@ -286,7 +290,11 @@ impl From<&ManagedAccountType> for AccountTypeToCheck {
             } => AccountTypeToCheck::DashpayExternalAccount,
             ManagedAccountType::PlatformPayment {
                 ..
-            } => AccountTypeToCheck::PlatformPayment,
+            } => {
+                // Platform Payment accounts (DIP-17) operate on Dash Platform, not the Core chain.
+                // They should never be converted to AccountTypeToCheck.
+                panic!("PlatformPayment accounts cannot be converted to AccountTypeToCheck")
+            }
         }
     }
 }

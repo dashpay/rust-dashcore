@@ -6,7 +6,7 @@ use crate::account::AccountMetadata;
 use crate::account::TransactionRecord;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::utxo::Utxo;
-use crate::wallet::balance::WalletBalance;
+use crate::wallet::balance::WalletCoreBalance;
 use crate::Network;
 use alloc::collections::BTreeMap;
 use dashcore::blockdata::transaction::OutPoint;
@@ -33,10 +33,10 @@ pub trait ManagedAccountTrait {
     fn is_watch_only(&self) -> bool;
 
     /// Get balance
-    fn balance(&self) -> &WalletBalance;
+    fn balance(&self) -> &WalletCoreBalance;
 
     /// Get mutable balance
-    fn balance_mut(&mut self) -> &mut WalletBalance;
+    fn balance_mut(&mut self) -> &mut WalletCoreBalance;
 
     /// Get transactions
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord>;

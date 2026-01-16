@@ -65,10 +65,12 @@ pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};
 pub use managed_account::address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
 pub use managed_account::managed_account_type::ManagedAccountType;
+pub use managed_account::managed_platform_account::ManagedPlatformAccount;
+pub use managed_account::platform_address::PlatformP2PKHAddress;
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
 pub use utxo::{Utxo, UtxoSet};
-pub use wallet::{balance::WalletBalance, Wallet};
+pub use wallet::{balance::WalletCoreBalance, Wallet};
 
 /// Re-export commonly used types
 pub mod prelude {

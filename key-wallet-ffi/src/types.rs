@@ -63,8 +63,8 @@ pub struct FFIBalance {
     pub total: u64,
 }
 
-impl From<key_wallet::WalletBalance> for FFIBalance {
-    fn from(balance: key_wallet::WalletBalance) -> Self {
+impl From<key_wallet::WalletCoreBalance> for FFIBalance {
+    fn from(balance: key_wallet::WalletCoreBalance) -> Self {
         FFIBalance {
             confirmed: balance.spendable(),
             unconfirmed: balance.unconfirmed(),

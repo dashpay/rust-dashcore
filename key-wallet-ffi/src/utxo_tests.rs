@@ -177,7 +177,7 @@ mod utxo_tests {
         use dashcore::blockdata::script::ScriptBuf;
         use dashcore::{Address, OutPoint, TxOut, Txid};
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::managed_account::ManagedAccount;
+        use key_wallet::managed_account::ManagedCoreAccount;
         use key_wallet::utxo::Utxo;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
@@ -191,7 +191,7 @@ mod utxo_tests {
         let mut managed_info = ManagedWalletInfo::new(Network::Testnet, [1u8; 32]);
 
         // Create a BIP44 account with UTXOs
-        let mut bip44_account = ManagedAccount::new(
+        let mut bip44_account = ManagedCoreAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
@@ -282,7 +282,7 @@ mod utxo_tests {
     fn test_managed_wallet_get_utxos_multiple_accounts() {
         use crate::managed_wallet::FFIManagedWalletInfo;
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::managed_account::ManagedAccount;
+        use key_wallet::managed_account::ManagedCoreAccount;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
@@ -294,7 +294,7 @@ mod utxo_tests {
         let mut managed_info = ManagedWalletInfo::new(Network::Testnet, [2u8; 32]);
 
         // Create BIP44 account with 2 UTXOs
-        let mut bip44_account = ManagedAccount::new(
+        let mut bip44_account = ManagedCoreAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
@@ -320,7 +320,7 @@ mod utxo_tests {
         managed_info.accounts.insert(bip44_account);
 
         // Create BIP32 account with 1 UTXO
-        let mut bip32_account = ManagedAccount::new(
+        let mut bip32_account = ManagedCoreAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP32Account,
@@ -346,7 +346,7 @@ mod utxo_tests {
         managed_info.accounts.insert(bip32_account);
 
         // Create CoinJoin account with 2 UTXOs
-        let mut coinjoin_account = ManagedAccount::new(
+        let mut coinjoin_account = ManagedCoreAccount::new(
             ManagedAccountType::CoinJoin {
                 index: 0,
                 addresses: key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
@@ -385,7 +385,7 @@ mod utxo_tests {
     fn test_managed_wallet_get_utxos() {
         use crate::managed_wallet::FFIManagedWalletInfo;
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::managed_account::ManagedAccount;
+        use key_wallet::managed_account::ManagedCoreAccount;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
@@ -398,7 +398,7 @@ mod utxo_tests {
         let mut managed_info = ManagedWalletInfo::new(Network::Testnet, [3u8; 32]);
 
         // Add a UTXO to Testnet account
-        let mut testnet_account = ManagedAccount::new(
+        let mut testnet_account = ManagedCoreAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,

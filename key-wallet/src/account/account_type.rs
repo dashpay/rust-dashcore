@@ -127,7 +127,11 @@ impl From<AccountType> for AccountTypeToCheck {
             } => AccountTypeToCheck::DashpayExternalAccount,
             AccountType::PlatformPayment {
                 ..
-            } => AccountTypeToCheck::PlatformPayment,
+            } => {
+                // Platform Payment accounts (DIP-17) operate on Dash Platform, not Core chain.
+                // They should never be converted to AccountTypeToCheck.
+                panic!("PlatformPayment accounts cannot be converted to AccountTypeToCheck")
+            }
         }
     }
 }

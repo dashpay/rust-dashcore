@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Wallet balance breakdown
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct WalletBalance {
+pub struct WalletCoreBalance {
     /// Confirmed and mature balance (UTXOs with enough confirmations to be spendable)
     spendable: u64,
     /// Unconfirmed balance (UTXOs without confirmations)
@@ -21,7 +21,7 @@ pub struct WalletBalance {
     locked: u64,
 }
 
-impl WalletBalance {
+impl WalletCoreBalance {
     /// Create a new wallet balance
     pub fn new(spendable: u64, unconfirmed: u64, immature: u64, locked: u64) -> Self {
         Self {
@@ -58,7 +58,7 @@ impl WalletBalance {
     }
 }
 
-impl Display for WalletBalance {
+impl Display for WalletCoreBalance {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -72,7 +72,7 @@ impl Display for WalletBalance {
     }
 }
 
-impl AddAssign for WalletBalance {
+impl AddAssign for WalletCoreBalance {
     fn add_assign(&mut self, other: Self) {
         self.spendable += other.spendable;
         self.unconfirmed += other.unconfirmed;
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn test_balance_creation_and_getters() {
-        let balance = WalletBalance::new(1000, 500, 100, 200);
+        let balance = WalletCoreBalance::new(1000, 500, 100, 200);
         assert_eq!(balance.spendable(), 1000);
         assert_eq!(balance.unconfirmed(), 500);
         assert_eq!(balance.immature(), 100);
@@ -98,19 +98,19 @@ mod tests {
     #[test]
     #[should_panic(expected = "attempt to add with overflow")]
     fn test_balance_overflow() {
-        let balance = WalletBalance::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX);
+        let balance = WalletCoreBalance::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX);
         balance.total();
     }
 
     #[test]
     fn test_balance_display() {
-        let zero = WalletBalance::default();
+        let zero = WalletCoreBalance::default();
         assert_eq!(
             zero.to_string(),
             "Spendable: 0, Unconfirmed: 0, Immature: 0, Locked: 0, Total: 0"
         );
 
-        let balance = WalletBalance::new(1000, 500, 100, 200);
+        let balance = WalletCoreBalance::new(1000, 500, 100, 200);
         let display = balance.to_string();
         assert_eq!(
             display,
@@ -120,8 +120,8 @@ mod tests {
 
     #[test]
     fn test_balance_add_assign() {
-        let mut balance = WalletBalance::new(1000, 500, 50, 200);
-        let balance_add = WalletBalance::new(300, 100, 100, 50);
+        let mut balance = WalletCoreBalance::new(1000, 500, 50, 200);
+        let balance_add = WalletCoreBalance::new(300, 100, 100, 50);
         // Test adding actual balances
         balance += balance_add;
         assert_eq!(balance.spendable(), 1300);
@@ -131,7 +131,7 @@ mod tests {
         assert_eq!(balance.total(), 2300);
         // Test adding zero balances
         let balance_before = balance;
-        balance += WalletBalance::default();
+        balance += WalletCoreBalance::default();
         assert_eq!(balance_before, balance);
     }
 }

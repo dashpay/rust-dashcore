@@ -15,7 +15,7 @@ use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::address_pool::PublicKeyType;
 use crate::utxo::Utxo;
-use crate::wallet::balance::WalletBalance;
+use crate::wallet::balance::WalletCoreBalance;
 #[cfg(feature = "eddsa")]
 use crate::AddressInfo;
 use crate::{ExtendedPubKey, Network};
@@ -31,7 +31,9 @@ pub mod address_pool;
 pub mod managed_account_collection;
 pub mod managed_account_trait;
 pub mod managed_account_type;
+pub mod managed_platform_account;
 pub mod metadata;
+pub mod platform_address;
 pub mod transaction_record;
 
 /// Managed account with mutable state
@@ -41,7 +43,7 @@ pub mod transaction_record;
 /// the immutable Account structure.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct ManagedAccount {
+pub struct ManagedCoreAccount {
     /// Account type with embedded address pools and index
     pub account_type: ManagedAccountType,
     /// Network this account belongs to
@@ -51,14 +53,14 @@ pub struct ManagedAccount {
     /// Whether this is a watch-only account
     pub is_watch_only: bool,
     /// Account balance information
-    pub balance: WalletBalance,
+    pub balance: WalletCoreBalance,
     /// Transaction history for this account
     pub transactions: BTreeMap<Txid, TransactionRecord>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
 }
 
-impl ManagedAccount {
+impl ManagedCoreAccount {
     /// Create a new managed account
     pub fn new(account_type: ManagedAccountType, network: Network, is_watch_only: bool) -> Self {
         Self {
@@ -66,7 +68,7 @@ impl ManagedAccount {
             network,
             metadata: AccountMetadata::default(),
             is_watch_only,
-            balance: WalletBalance::default(),
+            balance: WalletCoreBalance::default(),
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
         }
@@ -282,7 +284,7 @@ impl ManagedAccount {
                 unconfirmed += value;
             }
         }
-        self.balance = WalletBalance::new(spendable, unconfirmed, immature, locked);
+        self.balance = WalletCoreBalance::new(spendable, unconfirmed, immature, locked);
         self.metadata.last_used = Some(Self::current_timestamp());
     }
 
@@ -833,7 +835,7 @@ impl ManagedAccount {
     }
 }
 
-impl ManagedAccountTrait for ManagedAccount {
+impl ManagedAccountTrait for ManagedCoreAccount {
     fn account_type(&self) -> &ManagedAccountType {
         &self.account_type
     }
@@ -858,11 +860,11 @@ impl ManagedAccountTrait for ManagedAccount {
         self.is_watch_only
     }
 
-    fn balance(&self) -> &WalletBalance {
+    fn balance(&self) -> &WalletCoreBalance {
         &self.balance
     }
 
-    fn balance_mut(&mut self) -> &mut WalletBalance {
+    fn balance_mut(&mut self) -> &mut WalletCoreBalance {
         &mut self.balance
     }
 

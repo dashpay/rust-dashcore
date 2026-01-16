@@ -16,25 +16,25 @@ use crate::wallet_manager::FFIWalletManager;
 use crate::FFINetwork;
 use key_wallet::account::account_collection::DashpayAccountKey;
 use key_wallet::managed_account::address_pool::AddressPool;
-use key_wallet::managed_account::ManagedAccount;
+use key_wallet::managed_account::ManagedCoreAccount;
 use key_wallet::AccountType;
 
 /// Opaque managed account handle that wraps ManagedAccount
 pub struct FFIManagedAccount {
     /// The underlying managed account
-    pub(crate) account: Arc<ManagedAccount>,
+    pub(crate) account: Arc<ManagedCoreAccount>,
 }
 
 impl FFIManagedAccount {
     /// Create a new FFI managed account handle
-    pub fn new(account: &ManagedAccount) -> Self {
+    pub fn new(account: &ManagedCoreAccount) -> Self {
         FFIManagedAccount {
             account: Arc::new(account.clone()),
         }
     }
 
     /// Get a reference to the inner managed account
-    pub fn inner(&self) -> &ManagedAccount {
+    pub fn inner(&self) -> &ManagedCoreAccount {
         self.account.as_ref()
     }
 }
