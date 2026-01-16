@@ -22,9 +22,6 @@ use dashcore::blockdata::block::Header;
 use dashcore::network::message_headers2::{CompressedHeader, CompressionState, DecompressionError};
 use std::collections::HashMap;
 
-/// Size of an uncompressed block header in bytes
-const UNCOMPRESSED_HEADER_SIZE: usize = 80;
-
 /// Error types for headers2 processing
 #[derive(Debug, Clone)]
 pub enum ProcessError {
@@ -54,12 +51,6 @@ impl std::error::Error for ProcessError {}
 pub struct Headers2StateManager {
     /// Compression state per peer
     peer_states: HashMap<PeerId, CompressionState>,
-
-    /// Statistics
-    pub total_headers_received: u64,
-    pub compressed_headers_received: u64,
-    pub bytes_saved: u64,
-    pub total_bytes_received: u64,
 }
 
 impl Headers2StateManager {
@@ -67,10 +58,6 @@ impl Headers2StateManager {
     pub fn new() -> Self {
         Self {
             peer_states: HashMap::new(),
-            total_headers_received: 0,
-            compressed_headers_received: 0,
-            bytes_saved: 0,
-            total_bytes_received: 0,
         }
     }
 
@@ -117,15 +104,6 @@ impl Headers2StateManager {
 
         // Process headers and collect statistics
         for (i, compressed) in headers.iter().enumerate() {
-            // Update statistics
-            self.total_headers_received += 1;
-            self.total_bytes_received += compressed.encoded_size() as u64;
-
-            if compressed.is_compressed() {
-                self.compressed_headers_received += 1;
-                self.bytes_saved += compressed.bytes_saved() as u64;
-            }
-
             // Get state and decompress
             let state = self.get_state(peer_id);
             let header =
@@ -141,58 +119,6 @@ impl Headers2StateManager {
     pub fn reset_peer(&mut self, peer_id: PeerId) {
         self.peer_states.remove(&peer_id);
     }
-
-    /// Get compression ratio
-    pub fn compression_ratio(&self) -> f64 {
-        if self.total_headers_received == 0 {
-            0.0
-        } else {
-            self.compressed_headers_received as f64 / self.total_headers_received as f64
-        }
-    }
-
-    /// Get bandwidth savings percentage
-    pub fn bandwidth_savings(&self) -> f64 {
-        if self.total_bytes_received == 0 {
-            0.0
-        } else {
-            let uncompressed_size = self.total_headers_received as usize * UNCOMPRESSED_HEADER_SIZE;
-            let savings = (uncompressed_size - self.total_bytes_received as usize) as f64;
-            (savings / uncompressed_size as f64) * 100.0
-        }
-    }
-
-    /// Get detailed statistics
-    pub fn get_stats(&self) -> Headers2Stats {
-        Headers2Stats {
-            total_headers: self.total_headers_received,
-            compressed_headers: self.compressed_headers_received,
-            bytes_saved: self.bytes_saved,
-            total_bytes_received: self.total_bytes_received,
-            compression_ratio: self.compression_ratio(),
-            bandwidth_savings: self.bandwidth_savings(),
-            active_peers: self.peer_states.len(),
-        }
-    }
-}
-
-/// Statistics about headers2 compression
-#[derive(Debug, Clone)]
-pub struct Headers2Stats {
-    /// Total number of headers received
-    pub total_headers: u64,
-    /// Number of headers that were compressed
-    pub compressed_headers: u64,
-    /// Bytes saved through compression
-    pub bytes_saved: u64,
-    /// Total bytes received (compressed)
-    pub total_bytes_received: u64,
-    /// Ratio of compressed to total headers
-    pub compression_ratio: f64,
-    /// Bandwidth savings percentage
-    pub bandwidth_savings: f64,
-    /// Number of peers with active compression state
-    pub active_peers: usize,
 }
 
 #[cfg(test)]
@@ -236,11 +162,6 @@ mod tests {
         assert_eq!(decompressed.len(), 2);
         assert_eq!(decompressed[0], header1);
         assert_eq!(decompressed[1], header2);
-
-        // Check statistics
-        assert_eq!(manager.total_headers_received, 2);
-        assert!(manager.compressed_headers_received > 0);
-        assert!(manager.bytes_saved > 0);
     }
 
     #[test]
@@ -276,16 +197,5 @@ mod tests {
         // Reset peer
         manager.reset_peer(peer_id);
         assert_eq!(manager.peer_states.len(), 0);
-    }
-
-    #[test]
-    fn test_statistics() {
-        let manager = Headers2StateManager::new();
-        let stats = manager.get_stats();
-
-        assert_eq!(stats.total_headers, 0);
-        assert_eq!(stats.compression_ratio, 0.0);
-        assert_eq!(stats.bandwidth_savings, 0.0);
-        assert_eq!(stats.active_peers, 0);
     }
 }

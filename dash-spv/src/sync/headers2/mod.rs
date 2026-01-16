@@ -2,4 +2,4 @@
 
 mod manager;
 
-pub use manager::{Headers2StateManager, Headers2Stats, ProcessError};
+pub use manager::{Headers2StateManager, ProcessError};
