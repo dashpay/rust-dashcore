@@ -56,9 +56,6 @@ pub use status_display::StatusDisplay;
 pub use core::DashSpvClient;
 
 #[cfg(test)]
-mod config_test;
-
-#[cfg(test)]
 mod message_handler_test;
 
 #[cfg(test)]
