@@ -1,1 +1,4 @@
-disallowed-types = ["std::sync::RwLock", "std::sync::Mutex"]
+disallowed-types = [
+  { path = "std::sync::RwLock", reason = "This struct is blocking and can be poisoned", replacement = "tokio::sync::RwLock" },
+  { path = "std::sync::Mutex", reason = "This struct is blocking and can be poisoned", replacement = "tokio::sync::Mutex" },
+]
