@@ -2,7 +2,7 @@
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
-use dash_spv::{init_console_logging, ClientConfig, DashSpvClient, LevelFilter};
+use dash_spv::{init_console_logging, Config, DashSpvClient, LevelFilter};
 use dashcore::Address;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Create configuration with filter support
-    let config = ClientConfig::mainnet()
+    let config = Config::mainnet()
         .with_storage_path("./.tmp/filter-sync-example-storage")
         .without_masternodes(); // Skip masternode sync for this example
 

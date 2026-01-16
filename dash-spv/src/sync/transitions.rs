@@ -1,6 +1,6 @@
 //! Phase transition logic for sequential sync
 
-use crate::client::ClientConfig;
+use crate::client::Config;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -11,12 +11,12 @@ use std::time::Instant;
 
 /// Manages phase transitions and validation
 pub struct TransitionManager {
-    config: ClientConfig,
+    config: Config,
 }
 
 impl TransitionManager {
     /// Create a new transition manager
-    pub fn new(config: &ClientConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         Self {
             config: config.clone(),
         }

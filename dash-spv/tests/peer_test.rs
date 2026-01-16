@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use tokio::sync::RwLock;
 use tokio::time;
 
-use dash_spv::client::{ClientConfig, DashSpvClient};
+use dash_spv::client::{Config, DashSpvClient};
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
@@ -15,8 +15,8 @@ use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test configuration with the given network
-fn create_test_config(network: Network) -> ClientConfig {
-    let mut config = ClientConfig::new(network);
+fn create_test_config(network: Network) -> Config {
+    let mut config = Config::new(network);
 
     config.storage_path = TempDir::new().unwrap().path().to_path_buf();
 

@@ -2,7 +2,7 @@
 
 use super::phases::{PhaseTransition, SyncPhase};
 use super::transitions::TransitionManager;
-use crate::client::ClientConfig;
+use crate::client::Config;
 use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -76,7 +76,7 @@ pub struct SyncManager<S: StorageManager, N: NetworkManager, W: WalletInterface>
     pub(super) masternode_sync: MasternodeSyncManager<S, N>,
 
     /// Configuration
-    pub(super) config: ClientConfig,
+    pub(super) config: Config,
 
     /// Phase transition history
     pub(super) phase_history: Vec<PhaseTransition>,
@@ -103,7 +103,7 @@ pub struct SyncManager<S: StorageManager, N: NetworkManager, W: WalletInterface>
 impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N, W> {
     /// Create a new sequential sync manager
     pub fn new(
-        config: &ClientConfig,
+        config: &Config,
         received_filter_heights: SharedFilterHeights,
         wallet: Arc<RwLock<W>>,
         chain_state: Arc<RwLock<crate::types::ChainState>>,

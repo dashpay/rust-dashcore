@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 use dash_spv::{
-    client::ClientConfig,
+    client::Config,
     error::NetworkResult,
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
@@ -109,7 +109,7 @@ impl NetworkManager for MockNetworkManager {
 
 #[tokio::test]
 async fn test_filter_sync_at_tip_edge_case() {
-    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
+    let config = Config::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
 
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
     let mut filter_sync = FilterSyncManager::new(&config, received_heights);
@@ -151,7 +151,7 @@ async fn test_filter_sync_at_tip_edge_case() {
 
 #[tokio::test]
 async fn test_no_invalid_getcfheaders_at_tip() {
-    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
+    let config = Config::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
 
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
     let mut filter_sync = FilterSyncManager::new(&config, received_heights);

@@ -8,14 +8,14 @@ use tokio::sync::RwLock;
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
-use dash_spv::{ClientConfig, DashSpvClient};
+use dash_spv::{Config, DashSpvClient};
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
 ) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager> {
-    let config = ClientConfig::testnet()
+    let config = Config::testnet()
         .without_filters()
         .with_storage_path(TempDir::new().unwrap().path())
         .without_masternodes();

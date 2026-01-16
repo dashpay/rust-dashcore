@@ -14,7 +14,7 @@ use dashcore::{
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::client::ClientConfig;
+use crate::client::Config;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -23,7 +23,7 @@ use crate::storage::StorageManager;
 pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
-    config: ClientConfig,
+    config: Config,
     engine: Option<MasternodeListEngine>,
 
     // Simple caches matching dash-evo-tool pattern
@@ -53,7 +53,7 @@ pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
 
 impl<S: StorageManager, N: NetworkManager> MasternodeSyncManager<S, N> {
     /// Create a new masternode sync manager.
-    pub fn new(config: &ClientConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         let (engine, mnlist_diffs) = if config.enable_masternodes {
             // Try to load embedded MNListDiff data for faster initial sync
             if let Some(embedded) = super::embedded_data::get_embedded_diff(config.network) {

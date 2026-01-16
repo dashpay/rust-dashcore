@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use clap::{Arg, Command};
 use dash_spv::terminal::TerminalGuard;
-use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, Network};
+use dash_spv::{Config, DashSpvClient, LevelFilter, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use tokio_util::sync::CancellationToken;
@@ -249,7 +249,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Validation mode: {:?}", validation_mode);
 
     // Create configuration
-    let mut config = ClientConfig::new(network)
+    let mut config = Config::new(network)
         .with_storage_path(data_dir.clone())
         .with_validation_mode(validation_mode);
 
@@ -342,7 +342,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_client<S: dash_spv::storage::StorageManager>(
-    config: ClientConfig,
+    config: Config,
     network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,

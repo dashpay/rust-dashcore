@@ -48,7 +48,7 @@ mod sync_coordinator;
 mod transactions;
 
 // Re-export public types from extracted modules
-pub use config::ClientConfig;
+pub use config::Config;
 pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
 
@@ -63,7 +63,7 @@ mod message_handler_test;
 
 #[cfg(test)]
 mod tests {
-    use super::{ClientConfig, DashSpvClient};
+    use super::{Config, DashSpvClient};
     use crate::client::config::MempoolStrategy;
     use crate::storage::DiskStorageManager;
     use crate::{test_utils::MockNetworkManager, types::UnconfirmedTransaction};
@@ -82,7 +82,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_exposes_shared_wallet_manager() {
-        let config = ClientConfig::mainnet()
+        let config = Config::mainnet()
             .without_filters()
             .without_masternodes()
             .with_mempool_tracking(MempoolStrategy::FetchAll)
@@ -108,7 +108,7 @@ mod tests {
         // This test validates the get_mempool_balance logic by directly testing
         // the balance calculation code using a mocked mempool state.
 
-        let config = ClientConfig::testnet()
+        let config = Config::testnet()
             .without_filters()
             .without_masternodes()
             .with_mempool_tracking(MempoolStrategy::FetchAll)

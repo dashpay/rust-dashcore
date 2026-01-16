@@ -1,7 +1,7 @@
 //! Integration tests for header synchronization functionality.
 
 use dash_spv::{
-    client::{ClientConfig, DashSpvClient},
+    client::{Config, DashSpvClient},
     network::PeerNetworkManager,
     storage::{BlockHeaderStorage, ChainStateStorage, DiskStorageManager},
     sync::{HeaderSyncManager, ReorgConfig},
@@ -22,7 +22,7 @@ async fn test_header_sync_with_client_integration() {
     let _ = env_logger::try_init();
 
     // Test header sync integration with the full client
-    let config = ClientConfig::new(Network::Dash)
+    let config = Config::new(Network::Dash)
         .with_validation_mode(ValidationMode::Basic)
         .with_storage_path(TempDir::new().expect("Failed to create tmp dir").path());
 
@@ -87,7 +87,7 @@ fn create_test_header_chain_from(start: usize, count: usize) -> Vec<BlockHeader>
 #[tokio::test]
 async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let config = ClientConfig::regtest().with_storage_path(temp_dir.path());
+    let config = Config::regtest().with_storage_path(temp_dir.path());
     let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     let headers = create_test_header_chain(header_count);
@@ -100,7 +100,7 @@ async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
     storage.store_headers(&headers).await.expect("Failed to store headers");
 
     // Create HeaderSyncManager and load from storage
-    let config = ClientConfig::new(Network::Dash);
+    let config = Config::new(Network::Dash);
     let chain_state_arc = Arc::new(RwLock::new(ChainState::new_for_network(Network::Dash)));
     let mut header_sync = HeaderSyncManager::<DiskStorageManager, PeerNetworkManager>::new(
         &config,

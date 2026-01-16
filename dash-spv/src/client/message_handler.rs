@@ -1,6 +1,6 @@
 //! Network message handling for the Dash SPV client.
 
-use crate::client::ClientConfig;
+use crate::client::Config;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
@@ -17,7 +17,7 @@ pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager, W: WalletInt
     sync_manager: &'a mut SyncManager<S, N, W>,
     storage: &'a mut S,
     network: &'a mut N,
-    config: &'a ClientConfig,
+    config: &'a Config,
     mempool_filter: &'a Option<Arc<MempoolFilter>>,
     mempool_state: &'a Arc<RwLock<MempoolState>>,
     event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
@@ -30,7 +30,7 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
         sync_manager: &'a mut SyncManager<S, N, W>,
         storage: &'a mut S,
         network: &'a mut N,
-        config: &'a ClientConfig,
+        config: &'a Config,
         mempool_filter: &'a Option<Arc<MempoolFilter>>,
         mempool_state: &'a Arc<RwLock<MempoolState>>,
         event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,

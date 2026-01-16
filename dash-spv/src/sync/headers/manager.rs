@@ -8,7 +8,7 @@ use dashcore_hashes::Hash;
 
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use crate::chain::{ChainTip, ChainTipManager, ChainWork};
-use crate::client::ClientConfig;
+use crate::client::Config;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -45,7 +45,7 @@ impl Default for ReorgConfig {
 pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
-    config: ClientConfig,
+    config: Config,
     tip_manager: ChainTipManager,
     checkpoint_manager: CheckpointManager,
     reorg_config: ReorgConfig,
@@ -59,7 +59,7 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
 impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
     /// Create a new header sync manager
     pub fn new(
-        config: &ClientConfig,
+        config: &Config,
         reorg_config: ReorgConfig,
         chain_state: Arc<RwLock<ChainState>>,
     ) -> SyncResult<Self> {

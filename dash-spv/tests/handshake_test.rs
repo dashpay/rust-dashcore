@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::{HandshakeManager, NetworkManager, Peer, PeerNetworkManager};
-use dash_spv::{ClientConfig, Network};
+use dash_spv::{Config, Network};
 
 #[tokio::test]
 async fn test_handshake_with_mainnet_peer() {
@@ -73,7 +73,7 @@ async fn test_handshake_timeout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_network_manager_creation() {
-    let config = ClientConfig::new(Network::Dash);
+    let config = Config::new(Network::Dash);
     let network = PeerNetworkManager::new(&config).await;
 
     assert!(network.is_ok(), "Network manager creation should succeed");

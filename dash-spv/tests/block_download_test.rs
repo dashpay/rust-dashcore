@@ -9,11 +9,12 @@ use tokio::sync::Mutex;
 use dashcore::block::Block;
 
 use dash_spv::{
-    client::ClientConfig, storage::DiskStorageManager, sync::FilterSyncManager, types::FilterMatch,
+    client::Config, storage::DiskStorageManager, sync::FilterSyncManager,
+    types::FilterMatch,
 };
 
-fn create_test_config() -> ClientConfig {
-    ClientConfig::testnet()
+fn create_test_config() -> Config {
+    Config::testnet()
         .without_masternodes()
         .with_validation_mode(dash_spv::types::ValidationMode::None)
         .with_storage_path(TempDir::new().unwrap().path())

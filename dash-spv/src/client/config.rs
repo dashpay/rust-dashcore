@@ -19,8 +19,7 @@ pub enum MempoolStrategy {
 
 /// Configuration for the Dash SPV client.
 #[derive(Debug, Clone)]
-#[repr(C)]
-pub struct ClientConfig {
+pub struct Config {
     /// Network to connect to.
     pub network: Network,
 
@@ -74,7 +73,7 @@ pub struct ClientConfig {
     pub start_from_height: Option<u32>,
 }
 
-impl Default for ClientConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             network: Network::Dash,
@@ -97,7 +96,7 @@ impl Default for ClientConfig {
     }
 }
 
-impl ClientConfig {
+impl Config {
     /// Create a new configuration for the given network.
     pub fn new(network: Network) -> Self {
         Self {

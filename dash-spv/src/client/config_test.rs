@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::client::config::{ClientConfig, MempoolStrategy};
+    use crate::client::config::{Config, MempoolStrategy};
     use crate::types::ValidationMode;
     use dashcore::Network;
     use std::net::SocketAddr;
@@ -10,7 +10,7 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = ClientConfig::default();
+        let config = Config::default();
 
         assert_eq!(config.network, Network::Dash);
         assert!(config.peers.is_empty());
@@ -29,15 +29,15 @@ mod tests {
 
     #[test]
     fn test_network_specific_configs() {
-        let mainnet = ClientConfig::mainnet();
+        let mainnet = Config::mainnet();
         assert_eq!(mainnet.network, Network::Dash);
         assert!(mainnet.peers.is_empty()); // Should use DNS discovery
 
-        let testnet = ClientConfig::testnet();
+        let testnet = Config::testnet();
         assert_eq!(testnet.network, Network::Testnet);
         assert!(testnet.peers.is_empty()); // Should use DNS discovery
 
-        let regtest = ClientConfig::regtest();
+        let regtest = Config::regtest();
         assert_eq!(regtest.network, Network::Regtest);
         assert_eq!(regtest.peers.len(), 1);
         assert_eq!(regtest.peers[0].to_string(), "127.0.0.1:19899");
@@ -47,7 +47,7 @@ mod tests {
     fn test_builder_pattern() {
         let path = PathBuf::from("/test/storage");
 
-        let config = ClientConfig::mainnet()
+        let config = Config::mainnet()
             .with_storage_path(path.clone())
             .with_validation_mode(ValidationMode::Basic)
             .with_mempool_tracking(MempoolStrategy::BloomFilter)
@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_add_peer() {
-        let mut config = ClientConfig::default();
+        let mut config = Config::default();
         let addr1: SocketAddr = "1.2.3.4:9999".parse().unwrap();
         let addr2: SocketAddr = "5.6.7.8:9999".parse().unwrap();
 
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_disable_features() {
-        let config = ClientConfig::default().without_filters().without_masternodes();
+        let config = Config::default().without_filters().without_masternodes();
 
         assert!(!config.enable_filters);
         assert!(!config.enable_masternodes);
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_max_peers() {
-        let config = ClientConfig {
+        let config = Config {
             max_peers: 0,
             ..Default::default()
         };
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_mempool_config() {
-        let config = ClientConfig {
+        let config = Config {
             enable_mempool_tracking: true,
             max_mempool_transactions: 0,
             ..Default::default()

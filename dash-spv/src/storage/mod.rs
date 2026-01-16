@@ -32,7 +32,7 @@ use crate::storage::masternode::PersistentMasternodeStateStorage;
 use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
 use crate::types::{MempoolState, UnconfirmedTransaction};
-use crate::{ChainState, ClientConfig};
+use crate::{ChainState, Config};
 
 pub use crate::storage::blocks::BlockHeaderStorage;
 pub use crate::storage::chainstate::ChainStateStorage;
@@ -94,7 +94,7 @@ pub struct DiskStorageManager {
 }
 
 impl DiskStorageManager {
-    pub async fn new(config: &ClientConfig) -> StorageResult<Self> {
+    pub async fn new(config: &Config) -> StorageResult<Self> {
         use std::fs;
 
         let storage_path = config.storage_path.clone();
@@ -144,7 +144,7 @@ impl DiskStorageManager {
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new()?;
-        Self::new(&ClientConfig::testnet().with_storage_path(temp_dir.path())).await
+        Self::new(&Config::testnet().with_storage_path(temp_dir.path())).await
     }
 
     /// Start the background worker saving data every 5 seconds
@@ -402,7 +402,7 @@ mod tests {
     async fn test_store_load_headers() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
         let temp_dir = TempDir::new()?;
-        let config = ClientConfig::testnet().with_storage_path(temp_dir.path());
+        let config = Config::testnet().with_storage_path(temp_dir.path());
         let mut storage = DiskStorageManager::new(&config).await.expect("Unable to create storage");
 
         let headers = BlockHeader::dummy_batch(0..60_000);
@@ -445,7 +445,7 @@ mod tests {
     #[tokio::test]
     async fn test_checkpoint_storage_indexing() -> StorageResult<()> {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config = ClientConfig::testnet().with_storage_path(temp_dir.path());
+        let config = Config::testnet().with_storage_path(temp_dir.path());
         let mut storage = DiskStorageManager::new(&config).await?;
 
         // Create test headers starting from checkpoint height
@@ -502,7 +502,7 @@ mod tests {
     #[tokio::test]
     async fn test_reverse_index_disk_storage() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let config = ClientConfig::regtest().with_storage_path(temp_dir.path());
+        let config = Config::regtest().with_storage_path(temp_dir.path());
 
         {
             let mut storage = DiskStorageManager::new(&config).await.unwrap();
@@ -565,7 +565,7 @@ mod tests {
             lock_file.set_extension("lock");
             lock_file
         };
-        let config = ClientConfig::regtest().with_storage_path(path);
+        let config = Config::regtest().with_storage_path(path);
 
         let mut storage1 = DiskStorageManager::new(&config).await.unwrap();
         assert!(lock_path.exists(), "Lock file should exist while storage is open");

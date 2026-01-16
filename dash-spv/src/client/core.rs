@@ -24,7 +24,7 @@ use crate::sync::SyncManager;
 use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::{ClientConfig, StatusDisplay};
+use super::{Config, StatusDisplay};
 
 /// Main Dash SPV client with generic trait-based architecture.
 ///
@@ -98,7 +98,7 @@ use super::{ClientConfig, StatusDisplay};
 ///
 /// The generic design is an intentional, beneficial architectural choice for a library.
 pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
-    pub(super) config: ClientConfig,
+    pub(super) config: Config,
     pub(super) state: Arc<RwLock<ChainState>>,
     pub(super) stats: Arc<RwLock<SpvStats>>,
     pub(super) network: N,
@@ -267,7 +267,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     // ============ Configuration ============
 
     /// Update the client configuration.
-    pub async fn update_config(&mut self, new_config: ClientConfig) -> Result<()> {
+    pub async fn update_config(&mut self, new_config: Config) -> Result<()> {
         // Validate new configuration
         new_config.validate().map_err(SpvError::Config)?;
 

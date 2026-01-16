@@ -1,5 +1,5 @@
 use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy, FFIString};
-use dash_spv::{ClientConfig, ValidationMode};
+use dash_spv::{Config, ValidationMode};
 use key_wallet_ffi::FFINetwork;
 use std::ffi::CStr;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -32,7 +32,7 @@ pub struct FFIClientConfig {
 
 #[no_mangle]
 pub extern "C" fn dash_spv_ffi_config_new(network: FFINetwork) -> *mut FFIClientConfig {
-    let config = ClientConfig::new(network.into());
+    let config = Config::new(network.into());
     let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
     Box::into_raw(Box::new(FFIClientConfig {
         inner,
@@ -42,7 +42,7 @@ pub extern "C" fn dash_spv_ffi_config_new(network: FFINetwork) -> *mut FFIClient
 
 #[no_mangle]
 pub extern "C" fn dash_spv_ffi_config_mainnet() -> *mut FFIClientConfig {
-    let config = ClientConfig::mainnet();
+    let config = Config::mainnet();
     let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
     Box::into_raw(Box::new(FFIClientConfig {
         inner,
@@ -52,7 +52,7 @@ pub extern "C" fn dash_spv_ffi_config_mainnet() -> *mut FFIClientConfig {
 
 #[no_mangle]
 pub extern "C" fn dash_spv_ffi_config_testnet() -> *mut FFIClientConfig {
-    let config = ClientConfig::testnet();
+    let config = Config::testnet();
     let inner = Box::into_raw(Box::new(config)) as *mut std::ffi::c_void;
     Box::into_raw(Box::new(FFIClientConfig {
         inner,
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_data_dir(
     null_check!(config);
     null_check!(path);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     match CStr::from_ptr(path).to_str() {
         Ok(path_str) => {
             config.storage_path = path_str.into();
@@ -99,7 +99,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_validation_mode(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.validation_mode = mode.into();
     FFIErrorCode::Success as i32
 }
@@ -116,7 +116,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.max_peers = max_peers;
     FFIErrorCode::Success as i32
 }
@@ -146,7 +146,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     null_check!(config);
     null_check!(addr);
 
-    let cfg = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let cfg = unsafe { &mut *((*config).inner as *mut Config) };
     let default_port = match cfg.network {
         dashcore::Network::Dash => 9999,
         dashcore::Network::Testnet => 19999,
@@ -218,7 +218,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_user_agent(
     match CStr::from_ptr(user_agent).to_str() {
         Ok(agent_str) => {
             // Store as-is; normalization/length capping is applied at handshake build time
-            let cfg = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+            let cfg = unsafe { &mut *((*config).inner as *mut Config) };
             cfg.user_agent = Some(agent_str.to_string());
             FFIErrorCode::Success as i32
         }
@@ -241,7 +241,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_relay_transactions(
 ) -> i32 {
     null_check!(config);
 
-    let _config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let _config = unsafe { &mut *((*config).inner as *mut Config) };
     // relay_transactions not directly settable in current ClientConfig
     FFIErrorCode::Success as i32
 }
@@ -258,7 +258,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_filter_load(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.enable_filters = load_filters;
     FFIErrorCode::Success as i32
 }
@@ -274,7 +274,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_restrict_to_configured_peers(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.restrict_to_configured_peers = restrict_peers;
     FFIErrorCode::Success as i32
 }
@@ -291,7 +291,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_masternode_sync_enabled(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.enable_masternodes = enable;
     FFIErrorCode::Success as i32
 }
@@ -309,7 +309,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_network(
         return FFINetwork::Dash;
     }
 
-    let config = unsafe { &*((*config).inner as *const ClientConfig) };
+    let config = unsafe { &*((*config).inner as *const Config) };
     config.network.into()
 }
 
@@ -330,7 +330,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
         };
     }
 
-    let config = unsafe { &*((*config).inner as *const ClientConfig) };
+    let config = unsafe { &*((*config).inner as *const Config) };
     FFIString::new(&config.storage_path.to_string_lossy())
 }
 
@@ -347,18 +347,18 @@ pub unsafe extern "C" fn dash_spv_ffi_config_destroy(config: *mut FFIClientConfi
         let cfg = Box::from_raw(config);
         // Free inner ClientConfig if present
         if !cfg.inner.is_null() {
-            let _ = Box::from_raw(cfg.inner as *mut ClientConfig);
+            let _ = Box::from_raw(cfg.inner as *mut Config);
         }
     }
 }
 
 impl FFIClientConfig {
-    pub fn get_inner(&self) -> &ClientConfig {
-        unsafe { &*(self.inner as *const ClientConfig) }
+    pub fn get_inner(&self) -> &Config {
+        unsafe { &*(self.inner as *const Config) }
     }
 
-    pub fn clone_inner(&self) -> ClientConfig {
-        unsafe { (*(self.inner as *const ClientConfig)).clone() }
+    pub fn clone_inner(&self) -> Config {
+        unsafe { (*(self.inner as *const Config)).clone() }
     }
 }
 
@@ -391,7 +391,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_tracking(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.enable_mempool_tracking = enable;
     FFIErrorCode::Success as i32
 }
@@ -408,7 +408,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_strategy(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.mempool_strategy = strategy.into();
     FFIErrorCode::Success as i32
 }
@@ -425,7 +425,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.max_mempool_transactions = max_transactions as usize;
     FFIErrorCode::Success as i32
 }
@@ -442,7 +442,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.fetch_mempool_transactions = fetch;
     FFIErrorCode::Success as i32
 }
@@ -459,7 +459,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.persist_mempool = persist;
     FFIErrorCode::Success as i32
 }
@@ -477,7 +477,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
         return false;
     }
 
-    let config = unsafe { &*((*config).inner as *const ClientConfig) };
+    let config = unsafe { &*((*config).inner as *const Config) };
     config.enable_mempool_tracking
 }
 
@@ -494,7 +494,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
         return FFIMempoolStrategy::FetchAll;
     }
 
-    let config = unsafe { &*((*config).inner as *const ClientConfig) };
+    let config = unsafe { &*((*config).inner as *const Config) };
     config.mempool_strategy.into()
 }
 
@@ -512,7 +512,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
 ) -> i32 {
     null_check!(config);
 
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    let config = unsafe { &mut *((*config).inner as *mut Config) };
     config.start_from_height = Some(height);
     FFIErrorCode::Success as i32
 }

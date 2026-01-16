@@ -3,7 +3,7 @@
 //! This module contains the FilterSyncManager struct and high-level coordination logic
 //! that delegates to specialized sub-modules for headers, downloads, matching, etc.
 
-use crate::client::ClientConfig;
+use crate::client::Config;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -41,7 +41,7 @@ use super::types::*;
 pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     pub(super) _phantom_s: std::marker::PhantomData<S>,
     pub(super) _phantom_n: std::marker::PhantomData<N>,
-    pub(super) _config: ClientConfig,
+    pub(super) _config: Config,
     /// Whether filter header sync is currently in progress
     pub(super) syncing_filter_headers: bool,
     /// Current height being synced for filter headers
@@ -88,7 +88,7 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
 
 impl<S: StorageManager, N: NetworkManager> FilterSyncManager<S, N> {
     /// Verify that the received compact filter hashes to the expected filter header
-    pub fn new(config: &ClientConfig, received_filter_heights: SharedFilterHeights) -> Self {
+    pub fn new(config: &Config, received_filter_heights: SharedFilterHeights) -> Self {
         Self {
             _config: config.clone(),
             syncing_filter_headers: false,

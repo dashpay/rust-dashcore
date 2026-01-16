@@ -1,6 +1,6 @@
 //! Simple integration test for ChainLock validation flow
 
-use dash_spv::client::{ClientConfig, DashSpvClient};
+use dash_spv::client::{Config, DashSpvClient};
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
@@ -31,7 +31,7 @@ async fn test_chainlock_validation_flow() {
     // Create client config with masternodes enabled
     let network = Network::Dash;
     let enable_masternodes = true;
-    let config = ClientConfig {
+    let config = Config {
         network,
         enable_filters: false,
         enable_masternodes,
@@ -78,7 +78,7 @@ async fn test_chainlock_manager_initialization() {
     let temp_dir = TempDir::new().unwrap();
 
     // Create client config
-    let config = ClientConfig {
+    let config = Config {
         network: Network::Dash,
         enable_filters: false,
         enable_masternodes: false,

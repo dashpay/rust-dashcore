@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 use tokio::time;
 
 use crate::client::config::MempoolStrategy;
-use crate::client::ClientConfig;
+use crate::client::Config;
 use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
@@ -77,7 +77,7 @@ pub struct PeerNetworkManager {
 
 impl PeerNetworkManager {
     /// Create a new peer network manager
-    pub async fn new(config: &ClientConfig) -> Result<Self, Error> {
+    pub async fn new(config: &Config) -> Result<Self, Error> {
         let (message_tx, message_rx) = mpsc::channel(1000);
 
         let discovery = DnsDiscovery::new().await?;
