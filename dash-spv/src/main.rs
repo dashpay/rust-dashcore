@@ -320,13 +320,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let path = if let Some(path) = &config.storage_path {
-        path.clone()
-    } else {
-        "./.tmp/main-exec-storage".into()
-    };
-
-    let storage_manager = match dash_spv::storage::DiskStorageManager::new(path.clone()).await {
+    let storage_manager = match dash_spv::storage::DiskStorageManager::new(&config).await {
         Ok(sm) => sm,
         Err(e) => {
             eprintln!("Failed to create disk storage manager: {}", e);
