@@ -183,117 +183,129 @@ pub enum AccountTypeToCheck {
     DashpayExternalAccount,
 }
 
-impl From<ManagedAccountType> for AccountTypeToCheck {
-    fn from(value: ManagedAccountType) -> Self {
+/// Error returned when trying to convert a Platform Payment account to AccountTypeToCheck
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlatformAccountConversionError;
+
+impl core::fmt::Display for PlatformAccountConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "PlatformPayment accounts cannot be converted to AccountTypeToCheck")
+    }
+}
+
+impl TryFrom<ManagedAccountType> for AccountTypeToCheck {
+    type Error = PlatformAccountConversionError;
+
+    fn try_from(value: ManagedAccountType) -> Result<Self, Self::Error> {
         match value {
             ManagedAccountType::Standard {
                 standard_account_type,
                 ..
             } => match standard_account_type {
                 crate::account::account_type::StandardAccountType::BIP44Account => {
-                    AccountTypeToCheck::StandardBIP44
+                    Ok(AccountTypeToCheck::StandardBIP44)
                 }
                 crate::account::account_type::StandardAccountType::BIP32Account => {
-                    AccountTypeToCheck::StandardBIP32
+                    Ok(AccountTypeToCheck::StandardBIP32)
                 }
             },
             ManagedAccountType::CoinJoin {
                 ..
-            } => AccountTypeToCheck::CoinJoin,
+            } => Ok(AccountTypeToCheck::CoinJoin),
             ManagedAccountType::IdentityRegistration {
                 ..
-            } => AccountTypeToCheck::IdentityRegistration,
+            } => Ok(AccountTypeToCheck::IdentityRegistration),
             ManagedAccountType::IdentityTopUp {
                 ..
-            } => AccountTypeToCheck::IdentityTopUp,
+            } => Ok(AccountTypeToCheck::IdentityTopUp),
             ManagedAccountType::IdentityTopUpNotBoundToIdentity {
                 ..
-            } => AccountTypeToCheck::IdentityTopUpNotBound,
+            } => Ok(AccountTypeToCheck::IdentityTopUpNotBound),
             ManagedAccountType::IdentityInvitation {
                 ..
-            } => AccountTypeToCheck::IdentityInvitation,
+            } => Ok(AccountTypeToCheck::IdentityInvitation),
             ManagedAccountType::ProviderVotingKeys {
                 ..
-            } => AccountTypeToCheck::ProviderVotingKeys,
+            } => Ok(AccountTypeToCheck::ProviderVotingKeys),
             ManagedAccountType::ProviderOwnerKeys {
                 ..
-            } => AccountTypeToCheck::ProviderOwnerKeys,
+            } => Ok(AccountTypeToCheck::ProviderOwnerKeys),
             ManagedAccountType::ProviderOperatorKeys {
                 ..
-            } => AccountTypeToCheck::ProviderOperatorKeys,
+            } => Ok(AccountTypeToCheck::ProviderOperatorKeys),
             ManagedAccountType::ProviderPlatformKeys {
                 ..
-            } => AccountTypeToCheck::ProviderPlatformKeys,
+            } => Ok(AccountTypeToCheck::ProviderPlatformKeys),
             ManagedAccountType::DashpayReceivingFunds {
                 ..
-            } => AccountTypeToCheck::DashpayReceivingFunds,
+            } => Ok(AccountTypeToCheck::DashpayReceivingFunds),
             ManagedAccountType::DashpayExternalAccount {
                 ..
-            } => AccountTypeToCheck::DashpayExternalAccount,
+            } => Ok(AccountTypeToCheck::DashpayExternalAccount),
             ManagedAccountType::PlatformPayment {
                 ..
             } => {
                 // Platform Payment accounts (DIP-17) operate on Dash Platform, not the Core chain.
-                // They should never be converted to AccountTypeToCheck.
-                panic!("PlatformPayment accounts cannot be converted to AccountTypeToCheck")
+                Err(PlatformAccountConversionError)
             }
         }
     }
 }
 
-impl From<&ManagedAccountType> for AccountTypeToCheck {
-    fn from(value: &ManagedAccountType) -> Self {
+impl TryFrom<&ManagedAccountType> for AccountTypeToCheck {
+    type Error = PlatformAccountConversionError;
+
+    fn try_from(value: &ManagedAccountType) -> Result<Self, Self::Error> {
         match value {
             ManagedAccountType::Standard {
                 standard_account_type,
                 ..
             } => match standard_account_type {
                 crate::account::account_type::StandardAccountType::BIP44Account => {
-                    AccountTypeToCheck::StandardBIP44
+                    Ok(AccountTypeToCheck::StandardBIP44)
                 }
                 crate::account::account_type::StandardAccountType::BIP32Account => {
-                    AccountTypeToCheck::StandardBIP32
+                    Ok(AccountTypeToCheck::StandardBIP32)
                 }
             },
             ManagedAccountType::CoinJoin {
                 ..
-            } => AccountTypeToCheck::CoinJoin,
+            } => Ok(AccountTypeToCheck::CoinJoin),
             ManagedAccountType::IdentityRegistration {
                 ..
-            } => AccountTypeToCheck::IdentityRegistration,
+            } => Ok(AccountTypeToCheck::IdentityRegistration),
             ManagedAccountType::IdentityTopUp {
                 ..
-            } => AccountTypeToCheck::IdentityTopUp,
+            } => Ok(AccountTypeToCheck::IdentityTopUp),
             ManagedAccountType::IdentityTopUpNotBoundToIdentity {
                 ..
-            } => AccountTypeToCheck::IdentityTopUpNotBound,
+            } => Ok(AccountTypeToCheck::IdentityTopUpNotBound),
             ManagedAccountType::IdentityInvitation {
                 ..
-            } => AccountTypeToCheck::IdentityInvitation,
+            } => Ok(AccountTypeToCheck::IdentityInvitation),
             ManagedAccountType::ProviderVotingKeys {
                 ..
-            } => AccountTypeToCheck::ProviderVotingKeys,
+            } => Ok(AccountTypeToCheck::ProviderVotingKeys),
             ManagedAccountType::ProviderOwnerKeys {
                 ..
-            } => AccountTypeToCheck::ProviderOwnerKeys,
+            } => Ok(AccountTypeToCheck::ProviderOwnerKeys),
             ManagedAccountType::ProviderOperatorKeys {
                 ..
-            } => AccountTypeToCheck::ProviderOperatorKeys,
+            } => Ok(AccountTypeToCheck::ProviderOperatorKeys),
             ManagedAccountType::ProviderPlatformKeys {
                 ..
-            } => AccountTypeToCheck::ProviderPlatformKeys,
+            } => Ok(AccountTypeToCheck::ProviderPlatformKeys),
             ManagedAccountType::DashpayReceivingFunds {
                 ..
-            } => AccountTypeToCheck::DashpayReceivingFunds,
+            } => Ok(AccountTypeToCheck::DashpayReceivingFunds),
             ManagedAccountType::DashpayExternalAccount {
                 ..
-            } => AccountTypeToCheck::DashpayExternalAccount,
+            } => Ok(AccountTypeToCheck::DashpayExternalAccount),
             ManagedAccountType::PlatformPayment {
                 ..
             } => {
                 // Platform Payment accounts (DIP-17) operate on Dash Platform, not the Core chain.
-                // They should never be converted to AccountTypeToCheck.
-                panic!("PlatformPayment accounts cannot be converted to AccountTypeToCheck")
+                Err(PlatformAccountConversionError)
             }
         }
     }

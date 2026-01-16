@@ -495,7 +495,17 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 
     let account_type_rust = account_type.to_account_type(account_index);
 
-    let account_type_to_check = account_type_rust.into();
+    let account_type_to_check = match account_type_rust.try_into() {
+        Ok(check_type) => check_type,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Platform Payment accounts cannot be used for address pool operations".to_string(),
+            );
+            return false;
+        }
+    };
 
     let xpub_opt = wallet
         .inner()

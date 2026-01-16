@@ -11,5 +11,5 @@ pub mod wallet_checker;
 
 pub use account_checker::{AccountMatch, AddressClassification, TransactionCheckResult};
 pub use platform_checker::WalletPlatformChecker;
-pub use transaction_router::{TransactionRouter, TransactionType};
+pub use transaction_router::{PlatformAccountConversionError, TransactionRouter, TransactionType};
 pub use wallet_checker::{TransactionContext, WalletTransactionChecker};

@@ -1,7 +1,9 @@
 //! Helper methods for ManagedWalletInfo
 
 use super::ManagedWalletInfo;
+use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreAccount;
+use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use alloc::vec::Vec;
 
 impl ManagedWalletInfo {
@@ -196,6 +198,92 @@ impl ManagedWalletInfo {
         &mut self,
     ) -> Option<&mut ManagedCoreAccount> {
         self.accounts.provider_platform_keys.as_mut()
+    }
+
+    // Platform Payment Account Helpers (DIP-17)
+
+    /// Get the first platform payment managed account
+    ///
+    /// Returns the platform payment account with the lowest account index and key_class 0.
+    pub fn first_platform_payment_managed_account(&self) -> Option<&ManagedPlatformAccount> {
+        self.platform_payment_managed_account(0, 0)
+    }
+
+    /// Get the first platform payment managed account (mutable)
+    ///
+    /// Returns the platform payment account with account index 0 and key_class 0.
+    pub fn first_platform_payment_managed_account_mut(
+        &mut self,
+    ) -> Option<&mut ManagedPlatformAccount> {
+        self.platform_payment_managed_account_mut(0, 0)
+    }
+
+    /// Get a platform payment managed account by account index (with default key_class 0)
+    pub fn platform_payment_managed_account_at_index(
+        &self,
+        account_index: u32,
+    ) -> Option<&ManagedPlatformAccount> {
+        self.platform_payment_managed_account(account_index, 0)
+    }
+
+    /// Get a platform payment managed account by account index (mutable, with default key_class 0)
+    pub fn platform_payment_managed_account_at_index_mut(
+        &mut self,
+        account_index: u32,
+    ) -> Option<&mut ManagedPlatformAccount> {
+        self.platform_payment_managed_account_mut(account_index, 0)
+    }
+
+    /// Get a platform payment managed account by account index and key class
+    pub fn platform_payment_managed_account(
+        &self,
+        account_index: u32,
+        key_class: u32,
+    ) -> Option<&ManagedPlatformAccount> {
+        let key = PlatformPaymentAccountKey {
+            account: account_index,
+            key_class,
+        };
+        self.accounts.platform_payment_accounts.get(&key)
+    }
+
+    /// Get a platform payment managed account by account index and key class (mutable)
+    pub fn platform_payment_managed_account_mut(
+        &mut self,
+        account_index: u32,
+        key_class: u32,
+    ) -> Option<&mut ManagedPlatformAccount> {
+        let key = PlatformPaymentAccountKey {
+            account: account_index,
+            key_class,
+        };
+        self.accounts.platform_payment_accounts.get_mut(&key)
+    }
+
+    /// Get all platform payment managed accounts
+    pub fn all_platform_payment_managed_accounts(&self) -> Vec<&ManagedPlatformAccount> {
+        self.accounts.platform_payment_accounts.values().collect()
+    }
+
+    /// Get all platform payment managed accounts (mutable)
+    pub fn all_platform_payment_managed_accounts_mut(
+        &mut self,
+    ) -> Vec<&mut ManagedPlatformAccount> {
+        self.accounts.platform_payment_accounts.values_mut().collect()
+    }
+
+    /// Get the number of platform payment accounts
+    pub fn platform_payment_account_count(&self) -> usize {
+        self.accounts.platform_payment_accounts.len()
+    }
+
+    /// Check if a platform payment account exists
+    pub fn has_platform_payment_account(&self, account_index: u32, key_class: u32) -> bool {
+        let key = PlatformPaymentAccountKey {
+            account: account_index,
+            key_class,
+        };
+        self.accounts.platform_payment_accounts.contains_key(&key)
     }
 
     // General Helpers
