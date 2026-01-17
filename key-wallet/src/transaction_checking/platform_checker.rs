@@ -97,7 +97,9 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         // Find the account that contains this address
         for account in self.accounts.platform_payment_accounts.values_mut() {
             if account.contains_platform_address(address) {
-                account.set_address_credit_balance(*address, credit_balance);
+                // Note: Gap limit maintenance should be done at a higher level
+                // where the Account object is available
+                account.set_address_credit_balance(*address, credit_balance, None);
                 return true;
             }
         }
@@ -111,7 +113,9 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         credit_balance: u64,
     ) -> bool {
         if let Some(account) = self.accounts.platform_payment_accounts.get_mut(account_key) {
-            account.set_address_credit_balance(address, credit_balance);
+            // Note: Gap limit maintenance should be done at a higher level
+            // where the Account object is available
+            account.set_address_credit_balance(address, credit_balance, None);
             true
         } else {
             false
@@ -126,7 +130,9 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         // Find the account that contains this address
         for account in self.accounts.platform_payment_accounts.values_mut() {
             if account.contains_platform_address(address) {
-                let new_balance = account.add_address_credit_balance(*address, amount);
+                // Note: Gap limit maintenance should be done at a higher level
+                // where the Account object is available
+                let new_balance = account.add_address_credit_balance(*address, amount, None);
                 return Some(new_balance);
             }
         }
@@ -140,7 +146,9 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         amount: u64,
     ) -> Option<u64> {
         if let Some(account) = self.accounts.platform_payment_accounts.get_mut(account_key) {
-            let new_balance = account.add_address_credit_balance(address, amount);
+            // Note: Gap limit maintenance should be done at a higher level
+            // where the Account object is available
+            let new_balance = account.add_address_credit_balance(address, amount, None);
             Some(new_balance)
         } else {
             None
@@ -218,7 +226,7 @@ mod tests {
 
         // Add some balance
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
-        account.set_address_credit_balance(addr, 5000);
+        account.set_address_credit_balance(addr, 5000, None);
 
         let key = PlatformPaymentAccountKey {
             account: 0,
@@ -238,13 +246,13 @@ mod tests {
         let pool1 = create_test_pool();
         let mut account1 = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool1, false);
         let addr1 = PlatformP2PKHAddress::new([0x11; 20]);
-        account1.set_address_credit_balance(addr1, 3000);
+        account1.set_address_credit_balance(addr1, 3000, None);
 
         // Create second platform account
         let pool2 = create_test_pool();
         let mut account2 = ManagedPlatformAccount::new(1, 0, Network::Testnet, pool2, false);
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
-        account2.set_address_credit_balance(addr2, 2000);
+        account2.set_address_credit_balance(addr2, 2000, None);
 
         wallet_info.accounts.platform_payment_accounts.insert(
             PlatformPaymentAccountKey {
@@ -273,7 +281,7 @@ mod tests {
         let pool = create_test_pool();
         let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
-        account.set_address_credit_balance(addr, 1000);
+        account.set_address_credit_balance(addr, 1000, None);
 
         let key = PlatformPaymentAccountKey {
             account: 0,
@@ -300,7 +308,7 @@ mod tests {
         let pool = create_test_pool();
         let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
-        account.set_address_credit_balance(addr, 1000);
+        account.set_address_credit_balance(addr, 1000, None);
 
         let key = PlatformPaymentAccountKey {
             account: 0,
@@ -327,7 +335,7 @@ mod tests {
         let pool = create_test_pool();
         let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
-        account.set_address_credit_balance(addr, 5000);
+        account.set_address_credit_balance(addr, 5000, None);
 
         let key = PlatformPaymentAccountKey {
             account: 0,
@@ -352,7 +360,7 @@ mod tests {
         let pool = create_test_pool();
         let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
-        account.set_address_credit_balance(addr, 3000);
+        account.set_address_credit_balance(addr, 3000, None);
 
         let key = PlatformPaymentAccountKey {
             account: 0,

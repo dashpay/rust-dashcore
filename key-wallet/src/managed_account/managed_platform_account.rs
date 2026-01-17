@@ -9,7 +9,7 @@
 //!
 //! The derivation path follows DIP-17: `m/9'/coin_type'/17'/account'/key_class'/index`
 
-use super::address_pool::AddressPool;
+use super::address_pool::{AddressPool, KeySource};
 use super::metadata::AccountMetadata;
 use super::platform_address::PlatformP2PKHAddress;
 use crate::error::{Error, Result};
@@ -98,30 +98,63 @@ impl ManagedPlatformAccount {
 
     /// Set the credit balance for a specific address
     ///
-    /// This also updates the total balance by recalculating from all address balances.
+    /// This also updates the total balance by applying the delta.
+    /// If the address was previously unfunded (balance 0) and becomes funded,
+    /// and a `KeySource` is provided, the address will be marked as used
+    /// and the gap limit will be maintained.
     pub fn set_address_credit_balance(
         &mut self,
         address: PlatformP2PKHAddress,
         credit_balance: u64,
+        key_source: Option<&KeySource>,
     ) {
+        let old_balance = self.address_balances.get(&address).copied().unwrap_or(0);
+        let was_unfunded = old_balance == 0;
+        let is_now_funded = credit_balance > 0;
+
         self.address_balances.insert(address, credit_balance);
-        self.recalculate_credit_balance();
+        // Apply delta to total: subtract old, add new
+        self.credit_balance =
+            self.credit_balance.saturating_sub(old_balance).saturating_add(credit_balance);
         self.metadata.last_used = Some(Self::current_timestamp());
+
+        // If address became funded and we have a key source, update address pool
+        if was_unfunded && is_now_funded {
+            if let Some(ks) = key_source {
+                self.mark_and_maintain_gap_limit(&address, ks);
+            }
+        }
     }
 
     /// Add credits to a specific address balance
     ///
     /// Returns the new credit balance for the address.
+    /// If the address was previously unfunded (balance 0) and becomes funded,
+    /// and a `KeySource` is provided, the address will be marked as used
+    /// and the gap limit will be maintained.
     pub fn add_address_credit_balance(
         &mut self,
         address: PlatformP2PKHAddress,
         amount: u64,
+        key_source: Option<&KeySource>,
     ) -> u64 {
         let current = self.address_balances.get(&address).copied().unwrap_or(0);
+        let was_unfunded = current == 0;
         let new_balance = current.saturating_add(amount);
+        let is_now_funded = new_balance > 0;
+
         self.address_balances.insert(address, new_balance);
-        self.recalculate_credit_balance();
+        // Add the amount to the total (saturating to handle overflow)
+        self.credit_balance = self.credit_balance.saturating_add(amount);
         self.metadata.last_used = Some(Self::current_timestamp());
+
+        // If address became funded and we have a key source, update address pool
+        if was_unfunded && is_now_funded {
+            if let Some(ks) = key_source {
+                self.mark_and_maintain_gap_limit(&address, ks);
+            }
+        }
+
         new_balance
     }
 
@@ -135,9 +168,12 @@ impl ManagedPlatformAccount {
         amount: u64,
     ) -> u64 {
         let current = self.address_balances.get(&address).copied().unwrap_or(0);
+        // Only subtract what was actually removed (may be less due to saturating)
+        let actual_removed = current.min(amount);
         let new_balance = current.saturating_sub(amount);
         self.address_balances.insert(address, new_balance);
-        self.recalculate_credit_balance();
+        // Subtract only what was actually removed from the total
+        self.credit_balance = self.credit_balance.saturating_sub(actual_removed);
         self.metadata.last_used = Some(Self::current_timestamp());
         new_balance
     }
@@ -232,6 +268,34 @@ impl ManagedPlatformAccount {
     pub fn mark_platform_address_used(&mut self, address: &PlatformP2PKHAddress) -> bool {
         let dashcore_addr = address.to_address(self.network);
         self.mark_address_used(&dashcore_addr)
+    }
+
+    /// Mark a platform address as used and maintain the gap limit
+    ///
+    /// This is called internally when an address receives funds for the first time.
+    /// It marks the address as used in the address pool and generates new addresses
+    /// if needed to maintain the gap limit.
+    fn mark_and_maintain_gap_limit(
+        &mut self,
+        address: &PlatformP2PKHAddress,
+        key_source: &KeySource,
+    ) {
+        // Mark the address as used
+        self.mark_platform_address_used(address);
+
+        // Maintain gap limit - generate new addresses if needed
+        // We ignore errors here since this is a best-effort operation
+        let _ = self.addresses.maintain_gap_limit(key_source);
+    }
+
+    /// Maintain the gap limit for the address pool
+    ///
+    /// This generates new addresses if needed to maintain the gap limit.
+    /// Returns the newly generated addresses.
+    pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
+        self.addresses
+            .maintain_gap_limit(key_source)
+            .map_err(|e| Error::InvalidParameter(format!("Failed to maintain gap limit: {}", e)))
     }
 
     /// Get address info for a given address
@@ -382,26 +446,49 @@ mod tests {
         let pool = create_test_pool();
         let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
 
-        // Set total credit balance
-        account.set_credit_balance(1000);
+        // Set address credit balance (this also updates total)
+        let addr = PlatformP2PKHAddress::new([0x11; 20]);
+        account.set_address_credit_balance(addr, 500, None);
+        assert_eq!(account.address_credit_balance(&addr), 500);
+        assert_eq!(account.total_credit_balance(), 500);
+        assert_eq!(account.duff_balance(), 0); // 500 credits = 0 duffs (integer division)
+
+        // Add to address credit balance
+        let new_balance = account.add_address_credit_balance(addr, 500, None);
+        assert_eq!(new_balance, 1000);
         assert_eq!(account.total_credit_balance(), 1000);
         assert_eq!(account.duff_balance(), 1); // 1000 credits = 1 duff
 
-        // Set address credit balance
-        let addr = PlatformP2PKHAddress::new([0x11; 20]);
-        account.set_address_credit_balance(addr, 500);
-        assert_eq!(account.address_credit_balance(&addr), 500);
-        assert_eq!(account.total_credit_balance(), 500); // Recalculated from address balances
-
-        // Add to address credit balance
-        let new_balance = account.add_address_credit_balance(addr, 200);
-        assert_eq!(new_balance, 700);
-        assert_eq!(account.total_credit_balance(), 700);
+        // Add more
+        let new_balance = account.add_address_credit_balance(addr, 200, None);
+        assert_eq!(new_balance, 1200);
+        assert_eq!(account.total_credit_balance(), 1200);
 
         // Remove from address credit balance
         let new_balance = account.remove_address_credit_balance(addr, 100);
-        assert_eq!(new_balance, 600);
+        assert_eq!(new_balance, 1100);
+        assert_eq!(account.total_credit_balance(), 1100);
+
+        // Update address balance directly (replacing existing)
+        account.set_address_credit_balance(addr, 600, None);
+        assert_eq!(account.address_credit_balance(&addr), 600);
         assert_eq!(account.total_credit_balance(), 600);
+    }
+
+    #[test]
+    fn test_set_credit_balance_directly() {
+        let pool = create_test_pool();
+        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+
+        // set_credit_balance is for direct manipulation (e.g., deserialization)
+        // When used alone (no address balances), it just sets the total
+        account.set_credit_balance(1000);
+        assert_eq!(account.total_credit_balance(), 1000);
+        assert_eq!(account.duff_balance(), 1);
+
+        account.set_credit_balance(2500);
+        assert_eq!(account.total_credit_balance(), 2500);
+        assert_eq!(account.duff_balance(), 2);
     }
 
     #[test]
@@ -438,15 +525,15 @@ mod tests {
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
         let addr3 = PlatformP2PKHAddress::new([0x33; 20]);
 
-        account.set_address_credit_balance(addr1, 100);
-        account.set_address_credit_balance(addr2, 200);
-        account.set_address_credit_balance(addr3, 300);
+        account.set_address_credit_balance(addr1, 100, None);
+        account.set_address_credit_balance(addr2, 200, None);
+        account.set_address_credit_balance(addr3, 300, None);
 
         assert_eq!(account.total_credit_balance(), 600);
         assert_eq!(account.funded_address_count(), 3);
 
         // Set one to zero
-        account.set_address_credit_balance(addr2, 0);
+        account.set_address_credit_balance(addr2, 0, None);
         assert_eq!(account.total_credit_balance(), 400);
         assert_eq!(account.funded_address_count(), 2);
     }
@@ -457,7 +544,7 @@ mod tests {
         let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
 
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
-        account.set_address_credit_balance(addr, 1000);
+        account.set_address_credit_balance(addr, 1000, None);
 
         account.clear_balances();
         assert_eq!(account.total_credit_balance(), 0);
@@ -473,9 +560,9 @@ mod tests {
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
         let addr3 = PlatformP2PKHAddress::new([0x33; 20]);
 
-        account.set_address_credit_balance(addr1, 100);
-        account.set_address_credit_balance(addr2, 0); // Zero balance
-        account.set_address_credit_balance(addr3, 300);
+        account.set_address_credit_balance(addr1, 100, None);
+        account.set_address_credit_balance(addr2, 0, None); // Zero balance
+        account.set_address_credit_balance(addr3, 300, None);
 
         let funded = account.funded_addresses();
         assert_eq!(funded.len(), 2);
@@ -495,7 +582,7 @@ mod tests {
         assert!(!account.address_balances.contains_key(&addr));
 
         // Add to balances
-        account.set_address_credit_balance(addr, 100);
+        account.set_address_credit_balance(addr, 100, None);
         assert!(account.contains_platform_address(&addr));
     }
 }
