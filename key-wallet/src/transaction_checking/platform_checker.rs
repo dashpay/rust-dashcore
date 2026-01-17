@@ -4,6 +4,7 @@
 //! Platform Payment account balances (DIP-17).
 
 use crate::account::account_collection::PlatformPaymentAccountKey;
+use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::platform_address::PlatformP2PKHAddress;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 
@@ -20,43 +21,55 @@ pub trait WalletPlatformChecker {
     /// Set the credit balance for a specific platform address
     ///
     /// The address must belong to one of the Platform Payment accounts.
+    /// If `key_source` is provided and the address becomes funded (0 → non-zero),
+    /// the address will be marked as used and gap limit will be maintained.
     /// Returns true if the address was found and the balance was set.
     fn set_platform_address_balance(
         &mut self,
         address: &PlatformP2PKHAddress,
         credit_balance: u64,
+        key_source: Option<&KeySource>,
     ) -> bool;
 
     /// Set the credit balance for a specific platform address by account key
     ///
     /// This is more efficient when you know which account the address belongs to.
+    /// If `key_source` is provided and the address becomes funded (0 → non-zero),
+    /// the address will be marked as used and gap limit will be maintained.
     /// Returns true if the account was found and the balance was set.
     fn set_platform_address_balance_for_account(
         &mut self,
         account_key: &PlatformPaymentAccountKey,
         address: PlatformP2PKHAddress,
         credit_balance: u64,
+        key_source: Option<&KeySource>,
     ) -> bool;
 
     /// Increase the credit balance for a specific platform address
     ///
     /// The address must belong to one of the Platform Payment accounts.
+    /// If `key_source` is provided and the address becomes funded (0 → non-zero),
+    /// the address will be marked as used and gap limit will be maintained.
     /// Returns the new balance if successful, None if the address was not found.
     fn increase_platform_address_balance(
         &mut self,
         address: &PlatformP2PKHAddress,
         amount: u64,
+        key_source: Option<&KeySource>,
     ) -> Option<u64>;
 
     /// Increase the credit balance for a specific platform address by account key
     ///
     /// This is more efficient when you know which account the address belongs to.
+    /// If `key_source` is provided and the address becomes funded (0 → non-zero),
+    /// the address will be marked as used and gap limit will be maintained.
     /// Returns the new balance if successful, None if the account was not found.
     fn increase_platform_address_balance_for_account(
         &mut self,
         account_key: &PlatformPaymentAccountKey,
         address: PlatformP2PKHAddress,
         amount: u64,
+        key_source: Option<&KeySource>,
     ) -> Option<u64>;
 
     /// Decrease the credit balance for a specific platform address
@@ -93,13 +106,12 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         &mut self,
         address: &PlatformP2PKHAddress,
         credit_balance: u64,
+        key_source: Option<&KeySource>,
     ) -> bool {
         // Find the account that contains this address
         for account in self.accounts.platform_payment_accounts.values_mut() {
             if account.contains_platform_address(address) {
-                // Note: Gap limit maintenance should be done at a higher level
-                // where the Account object is available
-                account.set_address_credit_balance(*address, credit_balance, None);
+                account.set_address_credit_balance(*address, credit_balance, key_source);
                 return true;
             }
         }
@@ -111,11 +123,10 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         account_key: &PlatformPaymentAccountKey,
         address: PlatformP2PKHAddress,
         credit_balance: u64,
+        key_source: Option<&KeySource>,
     ) -> bool {
         if let Some(account) = self.accounts.platform_payment_accounts.get_mut(account_key) {
-            // Note: Gap limit maintenance should be done at a higher level
-            // where the Account object is available
-            account.set_address_credit_balance(address, credit_balance, None);
+            account.set_address_credit_balance(address, credit_balance, key_source);
             true
         } else {
             false
@@ -126,13 +137,12 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         &mut self,
         address: &PlatformP2PKHAddress,
         amount: u64,
+        key_source: Option<&KeySource>,
     ) -> Option<u64> {
         // Find the account that contains this address
         for account in self.accounts.platform_payment_accounts.values_mut() {
             if account.contains_platform_address(address) {
-                // Note: Gap limit maintenance should be done at a higher level
-                // where the Account object is available
-                let new_balance = account.add_address_credit_balance(*address, amount, None);
+                let new_balance = account.add_address_credit_balance(*address, amount, key_source);
                 return Some(new_balance);
             }
         }
@@ -144,11 +154,10 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         account_key: &PlatformPaymentAccountKey,
         address: PlatformP2PKHAddress,
         amount: u64,
+        key_source: Option<&KeySource>,
     ) -> Option<u64> {
         if let Some(account) = self.accounts.platform_payment_accounts.get_mut(account_key) {
-            // Note: Gap limit maintenance should be done at a higher level
-            // where the Account object is available
-            let new_balance = account.add_address_credit_balance(address, amount, None);
+            let new_balance = account.add_address_credit_balance(address, amount, key_source);
             Some(new_balance)
         } else {
             None
@@ -290,13 +299,13 @@ mod tests {
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
         // Set balance for existing address
-        let result = wallet_info.set_platform_address_balance(&addr, 5000);
+        let result = wallet_info.set_platform_address_balance(&addr, 5000, None);
         assert!(result);
         assert_eq!(wallet_info.platform_credit_balance(), 5000);
 
         // Try to set balance for non-existent address
         let unknown_addr = PlatformP2PKHAddress::new([0xFF; 20]);
-        let result = wallet_info.set_platform_address_balance(&unknown_addr, 1000);
+        let result = wallet_info.set_platform_address_balance(&unknown_addr, 1000, None);
         assert!(!result);
     }
 
@@ -317,12 +326,12 @@ mod tests {
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
         // Increase balance
-        let new_balance = wallet_info.increase_platform_address_balance(&addr, 500);
+        let new_balance = wallet_info.increase_platform_address_balance(&addr, 500, None);
         assert_eq!(new_balance, Some(1500));
         assert_eq!(wallet_info.platform_credit_balance(), 1500);
 
         // Increase again
-        let new_balance = wallet_info.increase_platform_address_balance(&addr, 1000);
+        let new_balance = wallet_info.increase_platform_address_balance(&addr, 1000, None);
         assert_eq!(new_balance, Some(2500));
         assert_eq!(wallet_info.platform_credit_balance(), 2500);
     }
@@ -394,7 +403,7 @@ mod tests {
 
         // Set balance using account key
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
-        let result = wallet_info.set_platform_address_balance_for_account(&key, addr, 5000);
+        let result = wallet_info.set_platform_address_balance_for_account(&key, addr, 5000, None);
         assert!(result);
         assert_eq!(wallet_info.platform_credit_balance(), 5000);
 
@@ -403,7 +412,8 @@ mod tests {
             account: 99,
             key_class: 0,
         };
-        let result = wallet_info.set_platform_address_balance_for_account(&bad_key, addr, 1000);
+        let result =
+            wallet_info.set_platform_address_balance_for_account(&bad_key, addr, 1000, None);
         assert!(!result);
     }
 }
