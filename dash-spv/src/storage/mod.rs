@@ -24,7 +24,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
-use crate::storage::blocks::PersistentBlockHeaderStorage;
+use crate::storage::blocks::{BlockHeaderTip, PersistentBlockHeaderStorage};
 use crate::storage::chainstate::PersistentChainStateStorage;
 use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
 use crate::storage::lockfile::LockFile;
@@ -271,6 +271,10 @@ impl blocks::BlockHeaderStorage for DiskStorageManager {
 
     async fn get_tip_height(&self) -> Option<u32> {
         self.block_headers.read().await.get_tip_height().await
+    }
+
+    async fn get_tip(&self) -> Option<BlockHeaderTip> {
+        self.block_headers.read().await.get_tip().await
     }
 
     async fn get_start_height(&self) -> Option<u32> {
