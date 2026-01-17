@@ -90,7 +90,6 @@ dash_spv_ffi_config_destroy(config);
 - `dash_spv_ffi_client_new(config)` - Create new client
 - `dash_spv_ffi_client_start(client)` - Start the client
 - `dash_spv_ffi_client_stop(client)` - Stop the client
-- `dash_spv_ffi_client_sync_to_tip(client, callbacks)` - Sync to chain tip
 - `dash_spv_ffi_client_get_sync_progress(client)` - Get sync progress
 - `dash_spv_ffi_client_get_stats(client)` - Get client statistics
 - `dash_spv_ffi_client_destroy(client)` - Free client memory

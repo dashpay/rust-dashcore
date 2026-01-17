@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore] // Requires network - sync_to_tip hangs without peers
+    #[ignore] // Requires network
     fn test_client_destruction_while_operations_pending() {
         unsafe {
             let (config, _temp_dir) = create_test_config_with_dir();
@@ -99,7 +99,7 @@ mod tests {
 
             // Start a sync operation in background
             // Start sync (non-blocking)
-            dash_spv_ffi_client_sync_to_tip(client, None, std::ptr::null_mut());
+            dash_spv_ffi_client_start(client);
 
             // Immediately destroy client (should handle pending operations)
             dash_spv_ffi_client_destroy(client);
@@ -173,11 +173,6 @@ mod tests {
 
             assert_eq!(
                 dash_spv_ffi_client_stop(std::ptr::null_mut()),
-                FFIErrorCode::NullPointer as i32
-            );
-
-            assert_eq!(
-                dash_spv_ffi_client_sync_to_tip(std::ptr::null_mut(), None, std::ptr::null_mut()),
                 FFIErrorCode::NullPointer as i32
             );
 

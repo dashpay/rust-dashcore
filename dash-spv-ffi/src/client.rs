@@ -44,11 +44,6 @@ enum CallbackInfo {
         completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
         user_data: *mut c_void,
     },
-    /// Simple progress callbacks (used by sync_to_tip)
-    Simple {
-        completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
-        user_data: *mut c_void,
-    },
 }
 
 /// # Safety
@@ -541,115 +536,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
     }
 }
 
-/// Sync the SPV client to the chain tip.
-///
-/// # Safety
-///
-/// This function is unsafe because:
-/// - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
-/// - `user_data` must satisfy thread safety requirements:
-///   - If non-null, it must point to data that is safe to access from multiple threads
-///   - The caller must ensure proper synchronization if the data is mutable
-///   - The data must remain valid for the entire duration of the sync operation
-/// - `completion_callback` must be thread-safe and can be called from any thread
-///
-/// # Parameters
-///
-/// - `client`: Pointer to the SPV client
-/// - `completion_callback`: Optional callback invoked on completion
-/// - `user_data`: Optional user data pointer passed to callbacks
-///
-/// # Returns
-///
-/// 0 on success, error code on failure
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
-    client: *mut FFIDashSpvClient,
-    completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
-    user_data: *mut c_void,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-    let runtime = client.runtime.clone();
-
-    // Register callbacks in the global registry for safe lifetime management
-    let callback_info = CallbackInfo::Simple {
-        completion_callback,
-        user_data,
-    };
-    let callback_id = CALLBACK_REGISTRY.lock().unwrap().register(callback_info);
-
-    // Execute sync in the runtime
-    let result = runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        match spv_client.sync_to_tip().await {
-            Ok(_sync_result) => {
-                // sync_to_tip returns a SyncResult, not a stream
-                // Progress callbacks removed as sync_to_tip doesn't provide real progress updates
-
-                // Report completion and unregister callbacks
-                let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                if let Some(CallbackInfo::Simple {
-                    completion_callback: Some(callback),
-                    user_data,
-                }) = registry.unregister(callback_id)
-                {
-                    let msg = CString::new("Sync completed successfully").unwrap_or_else(|_| {
-                        CString::new("Sync completed").expect("hardcoded string is safe")
-                    });
-                    callback(true, msg.as_ptr(), user_data);
-                }
-
-                // Put client back
-                let mut guard = inner.lock().unwrap();
-                *guard = Some(spv_client);
-
-                Ok(())
-            }
-            Err(e) => {
-                // Report error and unregister callbacks
-                let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                if let Some(CallbackInfo::Simple {
-                    completion_callback: Some(callback),
-                    user_data,
-                }) = registry.unregister(callback_id)
-                {
-                    let msg = match CString::new(format!("Sync failed: {}", e)) {
-                        Ok(s) => s,
-                        Err(_) => CString::new("Sync failed").expect("hardcoded string is safe"),
-                    };
-                    callback(false, msg.as_ptr(), user_data);
-                }
-
-                // Put client back
-                let mut guard = inner.lock().unwrap();
-                *guard = Some(spv_client);
-                Err(e)
-            }
-        }
-    });
-
-    match result {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
 /// Performs a test synchronization of the SPV client
 ///
 /// # Parameters
@@ -668,7 +554,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
 
     let client = &(*client);
     let result = client.runtime.block_on(async {
-        let mut spv_client = {
+        let spv_client = {
             let mut guard = client.inner.lock().unwrap();
             match guard.take() {
                 Some(client) => client,
@@ -688,18 +574,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
             }
         };
         tracing::info!("Initial height: {}", start_height);
-
-        // Start sync
-        match spv_client.sync_to_tip().await {
-            Ok(_) => tracing::info!("Sync started successfully"),
-            Err(e) => {
-                tracing::error!("Failed to start sync: {}", e);
-                // put back before returning
-                let mut guard = client.inner.lock().unwrap();
-                *guard = Some(spv_client);
-                return Err(e);
-            }
-        }
 
         // Wait a bit for headers to download
         tokio::time::sleep(Duration::from_secs(10)).await;

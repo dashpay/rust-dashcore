@@ -83,7 +83,6 @@ mod tests {
             let (client, config, _temp_dir) = create_test_client();
             assert!(!client.is_null());
 
-            // Don't call sync_to_tip on unstarted client as it will hang
             // Instead, test that we can safely destroy a client with null callbacks
             // The test is really about null pointer safety, not sync functionality
             println!("Testing null callback safety without starting client");
@@ -103,7 +102,6 @@ mod tests {
             let (client, config, _temp_dir) = create_test_client();
             assert!(!client.is_null());
 
-            // Don't call sync_to_tip on unstarted client as it will hang
             // Test null user_data handling in a different way
             println!("Testing null user_data safety without starting client");
 
@@ -171,12 +169,6 @@ mod tests {
 
             // Stop client first to ensure sync fails
             dash_spv_ffi_client_stop(client);
-
-            dash_spv_ffi_client_sync_to_tip(
-                client,
-                Some(test_completion_callback),
-                &test_data as *const _ as *mut c_void,
-            );
 
             // Wait for completion
             let start = Instant::now();
@@ -302,13 +294,6 @@ mod tests {
 
             // Now test reentrancy by invoking callback directly and through FFI
             reentrant_callback(true, std::ptr::null(), &reentrant_data as *const _ as *mut c_void);
-
-            // Also test with a real async operation using sync_to_tip
-            let _sync_result = dash_spv_ffi_client_sync_to_tip(
-                client,
-                Some(reentrant_callback),
-                &reentrant_data as *const _ as *mut c_void,
-            );
 
             // Wait for operations to complete
             thread::sleep(Duration::from_millis(500));

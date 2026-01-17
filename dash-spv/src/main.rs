@@ -609,22 +609,6 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
         !monitored.is_empty() && !matches.get_flag("no-filters")
     };
 
-    // Start synchronization first, then monitoring immediately
-    // The key is to minimize the gap between sync requests and monitoring startup
-    tracing::info!("Starting synchronization to tip...");
-    match client.sync_to_tip().await {
-        Ok(progress) => {
-            tracing::info!("Synchronization requests sent! (actual sync happens asynchronously)");
-            tracing::info!("Current Header height: {}", progress.header_height);
-            tracing::info!("Current Filter header height: {}", progress.filter_header_height);
-            tracing::info!("Current Masternode height: {}", progress.masternode_height);
-        }
-        Err(e) => {
-            tracing::error!("Synchronization startup failed: {}", e);
-            return Err(format!("SPV client synchronization startup failed: {}", e).into());
-        }
-    }
-
     // Start monitoring immediately after sync requests are sent
     tracing::info!("Starting network monitoring...");
 

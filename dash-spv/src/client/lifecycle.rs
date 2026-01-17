@@ -211,12 +211,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.stop().await
     }
 
-    /// Start synchronization (alias for sync_to_tip).
-    pub async fn start_sync(&mut self) -> Result<()> {
-        self.sync_to_tip().await?;
-        Ok(())
-    }
-
     /// Initialize genesis block or checkpoint.
     pub(super) async fn initialize_genesis_block(&mut self) -> Result<()> {
         // Check if we already have any headers in storage
