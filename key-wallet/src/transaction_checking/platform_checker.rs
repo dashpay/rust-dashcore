@@ -126,7 +126,7 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         // Find the account that contains this address
         for account in self.accounts.platform_payment_accounts.values_mut() {
             if account.contains_platform_address(address) {
-                let new_balance = account.update_address_credit_balance(*address, amount as i64);
+                let new_balance = account.add_address_credit_balance(*address, amount);
                 return Some(new_balance);
             }
         }
@@ -140,7 +140,7 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         amount: u64,
     ) -> Option<u64> {
         if let Some(account) = self.accounts.platform_payment_accounts.get_mut(account_key) {
-            let new_balance = account.update_address_credit_balance(address, amount as i64);
+            let new_balance = account.add_address_credit_balance(address, amount);
             Some(new_balance)
         } else {
             None
@@ -155,7 +155,7 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         // Find the account that contains this address
         for account in self.accounts.platform_payment_accounts.values_mut() {
             if account.contains_platform_address(address) {
-                let new_balance = account.update_address_credit_balance(*address, -(amount as i64));
+                let new_balance = account.remove_address_credit_balance(*address, amount);
                 return Some(new_balance);
             }
         }

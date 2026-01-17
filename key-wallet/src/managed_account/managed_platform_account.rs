@@ -109,20 +109,33 @@ impl ManagedPlatformAccount {
         self.metadata.last_used = Some(Self::current_timestamp());
     }
 
-    /// Update the credit balance for a specific address (add/subtract)
+    /// Add credits to a specific address balance
     ///
     /// Returns the new credit balance for the address.
-    pub fn update_address_credit_balance(
+    pub fn add_address_credit_balance(
         &mut self,
         address: PlatformP2PKHAddress,
-        delta: i64,
+        amount: u64,
     ) -> u64 {
         let current = self.address_balances.get(&address).copied().unwrap_or(0);
-        let new_balance = if delta >= 0 {
-            current.saturating_add(delta as u64)
-        } else {
-            current.saturating_sub((-delta) as u64)
-        };
+        let new_balance = current.saturating_add(amount);
+        self.address_balances.insert(address, new_balance);
+        self.recalculate_credit_balance();
+        self.metadata.last_used = Some(Self::current_timestamp());
+        new_balance
+    }
+
+    /// Remove credits from a specific address balance
+    ///
+    /// Uses saturating subtraction - balance will not go below zero.
+    /// Returns the new credit balance for the address.
+    pub fn remove_address_credit_balance(
+        &mut self,
+        address: PlatformP2PKHAddress,
+        amount: u64,
+    ) -> u64 {
+        let current = self.address_balances.get(&address).copied().unwrap_or(0);
+        let new_balance = current.saturating_sub(amount);
         self.address_balances.insert(address, new_balance);
         self.recalculate_credit_balance();
         self.metadata.last_used = Some(Self::current_timestamp());
@@ -380,13 +393,13 @@ mod tests {
         assert_eq!(account.address_credit_balance(&addr), 500);
         assert_eq!(account.total_credit_balance(), 500); // Recalculated from address balances
 
-        // Update address credit balance
-        let new_balance = account.update_address_credit_balance(addr, 200);
+        // Add to address credit balance
+        let new_balance = account.add_address_credit_balance(addr, 200);
         assert_eq!(new_balance, 700);
         assert_eq!(account.total_credit_balance(), 700);
 
-        // Negative update
-        let new_balance = account.update_address_credit_balance(addr, -100);
+        // Remove from address credit balance
+        let new_balance = account.remove_address_credit_balance(addr, 100);
         assert_eq!(new_balance, 600);
         assert_eq!(account.total_credit_balance(), 600);
     }
