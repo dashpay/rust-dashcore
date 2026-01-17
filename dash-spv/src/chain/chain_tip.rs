@@ -195,19 +195,6 @@ impl ChainTipManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::blockdata::constants::genesis_block;
-    use dashcore::Network;
-
-    fn create_test_tip(height: u32, work_value: u8) -> ChainTip {
-        let mut header = genesis_block(Network::Dash).header;
-        header.nonce = height; // Make it unique
-
-        let mut work_bytes = [0u8; 32];
-        work_bytes[31] = work_value;
-        let chain_work = ChainWork::from_bytes(work_bytes);
-
-        ChainTip::new(header, height, chain_work)
-    }
 
     #[test]
     fn test_tip_manager() {
@@ -215,7 +202,7 @@ mod tests {
 
         // Add some tips with different work
         for i in 0..3 {
-            let tip = create_test_tip(i, i as u8);
+            let tip = ChainTip::dummy(i, i as u8);
             manager.add_tip(tip).expect("Failed to add tip");
         }
 
@@ -227,7 +214,7 @@ mod tests {
         assert!(active.is_active);
 
         // Add a tip with more work
-        let better_tip = create_test_tip(1, 10);
+        let better_tip = ChainTip::dummy(1, 10);
         manager.add_tip(better_tip).expect("Failed to add better tip");
 
         // Active tip should update
@@ -240,11 +227,11 @@ mod tests {
         let mut manager = ChainTipManager::new(2);
 
         // Fill to capacity
-        manager.add_tip(create_test_tip(1, 5)).expect("Failed to add first tip");
-        manager.add_tip(create_test_tip(2, 10)).expect("Failed to add second tip");
+        manager.add_tip(ChainTip::dummy(1, 5)).expect("Failed to add first tip");
+        manager.add_tip(ChainTip::dummy(2, 10)).expect("Failed to add second tip");
 
         // Adding another should evict the weakest
-        manager.add_tip(create_test_tip(3, 7)).expect("Failed to add third tip");
+        manager.add_tip(ChainTip::dummy(3, 7)).expect("Failed to add third tip");
 
         assert_eq!(manager.tip_count(), 2);
 
@@ -258,18 +245,16 @@ mod tests {
         let mut manager = ChainTipManager::new(2);
 
         // Add two tips to fill capacity
-        let tip1 = create_test_tip(1, 5);
+        let tip1 = ChainTip::dummy(1, 5);
         let tip1_hash = tip1.hash;
         manager.add_tip(tip1).expect("Failed to add tip1");
 
-        let tip2 = create_test_tip(2, 10);
+        let tip2 = ChainTip::dummy(2, 10);
         manager.add_tip(tip2).expect("Failed to add tip2");
 
         // Extend tip1 successfully - since we remove tip1 first, there's room for the new tip
-        let new_header = create_test_tip(3, 6).header;
-        let mut work_bytes = [0u8; 32];
-        work_bytes[31] = 7; // Give it some work value
-        let new_work = ChainWork::from_bytes(work_bytes);
+        let new_header = ChainTip::dummy(3, 6).header;
+        let new_work = ChainWork::dummy(7);
 
         // The extend operation should succeed
         let result = manager.extend_tip(&tip1_hash, new_header, new_work);
@@ -295,14 +280,14 @@ mod tests {
         let mut manager = ChainTipManager::new(3);
 
         // Add three tips
-        let tip1 = create_test_tip(1, 5);
+        let tip1 = ChainTip::dummy(1, 5);
         let tip1_hash = tip1.hash;
         manager.add_tip(tip1).expect("Failed to add tip1");
 
-        let tip2 = create_test_tip(2, 10);
+        let tip2 = ChainTip::dummy(2, 10);
         manager.add_tip(tip2).expect("Failed to add tip2");
 
-        let tip3 = create_test_tip(3, 8);
+        let tip3 = ChainTip::dummy(3, 8);
         manager.add_tip(tip3).expect("Failed to add tip3");
 
         // Verify initial state
@@ -310,10 +295,8 @@ mod tests {
         assert!(manager.get_tip(&tip1_hash).is_some());
 
         // Extend tip1 - this should work and be atomic
-        let new_header = create_test_tip(4, 6).header;
-        let mut work_bytes = [0u8; 32];
-        work_bytes[31] = 6;
-        let new_work = ChainWork::from_bytes(work_bytes);
+        let new_header = ChainTip::dummy(4, 6).header;
+        let new_work = ChainWork::dummy(6);
 
         let result = manager.extend_tip(&tip1_hash, new_header, new_work);
         assert!(result.is_ok());

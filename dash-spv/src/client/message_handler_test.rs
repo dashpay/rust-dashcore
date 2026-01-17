@@ -3,9 +3,9 @@
 #[cfg(test)]
 mod tests {
     use crate::client::{ClientConfig, MessageHandler};
-    use crate::network::mock::MockNetworkManager;
     use crate::storage::DiskStorageManager;
     use crate::sync::SyncManager;
+    use crate::test_utils::MockNetworkManager;
     use crate::types::{MempoolState, SpvEvent, SpvStats};
     use crate::ChainState;
     use dashcore::block::Header as BlockHeader;

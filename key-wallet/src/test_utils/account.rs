@@ -6,14 +6,14 @@ use crate::{DerivationPath, Network};
 
 impl ManagedCoreAccount {
     /// Create a test managed account with a standard BIP44 type and empty address pools
-    pub fn new_test_bip44(network: Network) -> Self {
+    pub fn dummy_bip44() -> Self {
         let base_path = DerivationPath::master();
 
         let external_pool = AddressPool::new(
             base_path.clone(),
             AddressPoolType::External,
             20,
-            network,
+            Network::Regtest,
             &KeySource::NoKeySource,
         )
         .expect("Failed to create external address pool");
@@ -22,7 +22,7 @@ impl ManagedCoreAccount {
             base_path,
             AddressPoolType::Internal,
             20,
-            network,
+            Network::Regtest,
             &KeySource::NoKeySource,
         )
         .expect("Failed to create internal address pool");
@@ -34,6 +34,6 @@ impl ManagedCoreAccount {
             internal_addresses: internal_pool,
         };
 
-        ManagedCoreAccount::new(account_type, network, false)
+        ManagedCoreAccount::new(account_type, Network::Regtest, false)
     }
 }

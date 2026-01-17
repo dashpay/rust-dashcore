@@ -1,7 +1,6 @@
 //! Sync coordination and orchestration.
 //!
 //! This module contains the core sync orchestration logic:
-//! - sync_to_tip: Initiate blockchain sync
 //! - monitor_network: Main event loop for processing network messages
 //! - Sync state persistence and restoration
 //! - Filter sync coordination
@@ -24,41 +23,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
-    /// Synchronize to the tip of the blockchain.
-    pub async fn sync_to_tip(&mut self) -> Result<SyncProgress> {
-        let running = self.running.read().await;
-        if !*running {
-            return Err(SpvError::Config("Client not running".to_string()));
-        }
-        drop(running);
-
-        // Prepare sync state but don't send requests (monitoring loop will handle that)
-        tracing::info!("Preparing sync state for monitoring loop...");
-        let result = SyncProgress {
-            header_height: {
-                let storage = self.storage.lock().await;
-                storage.get_tip_height().await.unwrap_or(0)
-            },
-            filter_header_height: {
-                let storage = self.storage.lock().await;
-                storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
-            },
-            ..SyncProgress::default()
-        };
-
-        // Update status display after initial sync
-        self.update_status_display().await;
-
-        tracing::info!(
-            "✅ Prepared initial sync state - Headers: {}, Filter headers: {}",
-            result.header_height,
-            result.filter_header_height
-        );
-        tracing::info!("📊 Sync requests will be sent by the monitoring loop");
-
-        Ok(result)
-    }
-
     /// Run continuous monitoring for new blocks, ChainLocks, InstantLocks, etc.
     ///
     /// This is the sole network message receiver to prevent race conditions.

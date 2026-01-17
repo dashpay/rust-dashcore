@@ -20,6 +20,7 @@
 //! use key_wallet_manager::wallet_manager::WalletManager;
 //! use std::sync::Arc;
 //! use tokio::sync::RwLock;
+//! use tokio_util::sync::CancellationToken;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,12 +37,10 @@
 //!     let mut client = DashSpvClient::new(config.clone(), network, storage, wallet).await?;
 //!     client.start().await?;
 //!
-//!     // Synchronize to the tip of the blockchain
-//!     let progress = client.sync_to_tip().await?;
-//!     println!("Synced to height {}", progress.header_height);
+//!     let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+//!     let shutdown_token = CancellationToken::new();
 //!
-//!     // Stop the client
-//!     client.stop().await?;
+//!     client.run(command_receiver, shutdown_token).await?;
 //!
 //!     Ok(())
 //! }
@@ -56,6 +55,9 @@
 //! - **Dash-specific features**: ChainLocks, InstantLocks, and masternode list sync
 //! - **Persistent storage**: Save and restore state between runs
 //! - **Extensive logging**: Built-in tracing support for debugging
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 pub mod chain;
 pub mod client;

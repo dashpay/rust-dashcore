@@ -1,15 +1,15 @@
 use std::ops::Range;
 
-use dashcore::{OutPoint, ScriptBuf, TxOut, Txid};
+use dashcore::{Address, Network, OutPoint, ScriptBuf, TxOut, Txid};
 
-use crate::{test_utils::test_address, Utxo};
+use crate::Utxo;
 
 impl Utxo {
-    pub fn new_test(id: u8, value: u64, height: u32, coinbase: bool, confirmed: bool) -> Self {
-        Self::new_test_batch(id..id + 1, value, height, coinbase, confirmed).remove(0)
+    pub fn dummy(id: u8, value: u64, height: u32, coinbase: bool, confirmed: bool) -> Self {
+        Self::dummy_batch(id..id + 1, value, height, coinbase, confirmed).remove(0)
     }
 
-    pub fn new_test_batch(
+    pub fn dummy_batch(
         ids_range: Range<u8>,
         value: u64,
         height: u32,
@@ -26,7 +26,13 @@ impl Utxo {
                     script_pubkey: ScriptBuf::new(),
                 };
 
-                let mut utxo = Utxo::new(outpoint, txout, test_address(), height, coinbase);
+                let mut utxo = Utxo::new(
+                    outpoint,
+                    txout,
+                    Address::dummy(Network::Testnet, id as usize),
+                    height,
+                    coinbase,
+                );
                 utxo.is_confirmed = confirmed;
                 utxo
             })

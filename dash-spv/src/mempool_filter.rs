@@ -184,169 +184,8 @@ impl MempoolFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::{Network, OutPoint, ScriptBuf, TxIn, TxOut, Witness};
+    use dashcore::Network;
     use std::str::FromStr;
-
-    // Stub types for ignored tests
-    #[derive(Clone)]
-    enum WatchItem {
-        Address(Address),
-        // Keep placeholders as unit to avoid dead_code warnings
-        Script(()),
-        Outpoint(()),
-    }
-
-    impl WatchItem {
-        fn address(addr: Address) -> Self {
-            WatchItem::Address(addr)
-        }
-
-        fn address_from_height(addr: Address, _height: u32) -> Self {
-            WatchItem::Address(addr)
-        }
-
-        fn script(_script: ScriptBuf) -> Self {
-            WatchItem::Script(())
-        }
-
-        fn outpoint(_outpoint: OutPoint) -> Self {
-            WatchItem::Outpoint(())
-        }
-    }
-
-    struct MockWallet {
-        watched_addresses: HashSet<Address>,
-    }
-
-    impl MockWallet {
-        fn new(_network: Network) -> Self {
-            Self {
-                watched_addresses: HashSet::new(),
-            }
-        }
-
-        fn add_watched_address(&mut self, address: Address) {
-            self.watched_addresses.insert(address);
-        }
-
-        // Accessor omitted; tests use add_watched_address directly
-    }
-
-    // Helper to create deterministically generated test addresses
-    fn create_test_addresses(network: Network, count: usize) -> Vec<Address> {
-        use dashcore::hashes::{sha256, Hash};
-        use dashcore::{secp256k1, PrivateKey, PublicKey};
-
-        let mut addresses = Vec::new();
-        let secp = secp256k1::Secp256k1::new();
-
-        // Fixed seed for deterministic generation
-        let seed = b"dash-spv-test-seed";
-
-        let mut index: u64 = 0;
-        while addresses.len() < count {
-            // Create deterministic secret: SHA256(fixed_seed + index)
-            let mut data = seed.to_vec();
-            data.extend_from_slice(&index.to_le_bytes());
-
-            let secret_bytes = sha256::Hash::hash(&data).to_byte_array();
-
-            // Try to create secp256k1 SecretKey from the hash
-            match secp256k1::SecretKey::from_byte_array(&secret_bytes) {
-                Ok(secret_key) => {
-                    // Create PrivateKey from SecretKey
-                    let private_key = PrivateKey::new(secret_key, network);
-
-                    // Create PublicKey from PrivateKey
-                    let public_key = PublicKey::from_private_key(&secp, &private_key);
-
-                    // Create P2PKH address from PublicKey
-                    let address = Address::p2pkh(&public_key, network);
-
-                    addresses.push(address);
-                }
-                Err(_) => {
-                    // Skip this index if key derivation fails
-                    tracing::trace!("Skipping index {}: invalid secret key", index);
-                }
-            }
-
-            index += 1;
-        }
-
-        addresses
-    }
-
-    // Test function to verify deterministic address generation
-    #[cfg(test)]
-    fn test_deterministic_addresses() {
-        use dashcore::{AddressType, Network};
-
-        // Generate addresses twice with the same parameters
-        let addresses1 = create_test_addresses(Network::Dash, 3);
-        let addresses2 = create_test_addresses(Network::Dash, 3);
-
-        // Verify they are identical
-        assert_eq!(addresses1.len(), 3);
-        assert_eq!(addresses2.len(), 3);
-        assert_eq!(addresses1, addresses2);
-
-        // Verify they are valid P2PKH addresses
-        for addr in &addresses1 {
-            assert_eq!(addr.address_type(), Some(AddressType::P2pkh));
-            assert_eq!(*addr.network(), Network::Dash);
-        }
-
-        // Test with different networks
-        let testnet_addresses = create_test_addresses(Network::Testnet, 2);
-        assert_eq!(testnet_addresses.len(), 2);
-        for addr in &testnet_addresses {
-            assert_eq!(addr.address_type(), Some(AddressType::P2pkh));
-            assert_eq!(*addr.network(), Network::Testnet);
-        }
-
-        println!("Deterministic address generation test passed!");
-        println!("Dash addresses: {:?}", addresses1);
-        println!("Testnet addresses: {:?}", testnet_addresses);
-    }
-
-    // Helper to create a test transaction
-    fn create_test_transaction(outputs: Vec<(Address, u64)>, inputs: Vec<OutPoint>) -> Transaction {
-        let mut tx_outputs = vec![];
-        for (addr, amount) in outputs {
-            tx_outputs.push(TxOut {
-                value: amount,
-                script_pubkey: addr.script_pubkey(),
-            });
-        }
-
-        let mut tx_inputs = vec![];
-        for outpoint in inputs {
-            tx_inputs.push(TxIn {
-                previous_output: outpoint,
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: Witness::new(),
-            });
-        }
-
-        Transaction {
-            version: 1,
-            lock_time: 0,
-            input: tx_inputs,
-            output: tx_outputs,
-            special_transaction_payload: None,
-        }
-    }
-
-    // Stub implementations for ignored tests
-    fn test_address(network: Network) -> Address {
-        create_test_addresses(network, 1)[0].clone()
-    }
-
-    fn test_address2(network: Network) -> Address {
-        create_test_addresses(network, 2)[1].clone()
-    }
 
     #[tokio::test]
     async fn test_fetch_all_strategy() {
@@ -409,10 +248,8 @@ mod tests {
     async fn test_is_transaction_relevant_with_address() {
         let network = Network::Dash;
 
-        // Create a wallet and get addresses from it
-        let addresses = create_test_addresses(network, 2);
-        let addr1 = &addresses[0];
-        let addr2 = &addresses[1];
+        let addr1 = Address::dummy(network, 0);
+        let addr2 = Address::dummy(network, 1);
 
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let watched_addresses = vec![addr1.clone()].into_iter().collect();
@@ -426,11 +263,11 @@ mod tests {
         );
 
         // Transaction sending to watched address should be relevant
-        let tx1 = create_test_transaction(vec![(addr1.clone(), 50000)], vec![]);
+        let tx1 = Transaction::dummy(&addr1.clone(), 0..0, &[50000]);
         assert!(filter.is_transaction_relevant(&tx1));
 
         // Transaction sending to unwatched address should not be relevant
-        let tx2 = create_test_transaction(vec![(addr2.clone(), 50000)], vec![]);
+        let tx2 = Transaction::dummy(&addr2.clone(), 0..0, &[50000]);
         assert!(!filter.is_transaction_relevant(&tx2));
     }
 
@@ -438,13 +275,11 @@ mod tests {
     async fn test_is_transaction_relevant_with_script() {
         let network = Network::Dash;
 
-        // Create a wallet and get addresses from it
-        let addresses = create_test_addresses(network, 2);
-        let addr = &addresses[0];
-        let addr2 = &addresses[1];
+        let addr1 = Address::dummy(network, 0);
+        let addr2 = Address::dummy(network, 1);
 
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        let watched_addresses = vec![addr.clone()].into_iter().collect();
+        let watched_addresses = vec![addr1.clone()].into_iter().collect();
 
         let filter = MempoolFilter::new(
             MempoolStrategy::FetchAll,
@@ -455,11 +290,11 @@ mod tests {
         );
 
         // Transaction with watched script should be relevant
-        let tx = create_test_transaction(vec![(addr.clone(), 50000)], vec![]);
+        let tx = Transaction::dummy(&addr1.clone(), 0..0, &[50000]);
         assert!(filter.is_transaction_relevant(&tx));
 
         // Transaction without watched script should not be relevant
-        let tx2 = create_test_transaction(vec![(addr2.clone(), 50000)], vec![]);
+        let tx2 = Transaction::dummy(&addr2.clone(), 0..0, &[50000]);
         assert!(!filter.is_transaction_relevant(&tx2));
     }
 
@@ -467,12 +302,10 @@ mod tests {
     async fn test_is_transaction_relevant_with_outpoint() {
         let network = Network::Dash;
 
-        // Create a wallet and get an address from it
-        let addresses = create_test_addresses(network, 1);
-        let addr = &addresses[0];
+        let addr1 = Address::dummy(network, 0);
 
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        let watched_addresses = vec![addr.clone()].into_iter().collect();
+        let watched_addresses = vec![addr1.clone()].into_iter().collect();
 
         let filter = MempoolFilter::new(
             MempoolStrategy::FetchAll,
@@ -483,19 +316,13 @@ mod tests {
         );
 
         // Transaction receiving to watched address should be relevant
-        let tx = create_test_transaction(vec![(addr.clone(), 50000)], vec![]);
+        let tx = Transaction::dummy(&addr1.clone(), 0..0, &[50000]);
         assert!(filter.is_transaction_relevant(&tx));
 
         // Transaction not involving watched address should not be relevant
         // Create a completely different address not in our watched list
-        let other_addr = {
-            // Create from script to ensure it's different from watched addresses
-            use dashcore::script::ScriptBuf;
-            let script =
-                ScriptBuf::from_hex("76a914123456789012345678901234567890123456789088ac").unwrap();
-            Address::from_script(&script, network).unwrap()
-        };
-        let tx2 = create_test_transaction(vec![(other_addr, 50000)], vec![]);
+        let addr2 = Address::dummy(network, 1);
+        let tx2 = Transaction::dummy(&addr2, 0..0, &[50000]);
         assert!(!filter.is_transaction_relevant(&tx2));
     }
 
@@ -623,11 +450,6 @@ mod tests {
         assert!(pruned.is_empty() || !pruned.is_empty()); // Tautology, but shows the test ran
     }
 
-    #[test]
-    fn test_deterministic_address_generation() {
-        test_deterministic_addresses();
-    }
-
     #[tokio::test]
     async fn test_bloom_filter_strategy() {
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
@@ -647,20 +469,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires MockWallet implementation"]
     async fn test_address_with_earliest_height() {
         let network = Network::Dash;
-        let addr = test_address(network);
+        let addr1 = Address::dummy(network, 0);
+        let addr2 = Address::dummy(network, 1);
 
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        let watch_items = vec![WatchItem::address_from_height(addr.clone(), 100000)];
-        let watched_addresses: HashSet<Address> = watch_items
-            .into_iter()
-            .filter_map(|item| match item {
-                WatchItem::Address(addr) => Some(addr),
-                _ => None,
-            })
-            .collect();
+        let mut watched_addresses: HashSet<Address> = HashSet::new();
+        watched_addresses.insert(addr1.clone());
 
         let filter = MempoolFilter::new(
             MempoolStrategy::FetchAll,
@@ -669,74 +485,17 @@ mod tests {
             watched_addresses,
             network,
         );
-
-        let mut wallet = MockWallet::new(network);
-        wallet.add_watched_address(addr.clone());
 
         // Transaction to watched address should still be relevant
-        let tx = create_test_transaction(vec![(addr.clone(), 50000)], vec![]);
+        let tx = Transaction::dummy(&addr1.clone(), 0..0, &[50000]);
         assert!(filter.is_transaction_relevant(&tx));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires MockWallet implementation"]
-    async fn test_multiple_watch_items() {
-        let network = Network::Dash;
-        let addr1 = test_address(network);
-        let addr2 = test_address2(network);
-
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        let dummy_script = ScriptBuf::new();
-        let dummy_outpoint = OutPoint {
-            txid: Txid::from_str(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            )
-            .unwrap(),
-            vout: 0,
-        };
-        let watch_items = vec![
-            WatchItem::address(addr1.clone()),
-            WatchItem::script(dummy_script),
-            WatchItem::outpoint(dummy_outpoint),
-        ];
-        let watched_addresses: HashSet<Address> = watch_items
-            .into_iter()
-            .filter_map(|item| match item {
-                WatchItem::Address(addr) => Some(addr),
-                _ => None,
-            })
-            .collect();
-
-        let filter = MempoolFilter::new(
-            MempoolStrategy::FetchAll,
-            1000,
-            mempool_state,
-            watched_addresses,
-            network,
-        );
-
-        let mut wallet = MockWallet::new(network);
-        wallet.add_watched_address(addr1.clone());
-
-        // Transaction matching any watch item should be relevant
-
-        // Match by address
-        let tx1 = create_test_transaction(vec![(addr1.clone(), 1000)], vec![]);
-        assert!(filter.is_transaction_relevant(&tx1));
 
         // TODO: Match by outpoint - requires OutPoint to be stored in WatchItem::Outpoint variant
-        // let tx2 = create_test_transaction(vec![(addr2.clone(), 2000)], vec![outpoint]);
+        // let tx2 = Transaction::dummy_with_address(&addr2.clone(), vec![outpoint]);
         // assert!(filter.is_transaction_relevant(&tx2));
 
         // No match
-        let other_outpoint = OutPoint {
-            txid: Txid::from_str(
-                "5858585858585858585858585858585858585858585858585858585858585858",
-            )
-            .unwrap(),
-            vout: 0,
-        };
-        let tx3 = create_test_transaction(vec![(addr2, 3000)], vec![other_outpoint]);
+        let tx3 = Transaction::dummy(&addr2, 0..1, &[50000]);
         assert!(!filter.is_transaction_relevant(&tx3));
     }
 }

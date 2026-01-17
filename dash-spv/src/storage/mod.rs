@@ -24,7 +24,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
-use crate::storage::blocks::PersistentBlockHeaderStorage;
+use crate::storage::blocks::{BlockHeaderTip, PersistentBlockHeaderStorage};
 use crate::storage::chainstate::PersistentChainStateStorage;
 use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
 use crate::storage::lockfile::LockFile;
@@ -273,6 +273,10 @@ impl blocks::BlockHeaderStorage for DiskStorageManager {
         self.block_headers.read().await.get_tip_height().await
     }
 
+    async fn get_tip(&self) -> Option<BlockHeaderTip> {
+        self.block_headers.read().await.get_tip().await
+    }
+
     async fn get_start_height(&self) -> Option<u32> {
         self.block_headers.read().await.get_start_height().await
     }
@@ -393,32 +397,8 @@ mod tests {
     use crate::ChainState;
 
     use super::*;
-    use dashcore::{block::Version, pow::CompactTarget, BlockHash, Header as BlockHeader};
-    use dashcore_hashes::Hash;
-    use tempfile::TempDir;
-
-    fn build_headers(count: usize) -> Vec<BlockHeader> {
-        let mut headers = Vec::with_capacity(count);
-        let mut prev_hash = BlockHash::from_byte_array([0u8; 32]);
-
-        for i in 0..count {
-            let header = BlockHeader {
-                version: Version::from_consensus(1),
-                prev_blockhash: prev_hash,
-                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array(
-                    [(i % 255) as u8; 32],
-                )
-                .into(),
-                time: 1 + i as u32,
-                bits: CompactTarget::from_consensus(0x1d00ffff),
-                nonce: i as u32,
-            };
-            prev_hash = header.block_hash();
-            headers.push(header);
-        }
-
-        headers
-    }
+    use dashcore::Header as BlockHeader;
+    use tempfile::{tempdir, TempDir};
 
     #[tokio::test]
     async fn test_load_headers() -> Result<(), Box<dyn std::error::Error>> {
@@ -429,14 +409,7 @@ mod tests {
             .expect("Unable to create storage");
 
         // Create a test header
-        let test_header = BlockHeader {
-            version: Version::from_consensus(1),
-            prev_blockhash: BlockHash::from_byte_array([1; 32]),
-            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([2; 32]).into(),
-            time: 12345,
-            bits: CompactTarget::from_consensus(0x1d00ffff),
-            nonce: 67890,
-        };
+        let test_header = BlockHeader::dummy(1);
 
         // Store just one header
         storage.store_headers(&[test_header]).await?;
@@ -452,24 +425,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_storage_indexing() -> StorageResult<()> {
-        use dashcore::TxMerkleNode;
-        use tempfile::tempdir;
-
         let temp_dir = tempdir().expect("Failed to create temp dir");
         let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
 
         // Create test headers starting from checkpoint height
         let checkpoint_height = 1_100_000;
-        let headers: Vec<BlockHeader> = (0..100)
-            .map(|i| BlockHeader {
-                version: Version::from_consensus(1),
-                prev_blockhash: BlockHash::from_byte_array([i as u8; 32]),
-                merkle_root: TxMerkleNode::from_byte_array([(i + 1) as u8; 32]),
-                time: 1234567890 + i,
-                bits: CompactTarget::from_consensus(0x1a2b3c4d),
-                nonce: 67890 + i,
-            })
-            .collect();
+        let headers = BlockHeader::dummy_batch(checkpoint_height..checkpoint_height + 100);
 
         let mut base_state = ChainState::new();
         base_state.sync_base_height = checkpoint_height;
@@ -544,7 +505,7 @@ mod tests {
     async fn test_shutdown_flushes_index() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_path_buf();
-        let headers = build_headers(11_000);
+        let headers = BlockHeader::dummy_batch(0..11_000);
         let last_hash = headers.last().unwrap().block_hash();
 
         {

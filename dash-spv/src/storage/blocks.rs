@@ -4,15 +4,41 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use async_trait::async_trait;
-use dashcore::block::Header as BlockHeader;
-use dashcore::BlockHash;
-use tokio::sync::RwLock;
-
 use crate::error::StorageResult;
 use crate::storage::segments::SegmentCache;
 use crate::storage::PersistentStorage;
 use crate::types::HashedBlockHeader;
+use async_trait::async_trait;
+use dashcore::block::Header as BlockHeader;
+use dashcore::prelude::CoreBlockHeight;
+use dashcore::BlockHash;
+use tokio::sync::RwLock;
+
+#[derive(Debug, PartialEq)]
+pub struct BlockHeaderTip {
+    height: CoreBlockHeight,
+    header: BlockHeader,
+    hash: BlockHash,
+}
+
+impl BlockHeaderTip {
+    pub fn new(height: CoreBlockHeight, hashed_block_header: HashedBlockHeader) -> Self {
+        Self {
+            height,
+            header: *hashed_block_header.header(),
+            hash: *hashed_block_header.hash(),
+        }
+    }
+    pub fn height(&self) -> CoreBlockHeight {
+        self.height
+    }
+    pub fn header(&self) -> &BlockHeader {
+        &self.header
+    }
+    pub fn hash(&self) -> &BlockHash {
+        &self.hash
+    }
+}
 
 #[async_trait]
 pub trait BlockHeaderStorage {
@@ -47,6 +73,8 @@ pub trait BlockHeaderStorage {
     }
 
     async fn get_tip_height(&self) -> Option<u32>;
+
+    async fn get_tip(&self) -> Option<BlockHeaderTip>;
 
     async fn get_start_height(&self) -> Option<u32>;
 
@@ -146,6 +174,14 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         self.block_headers.read().await.tip_height()
     }
 
+    async fn get_tip(&self) -> Option<BlockHeaderTip> {
+        let mut block_headers = self.block_headers.write().await;
+        let tip_height = block_headers.tip_height()?;
+        let hashed_header =
+            block_headers.get_items(tip_height..tip_height + 1).await.ok()?.into_iter().next()?;
+        Some(BlockHeaderTip::new(tip_height, hashed_header))
+    }
+
     async fn get_start_height(&self) -> Option<u32> {
         self.block_headers.read().await.start_height()
     }
@@ -173,5 +209,32 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         hash: &dashcore::BlockHash,
     ) -> StorageResult<Option<u32>> {
         Ok(self.header_hash_index.get(hash).copied())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_get_tip() {
+        let headers = BlockHeader::dummy_batch(0..5);
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        // Tip should be none before storing headers
+        assert!(storage.get_tip().await.is_none());
+        // Add one header and validate tip
+        storage.store_headers(&headers[0..1]).await.unwrap();
+        let tip = storage.get_tip().await.unwrap();
+        let expected_tip = BlockHeaderTip::new(0, HashedBlockHeader::from(headers[0]));
+        assert_eq!(tip, expected_tip);
+        assert_eq!(storage.get_tip_height().await, Some(0));
+        // Add multiple headers and validate tip
+        storage.store_headers(&headers[1..]).await.unwrap();
+        let tip = storage.get_tip().await.unwrap();
+        let expected_tip = BlockHeaderTip::new(4, HashedBlockHeader::from(headers[4]));
+        assert_eq!(tip, expected_tip);
+        assert_eq!(storage.get_tip_height().await, Some(4));
     }
 }

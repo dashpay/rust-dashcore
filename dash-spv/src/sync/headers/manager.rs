@@ -13,7 +13,6 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::headers::validate_headers;
-use crate::sync::headers2::Headers2StateManager;
 use crate::types::{ChainState, HashedBlockHeader};
 use crate::ValidationMode;
 use std::sync::Arc;
@@ -51,11 +50,8 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     checkpoint_manager: CheckpointManager,
     reorg_config: ReorgConfig,
     chain_state: Arc<RwLock<ChainState>>,
-    // WalletState removed - wallet functionality is now handled externally
-    headers2_state: Headers2StateManager,
     syncing_headers: bool,
     last_sync_progress: std::time::Instant,
-    headers2_failed: bool,
     // Cached flag for quick access without locking
     cached_sync_base_height: u32,
 }
@@ -83,11 +79,8 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             checkpoint_manager,
             reorg_config,
             chain_state,
-            // WalletState removed
-            headers2_state: Headers2StateManager::new(),
             syncing_headers: false,
             last_sync_progress: std::time::Instant::now(),
-            headers2_failed: false,
             cached_sync_base_height: 0,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
@@ -324,150 +317,20 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             getheaders_msg.stop_hash
         );
 
-        // Use headers2 if peer supports it and we haven't had failures
-        let use_headers2 = network.has_headers2_peer().await && !self.headers2_failed;
-
         // Log details about the request
         tracing::info!(
-            "Preparing headers request - height: {}, base_hash: {:?}, headers2_supported: {}",
+            "Preparing headers request - height: {}, base_hash: {:?}",
             storage.get_tip_height().await.unwrap_or(0),
-            base_hash,
-            use_headers2
+            base_hash
         );
 
-        // Try GetHeaders2 first if peer supports it, with fallback to regular GetHeaders
-        if use_headers2 {
-            tracing::info!("📤 Sending GetHeaders2 message (compressed headers)");
-            tracing::debug!(
-                "GetHeaders2 details: version={}, locator_hashes={:?}, stop_hash={}",
-                getheaders_msg.version,
-                getheaders_msg.locator_hashes,
-                getheaders_msg.stop_hash
-            );
-
-            // Log the raw message bytes for debugging
-            let msg_bytes = dashcore::consensus::encode::serialize(&getheaders_msg);
-            tracing::debug!(
-                "GetHeaders2 raw bytes ({}): {:02x?}",
-                msg_bytes.len(),
-                &msg_bytes[..std::cmp::min(100, msg_bytes.len())]
-            );
-
-            // Send GetHeaders2 message for compressed headers
-            let result =
-                network.send_message(NetworkMessage::GetHeaders2(getheaders_msg.clone())).await;
-
-            match result {
-                Ok(_) => {
-                    // TODO: Implement timeout and fallback mechanism
-                    // For now, we rely on the network layer's timeout handling
-                    // In the future, we should:
-                    // 1. Track the request with a unique ID
-                    // 2. Set a specific timeout for GetHeaders2 response
-                    // 3. Fall back to GetHeaders if no response within timeout
-                    // 4. Mark peers that don't respond to GetHeaders2 properly
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to send GetHeaders2, falling back to GetHeaders: {}", e);
-                    // Fall back to regular GetHeaders
-                    network
-                        .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-                        .await
-                        .map_err(|e| {
-                            SyncError::Network(format!("Failed to send GetHeaders: {}", e))
-                        })?;
-                }
-            }
-        } else {
-            tracing::info!("📤 Sending GetHeaders message (uncompressed headers)");
-            // Send regular GetHeaders message
-            network
-                .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-                .await
-                .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
-        }
+        tracing::debug!("Sending GetHeaders message");
+        network
+            .send_message(NetworkMessage::GetHeaders(getheaders_msg))
+            .await
+            .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
 
         Ok(())
-    }
-
-    /// Handle a Headers2 message with compressed headers.
-    /// Returns true if the message was processed and sync should continue, false if sync is complete.
-    pub async fn handle_headers2_message(
-        &mut self,
-        headers2: &dashcore::network::message_headers2::Headers2Message,
-        peer_id: crate::types::PeerId,
-        storage: &mut S,
-        network: &mut N,
-    ) -> SyncResult<(bool, usize)> {
-        tracing::info!(
-            "📦 Received {} compressed headers from peer {}",
-            headers2.headers.len(),
-            peer_id
-        );
-
-        // If this is the first headers2 message, and we need to initialize compression state
-        if !headers2.headers.is_empty() {
-            // Check if we need to initialize the compression state
-            let state = self.headers2_state.get_state(peer_id);
-            if state.prev_header.is_none() {
-                // Initialize with header at current tip height (works for both genesis and later)
-                let tip_height = storage.get_tip_height().await.unwrap_or(0);
-                if let Some(tip_header) = storage.get_header(tip_height).await.map_err(|e| {
-                    SyncError::Storage(format!(
-                        "Error trying to get block at height {} from storage: {}",
-                        tip_height, e
-                    ))
-                })? {
-                    tracing::info!(
-                        "Initializing headers2 compression state for peer {} with header at height {}",
-                        peer_id,
-                        tip_height
-                    );
-                    self.headers2_state.init_peer_state(peer_id, tip_header);
-                }
-            }
-        }
-
-        // Decompress headers using the peer's compression state
-        let headers = match self.headers2_state.process_headers(peer_id, &headers2.headers) {
-            Ok(headers) => headers,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to decompress headers2 from peer {}: {}. Headers count: {}, first header compressed: {}, chain height: {}",
-                    peer_id,
-                    e,
-                    headers2.headers.len(),
-                    if headers2.headers.is_empty() {
-                        "N/A (empty)".to_string()
-                    } else {
-                        (!headers2.headers[0].is_full()).to_string()
-                    },
-                    storage.get_tip_height().await.unwrap_or(0)
-                );
-
-                // Mark that headers2 failed for this sync session to trigger fallback to regular headers
-                self.headers2_failed = true;
-                return Err(SyncError::Headers2DecompressionFailed(format!(
-                    "Failed to decompress headers: {}",
-                    e
-                )));
-            }
-        };
-
-        // Log compression statistics
-        let stats = self.headers2_state.get_stats();
-        tracing::info!(
-            "📊 Headers2 compression stats: {:.1}% bandwidth saved, {:.1}% compression ratio",
-            stats.bandwidth_savings,
-            stats.compression_ratio * 100.0
-        );
-
-        let headers_count = headers.len();
-
-        // Process decompressed headers through the normal flow
-        let continue_sync = self.handle_headers_message(&headers, storage, network).await?;
-
-        Ok((continue_sync, headers_count))
     }
 
     /// Prepare sync state without sending network requests.

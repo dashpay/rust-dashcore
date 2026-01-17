@@ -37,12 +37,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Starting header synchronization...");
 
-    // Sync headers only
-    let progress = client.sync_to_tip().await?;
-
-    println!("Synchronization completed!");
-    println!("Synced {} headers", progress.header_height);
-
     // Get some statistics
     let stats = client.stats().await?;
     println!("Headers downloaded: {}", stats.headers_downloaded);

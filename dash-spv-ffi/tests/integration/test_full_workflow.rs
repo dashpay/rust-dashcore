@@ -100,9 +100,6 @@ mod tests {
             // Start the client
             let result = dash_spv_ffi_client_start(ctx.client);
 
-            // Start syncing
-            let sync_result = dash_spv_ffi_client_sync_to_tip(ctx.client, callbacks);
-
             // Wait for sync to complete or timeout
             let start = Instant::now();
             let timeout = Duration::from_secs(10);
@@ -391,11 +388,7 @@ mod tests {
             // 1. Start without peers
             let result = dash_spv_ffi_client_start(ctx.client);
 
-            // 2. Try to sync without being started (if not started above)
-            let callbacks = FFICallbacks::default();
-            let sync_result = dash_spv_ffi_client_sync_to_tip(ctx.client, callbacks);
-
-            // 3. Add invalid address
+            // 2. Add invalid address
             let invalid_addr = CString::new("invalid_address").unwrap();
             let watch_result = dash_spv_ffi_client_watch_address(ctx.client, invalid_addr.as_ptr());
             assert_eq!(watch_result, FFIErrorCode::InvalidArgument as i32);
@@ -515,17 +508,6 @@ mod tests {
 
             // Start with network issues
             let start_result = dash_spv_ffi_client_start(ctx.client);
-
-            // Try to sync with poor connectivity
-            let sync_start = Instant::now();
-            let callbacks = FFICallbacks {
-                on_progress: None,
-                on_completion: None,
-                on_data: None,
-                user_data: std::ptr::null_mut(),
-            };
-
-            dash_spv_ffi_client_sync_to_tip(ctx.client, callbacks);
 
             // Should handle timeouts gracefully
             thread::sleep(Duration::from_secs(3));

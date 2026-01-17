@@ -186,13 +186,6 @@ fn test_event_callbacks_setup() {
 
         println!("Client started, waiting for events...");
 
-        // Try to sync for a short time to see if we get any events
-        println!("Starting sync to trigger events...");
-        let sync_result = dash_spv_ffi_client_test_sync(client);
-        if sync_result != 0 {
-            println!("Warning: Test sync failed");
-        }
-
         // Wait a bit for events to be processed
         thread::sleep(Duration::from_secs(5));
 

@@ -10,12 +10,6 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinSet;
 use tokio::time;
 
-use async_trait::async_trait;
-use dashcore::network::constants::ServiceFlags;
-use dashcore::network::message::NetworkMessage;
-use dashcore::Network;
-use tokio_util::sync::CancellationToken;
-
 use crate::client::config::MempoolStrategy;
 use crate::client::ClientConfig;
 use crate::error::{NetworkError, NetworkResult, SpvError as Error};
@@ -29,6 +23,12 @@ use crate::network::reputation::{
 };
 use crate::network::{HandshakeManager, NetworkManager, Peer};
 use crate::types::PeerInfo;
+use async_trait::async_trait;
+use dashcore::network::constants::ServiceFlags;
+use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_headers2::CompressionState;
+use dashcore::Network;
+use tokio_util::sync::CancellationToken;
 
 /// Peer network manager
 pub struct PeerNetworkManager {
@@ -71,6 +71,8 @@ pub struct PeerNetworkManager {
     exclusive_mode: bool,
     /// Cached count of currently connected peers for fast, non-blocking queries
     connected_peer_count: Arc<AtomicUsize>,
+    /// Disable headers2 after decompression failure
+    headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
 }
 
 impl PeerNetworkManager {
@@ -124,6 +126,7 @@ impl PeerNetworkManager {
             user_agent: config.user_agent.clone(),
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
+            headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -210,6 +213,7 @@ impl PeerNetworkManager {
         let mempool_strategy = self.mempool_strategy;
         let user_agent = self.user_agent.clone();
         let connected_peer_count = self.connected_peer_count.clone();
+        let headers2_disabled = self.headers2_disabled.clone();
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -249,6 +253,7 @@ impl PeerNetworkManager {
                                 shutdown_token,
                                 reputation_manager.clone(),
                                 connected_peer_count.clone(),
+                                headers2_disabled.clone(),
                             )
                             .await;
                         }
@@ -283,6 +288,7 @@ impl PeerNetworkManager {
     }
 
     /// Start reading messages from a peer
+    #[allow(clippy::too_many_arguments)] // TODO: refactor to reduce arguments
     async fn start_peer_reader(
         addr: SocketAddr,
         pool: Arc<PeerPool>,
@@ -291,10 +297,12 @@ impl PeerNetworkManager {
         shutdown_token: CancellationToken,
         reputation_manager: Arc<PeerReputationManager>,
         connected_peer_count: Arc<AtomicUsize>,
+        headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
     ) {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
             let mut loop_iteration = 0;
+            let mut headers2_state = CompressionState::default();
 
             loop {
                 loop_iteration += 1;
@@ -440,9 +448,49 @@ impl PeerNetworkManager {
                                 // Forward to client
                             }
                             NetworkMessage::Headers2(headers2) => {
-                                // Log compressed headers messages specifically
-                                log::info!("📨 Received Headers2 message from {} with {} compressed headers!", addr, headers2.headers.len());
-                                // Forward to client (decompression handled by sync manager)
+                                // Decompress headers in network layer and forward as regular Headers
+                                log::info!(
+                                    "Received Headers2 from {} with {} compressed headers - decompressing",
+                                    addr,
+                                    headers2.headers.len()
+                                );
+
+                                match headers2_state.process_headers(&headers2.headers) {
+                                    Ok(headers) => {
+                                        log::info!(
+                                            "Decompressed {} headers from {} - forwarding as regular Headers",
+                                            headers.len(),
+                                            addr
+                                        );
+                                        // Forward as regular Headers message
+                                        let headers_msg = NetworkMessage::Headers(headers);
+                                        if message_tx.send((addr, headers_msg)).await.is_err() {
+                                            log::warn!(
+                                                "Breaking peer reader loop for {} - failed to send decompressed headers",
+                                                addr
+                                            );
+                                            break;
+                                        }
+                                        continue; // Already sent, don't forward the original Headers2
+                                    }
+                                    Err(e) => {
+                                        log::error!(
+                                            "Headers2 decompression failed from {}: {} - disabling headers2",
+                                            addr,
+                                            e
+                                        );
+                                        headers2_disabled.lock().await.insert(addr);
+                                        // Apply reputation penalty
+                                        reputation_manager
+                                            .update_reputation(
+                                                addr,
+                                                misbehavior_scores::INVALID_MESSAGE,
+                                                "Headers2 decompression failed",
+                                            )
+                                            .await;
+                                        continue; // Don't forward corrupted message
+                                    }
+                                }
                             }
                             NetworkMessage::GetHeaders(_) => {
                                 // SPV clients don't serve headers to peers
@@ -572,6 +620,8 @@ impl PeerNetworkManager {
                 // Decrement connected peer counter when a peer is removed
                 connected_peer_count.fetch_sub(1, Ordering::Relaxed);
             }
+
+            headers2_disabled.lock().await.remove(&addr);
 
             // Give small positive reputation if peer maintained long connection
             let conn_duration = Duration::from_secs(60 * loop_iteration); // Rough estimate
@@ -780,7 +830,8 @@ impl PeerNetworkManager {
         // For filter-related messages, we need a peer that supports compact filters
         let requires_compact_filters =
             matches!(&message, NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_));
-        let requires_headers2 = matches!(&message, NetworkMessage::GetHeaders2(_));
+        let check_headers2 =
+            matches!(&message, NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_));
 
         let selected_peer = if requires_compact_filters {
             // Find a peer that supports compact filters
@@ -808,7 +859,7 @@ impl PeerNetworkManager {
                     ));
                 }
             }
-        } else if requires_headers2 {
+        } else if check_headers2 {
             // Prefer a peer that advertises headers2 support
             let mut current_sync_peer = self.current_sync_peer.lock().await;
             let mut selected: Option<SocketAddr> = None;
@@ -875,6 +926,25 @@ impl PeerNetworkManager {
             .find(|(a, _)| *a == selected_peer)
             .ok_or_else(|| NetworkError::ConnectionFailed("Selected peer not found".to_string()))?;
 
+        // Upgrade GetHeaders to GetHeaders2 if this specific peer supports it and not disabled
+        let peer_supports_headers2 = {
+            let peer_guard = peer.read().await;
+            peer_guard.can_request_headers2()
+        };
+        let message = match message {
+            NetworkMessage::GetHeaders(get_headers)
+                if !self.headers2_disabled.lock().await.contains(addr)
+                    && peer_supports_headers2 =>
+            {
+                log::debug!(
+                    "Upgrading GetHeaders to GetHeaders2 for peer {}: {:?}",
+                    addr,
+                    get_headers
+                );
+                NetworkMessage::GetHeaders2(get_headers)
+            }
+            other => other,
+        };
         // Reduce verbosity for common sync messages
         match &message {
             NetworkMessage::GetHeaders(_)
@@ -1069,6 +1139,7 @@ impl Clone for PeerNetworkManager {
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
             connected_peer_count: self.connected_peer_count.clone(),
+            headers2_disabled: self.headers2_disabled.clone(),
         }
     }
 }

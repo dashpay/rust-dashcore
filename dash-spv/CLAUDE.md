@@ -57,7 +57,6 @@ cargo test
 cargo test --test handshake_test
 cargo test --test header_sync_test
 cargo test --test storage_test
-cargo test --test integration_real_node_test
 
 # Run individual test functions
 cargo test --test handshake_test test_handshake_with_mainnet_peer
@@ -68,19 +67,6 @@ cargo test -- --nocapture
 # Run single test with debug output
 cargo test --test handshake_test test_handshake_with_mainnet_peer -- --nocapture
 ```
-
-**Integration Tests with Real Node:**
-The integration tests in `tests/integration_real_node_test.rs` connect to a live Dash Core node at `127.0.0.1:9999`. These tests gracefully skip if no node is available.
-
-```bash
-# Run real node integration tests
-cargo test --test integration_real_node_test -- --nocapture
-
-# Test specific real node functionality
-cargo test --test integration_real_node_test test_real_header_sync_genesis_to_1000 -- --nocapture
-```
-
-See `run_integration_tests.md` for detailed setup instructions.
 
 ### Code Quality
 ```bash
@@ -201,7 +187,7 @@ Use domain-specific error types:
 **Common Debug Commands:**
 ```bash
 # Run with tracing output
-RUST_LOG=debug cargo test --test integration_real_node_test -- --nocapture
+RUST_LOG=debug cargo test --test test_handshake_with_mainnet_peer -- --nocapture
 
 # Run specific test with verbose output  
 cargo test --test handshake_test test_handshake_with_mainnet_peer -- --nocapture --test-threads=1

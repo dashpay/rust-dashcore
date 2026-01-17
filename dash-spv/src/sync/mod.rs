@@ -30,7 +30,6 @@
 // Core sync modules
 pub mod filters;
 pub mod headers;
-pub mod headers2;
 pub mod masternodes;
 
 // Sequential sync pipeline modules
@@ -44,7 +43,6 @@ pub mod transitions;
 // Re-exports
 pub use filters::FilterSyncManager;
 pub use headers::{HeaderSyncManager, ReorgConfig};
-pub use headers2::{Headers2StateManager, Headers2Stats, ProcessError};
 pub use manager::SyncManager;
 pub use masternodes::MasternodeSyncManager;
 pub use phases::{PhaseTransition, SyncPhase};

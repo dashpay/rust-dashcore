@@ -21,6 +21,9 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 pub mod wallet_interface;
 pub mod wallet_manager;
 

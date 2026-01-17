@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_utxo_spendability() {
-        let mut utxo = Utxo::new_test(0, 100000, 100, false, false);
+        let mut utxo = Utxo::dummy(0, 100000, 100, false, false);
 
         // Unconfirmed UTXO should not be spendable
         assert!(!utxo.is_spendable(200));
@@ -338,8 +338,8 @@ mod tests {
     fn test_utxo_set_operations() {
         let mut set = UtxoSet::new();
 
-        let utxo1 = Utxo::new_test(0, 100000, 100, false, false);
-        let utxo2 = Utxo::new_test(1, 200000, 150, false, false);
+        let utxo1 = Utxo::dummy(0, 100000, 100, false, false);
+        let utxo2 = Utxo::dummy(1, 200000, 150, false, false);
 
         set.add(utxo1.clone());
         set.add(utxo2.clone());
@@ -372,7 +372,7 @@ mod tests {
         current_height: u32,
         expected: u32,
     ) {
-        let utxo = Utxo::new_test(0, 100000, utxo_height, false, is_confirmed);
+        let utxo = Utxo::dummy(0, 100000, utxo_height, false, is_confirmed);
         assert_eq!(utxo.confirmations(current_height), expected);
     }
 }

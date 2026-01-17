@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 68
+**Total Functions**: 67
 
 ## Table of Contents
 
@@ -66,14 +66,13 @@ Functions: 25
 
 ### Synchronization
 
-Functions: 7
+Functions: 6
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_cancel_sync` | Cancels the sync operation | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
 | `dash_spv_ffi_client_is_filter_sync_available` | Check if compact filter sync is currently available | client |
-| `dash_spv_ffi_client_sync_to_tip` | Sync the SPV client to the chain tip | client |
 | `dash_spv_ffi_client_sync_to_tip_with_progress` | Sync the SPV client to the chain tip with detailed progress updates | client |
 | `dash_spv_ffi_client_test_sync` | Performs a test synchronization of the SPV client  # Parameters - `client`:... | client |
 | `dash_spv_ffi_sync_progress_destroy` | Destroy a `FFISyncProgress` object returned by this crate | client |
@@ -661,22 +660,6 @@ Check if compact filter sync is currently available.  # Safety - `client` must b
 
 ---
 
-#### `dash_spv_ffi_client_sync_to_tip`
-
-```c
-dash_spv_ffi_client_sync_to_tip(client: *mut FFIDashSpvClient, completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>, user_data: *mut c_void,) -> i32
-```
-
-**Description:**
-Sync the SPV client to the chain tip.  # Safety  This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - `completion_callback` must be thread-safe and can be called from any thread  # Parameters  - `client`: Pointer to the SPV client - `completion_callback`: Optional callback invoked on completion - `user_data`: Optional user data pointer passed to callbacks  # Returns  0 on success, error code on failure
-
-**Safety:**
-This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - `completion_callback` must be thread-safe and can be called from any thread
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_client_sync_to_tip_with_progress`
 
 ```c
@@ -1257,9 +1240,6 @@ if (result != 0) {
     const char* error = dash_spv_ffi_get_last_error();
     // Handle error
 }
-
-// Sync to chain tip
-dash_spv_ffi_client_sync_to_tip(client, NULL, NULL);
 
 // Get wallet manager (shares ownership with the client)
 FFIWalletManager* wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);

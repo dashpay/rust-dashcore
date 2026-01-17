@@ -42,9 +42,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting synchronization with filter support...");
     println!("Watching address: {:?}", watch_address);
 
-    // Full sync including filters
-    client.sync_to_tip().await?;
-
     let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let shutdown_token = CancellationToken::new();
 

@@ -24,6 +24,7 @@ use crate::hash_types::{BlockHash, TxMerkleNode};
 use crate::pow::CompactTarget;
 use crate::{VarInt, io};
 use core::fmt;
+use thiserror::Error;
 
 /// Bitfield flags for compressed header
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,6 +420,24 @@ impl CompressionState {
         Ok(header)
     }
 
+    pub fn process_headers(
+        &mut self,
+        headers: &[CompressedHeader],
+    ) -> Result<Vec<Header>, ProcessError> {
+        if headers.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut decompressed = Vec::with_capacity(headers.len());
+        for (i, compressed) in headers.iter().enumerate() {
+            let header =
+                self.decompress(compressed).map_err(|e| ProcessError::DecompressionError(i, e))?;
+            decompressed.push(header);
+        }
+
+        Ok(decompressed)
+    }
+
     /// Find the position of a version in the cache (0-indexed).
     /// Returns None if not found.
     fn find_version_position(&self, version: i32) -> Option<usize> {
@@ -456,18 +475,23 @@ impl CompressionState {
             false
         }
     }
-
-    /// Reset the compression state
-    pub fn reset(&mut self) {
-        self.version_cache.clear();
-        self.prev_header = None;
-    }
 }
 
 impl Default for CompressionState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Error types for headers2 processing
+#[derive(Debug, Clone, Error)]
+pub enum ProcessError {
+    /// First header in a batch must be uncompressed
+    #[error("first header in batch must be uncompressed")]
+    FirstHeaderNotFull,
+    /// Decompression failed for a specific header
+    #[error("decompression error at header {0}: {1}")]
+    DecompressionError(usize, DecompressionError),
 }
 
 /// Errors that can occur during decompression
@@ -703,22 +727,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compression_state_reset() {
-        let mut state = CompressionState::new();
-
-        // Add some data
-        state.save_version_as_mru(1);
-        state.prev_header = Some(create_test_header(1, 0));
-
-        // Reset
-        state.reset();
-
-        // Verify reset
-        assert!(state.version_cache.is_empty());
-        assert!(state.prev_header.is_none());
-    }
-
-    #[test]
     fn test_version_offset_cpp_semantics() {
         // Test that offset encoding matches C++ DIP-0025:
         // offset = 0: version NOT in cache (full version present)
@@ -794,5 +802,43 @@ mod tests {
             "First header flags should match C++ format: expected 0b{:08b}, got 0b{:08b}",
             expected_flags, compressed.flags.0
         );
+    }
+
+    #[test]
+    fn test_process_headers() {
+        // Create a compression state and compress some headers
+        let mut state = CompressionState::new();
+        let header1 = create_test_header(1, 0);
+        let header2 = create_test_header(2, 1);
+
+        let compressed1 = state.compress(&header1);
+        let compressed2 = state.compress(&header2);
+
+        // Process headers
+        let result = state.process_headers(&[compressed1, compressed2]);
+        assert!(result.is_ok());
+
+        let decompressed = result.expect("decompression should succeed in test");
+        assert_eq!(decompressed.len(), 2);
+        assert_eq!(decompressed[0], header1);
+        assert_eq!(decompressed[1], header2);
+    }
+
+    #[test]
+    fn test_first_header_compressed_fails_decompression() {
+        // Create a highly compressed header (would fail without previous state)
+        let mut compress_state = CompressionState::new();
+        let header = create_test_header(1, 0);
+
+        // Compress first header to prime the state
+        let _ = compress_state.compress(&header);
+
+        // Now compress second header - this will be highly compressed
+        let compressed = compress_state.compress(&header);
+
+        // Should fail with DecompressionError because the receiver doesn't have the previous header
+        let mut recv_state = CompressionState::new();
+        let result = recv_state.process_headers(&[compressed]);
+        assert!(matches!(result, Err(ProcessError::DecompressionError(0, _))));
     }
 }
