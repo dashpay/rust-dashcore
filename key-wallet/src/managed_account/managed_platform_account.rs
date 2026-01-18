@@ -56,13 +56,10 @@ pub struct ManagedPlatformAccount {
 
 impl ManagedPlatformAccount {
     /// Create a new managed platform account
-    pub fn new(
-        account: u32,
-        key_class: u32,
-        network: Network,
-        addresses: AddressPool,
-        is_watch_only: bool,
-    ) -> Self {
+    ///
+    /// The network is derived from the AddressPool to ensure consistency.
+    pub fn new(account: u32, key_class: u32, addresses: AddressPool, is_watch_only: bool) -> Self {
+        let network = addresses.network;
         Self {
             account,
             key_class,
@@ -431,7 +428,7 @@ mod tests {
     #[test]
     fn test_new_account() {
         let pool = create_test_pool();
-        let account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         assert_eq!(account.account, 0);
         assert_eq!(account.key_class, 0);
@@ -444,7 +441,7 @@ mod tests {
     #[test]
     fn test_balance_operations() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         // Set address credit balance (this also updates total)
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
@@ -478,7 +475,7 @@ mod tests {
     #[test]
     fn test_set_credit_balance_directly() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         // set_credit_balance is for direct manipulation (e.g., deserialization)
         // When used alone (no address balances), it just sets the total
@@ -494,7 +491,7 @@ mod tests {
     #[test]
     fn test_duff_balance_conversion() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         // Test various credit to duff conversions
         account.set_credit_balance(0);
@@ -519,7 +516,7 @@ mod tests {
     #[test]
     fn test_multiple_address_balances() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         let addr1 = PlatformP2PKHAddress::new([0x11; 20]);
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
@@ -541,7 +538,7 @@ mod tests {
     #[test]
     fn test_clear_balances() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 1000, None);
@@ -554,7 +551,7 @@ mod tests {
     #[test]
     fn test_funded_addresses() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         let addr1 = PlatformP2PKHAddress::new([0x11; 20]);
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
@@ -574,7 +571,7 @@ mod tests {
     #[test]
     fn test_contains_platform_address() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
 

@@ -126,6 +126,10 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         key_source: Option<&KeySource>,
     ) -> bool {
         if let Some(account) = self.accounts.platform_payment_accounts.get_mut(account_key) {
+            // Verify the address belongs to this account before modifying
+            if !account.contains_platform_address(&address) {
+                return false;
+            }
             account.set_address_credit_balance(address, credit_balance, key_source);
             true
         } else {
@@ -157,6 +161,10 @@ impl WalletPlatformChecker for ManagedWalletInfo {
         key_source: Option<&KeySource>,
     ) -> Option<u64> {
         if let Some(account) = self.accounts.platform_payment_accounts.get_mut(account_key) {
+            // Verify the address belongs to this account before modifying
+            if !account.contains_platform_address(&address) {
+                return None;
+            }
             let new_balance = account.add_address_credit_balance(address, amount, key_source);
             Some(new_balance)
         } else {
@@ -231,7 +239,7 @@ mod tests {
 
         // Create and add a platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
 
         // Add some balance
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
@@ -253,13 +261,13 @@ mod tests {
 
         // Create first platform account
         let pool1 = create_test_pool();
-        let mut account1 = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool1, false);
+        let mut account1 = ManagedPlatformAccount::new(0, 0, pool1, false);
         let addr1 = PlatformP2PKHAddress::new([0x11; 20]);
         account1.set_address_credit_balance(addr1, 3000, None);
 
         // Create second platform account
         let pool2 = create_test_pool();
-        let mut account2 = ManagedPlatformAccount::new(1, 0, Network::Testnet, pool2, false);
+        let mut account2 = ManagedPlatformAccount::new(1, 0, pool2, false);
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
         account2.set_address_credit_balance(addr2, 2000, None);
 
@@ -288,7 +296,7 @@ mod tests {
 
         // Create platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 1000, None);
 
@@ -315,7 +323,7 @@ mod tests {
 
         // Create platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 1000, None);
 
@@ -342,7 +350,7 @@ mod tests {
 
         // Create platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 5000, None);
 
@@ -367,7 +375,7 @@ mod tests {
 
         // Create platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 3000, None);
 
@@ -391,9 +399,12 @@ mod tests {
     fn test_set_platform_address_balance_for_account() {
         let mut wallet_info = create_test_wallet_info();
 
-        // Create platform account
+        // Create platform account with an address already having a balance
         let pool = create_test_pool();
-        let account = ManagedPlatformAccount::new(0, 0, Network::Testnet, pool, false);
+        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let addr = PlatformP2PKHAddress::new([0x11; 20]);
+        // First set initial balance so the address is known to the account
+        account.set_address_credit_balance(addr, 1000, None);
 
         let key = PlatformPaymentAccountKey {
             account: 0,
@@ -401,11 +412,17 @@ mod tests {
         };
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
-        // Set balance using account key
-        let addr = PlatformP2PKHAddress::new([0x11; 20]);
+        // Update balance using account key - should succeed since address is known
         let result = wallet_info.set_platform_address_balance_for_account(&key, addr, 5000, None);
         assert!(result);
         assert_eq!(wallet_info.platform_credit_balance(), 5000);
+
+        // Try with address not belonging to the account - should fail
+        let unknown_addr = PlatformP2PKHAddress::new([0xFF; 20]);
+        let result =
+            wallet_info.set_platform_address_balance_for_account(&key, unknown_addr, 2000, None);
+        assert!(!result);
+        assert_eq!(wallet_info.platform_credit_balance(), 5000); // Balance unchanged
 
         // Try with non-existent account
         let bad_key = PlatformPaymentAccountKey {

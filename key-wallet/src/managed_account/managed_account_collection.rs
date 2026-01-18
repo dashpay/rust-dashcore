@@ -662,7 +662,6 @@ impl ManagedAccountCollection {
         Ok(ManagedPlatformAccount::new(
             key.account,
             key.key_class,
-            account.network,
             addresses,
             account.is_watch_only,
         ))
