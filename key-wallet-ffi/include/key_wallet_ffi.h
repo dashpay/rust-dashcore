@@ -3820,6 +3820,13 @@ FFIWallet *wallet_create_random_with_options(FFINetwork network,
  The caller must ensure that:
  - The wallet pointer is either null or points to a valid FFIWallet
  - The FFIWallet remains valid for the duration of this call
+
+ # Note
+
+ This function does NOT support the following account types:
+ - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+ - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+ - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
  */
 
 FFIAccountResult wallet_add_account(FFIWallet *wallet,
@@ -3867,6 +3874,13 @@ FFIAccountResult wallet_add_dashpay_external_account_with_xpub_bytes(FFIWallet *
  - The wallet pointer is either null or points to a valid FFIWallet
  - The xpub_bytes pointer is either null or points to at least xpub_len bytes
  - The FFIWallet remains valid for the duration of this call
+
+ # Note
+
+ This function does NOT support the following account types:
+ - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+ - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+ - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
  */
 
 FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
@@ -3886,12 +3900,43 @@ FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
  - The wallet pointer is either null or points to a valid FFIWallet
  - The xpub_string pointer is either null or points to a valid null-terminated C string
  - The FFIWallet remains valid for the duration of this call
+
+ # Note
+
+ This function does NOT support the following account types:
+ - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+ - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+ - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
  */
 
 FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
                                                      FFIAccountType account_type,
                                                      unsigned int account_index,
                                                      const char *xpub_string)
+;
+
+/*
+ Add a Platform Payment account (DIP-17) to the wallet
+
+ Platform Payment accounts use the derivation path:
+ `m/9'/coin_type'/17'/account'/key_class'/index`
+
+ # Arguments
+ * `wallet` - Pointer to the wallet
+ * `account_index` - The account index (hardened) in the derivation path
+ * `key_class` - The key class (hardened) - typically 0' for main addresses
+
+ # Safety
+
+ This function dereferences a raw pointer to FFIWallet.
+ The caller must ensure that:
+ - The wallet pointer is either null or points to a valid FFIWallet
+ - The FFIWallet remains valid for the duration of this call
+ */
+
+FFIAccountResult wallet_add_platform_payment_account(FFIWallet *wallet,
+                                                     unsigned int account_index,
+                                                     unsigned int key_class)
 ;
 
 /*
