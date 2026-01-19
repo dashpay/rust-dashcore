@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 67
+**Total Functions**: 66
 
 ## Table of Contents
 
@@ -13,7 +13,6 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 - [Synchronization](#synchronization)
 - [Address Monitoring](#address-monitoring)
 - [Transaction Management](#transaction-management)
-- [Mempool Operations](#mempool-operations)
 - [Platform Integration](#platform-integration)
 - [Event Callbacks](#event-callbacks)
 - [Error Handling](#error-handling)
@@ -94,14 +93,6 @@ Functions: 3
 | `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | broadcast |
 | `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  #... | types |
 | `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx` | Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction... | types |
-
-### Mempool Operations
-
-Functions: 1
-
-| Function | Description | Module |
-|----------|-------------|--------|
-| `dash_spv_ffi_client_enable_mempool_tracking` | Enable mempool tracking with a given strategy | client |
 
 ### Platform Integration
 
@@ -773,24 +764,6 @@ Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction  #
 - `raw_tx` must be a valid pointer to memory allocated by the caller - `raw_tx_len` must be the correct length of the allocated memory - The pointer must not be used after this function is called - This function should only be called once per allocation
 
 **Module:** `types`
-
----
-
-### Mempool Operations - Detailed
-
-#### `dash_spv_ffi_client_enable_mempool_tracking`
-
-```c
-dash_spv_ffi_client_enable_mempool_tracking(client: *mut FFIDashSpvClient, strategy: FFIMempoolStrategy,) -> i32
-```
-
-**Description:**
-Enable mempool tracking with a given strategy.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
 
 ---
 

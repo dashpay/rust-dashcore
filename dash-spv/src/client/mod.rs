@@ -123,15 +123,9 @@ mod tests {
 
         let test_address = Address::dummy(config.network, 0);
 
-        let mut client = DashSpvClient::new(config, network_manager, storage, wallet)
+        let client = DashSpvClient::new(config, network_manager, storage, wallet)
             .await
             .expect("client construction must succeed");
-
-        // Enable mempool tracking to initialize mempool_filter
-        client
-            .enable_mempool_tracking(crate::client::config::MempoolStrategy::BloomFilter)
-            .await
-            .expect("enable mempool tracking must succeed");
 
         // Create a transaction that sends 10 Dash to the test address
         let tx = Transaction {

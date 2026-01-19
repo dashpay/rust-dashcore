@@ -15,33 +15,9 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
-use super::{config, DashSpvClient};
+use super::DashSpvClient;
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
-    /// Enable mempool tracking with the specified strategy.
-    pub async fn enable_mempool_tracking(
-        &mut self,
-        strategy: config::MempoolStrategy,
-    ) -> Result<()> {
-        // Update config
-        self.config.enable_mempool_tracking = true;
-        self.config.mempool_strategy = strategy;
-
-        // Initialize mempool filter if not already done
-        if self.mempool_filter.is_none() {
-            // TODO: Get monitored addresses from wallet
-            self.mempool_filter = Some(Arc::new(MempoolFilter::new(
-                self.config.mempool_strategy,
-                self.config.max_mempool_transactions,
-                self.mempool_state.clone(),
-                HashSet::new(), // Will be populated from wallet's monitored addresses
-                self.config.network,
-            )));
-        }
-
-        Ok(())
-    }
-
     /// Get mempool balance for an address.
     pub async fn get_mempool_balance(
         &self,
