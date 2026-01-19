@@ -4,7 +4,7 @@ use dash_spv::client::DashSpvClient;
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
-use dash_spv::ConfigBuilder;
+use dash_spv::ClientConfigBuilder;
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
@@ -32,7 +32,7 @@ async fn test_chainlock_validation_flow() {
     // Create client config with masternodes enabled
     let network = Network::Dash;
     let enable_masternodes = true;
-    let config = ConfigBuilder::mainnet()
+    let config = ClientConfigBuilder::mainnet()
         .enable_filters(false)
         .enable_masternodes(true)
         .validation_mode(ValidationMode::Basic)
@@ -77,7 +77,7 @@ async fn test_chainlock_manager_initialization() {
     let temp_dir = TempDir::new().unwrap();
 
     // Create client config
-    let config = ConfigBuilder::mainnet()
+    let config = ClientConfigBuilder::mainnet()
         .enable_filters(false)
         .enable_masternodes(false)
         .validation_mode(ValidationMode::Basic)

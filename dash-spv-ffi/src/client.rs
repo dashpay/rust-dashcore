@@ -1,5 +1,5 @@
 use crate::{
-    null_check, set_last_error, FFIConfig, FFIDetailedSyncProgress, FFIErrorCode,
+    null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
     FFIEventCallbacks, FFISpvStats, FFISyncProgress, FFIWalletManager,
 };
 // Import wallet types from key-wallet-ffi
@@ -128,7 +128,7 @@ pub struct FFIDashSpvClient {
 /// - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_new(
-    config: *const FFIConfig,
+    config: *const FFIClientConfig,
 ) -> *mut FFIDashSpvClient {
     null_check!(config, std::ptr::null_mut());
 
@@ -403,7 +403,7 @@ fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::S
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
     client: *mut FFIDashSpvClient,
-    config: *const FFIConfig,
+    config: *const FFIClientConfig,
 ) -> i32 {
     null_check!(client);
     null_check!(config);

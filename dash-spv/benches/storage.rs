@@ -3,7 +3,7 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use dash_spv::{
     storage::{BlockHeaderStorage, DiskStorageManager, StorageManager},
-    ConfigBuilder, Hash,
+    ClientConfigBuilder, Hash,
 };
 use dashcore::{block::Version, BlockHash, CompactTarget, Header};
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -34,7 +34,7 @@ fn bench_disk_storage(c: &mut Criterion) {
     c.bench_function("storage/disk/store", |b| {
         b.to_async(&rt).iter_batched(
             || async {
-                let config = ConfigBuilder::testnet()
+                let config = ClientConfigBuilder::testnet()
                     .storage_path(TempDir::new().unwrap().path())
                     .build()
                     .expect("Valid config");
@@ -51,7 +51,7 @@ fn bench_disk_storage(c: &mut Criterion) {
         )
     });
 
-    let config = ConfigBuilder::testnet()
+    let config = ClientConfigBuilder::testnet()
         .storage_path(TempDir::new().unwrap().path())
         .build()
         .expect("Valid config");

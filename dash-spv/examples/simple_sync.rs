@@ -2,7 +2,7 @@
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
-use dash_spv::ConfigBuilder;
+use dash_spv::ClientConfigBuilder;
 use dash_spv::{init_console_logging, DashSpvClient, LevelFilter};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _logging_guard = init_console_logging(LevelFilter::INFO)?;
 
     // Create a simple configuration
-    let config = ConfigBuilder::mainnet()
+    let config = ClientConfigBuilder::mainnet()
         .storage_path("./.tmp/simple-sync-example-storage")
         .enable_filters(false) // Skip filter sync for this example
         .enable_masternodes(false) // Skip masternode sync for this example

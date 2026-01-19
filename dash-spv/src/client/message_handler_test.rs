@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::client::{Config, MessageHandler};
+    use crate::client::{ClientConfig, MessageHandler};
     use crate::storage::DiskStorageManager;
     use crate::sync::SyncManager;
     use crate::test_utils::MockNetworkManager;
@@ -22,14 +22,14 @@ mod tests {
         MockNetworkManager,
         DiskStorageManager,
         SyncManager<DiskStorageManager, MockNetworkManager, WalletManager>,
-        Config,
+        ClientConfig,
         Arc<RwLock<MempoolState>>,
         mpsc::UnboundedSender<SpvEvent>,
     ) {
         let network = MockNetworkManager::new();
         let storage =
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
-        let config = Config::default();
+        let config = ClientConfig::default();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (event_tx, _event_rx) = mpsc::unbounded_channel();

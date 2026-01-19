@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinSet;
 use tokio::time;
 
-use crate::Config;
+use crate::ClientConfig;
 use crate::MempoolStrategy;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
@@ -78,7 +78,7 @@ pub struct PeerNetworkManager {
 
 impl PeerNetworkManager {
     /// Create a new peer network manager
-    pub async fn new(config: &Config) -> Result<Self, Error> {
+    pub async fn new(config: &ClientConfig) -> Result<Self, Error> {
         let (message_tx, message_rx) = mpsc::channel(1000);
 
         let discovery = DnsDiscovery::new().await?;

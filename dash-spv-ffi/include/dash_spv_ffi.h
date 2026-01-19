@@ -61,10 +61,11 @@ typedef struct FFIArray {
   uintptr_t elem_align;
 } FFIArray;
 
-typedef struct FFIConfig {
+typedef struct FFIClientConfig {
   void *inner;
   uint32_t worker_threads;
-} FFIConfig;
+
+} FFIClientConfig;
 
 typedef struct FFIString {
   char *ptr;
@@ -170,10 +171,10 @@ typedef struct FFIWalletManager {
   uint8_t _private[0];
 } FFIWalletManager;
 
-typedef struct FFIConfigBuilder {
+typedef struct FFIClientConfigBuilder {
   void *inner;
   uint32_t worker_threads;
-} FFIConfigBuilder;
+} FFIClientConfigBuilder;
 
 /**
  * Handle for Core SDK that can be passed to Platform SDK
@@ -287,7 +288,7 @@ struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
  * - `config` must be a valid, non-null pointer for the duration of the call.
  * - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
  */
- struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIConfig *config) ;
+ struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIClientConfig *config) ;
 
 /**
  * Drain pending events and invoke configured callbacks (non-blocking).
@@ -307,7 +308,7 @@ struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
  */
 
 int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
-                                          const struct FFIConfig *config)
+                                          const struct FFIClientConfig *config)
 ;
 
 /**
@@ -527,13 +528,13 @@ int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
  */
  void dash_spv_ffi_wallet_manager_free(struct FFIWalletManager *manager) ;
 
- struct FFIConfigBuilder *dash_spv_ffi_config_builder_mainnet(void) ;
+ struct FFIClientConfigBuilder *dash_spv_ffi_config_builder_mainnet(void) ;
 
- struct FFIConfigBuilder *dash_spv_ffi_config_builder_testnet(void) ;
+ struct FFIClientConfigBuilder *dash_spv_ffi_config_builder_testnet(void) ;
 
- struct FFIConfigBuilder *dash_spv_ffi_config_builder_devnet(void) ;
+ struct FFIClientConfigBuilder *dash_spv_ffi_config_builder_devnet(void) ;
 
- struct FFIConfigBuilder *dash_spv_ffi_config_builder_regtest(void) ;
+ struct FFIClientConfigBuilder *dash_spv_ffi_config_builder_regtest(void) ;
 
 /**
  * Sets the data directory for storing blockchain data
@@ -544,7 +545,7 @@ int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_storage_path(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_storage_path(struct FFIClientConfigBuilder *builder,
                                                      const char *path)
 ;
 
@@ -556,7 +557,7 @@ int32_t dash_spv_ffi_config_builder_set_storage_path(struct FFIConfigBuilder *bu
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_validation_mode(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_validation_mode(struct FFIClientConfigBuilder *builder,
                                                         enum DashSpvValidationMode mode)
 ;
 
@@ -568,7 +569,7 @@ int32_t dash_spv_ffi_config_builder_set_validation_mode(struct FFIConfigBuilder 
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_max_peers(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_max_peers(struct FFIClientConfigBuilder *builder,
                                                   uint32_t max_peers)
 ;
 
@@ -581,7 +582,7 @@ int32_t dash_spv_ffi_config_builder_set_max_peers(struct FFIConfigBuilder *build
  * - The caller must ensure both pointers remain valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_user_agent(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_user_agent(struct FFIClientConfigBuilder *builder,
                                                    const char *user_agent)
 ;
 
@@ -593,7 +594,7 @@ int32_t dash_spv_ffi_config_builder_set_user_agent(struct FFIConfigBuilder *buil
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_relay_transactions(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_relay_transactions(struct FFIClientConfigBuilder *builder,
                                                            bool _relay)
 ;
 
@@ -605,7 +606,7 @@ int32_t dash_spv_ffi_config_builder_set_relay_transactions(struct FFIConfigBuild
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_filter_load(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_filter_load(struct FFIClientConfigBuilder *builder,
                                                     bool load_filters)
 ;
 
@@ -616,7 +617,7 @@ int32_t dash_spv_ffi_config_builder_set_filter_load(struct FFIConfigBuilder *bui
  * - `builder` must be a valid pointer to an FFIConfigBuilder
  */
 
-int32_t dash_spv_ffi_config_builder_set_restrict_to_configured_peers(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_restrict_to_configured_peers(struct FFIClientConfigBuilder *builder,
                                                                      bool restrict_peers)
 ;
 
@@ -628,7 +629,7 @@ int32_t dash_spv_ffi_config_builder_set_restrict_to_configured_peers(struct FFIC
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_masternode_sync_enabled(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_masternode_sync_enabled(struct FFIClientConfigBuilder *builder,
                                                                 bool enable)
 ;
 
@@ -639,7 +640,7 @@ int32_t dash_spv_ffi_config_builder_set_masternode_sync_enabled(struct FFIConfig
  * - `config` must be a valid pointer to an FFIConfig
  */
 
-int32_t dash_spv_ffi_config_builder_set_worker_threads(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_worker_threads(struct FFIClientConfigBuilder *builder,
                                                        uint32_t threads)
 ;
 
@@ -651,7 +652,7 @@ int32_t dash_spv_ffi_config_builder_set_worker_threads(struct FFIConfigBuilder *
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_mempool_tracking(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_mempool_tracking(struct FFIClientConfigBuilder *builder,
                                                          bool enable)
 ;
 
@@ -663,7 +664,7 @@ int32_t dash_spv_ffi_config_builder_set_mempool_tracking(struct FFIConfigBuilder
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_mempool_strategy(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_mempool_strategy(struct FFIClientConfigBuilder *builder,
                                                          enum FFIMempoolStrategy strategy)
 ;
 
@@ -675,7 +676,7 @@ int32_t dash_spv_ffi_config_builder_set_mempool_strategy(struct FFIConfigBuilder
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_max_mempool_transactions(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_max_mempool_transactions(struct FFIClientConfigBuilder *builder,
                                                                  uint32_t max_transactions)
 ;
 
@@ -687,7 +688,7 @@ int32_t dash_spv_ffi_config_builder_set_max_mempool_transactions(struct FFIConfi
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_fetch_mempool_transactions(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_fetch_mempool_transactions(struct FFIClientConfigBuilder *builder,
                                                                    bool fetch)
 ;
 
@@ -699,7 +700,7 @@ int32_t dash_spv_ffi_config_builder_set_fetch_mempool_transactions(struct FFICon
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_persist_mempool(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_persist_mempool(struct FFIClientConfigBuilder *builder,
                                                         bool persist)
 ;
 
@@ -711,7 +712,7 @@ int32_t dash_spv_ffi_config_builder_set_persist_mempool(struct FFIConfigBuilder 
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_builder_set_start_from_height(struct FFIConfigBuilder *builder,
+int32_t dash_spv_ffi_config_builder_set_start_from_height(struct FFIClientConfigBuilder *builder,
                                                           uint32_t height)
 ;
 
@@ -723,7 +724,7 @@ int32_t dash_spv_ffi_config_builder_set_start_from_height(struct FFIConfigBuilde
  * - If null, returns default configuration
  */
 
-struct FFIConfig *dash_spv_ffi_config_builder_build(struct FFIConfigBuilder *builder)
+struct FFIClientConfig *dash_spv_ffi_config_builder_build(struct FFIClientConfigBuilder *builder)
 ;
 
 /**
@@ -735,7 +736,7 @@ struct FFIConfig *dash_spv_ffi_config_builder_build(struct FFIConfigBuilder *bui
  * - This function should only be called once per config builder instance if `built()` was not called
  */
 
-void dash_spv_ffi_config_builder_destroy(struct FFIConfigBuilder *builder)
+void dash_spv_ffi_config_builder_destroy(struct FFIClientConfigBuilder *builder)
 ;
 
 /**
@@ -755,7 +756,7 @@ void dash_spv_ffi_config_builder_destroy(struct FFIConfigBuilder *builder)
  * - `addr` must be a valid null-terminated C string containing a socket address or IP-only string
  * - The caller must ensure both pointers remain valid for the duration of this call
  */
- int32_t dash_spv_ffi_config_add_peer(struct FFIConfig *config, const char *addr) ;
+ int32_t dash_spv_ffi_config_add_peer(struct FFIClientConfig *config, const char *addr) ;
 
 /**
  * Gets the network type from the configuration
@@ -764,7 +765,7 @@ void dash_spv_ffi_config_builder_destroy(struct FFIConfigBuilder *builder)
  * - `config` must be a valid pointer to an FFIConfig or null
  * - If null, returns FFINetwork::Dash as default
  */
- FFINetwork dash_spv_ffi_config_get_network(const struct FFIConfig *config) ;
+ FFINetwork dash_spv_ffi_config_get_network(const struct FFIClientConfig *config) ;
 
 /**
  * Gets the data directory path from the configuration
@@ -774,7 +775,7 @@ void dash_spv_ffi_config_builder_destroy(struct FFIConfigBuilder *builder)
  * - If null or no data directory is set, returns an FFIString with null pointer
  * - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
  */
- struct FFIString dash_spv_ffi_config_get_storage_path(const struct FFIConfig *config) ;
+ struct FFIString dash_spv_ffi_config_get_storage_path(const struct FFIClientConfig *config) ;
 
 /**
  * Gets whether mempool tracking is enabled
@@ -783,7 +784,7 @@ void dash_spv_ffi_config_builder_destroy(struct FFIConfigBuilder *builder)
  * - `config` must be a valid pointer to an FFIConfig or null
  * - If null, returns false as default
  */
- bool dash_spv_ffi_config_get_mempool_tracking(const struct FFIConfig *config) ;
+ bool dash_spv_ffi_config_get_mempool_tracking(const struct FFIClientConfig *config) ;
 
 /**
  * Gets the mempool synchronization strategy
@@ -792,7 +793,9 @@ void dash_spv_ffi_config_builder_destroy(struct FFIConfigBuilder *builder)
  * - `config` must be a valid pointer to an FFIConfig or null
  * - If null, returns FFIMempoolStrategy::FetchAll as default
  */
- enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FFIConfig *config) ;
+
+enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FFIClientConfig *config)
+;
 
 /**
  * Destroys an FFIConfig and frees its memory
@@ -802,7 +805,7 @@ void dash_spv_ffi_config_builder_destroy(struct FFIConfigBuilder *builder)
  * - After calling this function, the config pointer becomes invalid and must not be used
  * - This function should only be called once per config instance
  */
- void dash_spv_ffi_config_destroy(struct FFIConfig *config) ;
+ void dash_spv_ffi_config_destroy(struct FFIClientConfig *config) ;
 
  const char *dash_spv_ffi_get_last_error(void) ;
 

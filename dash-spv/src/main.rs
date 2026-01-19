@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use clap::{Arg, Command};
 use dash_spv::terminal::TerminalGuard;
-use dash_spv::{ConfigBuilder, DashSpvClient, LevelFilter};
+use dash_spv::{ClientConfigBuilder, DashSpvClient, LevelFilter};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use tokio_util::sync::CancellationToken;
@@ -170,9 +170,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Parse network
     let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
     let mut cfg_builder = match network_str.as_str() {
-        "mainnet" => ConfigBuilder::mainnet(),
-        "testnet" => ConfigBuilder::testnet(),
-        "regtest" => ConfigBuilder::regtest(),
+        "mainnet" => ClientConfigBuilder::mainnet(),
+        "testnet" => ClientConfigBuilder::testnet(),
+        "regtest" => ClientConfigBuilder::regtest(),
         n => return Err(format!("Invalid network: {}", n).into()),
     };
 
@@ -342,7 +342,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_client<S: dash_spv::storage::StorageManager>(
-    config: dash_spv::Config,
+    config: dash_spv::ClientConfig,
     network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,

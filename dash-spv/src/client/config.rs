@@ -25,7 +25,7 @@ pub enum MempoolStrategy {
 #[builder(field(private))]
 #[builder(default)]
 #[builder(build_fn(validate = "Self::validate", error = "String"))]
-pub struct Config {
+pub struct ClientConfig {
     /// Network to connect to.
     #[getset(get_copy = "pub")]
     network: Network,
@@ -95,7 +95,7 @@ pub struct Config {
     start_from_height: Option<u32>,
 }
 
-impl Default for Config {
+impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             network: Network::Dash,
@@ -117,26 +117,26 @@ impl Default for Config {
     }
 }
 
-impl ConfigBuilder {
-    pub fn mainnet() -> ConfigBuilder {
+impl ClientConfigBuilder {
+    pub fn mainnet() -> ClientConfigBuilder {
         let mut builder = Self::default();
         builder.network(Network::Dash);
         builder
     }
 
-    pub fn testnet() -> ConfigBuilder {
+    pub fn testnet() -> ClientConfigBuilder {
         let mut builder = Self::default();
         builder.network(Network::Testnet);
         builder
     }
 
-    pub fn devnet() -> ConfigBuilder {
+    pub fn devnet() -> ClientConfigBuilder {
         let mut builder = Self::default();
         builder.network(Network::Devnet);
         builder
     }
 
-    pub fn regtest() -> ConfigBuilder {
+    pub fn regtest() -> ClientConfigBuilder {
         let peers = vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 19899)];
 
         let mut builder = Self::default();
@@ -175,7 +175,7 @@ impl ConfigBuilder {
     }
 }
 
-impl Config {
+impl ClientConfig {
     pub fn add_peer(&mut self, address: SocketAddr) -> &mut Self {
         self.peers.push(address);
         self
@@ -184,14 +184,14 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use crate::client::config::{Config, ConfigBuilder, MempoolStrategy};
+    use crate::client::config::{ClientConfig, ClientConfigBuilder, MempoolStrategy};
     use crate::types::ValidationMode;
     use dashcore::Network;
     use std::net::SocketAddr;
 
     #[test]
     fn test_default_config() {
-        let config = Config::default();
+        let config = ClientConfig::default();
 
         assert_eq!(config.network(), Network::Dash);
         assert!(config.peers().is_empty());
@@ -210,15 +210,15 @@ mod tests {
 
     #[test]
     fn test_network_specific_configs() {
-        let mainnet = ConfigBuilder::mainnet().build().expect("Valid configuration");
+        let mainnet = ClientConfigBuilder::mainnet().build().expect("Valid configuration");
         assert_eq!(mainnet.network(), Network::Dash);
         assert!(mainnet.peers().is_empty()); // Should use DNS discovery
 
-        let testnet = ConfigBuilder::testnet().build().expect("Valid configuration");
+        let testnet = ClientConfigBuilder::testnet().build().expect("Valid configuration");
         assert_eq!(testnet.network(), Network::Testnet);
         assert!(testnet.peers().is_empty()); // Should use DNS discovery
 
-        let regtest = ConfigBuilder::regtest().build().expect("Valid configuration");
+        let regtest = ClientConfigBuilder::regtest().build().expect("Valid configuration");
         assert_eq!(regtest.network(), Network::Regtest);
         assert_eq!(regtest.peers().len(), 1);
         assert_eq!(regtest.peers()[0].to_string(), "127.0.0.1:19899");
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_add_peer() {
-        let mut config = ConfigBuilder::default().build().expect("Valid configuration");
+        let mut config = ClientConfigBuilder::default().build().expect("Valid configuration");
         let addr1: SocketAddr = "1.2.3.4:9999".parse().unwrap();
         let addr2: SocketAddr = "5.6.7.8:9999".parse().unwrap();
 
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_disable_features() {
-        let config = ConfigBuilder::testnet()
+        let config = ClientConfigBuilder::testnet()
             .enable_filters(false)
             .enable_masternodes(false)
             .build()
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_max_peers() {
-        let result = ConfigBuilder::testnet().max_peers(0).build();
+        let result = ClientConfigBuilder::testnet().max_peers(0).build();
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "max_peers must be > 0");
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn test_validation_invalid_mempool_config() {
-        let result = ConfigBuilder::testnet()
+        let result = ClientConfigBuilder::testnet()
             .enable_mempool_tracking(true)
             .max_mempool_transactions(0)
             .build();

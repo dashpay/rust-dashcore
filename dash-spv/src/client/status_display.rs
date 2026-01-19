@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::client::Config;
+use crate::client::ClientConfig;
 use crate::error::Result;
 use crate::storage::StorageManager;
 #[cfg(feature = "terminal-ui")]
@@ -20,7 +20,7 @@ pub struct StatusDisplay<'a, S: StorageManager, W: WalletInterface> {
     #[cfg(feature = "terminal-ui")]
     terminal_ui: &'a Option<Arc<TerminalUI>>,
     #[allow(dead_code)]
-    config: &'a Config,
+    config: &'a ClientConfig,
 }
 
 impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
@@ -32,7 +32,7 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
         storage: Arc<Mutex<S>>,
         wallet: Option<&'a Arc<RwLock<W>>>,
         terminal_ui: &'a Option<Arc<TerminalUI>>,
-        config: &'a Config,
+        config: &'a ClientConfig,
     ) -> Self {
         Self {
             state,
@@ -52,7 +52,7 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
         storage: Arc<Mutex<S>>,
         wallet: Option<&'a Arc<RwLock<W>>>,
         _terminal_ui: &'a Option<()>,
-        config: &'a Config,
+        config: &'a ClientConfig,
     ) -> Self {
         Self {
             state,

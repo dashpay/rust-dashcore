@@ -1,6 +1,6 @@
 //! Integration tests for peer networking
 
-use dash_spv::ConfigBuilder;
+use dash_spv::ClientConfigBuilder;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use tokio::sync::RwLock;
 use tokio::time;
 
-use dash_spv::client::{Config, DashSpvClient};
+use dash_spv::client::{ClientConfig, DashSpvClient};
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
@@ -17,8 +17,8 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 
 /// Create a test configuration with the given network
-fn create_test_config(network: Network) -> Config {
-    ConfigBuilder::default()
+fn create_test_config(network: Network) -> ClientConfig {
+    ClientConfigBuilder::default()
         .network(network)
         .storage_path(TempDir::new().unwrap().path())
         .validation_mode(ValidationMode::Basic)

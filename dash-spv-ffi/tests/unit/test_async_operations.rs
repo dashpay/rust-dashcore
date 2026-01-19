@@ -58,7 +58,7 @@ mod tests {
         }
     }
 
-    fn create_test_client() -> (*mut FFIDashSpvClient, *mut FFIConfig, TempDir) {
+    fn create_test_client() -> (*mut FFIDashSpvClient, *mut FFIClientConfig, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         unsafe {
             let builder = dash_spv_ffi_config_builder_regtest();

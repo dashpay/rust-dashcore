@@ -10,7 +10,7 @@ use dash_spv::{
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::filters::FilterSyncManager,
-    ConfigBuilder,
+    ClientConfigBuilder,
 };
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::message::NetworkMessage,
@@ -109,7 +109,7 @@ impl NetworkManager for MockNetworkManager {
 
 #[tokio::test]
 async fn test_filter_sync_at_tip_edge_case() {
-    let config = ConfigBuilder::mainnet()
+    let config = ClientConfigBuilder::mainnet()
         .storage_path(TempDir::new().unwrap().path())
         .build()
         .expect("Valid config");
@@ -154,7 +154,7 @@ async fn test_filter_sync_at_tip_edge_case() {
 
 #[tokio::test]
 async fn test_no_invalid_getcfheaders_at_tip() {
-    let config = ConfigBuilder::mainnet()
+    let config = ClientConfigBuilder::mainnet()
         .storage_path(TempDir::new().unwrap().path())
         .build()
         .expect("Valid config");

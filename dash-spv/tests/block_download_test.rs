@@ -1,7 +1,7 @@
 //! Tests for block downloading on filter match functionality.
 
 use dash_spv::test_utils::MockNetworkManager;
-use dash_spv::ConfigBuilder;
+use dash_spv::ClientConfigBuilder;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -10,11 +10,11 @@ use tokio::sync::Mutex;
 use dashcore::block::Block;
 
 use dash_spv::{
-    client::Config, storage::DiskStorageManager, sync::FilterSyncManager, types::FilterMatch,
+    client::ClientConfig, storage::DiskStorageManager, sync::FilterSyncManager, types::FilterMatch,
 };
 
-fn create_test_config() -> Config {
-    ConfigBuilder::testnet()
+fn create_test_config() -> ClientConfig {
+    ClientConfigBuilder::testnet()
         .enable_masternodes(false)
         .validation_mode(dash_spv::types::ValidationMode::None)
         .storage_path(TempDir::new().unwrap().path())

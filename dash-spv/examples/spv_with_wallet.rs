@@ -4,7 +4,7 @@
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
-use dash_spv::ConfigBuilder;
+use dash_spv::ClientConfigBuilder;
 use dash_spv::{DashSpvClient, LevelFilter};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _logging_guard = dash_spv::init_console_logging(LevelFilter::INFO)?;
 
     // Create SPV client configuration
-    let config = ConfigBuilder::testnet()
+    let config = ClientConfigBuilder::testnet()
         .storage_path("./.tmp/spv-with-wallet-example-storage")
         .validation_mode(dash_spv::ValidationMode::Full)
         .enable_mempool_tracking(true)

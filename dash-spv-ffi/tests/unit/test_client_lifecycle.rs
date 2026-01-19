@@ -12,7 +12,7 @@ mod tests {
     use std::time::Duration;
     use tempfile::TempDir;
 
-    fn create_test_config_with_dir() -> (*mut FFIConfig, TempDir) {
+    fn create_test_config_with_dir() -> (*mut FFIClientConfig, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         unsafe {
             let builder = dash_spv_ffi_config_builder_regtest();

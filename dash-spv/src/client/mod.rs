@@ -46,7 +46,7 @@ mod sync_coordinator;
 mod transactions;
 
 // Re-export public types from extracted modules
-pub use config::{Config, ConfigBuilder, MempoolStrategy};
+pub use config::{ClientConfig, ClientConfigBuilder, MempoolStrategy};
 pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
 
@@ -59,7 +59,7 @@ mod message_handler_test;
 #[cfg(test)]
 mod tests {
     use super::DashSpvClient;
-    use crate::client::config::{ConfigBuilder, MempoolStrategy};
+    use crate::client::config::{ClientConfigBuilder, MempoolStrategy};
     use crate::storage::DiskStorageManager;
     use crate::{test_utils::MockNetworkManager, types::UnconfirmedTransaction};
     use dashcore::{Address, Amount, Transaction, TxOut};
@@ -77,7 +77,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_exposes_shared_wallet_manager() {
-        let config = ConfigBuilder::mainnet()
+        let config = ClientConfigBuilder::mainnet()
             .enable_filters(false)
             .enable_masternodes(false)
             .enable_mempool_tracking(true)
@@ -107,7 +107,7 @@ mod tests {
         // This test validates the get_mempool_balance logic by directly testing
         // the balance calculation code using a mocked mempool state.
 
-        let config = ConfigBuilder::testnet()
+        let config = ClientConfigBuilder::testnet()
             .enable_filters(false)
             .enable_masternodes(false)
             .enable_mempool_tracking(true)

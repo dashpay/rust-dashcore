@@ -12,7 +12,7 @@
 //! # Quick Start
 //!
 //! ```no_run
-//! use dash_spv::{DashSpvClient, ConfigBuilder};
+//! use dash_spv::{DashSpvClient, ClientConfigBuilder};
 //! use dash_spv::network::PeerNetworkManager;
 //! use dash_spv::storage::DiskStorageManager;
 //! use dashcore::Network;
@@ -25,7 +25,7 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create configuration for mainnet
-//!     let config = ConfigBuilder::mainnet()
+//!     let config = ClientConfigBuilder::mainnet()
 //!         .storage_path("./.tmp/example-storage")
 //!         .build()
 //!         .unwrap();
@@ -75,7 +75,7 @@ pub mod types;
 pub mod validation;
 
 // Re-export main types for convenience
-pub use client::{Config, ConfigBuilder, DashSpvClient, MempoolStrategy};
+pub use client::{ClientConfig, ClientConfigBuilder, DashSpvClient, MempoolStrategy};
 pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
 };

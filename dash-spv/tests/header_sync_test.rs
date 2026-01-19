@@ -6,7 +6,7 @@ use dash_spv::{
     storage::{BlockHeaderStorage, ChainStateStorage, DiskStorageManager},
     sync::{HeaderSyncManager, ReorgConfig},
     types::{ChainState, ValidationMode},
-    ConfigBuilder,
+    ClientConfigBuilder,
 };
 use dashcore::{block::Header as BlockHeader, block::Version};
 use dashcore_hashes::Hash;
@@ -23,7 +23,7 @@ async fn test_header_sync_with_client_integration() {
     let _ = env_logger::try_init();
 
     // Test header sync integration with the full client
-    let config = ConfigBuilder::mainnet()
+    let config = ClientConfigBuilder::mainnet()
         .validation_mode(ValidationMode::Basic)
         .storage_path(TempDir::new().expect("Failed to create tmp dir").path())
         .build()
@@ -91,7 +91,7 @@ fn create_test_header_chain_from(start: usize, count: usize) -> Vec<BlockHeader>
 async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let config =
-        ConfigBuilder::regtest().storage_path(temp_dir.path()).build().expect("Valid config");
+        ClientConfigBuilder::regtest().storage_path(temp_dir.path()).build().expect("Valid config");
     let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     let headers = create_test_header_chain(header_count);

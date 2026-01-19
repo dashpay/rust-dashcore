@@ -32,7 +32,7 @@ mod tests {
         *data.completion_called.lock().unwrap() = true;
     }
 
-    fn create_test_config() -> (*mut FFIConfig, TempDir) {
+    fn create_test_config() -> (*mut FFIClientConfig, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let builder = dash_spv_ffi_config_builder_regtest();
 
