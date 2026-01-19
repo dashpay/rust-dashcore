@@ -12,8 +12,8 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::headers::validate_headers;
 use crate::types::{ChainState, HashedBlockHeader};
+use crate::validation::{BlockHeaderValidator, Validator};
 use crate::ValidationMode;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -180,7 +180,7 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
         }
 
         if self.config.validation_mode != ValidationMode::None {
-            validate_headers(&cached_headers).map_err(|e| {
+            BlockHeaderValidator::new().validate(&cached_headers).map_err(|e| {
                 let error = format!("Header validation failed: {}", e);
                 tracing::error!(error);
                 SyncError::Validation(error)
