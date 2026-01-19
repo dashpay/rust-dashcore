@@ -1,7 +1,6 @@
-use crate::{set_last_error, FFIArray, FFIErrorCode};
-use dash_spv::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
+use crate::{set_last_error, FFIErrorCode};
+use dash_spv::chain::CheckpointManager;
 use dashcore::hashes::Hash;
-use dashcore::Network;
 use key_wallet_ffi::FFINetwork;
 
 /// FFI representation of a checkpoint (height + block hash)
@@ -9,15 +8,6 @@ use key_wallet_ffi::FFINetwork;
 pub struct FFICheckpoint {
     pub height: u32,
     pub block_hash: [u8; 32],
-}
-
-fn manager_for_network(network: FFINetwork) -> Result<CheckpointManager, String> {
-    let net: Network = network.into();
-    match net {
-        Network::Dash => Ok(CheckpointManager::new(mainnet_checkpoints())),
-        Network::Testnet => Ok(CheckpointManager::new(testnet_checkpoints())),
-        _ => Err("Checkpoints are only available for Dash and Testnet".to_string()),
-    }
 }
 
 /// Get the latest checkpoint for the given network.
@@ -31,26 +21,7 @@ pub unsafe extern "C" fn dash_spv_ffi_checkpoint_latest(
     out_height: *mut u32,
     out_hash: *mut u8, // expects at least 32 bytes
 ) -> i32 {
-    if out_height.is_null() || out_hash.is_null() {
-        set_last_error("Null output pointer provided");
-        return FFIErrorCode::NullPointer as i32;
-    }
-    let mgr = match manager_for_network(network) {
-        Ok(m) => m,
-        Err(e) => {
-            set_last_error(&e);
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-    if let Some(cp) = mgr.last_checkpoint() {
-        *out_height = cp.height;
-        let hash = cp.block_hash.to_byte_array();
-        std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        FFIErrorCode::Success as i32
-    } else {
-        set_last_error("No checkpoints available for network");
-        FFIErrorCode::NotImplemented as i32
-    }
+    dash_spv_ffi_checkpoint_before_height(network, u32::MAX, out_height, out_hash)
 }
 
 /// Get the last checkpoint at or before a given height.
@@ -69,22 +40,14 @@ pub unsafe extern "C" fn dash_spv_ffi_checkpoint_before_height(
         set_last_error("Null output pointer provided");
         return FFIErrorCode::NullPointer as i32;
     }
-    let mgr = match manager_for_network(network) {
-        Ok(m) => m,
-        Err(e) => {
-            set_last_error(&e);
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-    if let Some(cp) = mgr.last_checkpoint_before_height(height) {
-        *out_height = cp.height;
-        let hash = cp.block_hash.to_byte_array();
-        std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        FFIErrorCode::Success as i32
-    } else {
-        set_last_error("No checkpoint at or before given height");
-        FFIErrorCode::ValidationError as i32
-    }
+
+    let mgr = CheckpointManager::new(network.into());
+
+    let (height, cp) = mgr.last_checkpoint_before_height(height);
+    *out_height = height;
+    let hash = cp.hash().to_byte_array();
+    std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
+    FFIErrorCode::Success as i32
 }
 
 /// Get the last checkpoint at or before a given UNIX timestamp (seconds).
@@ -103,60 +66,12 @@ pub unsafe extern "C" fn dash_spv_ffi_checkpoint_before_timestamp(
         set_last_error("Null output pointer provided");
         return FFIErrorCode::NullPointer as i32;
     }
-    let mgr = match manager_for_network(network) {
-        Ok(m) => m,
-        Err(e) => {
-            set_last_error(&e);
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-    if let Some(cp) = mgr.last_checkpoint_before_timestamp(timestamp) {
-        *out_height = cp.height;
-        let hash = cp.block_hash.to_byte_array();
-        std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        FFIErrorCode::Success as i32
-    } else {
-        set_last_error("No checkpoint at or before given timestamp");
-        FFIErrorCode::ValidationError as i32
-    }
-}
 
-/// Get all checkpoints between two heights (inclusive).
-///
-/// Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and
-/// must free the array buffer using `dash_spv_ffi_array_destroy` when done.
-#[no_mangle]
-pub extern "C" fn dash_spv_ffi_checkpoints_between_heights(
-    network: FFINetwork,
-    start_height: u32,
-    end_height: u32,
-) -> FFIArray {
-    match manager_for_network(network) {
-        Ok(mgr) => {
-            // Collect checkpoints within inclusive range
-            let mut out: Vec<FFICheckpoint> = Vec::new();
-            for &h in mgr.checkpoint_heights() {
-                if h >= start_height && h <= end_height {
-                    if let Some(cp) = mgr.get_checkpoint(h) {
-                        out.push(FFICheckpoint {
-                            height: cp.height,
-                            block_hash: cp.block_hash.to_byte_array(),
-                        });
-                    }
-                }
-            }
-            FFIArray::new(out)
-        }
-        Err(e) => {
-            set_last_error(&e);
-            // Return empty array on error
-            FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: std::mem::size_of::<FFICheckpoint>(),
-                elem_align: std::mem::align_of::<FFICheckpoint>(),
-            }
-        }
-    }
+    let mgr = CheckpointManager::new(network.into());
+
+    let (height, cp) = mgr.last_checkpoint_before_timestamp(timestamp);
+    *out_height = height;
+    let hash = cp.hash().to_byte_array();
+    std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
+    FFIErrorCode::Success as i32
 }

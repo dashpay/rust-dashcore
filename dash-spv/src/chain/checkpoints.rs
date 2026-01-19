@@ -1,463 +1,341 @@
-//! Checkpoint system for chain validation and sync optimization
-//!
-//! Checkpoints are hardcoded blocks at specific heights that help:
-//! - Prevent accepting blocks from invalid chains
-//! - Optimize initial sync by starting from recent checkpoints
-//! - Protect against deep reorganizations
-//! - Bootstrap masternode lists at specific heights
+//! Checkpoints are hardcoded blocks at specific heights that help sync from a given height
 
-use dashcore::{BlockHash, CompactTarget, Target};
-use dashcore_hashes::{hex, Hash};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use dashcore::{
+    consensus::{encode, Decodable, Encodable},
+    constants::genesis_block,
+    prelude::CoreBlockHeight,
+    Network,
+};
 
-/// A checkpoint representing a known valid block
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Checkpoint {
-    /// Block height
-    pub height: u32,
-    /// Block hash
-    pub block_hash: BlockHash,
-    /// Previous block hash
-    pub prev_blockhash: BlockHash,
-    /// Block timestamp
-    pub timestamp: u32,
-    /// Difficulty target
-    pub target: Target,
-    /// Merkle root (optional for older checkpoints)
-    pub merkle_root: Option<BlockHash>,
-    /// Cumulative chain work up to this block (as hex string)
-    pub chain_work: String,
-    /// Masternode list identifier (e.g., "ML1088640__70218")
-    pub masternode_list_name: Option<String>,
-    /// Protocol version at this checkpoint
-    pub protocol_version: Option<u32>,
-    /// Nonce value for the block
-    pub nonce: u32,
+use crate::types::HashedBlockHeader;
+
+// This files must exist in the checkpoint directory. If you don't have them, create
+// empty ones and execute ``` cargo test generate_checkpoints_files -- --ignored ```
+const MAINNET_CHECKPOINTS_BYTES: &[u8] = include_bytes!("../../checkpoints/mainnet.checkpoints");
+const TESTNET_CHECKPOINTS_BYTES: &[u8] = include_bytes!("../../checkpoints/testnet.checkpoints");
+
+// If you modify the heights you must regenerate the checkpoints files by
+// executing ``` cargo test generate_checkpoints_files -- --ignored ```
+const MAINNET_CHECKPOINTS_HEIGHTS: [CoreBlockHeight; 7] =
+    [0, 4991, 107996, 750000, 1700000, 1900000, 2300000];
+const TESTNET_CHECKPOINTS_HEIGHTS: [CoreBlockHeight; 4] = [0, 500000, 800000, 1100000];
+
+fn checkpoints_bytes(network: Network) -> &'static [u8] {
+    match network {
+        Network::Dash => MAINNET_CHECKPOINTS_BYTES,
+        Network::Testnet => TESTNET_CHECKPOINTS_BYTES,
+        // Other networks do not have hardcoded checkpoints, this will help
+        // trigger the CheckpointManager to add genesis as the only checkpoint
+        _ => &[],
+    }
+}
+
+fn checkpoints_heights(network: Network) -> &'static [CoreBlockHeight] {
+    match network {
+        Network::Dash => &MAINNET_CHECKPOINTS_HEIGHTS,
+        Network::Testnet => &TESTNET_CHECKPOINTS_HEIGHTS,
+        // Other networks do not have hardcoded checkpoints, this will help
+        // trigger the CheckpointManager to add genesis as the only checkpoint
+        _ => &[],
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Checkpoint {
+    height: CoreBlockHeight,
+    hashed_block_header: HashedBlockHeader,
+}
+
+impl PartialOrd for Checkpoint {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.height.cmp(&other.height))
+    }
 }
 
 impl Checkpoint {
-    /// Extract protocol version from masternode list name or use stored value
-    pub fn protocol_version(&self) -> Option<u32> {
-        // Prefer explicitly stored protocol version
-        if let Some(version) = self.protocol_version {
-            return Some(version);
+    pub fn new(height: CoreBlockHeight, hashed_block_header: HashedBlockHeader) -> Self {
+        Self {
+            height,
+            hashed_block_header,
         }
-
-        // Otherwise extract from masternode list name
-        self.masternode_list_name.as_ref().and_then(|name| {
-            // Format: "ML{height}__{protocol_version}"
-            name.split("__").nth(1).and_then(|s| s.parse().ok())
-        })
-    }
-
-    /// Check if this checkpoint has an associated masternode list
-    pub fn has_masternode_list(&self) -> bool {
-        self.masternode_list_name.is_some()
     }
 }
 
-/// Manages checkpoints for a specific network
+impl Encodable for Checkpoint {
+    #[inline]
+    fn consensus_encode<W: std::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, std::io::Error> {
+        Ok(self.height.consensus_encode(writer)?
+            + self.hashed_block_header.consensus_encode(writer)?)
+    }
+}
+
+impl Decodable for Checkpoint {
+    #[inline]
+    fn consensus_decode<R: std::io::Read + ?Sized>(
+        reader: &mut R,
+    ) -> Result<Self, dashcore::consensus::encode::Error> {
+        Ok(Self {
+            height: CoreBlockHeight::consensus_decode(reader)?,
+            hashed_block_header: HashedBlockHeader::consensus_decode(reader)?,
+        })
+    }
+}
+
 pub struct CheckpointManager {
-    /// Checkpoints indexed by height
-    checkpoints: HashMap<u32, Checkpoint>,
-    /// Sorted list of checkpoint heights for efficient searching
-    sorted_heights: Vec<u32>,
+    // checkpoints collection sorted by height, lowest first
+    checkpoints: Vec<Checkpoint>,
 }
 
 impl CheckpointManager {
-    /// Create a new checkpoint manager from a list of checkpoints
-    pub fn new(checkpoints: Vec<Checkpoint>) -> Self {
-        let mut checkpoint_map = HashMap::new();
-        let mut heights = Vec::new();
+    pub fn new(network: Network) -> Self {
+        let bytes = checkpoints_bytes(network);
+        let heights_len = checkpoints_heights(network).len();
 
-        for checkpoint in checkpoints {
-            heights.push(checkpoint.height);
-            checkpoint_map.insert(checkpoint.height, checkpoint);
+        let mut checkpoints = {
+            let mut items = Vec::with_capacity(heights_len);
+            let mut reader = bytes;
+
+            loop {
+                match Checkpoint::consensus_decode(&mut reader) {
+                    Ok(item) => items.push(item),
+                    Err(encode::Error::Io(ref e))
+                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        break
+                    }
+                    Err(_) => {
+                        unreachable!("The bytes are hardcoded in the bin, decode cannot fail")
+                    }
+                }
+            }
+
+            items
+        };
+
+        debug_assert_eq!(
+            checkpoints.len(),
+            heights_len,
+            "Could not load checkpoints for all lengths, maybe the checkpoints files are not updated"
+        );
+
+        #[cfg(debug_assertions)]
+        {
+            let heights = checkpoints_heights(network);
+            for (i, cp) in checkpoints.iter().enumerate() {
+                debug_assert_eq!(
+                    cp.height,
+                    heights[i],
+                    "Checkpoint height does not match expected height, maybe the checkpoints files are not updated");
+            }
         }
 
-        heights.sort_unstable();
+        // If the list is empty (maybe we dont have any checkpoints) but we still
+        // want to be able to sync, we add the genesis block of the network as
+        // a fallback
+        if checkpoints.is_empty() {
+            let genesis = HashedBlockHeader::from(genesis_block(network).header);
+            let genesis_checkpoint = Checkpoint::new(0, genesis);
+            checkpoints.push(genesis_checkpoint);
+        }
+
+        Self::new_with_checkpoints(checkpoints)
+    }
+
+    /// The input must be sorted by height in ascending order
+    pub(crate) fn new_with_checkpoints(checkpoints: Vec<Checkpoint>) -> Self {
+        debug_assert!(!checkpoints.is_empty(), "Checkpoints must contain, at least, genesis");
+
+        // We need to ensure the first checkpoint is at height 0, genesis,
+        // with it we ensure we have a valid checkpoint for any other height
+        // since there is no value lower than 0 for u32 ;D
+        debug_assert_eq!(checkpoints[0].height, 0, "The first checkpoint must be at height 0");
+
+        debug_assert!(
+            checkpoints.is_sorted(),
+            "The checkpoints must be sorted by height in ascending order"
+        );
 
         Self {
-            checkpoints: checkpoint_map,
-            sorted_heights: heights,
-        }
-    }
-
-    /// Get a checkpoint at a specific height
-    pub fn get_checkpoint(&self, height: u32) -> Option<&Checkpoint> {
-        self.checkpoints.get(&height)
-    }
-
-    /// Check if a block hash matches the checkpoint at the given height
-    pub fn validate_block(&self, height: u32, block_hash: &BlockHash) -> bool {
-        match self.checkpoints.get(&height) {
-            Some(checkpoint) => checkpoint.block_hash == *block_hash,
-            None => true, // No checkpoint at this height, so it's valid
+            checkpoints,
         }
     }
 
     /// Get the last checkpoint at or before the given height
-    pub fn last_checkpoint_before_height(&self, height: u32) -> Option<&Checkpoint> {
-        // Binary search for the highest checkpoint <= height
-        let pos = self.sorted_heights.partition_point(|&h| h <= height);
-        if pos > 0 {
-            let checkpoint_height = self.sorted_heights[pos - 1];
-            self.checkpoints.get(&checkpoint_height)
-        } else {
-            None
+    pub fn last_checkpoint_before_height(
+        &self,
+        height: u32,
+    ) -> (CoreBlockHeight, &HashedBlockHeader) {
+        match self.checkpoints.binary_search_by_key(&height, |checkpoint| checkpoint.height) {
+            Ok(index) => {
+                (self.checkpoints[index].height, &self.checkpoints[index].hashed_block_header)
+            }
+            Err(index) => (
+                self.checkpoints[index - 1].height,
+                &self.checkpoints[index - 1].hashed_block_header,
+            ),
         }
-    }
-
-    /// Get the last checkpoint
-    pub fn last_checkpoint(&self) -> Option<&Checkpoint> {
-        self.sorted_heights.last().and_then(|&height| self.checkpoints.get(&height))
-    }
-
-    /// Get all checkpoint heights
-    pub fn checkpoint_heights(&self) -> &[u32] {
-        &self.sorted_heights
     }
 
     /// Get the last checkpoint before a given timestamp
-    pub fn last_checkpoint_before_timestamp(&self, timestamp: u32) -> Option<&Checkpoint> {
-        let mut best_checkpoint = None;
-        let mut best_height = 0;
+    pub fn last_checkpoint_before_timestamp(
+        &self,
+        timestamp: u32,
+    ) -> (CoreBlockHeight, &HashedBlockHeader) {
+        let mut checkpoints = self.checkpoints.iter();
 
-        for checkpoint in self.checkpoints.values() {
-            if checkpoint.timestamp <= timestamp && checkpoint.height >= best_height {
-                best_height = checkpoint.height;
-                best_checkpoint = Some(checkpoint);
+        let mut best_checkpoint =
+            checkpoints.next().expect("CheckpointManager should never be empty");
+
+        for checkpoint in checkpoints {
+            if checkpoint.hashed_block_header.header().time <= timestamp
+                && checkpoint.height >= best_checkpoint.height
+            {
+                best_checkpoint = checkpoint;
             }
         }
 
-        best_checkpoint
-    }
-
-    /// Get the checkpoint to use for sync chain based on override settings
-    pub fn get_sync_checkpoint(&self, wallet_creation_time: Option<u32>) -> Option<&Checkpoint> {
-        // Default to checkpoint based on wallet creation time
-        if let Some(creation_time) = wallet_creation_time {
-            self.last_checkpoint_before_timestamp(creation_time)
-        } else {
-            self.last_checkpoint()
-        }
-    }
-
-    /// Check if a fork at the given height should be rejected due to checkpoint
-    pub fn should_reject_fork(&self, fork_height: u32) -> bool {
-        if let Some(last_checkpoint) = self.last_checkpoint() {
-            fork_height <= last_checkpoint.height
-        } else {
-            false
-        }
-    }
-}
-
-/// Create mainnet checkpoints
-pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
-    vec![
-        // Genesis block (required)
-        create_checkpoint(
-            0,
-            "00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            1390095618,
-            0x1e0ffff0,
-            "0x0000000000000000000000000000000000000000000000000000000100010001",
-            "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7",
-            28917698,
-            None,
-        ),
-        // Early network checkpoint (1 week after genesis)
-        create_checkpoint(
-            4991,
-            "000000003b01809551952460744d5dbb8fcbd6cbae3c220267bf7fa43f837367",
-            "000000001263f3327dd2f6bc445b47beb82fb8807a62e252ba064e2d2b6f91a6",
-            1390163520,
-            0x1e0fffff,
-            "0x00000000000000000000000000000000000000000000000000000000271027f0",
-            "7faff642d9e914716c50e3406df522b2b9a10ea3df4fef4e2229997367a6cab1",
-            357631712,
-            None,
-        ),
-        // 3 months checkpoint
-        create_checkpoint(
-            107996,
-            "00000000000a23840ac16115407488267aa3da2b9bc843e301185b7d17e4dc40",
-            "000000000006fe4020a310786bd34e17aa7681c86a20a2e121e0e3dd599800e8",
-            1395522898,
-            0x1b04864c,
-            "0x0000000000000000000000000000000000000000000000000056bf9caa56bf9d",
-            "15c3852f9e71a6cbc0cfa96d88202746cfeae6fc645ccc878580bc29daeff193",
-            10049236,
-            None,
-        ),
-        // 2017 checkpoint
-        create_checkpoint(
-            750000,
-            "00000000000000b4181bbbdddbae464ce11fede5d0292fb63fdede1e7c8ab21c",
-            "00000000000001e115237541be8dd91bce2653edd712429d11371842f85bd3e1",
-            1491953700,
-            0x1a075a02,
-            "0x00000000000000000000000000000000000000000000000485f01ee9f01ee9f8",
-            "0ce99835e2de1240e230b5075024817aace2b03b3944967a88af079744d0aa62",
-            2199533779,
-            None,
-        ),
-        // Recent checkpoint with masternode list (2022)
-        create_checkpoint(
-            1700000,
-            "000000000000001d7579a371e782fd9c4480f626a62b916fa4eb97e16a49043a",
-            "000000000000001a5631d781a4be0d9cda08b470ac6f108843cedf32e4dc081e",
-            1657142113,
-            0x1927e30e,
-            "000000000000000000000000000000000000000000007562df93a26b81386288",
-            "dafe57cefc3bc265dfe8416e2f2e3a22af268fd587a48f36affd404bec738305",
-            3820512540,
-            Some("ML1700000__70227"),
-        ),
-        // Latest checkpoint with masternode list (2022/2023)
-        create_checkpoint(
-            1900000,
-            "000000000000001b8187c744355da78857cca5b9aeb665c39d12f26a0e3a9af5",
-            "000000000000000d41ff4e55f8ebc2e610ec74a0cbdd33e59ebbfeeb1f8a0a0d",
-            1688744911,
-            0x192946fd,
-            "000000000000000000000000000000000000000000008798ed692b94a398aa4f",
-            "3a6ff72336cf78e45b23101f755f4d7dce915b32336a8c242c33905b72b07b35",
-            498598646,
-            Some("ML1900000__70230"),
-        ),
-        // Block 2300000 (2025) - recent checkpoint
-        create_checkpoint(
-            2300000,
-            "00000000000000186f9f2fde843be3d66b8ae317cabb7d43dbde943d02a4b4d7",
-            "000000000000000d51caa0307836ca3eabe93068a9007515ac128a43d6addd4e",
-            1751767455,
-            0x1938df46,
-            "0x00000000000000000000000000000000000000000000aa3859b6456688a3fb53",
-            "b026649607d72d486480c0cef823dba6b28d0884a0d86f5a8b9e5a7919545cef",
-            972444458,
-            Some("ML2300000__70232"),
-        ),
-    ]
-}
-
-/// Create testnet checkpoints
-pub fn testnet_checkpoints() -> Vec<Checkpoint> {
-    vec![
-        // Genesis block
-        create_checkpoint(
-            0,
-            "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            1390666206,
-            0x1e0ffff0,
-            "0x0000000000000000000000000000000000000000000000000000000100010001",
-            "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7",
-            3861367235,
-            None,
-        ),
-        // Height 500000
-        create_checkpoint(
-            500000,
-            "000000d0f2239d3ea3d1e39e624f651c5a349b5ca729eec29540aeae0ecc94a7",
-            "000001d6339e773dea2a9f1eae5e569a04963eb885008be9d553568932885745",
-            1621049765,
-            0x1e025b1b,
-            "0x000000000000000000000000000000000000000000000000022f14e45fc51a2e",
-            "618c77a7c45783f5f20e957a296e077220b50690aae51d714ae164eb8d669fdf",
-            10457,
-            None,
-        ),
-        // Height 800000
-        create_checkpoint(
-            800000,
-            "00000075cdfa0a552e488406074bb95d831aee16c0ec30114319a587a8a8fb0c",
-            "0000011921c298768dc2ab0f9ca5a3ff4527813bbd7cd77f45bf93efd0bb0799",
-            1671238603,
-            0x1e018b19,
-            "0x00000000000000000000000000000000000000000000000002d68bf1d7e434f6",
-            "d58300efccbace51cdf5c8a012979e310da21337a7f311b1dcea7c1c894dfb94",
-            607529,
-            None,
-        ),
-        // Height 1100000
-        create_checkpoint(
-            1100000,
-            "000000078cc3952c7f594de921ae82fcf430a5f3b86755cd72acd819d0001015",
-            "00000068da3dc19e54cefd3f7e2a7f380bf8d9a0eb1090a7197c3e0b10e2cf1f",
-            1725934127,
-            0x1e017da4,
-            "0x000000000000000000000000000000000000000000000000031c3fcb33bc3a48",
-            "4cc82bf21c5f1e0e712ca1a3d5bde2f92eee2700b86019c6d0ace9c91a8b9bd8",
-            251545,
-            None,
-        ),
-    ]
-}
-
-/// Helper to parse hex block hash strings
-fn parse_block_hash(s: &str) -> Result<BlockHash, String> {
-    use hex::FromHex;
-    let bytes = Vec::<u8>::from_hex(s).map_err(|e| format!("Invalid hex: {}", e))?;
-    if bytes.len() != 32 {
-        return Err("Invalid hash length: expected 32 bytes".to_string());
-    }
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes.copy_from_slice(&bytes);
-    // Reverse for little-endian
-    hash_bytes.reverse();
-    Ok(BlockHash::from_byte_array(hash_bytes))
-}
-
-/// Helper to parse hex block hash strings, returning zero hash on error
-fn parse_block_hash_safe(s: &str) -> BlockHash {
-    parse_block_hash(s).unwrap_or_else(|e| {
-        tracing::error!("Failed to parse checkpoint block hash '{}': {}", s, e);
-        BlockHash::from_byte_array([0u8; 32])
-    })
-}
-
-/// Helper to create a checkpoint with common defaults
-#[allow(clippy::too_many_arguments)]
-fn create_checkpoint(
-    height: u32,
-    hash: &str,
-    prev_hash: &str,
-    timestamp: u32,
-    bits: u32,
-    chain_work: &str,
-    merkle_root: &str,
-    nonce: u32,
-    masternode_list: Option<&str>,
-) -> Checkpoint {
-    Checkpoint {
-        height,
-        block_hash: parse_block_hash_safe(hash),
-        prev_blockhash: parse_block_hash_safe(prev_hash),
-        timestamp,
-        target: Target::from_compact(CompactTarget::from_consensus(bits)),
-        merkle_root: Some(parse_block_hash_safe(merkle_root)),
-        chain_work: chain_work.to_string(),
-        masternode_list_name: masternode_list.map(|s| s.to_string()),
-        protocol_version: masternode_list.and_then(|ml| {
-            // Extract protocol version from masternode list name
-            ml.split("__").nth(1).and_then(|s| s.parse().ok())
-        }),
-        nonce,
+        (best_checkpoint.height, &best_checkpoint.hashed_block_header)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs::OpenOptions,
+        io::{BufWriter, Write},
+        path::PathBuf,
+        sync::Arc,
+    };
+
+    use key_wallet::wallet::ManagedWalletInfo;
+    use key_wallet_manager::WalletManager;
+    use tokio::sync::RwLock;
+    use tokio_util::sync::CancellationToken;
+    use tracing::level_filters::LevelFilter;
+
+    use crate::{
+        init_console_logging,
+        network::PeerNetworkManager,
+        storage::{BlockHeaderStorage, DiskStorageManager},
+        types::SyncStage,
+        ClientConfig, DashSpvClient,
+    };
+
     use super::*;
 
+    // This must be manually executed every time we modify checkpoints heights to allow the library
+    // to generate checkpoint files by requesting the block headers using its own client
+    #[tokio::test]
+    #[ignore = "This tests is meant to re-generate checkpoints files"]
+    async fn generate_checkpoints_files() {
+        const SUPPORTED_NETWORKS: [Network; 2] = [Network::Dash, Network::Testnet];
+
+        const MAINNET_CHECKPOINTS_FILE: &str = "checkpoints/mainnet.checkpoints";
+        const TESTNET_CHECKPOINTS_FILE: &str = "checkpoints/testnet.checkpoints";
+
+        let _logging_guard = init_console_logging(LevelFilter::INFO).unwrap();
+
+        for network in SUPPORTED_NETWORKS {
+            generate_checkpoints_file(network)
+                .await
+                .unwrap_or_else(|_| panic!("Error generating checkpoints for network {network}"));
+        }
+
+        async fn generate_checkpoints_file(network: Network) -> crate::error::Result<()> {
+            let storage_path = format!("./.tmp/{network}-checkpoints-generation-storage");
+
+            let config = ClientConfig::new(network)
+                .with_storage_path(PathBuf::from(&storage_path))
+                .without_filters()
+                .without_masternodes();
+
+            let network_manager = PeerNetworkManager::new(&config).await?;
+            let storage_manager = DiskStorageManager::new(&storage_path).await?;
+            let wallet =
+                Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+            let mut client =
+                DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
+
+            client.start().await?;
+            let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+            let shutdown_token = CancellationToken::new();
+
+            let mut progress_receiver = client.take_progress_receiver().unwrap();
+
+            {
+                let shutdown_token = shutdown_token.clone();
+                tokio::spawn(async move {
+                    client.run(command_receiver, shutdown_token).await.unwrap();
+                });
+            }
+
+            while let Some(progress) = progress_receiver.recv().await {
+                if matches!(progress.sync_stage, SyncStage::Complete) {
+                    shutdown_token.cancel();
+                }
+            }
+
+            let storage_manager = DiskStorageManager::new(&storage_path).await?;
+
+            let checkpoints_file_path = match network {
+                Network::Dash => MAINNET_CHECKPOINTS_FILE,
+                Network::Testnet => TESTNET_CHECKPOINTS_FILE,
+                _ => panic!("There is no checkpoints file for network {network}"),
+            };
+
+            let checkpoints_file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(checkpoints_file_path)
+                .expect("Should open checkpoints file for writing");
+            let mut writer = BufWriter::new(checkpoints_file);
+
+            for height in checkpoints_heights(network) {
+                let checkpoint_header =
+                    storage_manager.get_header(*height).await?.expect("Should find checkpoint");
+
+                let checkpoint = Checkpoint::new(*height, checkpoint_header.into());
+                checkpoint.consensus_encode(&mut writer).expect("Error writing checkpoint to file");
+            }
+
+            writer.flush()?;
+            Ok(())
+        }
+    }
+
     #[test]
-    fn test_checkpoint_validation() {
-        let checkpoints = mainnet_checkpoints();
-        let manager = CheckpointManager::new(checkpoints);
+    #[should_panic(expected = "height 0")]
+    fn test_checkpoint_must_start_at_zero() {
+        CheckpointManager::dummy(&[1, 4, 5, 9, 90, 9000]);
+    }
 
-        // Test genesis block
-        let genesis_checkpoint =
-            manager.get_checkpoint(0).expect("Genesis checkpoint should exist");
-        assert_eq!(genesis_checkpoint.height, 0);
-        assert_eq!(genesis_checkpoint.timestamp, 1390095618);
-
-        // Test validation
-        let genesis_hash =
-            parse_block_hash("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
-                .expect("Failed to parse genesis hash for test");
-        assert!(manager.validate_block(0, &genesis_hash));
-
-        // Test invalid hash
-        let invalid_hash = BlockHash::from_byte_array([1u8; 32]);
-        assert!(!manager.validate_block(0, &invalid_hash));
-
-        // Test no checkpoint at height
-        assert!(manager.validate_block(1, &invalid_hash)); // No checkpoint at height 1
+    #[test]
+    #[should_panic(expected = "ascending")]
+    fn test_checkpoints_must_be_ascending() {
+        CheckpointManager::dummy(&[0, 1, 2, 3, 2, 1]);
     }
 
     #[test]
     fn test_last_checkpoint_before() {
-        let checkpoints = mainnet_checkpoints();
-        let manager = CheckpointManager::new(checkpoints);
+        let manager = CheckpointManager::dummy(&MAINNET_CHECKPOINTS_HEIGHTS);
 
         // Test finding checkpoint before various heights
-        assert_eq!(
-            manager.last_checkpoint_before_height(0).expect("Should find checkpoint").height,
-            0
-        );
-        assert_eq!(
-            manager.last_checkpoint_before_height(1000).expect("Should find checkpoint").height,
-            0
-        );
-        assert_eq!(
-            manager.last_checkpoint_before_height(5000).expect("Should find checkpoint").height,
-            4991
-        );
-        assert_eq!(
-            manager.last_checkpoint_before_height(200000).expect("Should find checkpoint").height,
-            107996
-        );
-    }
-
-    #[test]
-    fn test_protocol_version_extraction() {
-        let checkpoint = create_checkpoint(
-            1088640,
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            0,
-            0,
-            "",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            0,
-            Some("ML1088640__70218"),
-        );
-
-        assert_eq!(checkpoint.protocol_version(), Some(70218));
-        assert!(checkpoint.has_masternode_list());
-
-        let checkpoint_no_version = create_checkpoint(
-            0,
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            0,
-            0,
-            "",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            0,
-            None,
-        );
-
-        assert_eq!(checkpoint_no_version.protocol_version(), None);
-        assert!(!checkpoint_no_version.has_masternode_list());
-    }
-
-    #[test]
-    #[ignore] // Test depends on specific mainnet checkpoint data
-    fn test_fork_rejection() {
-        let checkpoints = mainnet_checkpoints();
-        let manager = CheckpointManager::new(checkpoints);
-
-        // Should reject fork at checkpoint height
-        assert!(manager.should_reject_fork(1500));
-        assert!(manager.should_reject_fork(750000));
-
-        // Should not reject fork after last checkpoint
-        assert!(!manager.should_reject_fork(2000000));
+        assert_eq!(manager.last_checkpoint_before_height(0).0, 0);
+        assert_eq!(manager.last_checkpoint_before_height(1000).0, 0);
+        assert_eq!(manager.last_checkpoint_before_height(5000).0, 4991);
+        assert_eq!(manager.last_checkpoint_before_height(200000).0, 107996);
     }
 
     #[test]
     fn test_checkpoint_by_timestamp() {
-        let checkpoints = mainnet_checkpoints();
-        let manager = CheckpointManager::new(checkpoints);
+        let manager = CheckpointManager::dummy(&MAINNET_CHECKPOINTS_HEIGHTS);
 
         // Test finding checkpoint by timestamp
         let checkpoint = manager.last_checkpoint_before_timestamp(1500000000);
-        assert!(checkpoint.is_some());
-        assert!(checkpoint.expect("Should find checkpoint by timestamp").timestamp <= 1500000000);
+        assert!(checkpoint.1.header().time <= 1500000000);
     }
 }
