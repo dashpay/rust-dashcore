@@ -369,7 +369,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_builder_build(
     let builder = Box::from_raw(ffi_builder.inner as *mut ClientConfigBuilder);
 
     match builder.build() {
-        Ok(config) => Box::into_raw(Box::new(config.into())),
+        Ok(config) => {
+            let mut config = FFIClientConfig::from(config);
+            config.worker_threads = ffi_builder.worker_threads;
+            Box::into_raw(Box::new(config))
+        }
         Err(err) => {
             set_last_error(&format!("Failed to build config: {}", err));
             std::ptr::null_mut()
