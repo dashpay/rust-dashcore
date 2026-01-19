@@ -44,17 +44,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
+    let result: dash_spv::Result<()> = client.runtime.block_on(async {
         // Take the client out to avoid holding the lock across await
         let spv_client = {
             let mut guard = inner.lock().unwrap();
             match guard.take() {
                 Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
+                None => return Err(dash_spv::Error::UninitializedClient),
             }
         };
 

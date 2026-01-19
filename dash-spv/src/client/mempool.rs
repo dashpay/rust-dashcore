@@ -9,7 +9,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::error::Result;
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -22,7 +21,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub async fn enable_mempool_tracking(
         &mut self,
         strategy: config::MempoolStrategy,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         // Update config
         self.config.enable_mempool_tracking = true;
         self.config.mempool_strategy = strategy;
@@ -46,7 +45,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub async fn get_mempool_balance(
         &self,
         address: &dashcore::Address,
-    ) -> Result<crate::types::MempoolBalance> {
+    ) -> crate::Result<crate::types::MempoolBalance> {
         let _wallet = self.wallet.read().await;
         let mempool_state = self.mempool_state.read().await;
 
@@ -134,7 +133,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Record that we attempted to send a transaction (for UX/heuristics).
-    pub async fn record_send(&self, txid: dashcore::Txid) -> Result<()> {
+    pub async fn record_send(&self, txid: dashcore::Txid) -> crate::Result<()> {
         let mut mempool_state = self.mempool_state.write().await;
         mempool_state.record_send(txid);
         Ok(())

@@ -16,10 +16,10 @@ use dashcore::{
     BlockHash,
 };
 
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SyncProgress;
+use crate::{SyncError, SyncResult};
 
 impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     pub async fn verify_cfilter_against_headers(

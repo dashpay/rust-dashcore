@@ -3,11 +3,11 @@
 use super::phases::{PhaseTransition, SyncPhase};
 use super::transitions::TransitionManager;
 use crate::client::ClientConfig;
-use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::{FilterSyncManager, HeaderSyncManager, MasternodeSyncManager, ReorgConfig};
 use crate::types::{SharedFilterHeights, SyncProgress};
+use crate::SyncResult;
 use crate::{SpvStats, SyncError};
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;

@@ -1,9 +1,9 @@
 use rayon::prelude::*;
 use std::time::Instant;
 
-use crate::error::{ValidationError, ValidationResult};
 use crate::types::HashedBlockHeader;
 use crate::validation::Validator;
+use crate::{ValidationError, ValidationResult};
 
 #[derive(Default)]
 pub struct BlockHeaderValidator {}

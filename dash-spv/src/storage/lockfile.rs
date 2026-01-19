@@ -4,7 +4,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::error::{StorageError, StorageResult};
+use crate::{StorageError, StorageResult};
 
 /// Lock file that prevents concurrent access from multiple processes.
 pub(super) struct LockFile {

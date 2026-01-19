@@ -7,9 +7,9 @@
 //! - Sending individual requests to the network
 
 use super::types::*;
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::{SyncError, SyncResult};
 
 impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     /// Build a queue of filter requests covering the specified range.

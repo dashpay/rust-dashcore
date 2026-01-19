@@ -68,7 +68,7 @@ impl ChainStateStorage for PersistentChainStateStorage {
 
         let content = tokio::fs::read_to_string(path).await?;
         let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-            crate::error::StorageError::Serialization(format!("Failed to parse chain state: {}", e))
+            crate::StorageError::Serialization(format!("Failed to parse chain state: {}", e))
         })?;
 
         let state = ChainState {

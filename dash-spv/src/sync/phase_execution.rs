@@ -2,9 +2,9 @@
 
 use std::time::Instant;
 
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::{SyncError, SyncResult};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::manager::SyncManager;

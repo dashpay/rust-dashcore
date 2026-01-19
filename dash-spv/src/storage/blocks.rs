@@ -4,15 +4,16 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use crate::error::StorageResult;
-use crate::storage::segments::SegmentCache;
-use crate::storage::PersistentStorage;
-use crate::types::HashedBlockHeader;
 use async_trait::async_trait;
 use dashcore::block::Header as BlockHeader;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 use tokio::sync::RwLock;
+
+use crate::storage::segments::SegmentCache;
+use crate::storage::PersistentStorage;
+use crate::types::HashedBlockHeader;
+use crate::StorageResult;
 
 #[derive(Debug, PartialEq)]
 pub struct BlockHeaderTip {

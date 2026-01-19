@@ -18,13 +18,12 @@ async fn main() {
         eprintln!("Error: {}", e);
 
         // Provide specific exit codes for different error types
-        let exit_code = if let Some(spv_error) = e.downcast_ref::<dash_spv::SpvError>() {
+        let exit_code = if let Some(spv_error) = e.downcast_ref::<dash_spv::Error>() {
             match spv_error {
-                dash_spv::SpvError::Network(_) => 1,
-                dash_spv::SpvError::Storage(_) => 2,
-                dash_spv::SpvError::Validation(_) => 3,
-                dash_spv::SpvError::Config(_) => 4,
-                dash_spv::SpvError::Parse(_) => 5,
+                dash_spv::Error::Network(_) => 1,
+                dash_spv::Error::Storage(_) => 2,
+                dash_spv::Error::Validation(_) => 3,
+                dash_spv::Error::Config(_) => 4,
                 _ => 255,
             }
         } else {

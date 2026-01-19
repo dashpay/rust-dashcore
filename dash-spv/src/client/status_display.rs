@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::client::ClientConfig;
-use crate::error::Result;
 use crate::storage::StorageManager;
 #[cfg(feature = "terminal-ui")]
 use crate::terminal::TerminalUI;
@@ -98,7 +97,7 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
     }
 
     /// Get current sync progress.
-    pub async fn sync_progress(&self) -> Result<SyncProgress> {
+    pub async fn sync_progress(&self) -> crate::Result<SyncProgress> {
         let state = self.state.read().await;
         // Clone the inner heights handle and copy needed counters without awaiting while holding the RwLock
         let (filters_received, received_heights) = {
@@ -135,7 +134,7 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
     }
 
     /// Get current statistics.
-    pub async fn stats(&self) -> Result<SpvStats> {
+    pub async fn stats(&self) -> crate::Result<SpvStats> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
     }

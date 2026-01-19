@@ -13,7 +13,6 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::chain::ChainLockManager;
-use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -32,9 +31,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         network: N,
         storage: S,
         wallet: Arc<RwLock<W>>,
-    ) -> Result<Self> {
+    ) -> crate::Result<Self> {
         // Validate configuration
-        config.validate().map_err(SpvError::Config)?;
+        config.validate()?;
 
         // Initialize state for the network
         let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
@@ -53,7 +52,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             state.clone(),
             stats.clone(),
         )
-        .map_err(SpvError::Sync)?;
+        .map_err(crate::Error::Sync)?;
 
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
@@ -90,11 +89,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Start the SPV client.
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&mut self) -> crate::Result<()> {
         {
             let running = self.running.read().await;
             if *running {
-                return Err(SpvError::Config("Client already running".to_string()));
+                return Err(crate::Error::Config("Client already running".to_string()));
             }
         }
 
@@ -114,14 +113,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
             // Load mempool state from storage if persistence is enabled
             if self.config.persist_mempool {
-                if let Some(state) = self
-                    .storage
-                    .lock()
-                    .await
-                    .load_mempool_state()
-                    .await
-                    .map_err(SpvError::Storage)?
-                {
+                if let Some(state) = self.storage.lock().await.load_mempool_state().await? {
                     *self.mempool_state.write().await = state;
                 }
             }
@@ -162,8 +154,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             let (header_height, filter_height) = {
                 let storage = self.storage.lock().await;
                 let h_height = storage.get_tip_height().await.unwrap_or(0);
-                let f_height =
-                    storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
+                let f_height = storage.get_filter_tip_height().await?.unwrap_or(0);
                 (h_height, f_height)
             };
 
@@ -180,7 +171,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Stop the SPV client.
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&mut self) -> crate::Result<()> {
         // Check if already stopped
         {
             let running = self.running.read().await;
@@ -207,12 +198,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Shutdown the SPV client (alias for stop).
-    pub async fn shutdown(&mut self) -> Result<()> {
+    pub async fn shutdown(&mut self) -> crate::Result<()> {
         self.stop().await
     }
 
     /// Initialize genesis block or checkpoint.
-    pub(super) async fn initialize_genesis_block(&mut self) -> Result<()> {
+    pub(super) async fn initialize_genesis_block(&mut self) -> crate::Result<()> {
         // Check if we already have any headers in storage
         let current_tip = {
             let storage = self.storage.lock().await;
@@ -297,10 +288,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                             storage
                                 .store_headers_at_height(&[checkpoint_header], checkpoint.height)
                                 .await?;
-                            storage
-                                .store_chain_state(&chain_state_for_storage)
-                                .await
-                                .map_err(SpvError::Storage)?;
+                            storage.store_chain_state(&chain_state_for_storage).await?;
                         }
 
                         // Don't store the checkpoint header itself - we'll request headers from peers
@@ -325,11 +313,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Get the genesis block hash for this network
-        let genesis_hash = self
-            .config
-            .network
-            .known_genesis_block_hash()
-            .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
+        let genesis_hash =
+            self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                crate::Error::Config("No known genesis hash for network".to_string())
+            })?;
 
         tracing::info!(
             "Initializing genesis block for network {:?}: {}",
@@ -343,7 +330,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Verify the header produces the expected genesis hash
         let calculated_hash = genesis_header.block_hash();
         if calculated_hash != genesis_hash {
-            return Err(SpvError::Config(format!(
+            return Err(crate::Error::Config(format!(
                 "Genesis header hash mismatch! Expected: {}, Calculated: {}",
                 genesis_hash, calculated_hash
             )));
@@ -355,7 +342,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let genesis_headers = vec![genesis_header];
         {
             let mut storage = self.storage.lock().await;
-            storage.store_headers(&genesis_headers).await.map_err(SpvError::Storage)?;
+            storage.store_headers(&genesis_headers).await?;
         }
 
         // Verify it was stored correctly
@@ -372,7 +359,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Load wallet data from storage.
-    pub(super) async fn load_wallet_data(&self) -> Result<()> {
+    pub(super) async fn load_wallet_data(&self) -> crate::Result<()> {
         tracing::info!("Loading wallet data from storage...");
 
         let _wallet = self.wallet.read().await;

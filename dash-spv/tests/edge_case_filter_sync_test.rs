@@ -7,10 +7,10 @@ use tokio::sync::Mutex;
 
 use dash_spv::{
     client::ClientConfig,
-    error::NetworkResult,
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::filters::FilterSyncManager,
+    NetworkResult,
 };
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::message::NetworkMessage,
@@ -87,7 +87,7 @@ impl NetworkManager for MockNetworkManager {
         Vec::new()
     }
 
-    async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
+    async fn get_peer_best_height(&self) -> dash_spv::NetworkResult<Option<u32>> {
         Ok(Some(100))
     }
 

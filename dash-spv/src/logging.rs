@@ -10,7 +10,7 @@ use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::error::{LoggingError, LoggingResult};
+use crate::{LoggingError, LoggingResult};
 
 /// Prefix for archived log files.
 const LOG_FILE_PREFIX: &str = "dash-spv.";

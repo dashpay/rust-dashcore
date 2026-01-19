@@ -103,7 +103,7 @@ mod tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "max_peers must be > 0");
+        assert!(result.unwrap_err().to_string().contains("max_peers must be > 0"));
     }
 
     #[test]
@@ -116,7 +116,7 @@ mod tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("max_mempool_transactions must be > 0"));
+        assert!(result.unwrap_err().to_string().contains("max_mempool_transactions must be > 0"));
     }
 
     // Removed selective strategy validation test; Selective variant no longer exists

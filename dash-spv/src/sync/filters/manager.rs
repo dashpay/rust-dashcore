@@ -4,10 +4,10 @@
 //! that delegates to specialized sub-modules for headers, downloads, matching, etc.
 
 use crate::client::ClientConfig;
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SharedFilterHeights;
+use crate::{SyncError, SyncResult};
 use dashcore::{hash_types::FilterHeader, network::message_filter::CFHeaders, BlockHash};
 use dashcore_hashes::{sha256d, Hash};
 use std::collections::{HashMap, HashSet, VecDeque};

@@ -4,8 +4,7 @@ use dashcore::Network;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::error::{SpvError as Error, StorageError};
-use crate::storage::io::atomic_write;
+use crate::{storage::io::atomic_write, StorageError};
 
 /// Peer persistence for saving and loading known peer addresses
 pub struct PeerStore {
@@ -43,7 +42,7 @@ impl PeerStore {
     pub async fn save_peers(
         &self,
         peers: &[dashcore::network::address::AddrV2Message],
-    ) -> Result<(), Error> {
+    ) -> Result<(), crate::Error> {
         let saved = SavedPeers {
             version: 1,
             network: format!("{:?}", self.network),
@@ -59,21 +58,22 @@ impl PeerStore {
                 .collect(),
         };
 
-        let json = serde_json::to_string_pretty(&saved)
-            .map_err(|e| Error::Storage(StorageError::Serialization(e.to_string())))?;
+        let json = serde_json::to_string_pretty(&saved).map_err(|e| {
+            crate::Error::Storage(crate::StorageError::Serialization(e.to_string()))
+        })?;
 
-        atomic_write(&self.path, json.as_bytes()).await.map_err(Error::Storage)?;
+        atomic_write(&self.path, json.as_bytes()).await?;
 
         log::debug!("Saved {} peers to {:?}", saved.peers.len(), self.path);
         Ok(())
     }
 
     /// Load peers from disk
-    pub async fn load_peers(&self) -> Result<Vec<std::net::SocketAddr>, Error> {
+    pub async fn load_peers(&self) -> crate::Result<Vec<std::net::SocketAddr>> {
         match tokio::fs::read_to_string(&self.path).await {
             Ok(json) => {
                 let saved: SavedPeers = serde_json::from_str(&json).map_err(|e| {
-                    Error::Storage(StorageError::Corruption(format!(
+                    crate::Error::Storage(crate::StorageError::Corruption(format!(
                         "Failed to parse peers file: {}",
                         e
                     )))
@@ -81,7 +81,7 @@ impl PeerStore {
 
                 // Verify network matches
                 if saved.network != format!("{:?}", self.network) {
-                    return Err(Error::Storage(StorageError::Corruption(format!(
+                    return Err(crate::Error::Storage(crate::StorageError::Corruption(format!(
                         "Peers file is for network {} but we are on {:?}",
                         saved.network, self.network
                     ))));
@@ -97,19 +97,19 @@ impl PeerStore {
                 log::debug!("No saved peers file found at {:?}", self.path);
                 Ok(vec![])
             }
-            Err(e) => Err(Error::Storage(StorageError::ReadFailed(e.to_string()))),
+            Err(e) => Err(crate::Error::Storage(StorageError::from(e))),
         }
     }
 
     /// Delete the peers file
-    pub async fn clear(&self) -> Result<(), Error> {
+    pub async fn clear(&self) -> crate::Result<()> {
         match tokio::fs::remove_file(&self.path).await {
             Ok(_) => {
                 log::info!("Cleared peer store at {:?}", self.path);
                 Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(Error::Storage(StorageError::WriteFailed(e.to_string()))),
+            Err(e) => Err(crate::Error::Storage(StorageError::from(e))),
         }
     }
 }

@@ -1,9 +1,9 @@
 //! Phase transition logic for sequential sync
 
 use crate::client::ClientConfig;
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::{SyncError, SyncResult};
 use dashcore::network::constants::ServiceFlags;
 
 use super::phases::{PhaseTransition, SyncPhase};

@@ -12,9 +12,9 @@ use dashcore::consensus::{encode, Decodable};
 use dashcore::network::message::{NetworkMessage, RawNetworkMessage};
 use dashcore::Network;
 
-use crate::error::{NetworkError, NetworkResult};
 use crate::network::constants::PING_INTERVAL;
 use crate::types::PeerInfo;
+use crate::{NetworkError, NetworkResult};
 
 /// Internal state for the TCP connection
 struct ConnectionState {

@@ -22,9 +22,9 @@ use dashcore::{
 use dashcore_hashes::{sha256d, Hash};
 
 use super::types::*;
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::{SyncError, SyncResult};
 
 impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
     pub(super) async fn find_available_header_at_or_before(

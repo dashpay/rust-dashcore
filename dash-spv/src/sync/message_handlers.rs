@@ -7,9 +7,9 @@ use dashcore::block::Block;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::{SyncError, SyncResult};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::manager::SyncManager;

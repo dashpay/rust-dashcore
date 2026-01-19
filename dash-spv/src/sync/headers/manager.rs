@@ -9,12 +9,12 @@ use dashcore_hashes::Hash;
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use crate::chain::{ChainTip, ChainTipManager, ChainWork};
 use crate::client::ClientConfig;
-use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::{ChainState, HashedBlockHeader};
 use crate::validation::{BlockHeaderValidator, Validator};
 use crate::ValidationMode;
+use crate::{SyncError, SyncResult};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

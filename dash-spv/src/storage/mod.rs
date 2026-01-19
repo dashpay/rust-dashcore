@@ -23,7 +23,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-use crate::error::StorageResult;
 use crate::storage::blocks::{BlockHeaderTip, PersistentBlockHeaderStorage};
 use crate::storage::chainstate::PersistentChainStateStorage;
 use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
@@ -33,6 +32,7 @@ use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
 use crate::types::{MempoolState, UnconfirmedTransaction};
 use crate::ChainState;
+use crate::StorageResult;
 
 pub use crate::storage::blocks::BlockHeaderStorage;
 pub use crate::storage::chainstate::ChainStateStorage;
@@ -216,7 +216,7 @@ impl StorageManager for DiskStorageManager {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     tokio::fs::remove_dir_all(&self.storage_path).await?;
                 }
-                Err(e) => return Err(crate::error::StorageError::Io(e)),
+                Err(e) => return Err(crate::StorageError::Io(e)),
             }
             tokio::fs::create_dir_all(&self.storage_path).await?;
         }
