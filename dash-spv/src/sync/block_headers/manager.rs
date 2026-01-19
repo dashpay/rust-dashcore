@@ -214,8 +214,9 @@ impl<H: BlockHeaderStorage> BlockHeadersManager<H> {
 
 #[cfg(test)]
 mod tests {
+    use dashcore::Network;
+
     use super::*;
-    use crate::chain::checkpoints::testnet_checkpoints;
     use crate::network::MessageType;
     use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
@@ -223,7 +224,7 @@ mod tests {
     type TestBlockHeadersManager = BlockHeadersManager<PersistentBlockHeaderStorage>;
 
     fn create_test_checkpoint_manager() -> Arc<CheckpointManager> {
-        Arc::new(CheckpointManager::new(testnet_checkpoints()))
+        Arc::new(CheckpointManager::new(Network::Testnet))
     }
 
     async fn create_test_manager() -> TestBlockHeadersManager {
