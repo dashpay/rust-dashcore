@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use dashcore::Network;
 use derive_builder::Builder;
 use getset::{CopyGetters, Getters};
-// Serialization removed due to complex Address types
+use serde::Deserialize;
 
 use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum MempoolStrategy {
     /// Fetch all announced transactions (high bandwidth, sees all transactions).
     FetchAll,
@@ -25,6 +25,7 @@ pub enum MempoolStrategy {
 #[builder(field(private))]
 #[builder(default)]
 #[builder(build_fn(validate = "Self::validate", error = "String"))]
+#[builder(derive(Deserialize))]
 pub struct ClientConfig {
     /// Network to connect to.
     #[getset(get_copy = "pub")]
@@ -176,6 +177,12 @@ impl ClientConfigBuilder {
 }
 
 impl ClientConfig {
+    pub fn from_json_reader<R: std::io::Read>(reader: R) -> Result<Self, String> {
+        let builder: ClientConfigBuilder =
+            serde_json::from_reader(reader).map_err(|e| e.to_string())?;
+        builder.build()
+    }
+
     pub fn add_peer(&mut self, address: SocketAddr) -> &mut Self {
         self.peers.push(address);
         self
@@ -188,6 +195,38 @@ mod tests {
     use crate::types::ValidationMode;
     use dashcore::Network;
     use std::net::SocketAddr;
+
+    #[test]
+    fn test_config_from_reader() {
+        let config_str = r#"
+            {
+                "network": "dash",
+                "peers": ["127.0.0.1:19999"],
+
+                "start_from_height": 100
+            }
+            "#;
+
+        let config = ClientConfig::from_json_reader(config_str.as_bytes())
+            .expect("config should deserialize");
+
+        // Network different from the default
+        assert_eq!(config.network(), Network::Dash);
+
+        // SocketAddrs parsing is working
+        assert_eq!(config.peers().len(), 1);
+        assert_eq!(config.peers()[0], "127.0.0.1:19999".parse::<SocketAddr>().unwrap());
+
+        // Checking that we are using the defaults with the missing values
+        assert!(!config.restrict_to_configured_peers());
+        assert_eq!(config.max_peers(), 8);
+        assert_eq!(config.validation_mode(), ValidationMode::Full);
+
+        // Check optional fields work properly since we have a double Optional
+        // This asserts checks the behaviour of serde_json to ensure they work as expected
+        assert!(config.user_agent().is_none()); // None is the default value
+        assert_eq!(config.start_from_height(), Some(100));
+    }
 
     #[test]
     fn test_default_config() {
