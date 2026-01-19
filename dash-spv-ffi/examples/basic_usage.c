@@ -10,7 +10,7 @@ int main() {
     }
 
     // Create a configuration for testnet
-    FFIConfig* builder = dash_spv_ffi_config_builder_testnet();
+    FFIClientConfigBuilder* builder = dash_spv_ffi_config_builder_testnet();
     if (builder == NULL) {
         fprintf(stderr, "Failed to create config builder\n");
         return 1;
@@ -23,7 +23,7 @@ int main() {
         return 1;
     }
 
-    FFIConfig* config = dash_spv_ffi_config_builder_build(builder);
+    FFIClientConfig* config = dash_spv_ffi_config_builder_build(builder);
 
     // Create the client
     FFIDashSpvClient* client = dash_spv_ffi_client_new(config);

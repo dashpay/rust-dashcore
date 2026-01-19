@@ -175,7 +175,7 @@ Destroy the client and free associated resources.  # Safety - `client` must be e
 #### `dash_spv_ffi_client_new`
 
 ```c
-dash_spv_ffi_client_new(config: *const FFIConfig,) -> *mut FFIDashSpvClient
+dash_spv_ffi_client_new(config: *const FFIClientConfig,) -> *mut FFIDashSpvClient
 ```
 
 **Description:**
@@ -225,7 +225,7 @@ Stop the SPV client.  # Safety - `client` must be a valid, non-null pointer to a
 #### `dash_spv_ffi_client_update_config`
 
 ```c
-dash_spv_ffi_client_update_config(client: *mut FFIDashSpvClient, config: *const FFIConfig,) -> i32
+dash_spv_ffi_client_update_config(client: *mut FFIDashSpvClient, config: *const FFIClientConfig,) -> i32
 ```
 
 **Description:**
@@ -241,7 +241,7 @@ Update the running client's configuration.  # Safety - `client` must be a valid 
 #### `dash_spv_ffi_config_add_peer`
 
 ```c
-dash_spv_ffi_config_add_peer(config: *mut FFIConfig, addr: *const c_char,) -> i32
+dash_spv_ffi_config_add_peer(config: *mut FFIClientConfig, addr: *const c_char,) -> i32
 ```
 
 **Description:**
@@ -257,7 +257,7 @@ Adds a peer address to the configuration  Accepts socket addresses with or witho
 #### `dash_spv_ffi_config_builder_build`
 
 ```c
-dash_spv_ffi_config_builder_build(builder: *mut FFIConfigBuilder,) -> *mut FFIConfig
+dash_spv_ffi_config_builder_build(builder: *mut FFIClientConfigBuilder,) -> *mut FFIClientConfig
 ```
 
 **Description:**
@@ -273,7 +273,7 @@ Gets ownership of the builder and returns the built configuration destroying the
 #### `dash_spv_ffi_config_builder_destroy`
 
 ```c
-dash_spv_ffi_config_builder_destroy(builder: *mut FFIConfigBuilder) -> ()
+dash_spv_ffi_config_builder_destroy(builder: *mut FFIClientConfigBuilder) -> ()
 ```
 
 **Description:**
@@ -289,7 +289,7 @@ Destroys an FFIConfigBuilder and frees its memory  # Safety - `builder` must be 
 #### `dash_spv_ffi_config_builder_devnet`
 
 ```c
-dash_spv_ffi_config_builder_devnet() -> *mut FFIConfigBuilder
+dash_spv_ffi_config_builder_devnet() -> *mut FFIClientConfigBuilder
 ```
 
 **Module:** `config`
@@ -299,7 +299,7 @@ dash_spv_ffi_config_builder_devnet() -> *mut FFIConfigBuilder
 #### `dash_spv_ffi_config_builder_mainnet`
 
 ```c
-dash_spv_ffi_config_builder_mainnet() -> *mut FFIConfigBuilder
+dash_spv_ffi_config_builder_mainnet() -> *mut FFIClientConfigBuilder
 ```
 
 **Module:** `config`
@@ -309,7 +309,7 @@ dash_spv_ffi_config_builder_mainnet() -> *mut FFIConfigBuilder
 #### `dash_spv_ffi_config_builder_regtest`
 
 ```c
-dash_spv_ffi_config_builder_regtest() -> *mut FFIConfigBuilder
+dash_spv_ffi_config_builder_regtest() -> *mut FFIClientConfigBuilder
 ```
 
 **Module:** `config`
@@ -319,7 +319,7 @@ dash_spv_ffi_config_builder_regtest() -> *mut FFIConfigBuilder
 #### `dash_spv_ffi_config_builder_set_fetch_mempool_transactions`
 
 ```c
-dash_spv_ffi_config_builder_set_fetch_mempool_transactions(builder: *mut FFIConfigBuilder, fetch: bool,) -> i32
+dash_spv_ffi_config_builder_set_fetch_mempool_transactions(builder: *mut FFIClientConfigBuilder, fetch: bool,) -> i32
 ```
 
 **Description:**
@@ -335,7 +335,7 @@ Sets whether to fetch full mempool transaction data  # Safety - `builder` must b
 #### `dash_spv_ffi_config_builder_set_filter_load`
 
 ```c
-dash_spv_ffi_config_builder_set_filter_load(builder: *mut FFIConfigBuilder, load_filters: bool,) -> i32
+dash_spv_ffi_config_builder_set_filter_load(builder: *mut FFIClientConfigBuilder, load_filters: bool,) -> i32
 ```
 
 **Description:**
@@ -351,7 +351,7 @@ Sets whether to load bloom filters  # Safety - `builder` must be a valid pointer
 #### `dash_spv_ffi_config_builder_set_masternode_sync_enabled`
 
 ```c
-dash_spv_ffi_config_builder_set_masternode_sync_enabled(builder: *mut FFIConfigBuilder, enable: bool,) -> i32
+dash_spv_ffi_config_builder_set_masternode_sync_enabled(builder: *mut FFIClientConfigBuilder, enable: bool,) -> i32
 ```
 
 **Description:**
@@ -367,7 +367,7 @@ Enables or disables masternode synchronization  # Safety - `builder` must be a v
 #### `dash_spv_ffi_config_builder_set_max_mempool_transactions`
 
 ```c
-dash_spv_ffi_config_builder_set_max_mempool_transactions(builder: *mut FFIConfigBuilder, max_transactions: u32,) -> i32
+dash_spv_ffi_config_builder_set_max_mempool_transactions(builder: *mut FFIClientConfigBuilder, max_transactions: u32,) -> i32
 ```
 
 **Description:**
@@ -383,7 +383,7 @@ Sets the maximum number of mempool transactions to track  # Safety - `builder` m
 #### `dash_spv_ffi_config_builder_set_max_peers`
 
 ```c
-dash_spv_ffi_config_builder_set_max_peers(builder: *mut FFIConfigBuilder, max_peers: u32,) -> i32
+dash_spv_ffi_config_builder_set_max_peers(builder: *mut FFIClientConfigBuilder, max_peers: u32,) -> i32
 ```
 
 **Description:**
@@ -399,7 +399,7 @@ Sets the maximum number of peers to connect to  # Safety - `builder` must be a v
 #### `dash_spv_ffi_config_builder_set_mempool_strategy`
 
 ```c
-dash_spv_ffi_config_builder_set_mempool_strategy(builder: *mut FFIConfigBuilder, strategy: FFIMempoolStrategy,) -> i32
+dash_spv_ffi_config_builder_set_mempool_strategy(builder: *mut FFIClientConfigBuilder, strategy: FFIMempoolStrategy,) -> i32
 ```
 
 **Description:**
@@ -415,7 +415,7 @@ Sets the mempool synchronization strategy  # Safety - `builder` must be a valid 
 #### `dash_spv_ffi_config_builder_set_mempool_tracking`
 
 ```c
-dash_spv_ffi_config_builder_set_mempool_tracking(builder: *mut FFIConfigBuilder, enable: bool,) -> i32
+dash_spv_ffi_config_builder_set_mempool_tracking(builder: *mut FFIClientConfigBuilder, enable: bool,) -> i32
 ```
 
 **Description:**
@@ -431,7 +431,7 @@ Enables or disables mempool tracking  # Safety - `builder` must be a valid point
 #### `dash_spv_ffi_config_builder_set_persist_mempool`
 
 ```c
-dash_spv_ffi_config_builder_set_persist_mempool(builder: *mut FFIConfigBuilder, persist: bool,) -> i32
+dash_spv_ffi_config_builder_set_persist_mempool(builder: *mut FFIClientConfigBuilder, persist: bool,) -> i32
 ```
 
 **Description:**
@@ -447,7 +447,7 @@ Sets whether to persist mempool state to disk  # Safety - `builder` must be a va
 #### `dash_spv_ffi_config_builder_set_relay_transactions`
 
 ```c
-dash_spv_ffi_config_builder_set_relay_transactions(builder: *mut FFIConfigBuilder, _relay: bool,) -> i32
+dash_spv_ffi_config_builder_set_relay_transactions(builder: *mut FFIClientConfigBuilder, _relay: bool,) -> i32
 ```
 
 **Description:**
@@ -463,7 +463,7 @@ Sets whether to relay transactions (currently a no-op)  # Safety - `builder` mus
 #### `dash_spv_ffi_config_builder_set_restrict_to_configured_peers`
 
 ```c
-dash_spv_ffi_config_builder_set_restrict_to_configured_peers(builder: *mut FFIConfigBuilder, restrict_peers: bool,) -> i32
+dash_spv_ffi_config_builder_set_restrict_to_configured_peers(builder: *mut FFIClientConfigBuilder, restrict_peers: bool,) -> i32
 ```
 
 **Description:**
@@ -479,7 +479,7 @@ Restrict connections strictly to configured peers (disable DNS discovery and pee
 #### `dash_spv_ffi_config_builder_set_start_from_height`
 
 ```c
-dash_spv_ffi_config_builder_set_start_from_height(builder: *mut FFIConfigBuilder, height: u32,) -> i32
+dash_spv_ffi_config_builder_set_start_from_height(builder: *mut FFIClientConfigBuilder, height: u32,) -> i32
 ```
 
 **Description:**
@@ -495,7 +495,7 @@ Sets the starting block height for synchronization  # Safety - `builder` must be
 #### `dash_spv_ffi_config_builder_set_storage_path`
 
 ```c
-dash_spv_ffi_config_builder_set_storage_path(builder: *mut FFIConfigBuilder, path: *const c_char,) -> i32
+dash_spv_ffi_config_builder_set_storage_path(builder: *mut FFIClientConfigBuilder, path: *const c_char,) -> i32
 ```
 
 **Description:**
@@ -511,7 +511,7 @@ Sets the data directory for storing blockchain data  # Safety - `builder` must b
 #### `dash_spv_ffi_config_builder_set_user_agent`
 
 ```c
-dash_spv_ffi_config_builder_set_user_agent(builder: *mut FFIConfigBuilder, user_agent: *const c_char,) -> i32
+dash_spv_ffi_config_builder_set_user_agent(builder: *mut FFIClientConfigBuilder, user_agent: *const c_char,) -> i32
 ```
 
 **Description:**
@@ -527,7 +527,7 @@ Sets the user agent string to advertise in the P2P handshake  # Safety - `builde
 #### `dash_spv_ffi_config_builder_set_validation_mode`
 
 ```c
-dash_spv_ffi_config_builder_set_validation_mode(builder: *mut FFIConfigBuilder, mode: FFIValidationMode,) -> i32
+dash_spv_ffi_config_builder_set_validation_mode(builder: *mut FFIClientConfigBuilder, mode: FFIValidationMode,) -> i32
 ```
 
 **Description:**
@@ -543,7 +543,7 @@ Sets the validation mode for the SPV client  # Safety - `builder` must be a vali
 #### `dash_spv_ffi_config_builder_set_worker_threads`
 
 ```c
-dash_spv_ffi_config_builder_set_worker_threads(builder: *mut FFIConfigBuilder, threads: u32,) -> i32
+dash_spv_ffi_config_builder_set_worker_threads(builder: *mut FFIClientConfigBuilder, threads: u32,) -> i32
 ```
 
 **Description:**
@@ -559,7 +559,7 @@ Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  # Safety
 #### `dash_spv_ffi_config_builder_testnet`
 
 ```c
-dash_spv_ffi_config_builder_testnet() -> *mut FFIConfigBuilder
+dash_spv_ffi_config_builder_testnet() -> *mut FFIClientConfigBuilder
 ```
 
 **Module:** `config`
@@ -569,7 +569,7 @@ dash_spv_ffi_config_builder_testnet() -> *mut FFIConfigBuilder
 #### `dash_spv_ffi_config_destroy`
 
 ```c
-dash_spv_ffi_config_destroy(config: *mut FFIConfig) -> ()
+dash_spv_ffi_config_destroy(config: *mut FFIClientConfig) -> ()
 ```
 
 **Description:**
@@ -585,7 +585,7 @@ Destroys an FFIConfig and frees its memory  # Safety - `builder` must be a valid
 #### `dash_spv_ffi_config_get_mempool_strategy`
 
 ```c
-dash_spv_ffi_config_get_mempool_strategy(config: *const FFIConfig,) -> FFIMempoolStrategy
+dash_spv_ffi_config_get_mempool_strategy(config: *const FFIClientConfig,) -> FFIMempoolStrategy
 ```
 
 **Description:**
@@ -601,7 +601,7 @@ Gets the mempool synchronization strategy  # Safety - `config` must be a valid p
 #### `dash_spv_ffi_config_get_mempool_tracking`
 
 ```c
-dash_spv_ffi_config_get_mempool_tracking(config: *const FFIConfig,) -> bool
+dash_spv_ffi_config_get_mempool_tracking(config: *const FFIClientConfig,) -> bool
 ```
 
 **Description:**
@@ -617,7 +617,7 @@ Gets whether mempool tracking is enabled  # Safety - `config` must be a valid po
 #### `dash_spv_ffi_config_get_network`
 
 ```c
-dash_spv_ffi_config_get_network(config: *const FFIConfig) -> FFINetwork
+dash_spv_ffi_config_get_network(config: *const FFIClientConfig,) -> FFINetwork
 ```
 
 **Description:**
@@ -633,7 +633,7 @@ Gets the network type from the configuration  # Safety - `config` must be a vali
 #### `dash_spv_ffi_config_get_storage_path`
 
 ```c
-dash_spv_ffi_config_get_storage_path(config: *const FFIConfig,) -> FFIString
+dash_spv_ffi_config_get_storage_path(config: *const FFIClientConfig,) -> FFIString
 ```
 
 **Description:**
