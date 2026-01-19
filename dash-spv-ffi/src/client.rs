@@ -417,52 +417,6 @@ fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::S
     result
 }
 
-/// Update the running client's configuration.
-///
-/// # Safety
-/// - `client` must be a valid pointer to an `FFIDashSpvClient`.
-/// - `config` must be a valid pointer to an `FFIClientConfig`.
-/// - The network in `config` must match the client's network; changing networks at runtime is not supported.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
-    client: *mut FFIDashSpvClient,
-    config: *const FFIClientConfig,
-) -> i32 {
-    null_check!(client);
-    null_check!(config);
-
-    let client = &(*client);
-    let new_config = (&*config).clone_inner();
-
-    let result = client.runtime.block_on(async {
-        // Take client without holding the lock across await
-        let mut spv_client = {
-            let mut guard = client.inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-
-        let res = spv_client.update_config(new_config).await;
-
-        // Put client back
-        let mut guard = client.inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
 /// Start the SPV client.
 ///
 /// # Safety

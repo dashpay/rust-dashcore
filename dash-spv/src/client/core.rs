@@ -264,24 +264,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         Ok(())
     }
 
-    // ============ Configuration ============
-
-    /// Update the client configuration.
-    pub async fn update_config(&mut self, new_config: ClientConfig) -> Result<()> {
-        // Validate new configuration
-        new_config.validate().map_err(SpvError::Config)?;
-
-        // Ensure network hasn't changed
-        if new_config.network != self.config.network {
-            return Err(SpvError::Config("Cannot change network on running client".to_string()));
-        }
-
-        // Update configuration
-        self.config = new_config;
-
-        Ok(())
-    }
-
     // ============ Terminal UI ============
 
     /// Enable terminal UI for status display.

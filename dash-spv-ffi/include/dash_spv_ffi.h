@@ -294,19 +294,6 @@ struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
  int32_t dash_spv_ffi_client_drain_events(struct FFIDashSpvClient *client) ;
 
 /**
- * Update the running client's configuration.
- *
- * # Safety
- * - `client` must be a valid pointer to an `FFIDashSpvClient`.
- * - `config` must be a valid pointer to an `FFIClientConfig`.
- * - The network in `config` must match the client's network; changing networks at runtime is not supported.
- */
-
-int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
-                                          const struct FFIClientConfig *config)
-;
-
-/**
  * Start the SPV client.
  *
  * # Safety

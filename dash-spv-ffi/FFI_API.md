@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 67
+**Total Functions**: 66
 
 ## Table of Contents
 
@@ -34,11 +34,10 @@ Functions: 4
 
 ### Configuration
 
-Functions: 25
+Functions: 24
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_update_config` | Update the running client's configuration | client |
 | `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts socket addresses with or... | config |
 | `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_get_data_dir` | Gets the data directory path from the configuration  # Safety - `config`... | config |
@@ -227,22 +226,6 @@ Stop the SPV client.  # Safety - `client` must be a valid, non-null pointer to a
 ---
 
 ### Configuration - Detailed
-
-#### `dash_spv_ffi_client_update_config`
-
-```c
-dash_spv_ffi_client_update_config(client: *mut FFIDashSpvClient, config: *const FFIClientConfig,) -> i32
-```
-
-**Description:**
-Update the running client's configuration.  # Safety - `client` must be a valid pointer to an `FFIDashSpvClient`. - `config` must be a valid pointer to an `FFIClientConfig`. - The network in `config` must match the client's network; changing networks at runtime is not supported.
-
-**Safety:**
-- `client` must be a valid pointer to an `FFIDashSpvClient`. - `config` must be a valid pointer to an `FFIClientConfig`. - The network in `config` must match the client's network; changing networks at runtime is not supported.
-
-**Module:** `client`
-
----
 
 #### `dash_spv_ffi_config_add_peer`
 
