@@ -401,6 +401,8 @@ fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::S
 /// - `config` must be a valid pointer to an `FFIClientConfig`.
 /// - The network in `config` must match the client's network; changing networks at runtime is not supported.
 #[no_mangle]
+#[deprecated]
+#[allow(deprecated)]
 pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
     client: *mut FFIDashSpvClient,
     config: *const FFIClientConfig,

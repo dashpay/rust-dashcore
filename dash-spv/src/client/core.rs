@@ -267,6 +267,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     // ============ Configuration ============
 
     /// Update the client configuration.
+    #[deprecated(since = "0.42.0", note = "Config is not meant to be updated at runtime")]
     pub async fn update_config(&mut self, new_config: ClientConfig) -> Result<()> {
         // Ensure network hasn't changed
         if new_config.network() != self.config.network() {

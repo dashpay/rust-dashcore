@@ -118,25 +118,34 @@ impl Default for ClientConfig {
 }
 
 impl ClientConfigBuilder {
-    pub fn mainnet() -> ClientConfigBuilder {
+    pub fn new(network: Network) -> Self {
+        match network {
+            Network::Dash => Self::mainnet(),
+            Network::Testnet => Self::testnet(),
+            Network::Devnet => Self::devnet(),
+            Network::Regtest => Self::regtest(),
+            _ => panic!("Unsupported network"),
+        }
+    }
+    pub fn mainnet() -> Self {
         let mut builder = Self::default();
         builder.network(Network::Dash);
         builder
     }
 
-    pub fn testnet() -> ClientConfigBuilder {
+    pub fn testnet() -> Self {
         let mut builder = Self::default();
         builder.network(Network::Testnet);
         builder
     }
 
-    pub fn devnet() -> ClientConfigBuilder {
+    pub fn devnet() -> Self {
         let mut builder = Self::default();
         builder.network(Network::Devnet);
         builder
     }
 
-    pub fn regtest() -> ClientConfigBuilder {
+    pub fn regtest() -> Self {
         let peers = vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 19899)];
 
         let mut builder = Self::default();
@@ -176,6 +185,84 @@ impl ClientConfigBuilder {
 }
 
 impl ClientConfig {
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_restrict_to_configured_peers(&mut self, val: bool) -> &mut Self {
+        self.restrict_to_configured_peers = val;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_storage_path<P: Into<PathBuf>>(&mut self, path: P) -> &mut Self {
+        self.storage_path = path.into();
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_validation_mode(&mut self, mode: ValidationMode) -> &mut Self {
+        self.validation_mode = mode;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_enable_filters(&mut self, val: bool) -> &mut Self {
+        self.enable_filters = val;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_enable_masternodes(&mut self, val: bool) -> &mut Self {
+        self.enable_masternodes = val;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_max_peers(&mut self, max: u32) -> &mut Self {
+        self.max_peers = max;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_user_agent<S: Into<String>>(&mut self, ua: S) -> &mut Self {
+        self.user_agent = Some(ua.into());
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_enable_mempool_tracking(&mut self, val: bool) -> &mut Self {
+        self.enable_mempool_tracking = val;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_mempool_strategy(&mut self, strategy: MempoolStrategy) -> &mut Self {
+        self.mempool_strategy = strategy;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_max_mempool_transactions(&mut self, max: usize) -> &mut Self {
+        self.max_mempool_transactions = max;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_fetch_mempool_transactions(&mut self, val: bool) -> &mut Self {
+        self.fetch_mempool_transactions = val;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_persist_mempool(&mut self, val: bool) -> &mut Self {
+        self.persist_mempool = val;
+        self
+    }
+
+    #[deprecated(since = "0.42.0", note = "Use builder pattern")]
+    pub fn set_start_from_height(&mut self, height: u32) -> &mut Self {
+        self.start_from_height = Some(height);
+        self
+    }
+
     pub fn add_peer(&mut self, address: SocketAddr) -> &mut Self {
         self.peers.push(address);
         self

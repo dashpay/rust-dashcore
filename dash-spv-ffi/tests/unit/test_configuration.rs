@@ -257,7 +257,7 @@ mod tests {
             let net = dash_spv_ffi_config_get_network(std::ptr::null());
             assert_eq!(net as i32, FFINetwork::Dash as i32); // Returns default
 
-            let dir = dash_spv_ffi_config_get_storage_path(std::ptr::null());
+            let dir = dash_spv_ffi_config_get_data_dir(std::ptr::null());
             assert!(dir.ptr.is_null());
 
             // Test destroy with null (should be safe)

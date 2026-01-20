@@ -739,6 +739,49 @@ struct FFIClientConfig *dash_spv_ffi_config_builder_build(struct FFIClientConfig
 void dash_spv_ffi_config_builder_destroy(struct FFIClientConfigBuilder *builder)
 ;
 
+ struct FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network) ;
+
+ struct FFIClientConfig *dash_spv_ffi_config_mainnet(void) ;
+
+ struct FFIClientConfig *dash_spv_ffi_config_testnet(void) ;
+
+/**
+ * Sets the data directory for storing blockchain data
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - `path` must be a valid null-terminated C string
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_data_dir(struct FFIClientConfig *config,
+                                         const char *path)
+;
+
+/**
+ * Sets the validation mode for the SPV client
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_validation_mode(struct FFIClientConfig *config,
+                                                enum DashSpvValidationMode mode)
+;
+
+/**
+ * Sets the maximum number of peers to connect to
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_max_peers(struct FFIClientConfig *config,
+                                          uint32_t max_peers)
+;
+
 /**
  * Adds a peer address to the configuration
  *
@@ -752,17 +795,77 @@ void dash_spv_ffi_config_builder_destroy(struct FFIClientConfigBuilder *builder)
  * - Hostname without port: `node.example.com`
  *
  * # Safety
- * - `config` must be a valid pointer to an FFIConfig
+ * - `config` must be a valid pointer to an FFIClientConfig
  * - `addr` must be a valid null-terminated C string containing a socket address or IP-only string
  * - The caller must ensure both pointers remain valid for the duration of this call
  */
  int32_t dash_spv_ffi_config_add_peer(struct FFIClientConfig *config, const char *addr) ;
 
 /**
+ * Sets the user agent string to advertise in the P2P handshake
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - `user_agent` must be a valid null-terminated C string
+ * - The caller must ensure both pointers remain valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_user_agent(struct FFIClientConfig *config,
+                                           const char *user_agent)
+;
+
+/**
+ * Sets whether to relay transactions (currently a no-op)
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_relay_transactions(struct FFIClientConfig *config,
+                                                   bool _relay)
+;
+
+/**
+ * Sets whether to load bloom filters
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_filter_load(struct FFIClientConfig *config,
+                                            bool load_filters)
+;
+
+/**
+ * Restrict connections strictly to configured peers (disable DNS discovery and peer store)
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ */
+
+int32_t dash_spv_ffi_config_set_restrict_to_configured_peers(struct FFIClientConfig *config,
+                                                             bool restrict_peers)
+;
+
+/**
+ * Enables or disables masternode synchronization
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_masternode_sync_enabled(struct FFIClientConfig *config,
+                                                        bool enable)
+;
+
+/**
  * Gets the network type from the configuration
  *
  * # Safety
- * - `config` must be a valid pointer to an FFIConfig or null
+ * - `config` must be a valid pointer to an FFIClientConfig or null
  * - If null, returns FFINetwork::Dash as default
  */
  FFINetwork dash_spv_ffi_config_get_network(const struct FFIClientConfig *config) ;
@@ -771,11 +874,89 @@ void dash_spv_ffi_config_builder_destroy(struct FFIClientConfigBuilder *builder)
  * Gets the data directory path from the configuration
  *
  * # Safety
- * - `config` must be a valid pointer to an FFIConfig or null
+ * - `config` must be a valid pointer to an FFIClientConfig or null
  * - If null or no data directory is set, returns an FFIString with null pointer
  * - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
  */
- struct FFIString dash_spv_ffi_config_get_storage_path(const struct FFIClientConfig *config) ;
+ struct FFIString dash_spv_ffi_config_get_data_dir(const struct FFIClientConfig *config) ;
+
+/**
+ * Destroys an FFIClientConfig and frees its memory
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig or null
+ * - After calling this function, the config pointer becomes invalid and must not be used
+ * - This function should only be called once per config instance
+ */
+ void dash_spv_ffi_config_destroy(struct FFIClientConfig *config) ;
+
+/**
+ * Sets the number of Tokio worker threads for the FFI runtime (0 = auto)
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig
+ */
+ int32_t dash_spv_ffi_config_set_worker_threads(struct FFIClientConfig *config, uint32_t threads) ;
+
+/**
+ * Enables or disables mempool tracking
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_mempool_tracking(struct FFIClientConfig *config,
+                                                 bool enable)
+;
+
+/**
+ * Sets the mempool synchronization strategy
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_mempool_strategy(struct FFIClientConfig *config,
+                                                 enum FFIMempoolStrategy strategy)
+;
+
+/**
+ * Sets the maximum number of mempool transactions to track
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_max_mempool_transactions(struct FFIClientConfig *config,
+                                                         uint32_t max_transactions)
+;
+
+/**
+ * Sets whether to fetch full mempool transaction data
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_fetch_mempool_transactions(struct FFIClientConfig *config,
+                                                           bool fetch)
+;
+
+/**
+ * Sets whether to persist mempool state to disk
+ *
+ * # Safety
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
+ */
+
+int32_t dash_spv_ffi_config_set_persist_mempool(struct FFIClientConfig *config,
+                                                bool persist)
+;
 
 /**
  * Gets whether mempool tracking is enabled
@@ -798,14 +979,16 @@ enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FF
 ;
 
 /**
- * Destroys an FFIConfig and frees its memory
+ * Sets the starting block height for synchronization
  *
  * # Safety
- * - `builder` must be a valid pointer to an FFIConfigBuilder, or null
- * - After calling this function, the config pointer becomes invalid and must not be used
- * - This function should only be called once per config instance
+ * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+ * - The caller must ensure the config pointer remains valid for the duration of this call
  */
- void dash_spv_ffi_config_destroy(struct FFIClientConfig *config) ;
+
+int32_t dash_spv_ffi_config_set_start_from_height(struct FFIClientConfig *config,
+                                                  uint32_t height)
+;
 
  const char *dash_spv_ffi_get_last_error(void) ;
 
