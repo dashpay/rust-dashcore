@@ -29,16 +29,16 @@ typedef enum FFISyncStage {
   Failed = 9,
 } FFISyncStage;
 
-typedef enum FFIMempoolStrategy {
-  FetchAll = 0,
-  BloomFilter = 1,
-} FFIMempoolStrategy;
-
 typedef enum DashSpvValidationMode {
   None = 0,
   Basic = 1,
   Full = 2,
 } DashSpvValidationMode;
+
+typedef enum FFIMempoolStrategy {
+  FetchAll = 0,
+  BloomFilter = 1,
+} FFIMempoolStrategy;
 
 typedef struct FFIDashSpvClient FFIDashSpvClient;
 
@@ -480,17 +480,6 @@ int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
 
 int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
                                               uint32_t _from_height)
-;
-
-/**
- * Enable mempool tracking with a given strategy.
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- */
-
-int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *client,
-                                                    enum FFIMempoolStrategy strategy)
 ;
 
 /**
