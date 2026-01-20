@@ -148,11 +148,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         result
     }
 
-    /// Get the configured start height hint, if any.
-    pub fn config_start_height(&self) -> Option<u32> {
-        self.config.start_from_height
-    }
-
     /// Start the sequential sync process
     pub async fn start_sync(&mut self, network: &mut N, storage: &mut S) -> SyncResult<bool> {
         if self.current_phase.is_syncing() {
@@ -295,7 +290,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             last_synced_filter_height: None, // PLACEHOLDER: Caller MUST query from storage
             sync_start: std::time::SystemTime::now(),
             last_update: std::time::SystemTime::now(),
-            filter_sync_available: self.config.enable_filters,
+            filter_sync_available: self.config.enable_filters(),
         }
     }
 

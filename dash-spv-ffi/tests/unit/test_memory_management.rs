@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};
@@ -72,9 +71,10 @@ mod tests {
     fn test_client_memory_lifecycle() {
         unsafe {
             let temp_dir = TempDir::new().unwrap();
-            let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+            let builder = dash_spv_ffi_config_builder_regtest();
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-            dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+            dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+            let config = dash_spv_ffi_config_builder_build(builder);
 
             // Create and destroy multiple clients
             for _ in 0..10 {
@@ -268,9 +268,10 @@ mod tests {
         unsafe {
             // Test cleanup of structures containing pointers to other structures
             let temp_dir = TempDir::new().unwrap();
-            let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+            let builder = dash_spv_ffi_config_builder_regtest();
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-            dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+            dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+            let config = dash_spv_ffi_config_builder_build(builder);
 
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null());

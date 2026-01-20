@@ -6,15 +6,15 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 use dash_spv::{
-    client::ClientConfig,
     error::NetworkResult,
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::filters::FilterSyncManager,
+    ClientConfigBuilder,
 };
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::message::NetworkMessage,
-    BlockHash, Network,
+    BlockHash,
 };
 use dashcore_hashes::Hash;
 
@@ -109,7 +109,10 @@ impl NetworkManager for MockNetworkManager {
 
 #[tokio::test]
 async fn test_filter_sync_at_tip_edge_case() {
-    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
+    let config = ClientConfigBuilder::mainnet()
+        .storage_path(TempDir::new().unwrap().path())
+        .build()
+        .expect("Valid config");
 
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
     let mut filter_sync = FilterSyncManager::new(&config, received_heights);
@@ -151,7 +154,10 @@ async fn test_filter_sync_at_tip_edge_case() {
 
 #[tokio::test]
 async fn test_no_invalid_getcfheaders_at_tip() {
-    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
+    let config = ClientConfigBuilder::mainnet()
+        .storage_path(TempDir::new().unwrap().path())
+        .build()
+        .expect("Valid config");
 
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
     let mut filter_sync = FilterSyncManager::new(&config, received_heights);

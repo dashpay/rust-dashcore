@@ -15,6 +15,11 @@ dashcore_hashes = { path = "../hashes" }
 key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager" }
 
+# Quality-of-life dependencies:
+# fewer lines of code, fewer regrets
+getset = { version = "0.1.6" }
+derive_builder = { version = "0.20.2" }
+
 # BLS signatures
 blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900" }
 

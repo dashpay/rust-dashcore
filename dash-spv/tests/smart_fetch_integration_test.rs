@@ -1,4 +1,4 @@
-use dash_spv::client::ClientConfig;
+use dash_spv::ClientConfigBuilder;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::llmq_type::{DKGWindow, LLMQType};
@@ -28,7 +28,7 @@ async fn test_smart_fetch_basic_dkg_windows() {
 #[tokio::test]
 async fn test_smart_fetch_state_initialization() {
     // Create a simple config for testing
-    let config = ClientConfig::new(Network::Testnet);
+    let config = ClientConfigBuilder::testnet().build().expect("Valid config");
 
     // Test that we can create the sync manager
     // Note: We can't access private fields, but we can verify the structure exists

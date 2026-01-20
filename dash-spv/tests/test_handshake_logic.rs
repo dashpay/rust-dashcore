@@ -1,7 +1,7 @@
 //! Unit tests for handshake logic
 
-use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::{HandshakeManager, HandshakeState};
+use dash_spv::MempoolStrategy;
 use dashcore::Network;
 
 #[test]

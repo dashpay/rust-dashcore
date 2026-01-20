@@ -25,8 +25,8 @@ mod tests {
 
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-            dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::Basic);
-            dash_spv_ffi_config_set_max_peers(config, 8);
+            dash_spv_ffi_config_builder_set_validation_mode(config, FFIValidationMode::Basic);
+            dash_spv_ffi_config_builder_set_max_peers(config, 8);
 
             // Add some test peers if available
             let test_peers = [

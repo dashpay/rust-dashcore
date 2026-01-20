@@ -6,7 +6,6 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
     use std::thread;
@@ -16,10 +15,11 @@ mod tests {
     fn create_test_config_with_dir() -> (*mut FFIClientConfig, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         unsafe {
-            let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+            let builder = dash_spv_ffi_config_builder_regtest();
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-            dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-            dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+            dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+            dash_spv_ffi_config_builder_set_validation_mode(builder, FFIValidationMode::None);
+            let config = dash_spv_ffi_config_builder_build(builder);
             (config, temp_dir)
         }
     }
@@ -113,9 +113,11 @@ mod tests {
     fn test_client_with_no_peers() {
         unsafe {
             let temp_dir = TempDir::new().unwrap();
-            let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+            let builder = dash_spv_ffi_config_builder_devnet();
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-            dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+            dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+
+            let config = dash_spv_ffi_config_builder_build(builder);
 
             // Don't add any peers
             let client = dash_spv_ffi_client_new(config);

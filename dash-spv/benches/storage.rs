@@ -3,7 +3,7 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use dash_spv::{
     storage::{BlockHeaderStorage, DiskStorageManager, StorageManager},
-    ClientConfig, Hash,
+    ClientConfigBuilder, Hash,
 };
 use dashcore::{block::Version, BlockHash, CompactTarget, Header};
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -34,8 +34,10 @@ fn bench_disk_storage(c: &mut Criterion) {
     c.bench_function("storage/disk/store", |b| {
         b.to_async(&rt).iter_batched(
             || async {
-                let config =
-                    ClientConfig::testnet().with_storage_path(TempDir::new().unwrap().path());
+                let config = ClientConfigBuilder::testnet()
+                    .storage_path(TempDir::new().unwrap().path())
+                    .build()
+                    .expect("Valid config");
                 DiskStorageManager::new(&config).await.unwrap()
             },
             |a| async {
@@ -49,7 +51,10 @@ fn bench_disk_storage(c: &mut Criterion) {
         )
     });
 
-    let config = ClientConfig::testnet().with_storage_path(TempDir::new().unwrap().path());
+    let config = ClientConfigBuilder::testnet()
+        .storage_path(TempDir::new().unwrap().path())
+        .build()
+        .expect("Valid config");
 
     let mut storage = rt.block_on(async {
         let mut storage = DiskStorageManager::new(&config).await.unwrap();

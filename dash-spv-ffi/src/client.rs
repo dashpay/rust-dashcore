@@ -1,6 +1,6 @@
 use crate::{
     null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
-    FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress, FFIWalletManager,
+    FFIEventCallbacks, FFISpvStats, FFISyncProgress, FFIWalletManager,
 };
 // Import wallet types from key-wallet-ffi
 use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
@@ -155,7 +155,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
         let storage = DiskStorageManager::new(&client_config).await;
         let wallet = key_wallet_manager::wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
-        >::new(client_config.network);
+        >::new(client_config.network());
         let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));
 
         match (network, storage) {
@@ -401,6 +401,8 @@ fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::S
 /// - `config` must be a valid pointer to an `FFIClientConfig`.
 /// - The network in `config` must match the client's network; changing networks at runtime is not supported.
 #[no_mangle]
+#[deprecated]
+#[allow(deprecated)]
 pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
     client: *mut FFIDashSpvClient,
     config: *const FFIClientConfig,
@@ -1225,49 +1227,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
         Ok(_) => FFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&format!("Failed to rescan blockchain: {}", e));
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-/// Enable mempool tracking with a given strategy.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
-    client: *mut FFIDashSpvClient,
-    strategy: FFIMempoolStrategy,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let mempool_strategy = strategy.into();
-
-    let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.enable_mempool_tracking(mempool_strategy).await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
             FFIErrorCode::from(e) as i32
         }
     }

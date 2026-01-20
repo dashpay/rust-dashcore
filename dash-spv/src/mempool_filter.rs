@@ -7,8 +7,8 @@ use std::time::Duration;
 use dashcore::{Address, Network, Transaction, Txid};
 use tokio::sync::RwLock;
 
-use crate::client::config::MempoolStrategy;
 use crate::types::{MempoolState, UnconfirmedTransaction};
+use crate::MempoolStrategy;
 
 /// Filter for deciding which mempool transactions to fetch and track.
 pub struct MempoolFilter {

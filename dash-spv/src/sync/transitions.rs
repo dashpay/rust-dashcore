@@ -60,13 +60,13 @@ impl TransitionManager {
                 match next_phase {
                     SyncPhase::DownloadingMnList {
                         ..
-                    } => Ok(self.config.enable_masternodes),
+                    } => Ok(self.config.enable_masternodes()),
                     SyncPhase::DownloadingCFHeaders {
                         ..
-                    } => Ok(!self.config.enable_masternodes && self.config.enable_filters),
+                    } => Ok(!self.config.enable_masternodes() && self.config.enable_filters()),
                     SyncPhase::FullySynced {
                         ..
-                    } => Ok(!self.config.enable_masternodes && !self.config.enable_filters),
+                    } => Ok(!self.config.enable_masternodes() && !self.config.enable_filters()),
                     _ => Ok(false),
                 }
             }
@@ -86,10 +86,10 @@ impl TransitionManager {
                 match next_phase {
                     SyncPhase::DownloadingCFHeaders {
                         ..
-                    } => Ok(self.config.enable_filters),
+                    } => Ok(self.config.enable_filters()),
                     SyncPhase::FullySynced {
                         ..
-                    } => Ok(!self.config.enable_filters),
+                    } => Ok(!self.config.enable_filters()),
                     _ => Ok(false),
                 }
             }
@@ -194,7 +194,7 @@ impl TransitionManager {
             SyncPhase::DownloadingHeaders {
                 ..
             } => {
-                if self.config.enable_masternodes {
+                if self.config.enable_masternodes() {
                     let header_tip = storage.get_tip_height().await.unwrap_or(0);
 
                     let mn_height = match storage.load_masternode_state().await {
@@ -212,7 +212,7 @@ impl TransitionManager {
                         requests_total: 0,
                         requests_completed: 0,
                     }))
-                } else if self.config.enable_filters {
+                } else if self.config.enable_filters() {
                     self.create_cfheaders_phase(storage).await
                 } else {
                     self.create_fully_synced_phase(storage).await
@@ -222,7 +222,7 @@ impl TransitionManager {
             SyncPhase::DownloadingMnList {
                 ..
             } => {
-                if self.config.enable_filters {
+                if self.config.enable_filters() {
                     self.create_cfheaders_phase(storage).await
                 } else {
                     self.create_fully_synced_phase(storage).await

@@ -1,6 +1,5 @@
 use dash_spv_ffi::callbacks::FFIEventCallbacks;
 use dash_spv_ffi::*;
-use key_wallet_ffi::FFINetwork;
 use serial_test::serial;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -150,15 +149,17 @@ fn test_event_callbacks_setup() {
 
     unsafe {
         // Create config
-        let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
-        assert!(!config.is_null());
+        let builder = dash_spv_ffi_config_builder_testnet();
+        assert!(!builder.is_null());
 
         // Set data directory to temp directory
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+        dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
 
         // Set validation mode to basic for faster testing
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::Basic);
+        dash_spv_ffi_config_builder_set_validation_mode(builder, FFIValidationMode::Basic);
+
+        let config = dash_spv_ffi_config_builder_build(builder);
 
         // Create client
         let client = dash_spv_ffi_client_new(config);
@@ -237,14 +238,16 @@ fn test_enhanced_event_callbacks() {
         let event_data = TestEventData::new();
 
         // Create config
-        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
-        assert!(!config.is_null());
+        let builder = dash_spv_ffi_config_builder_regtest();
+        assert!(!builder.is_null());
 
         // Set data directory
         let temp_dir = TempDir::new().unwrap();
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+        dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+        dash_spv_ffi_config_builder_set_validation_mode(builder, FFIValidationMode::None);
+
+        let config = dash_spv_ffi_config_builder_build(builder);
 
         // Create client
         let client = dash_spv_ffi_client_new(config);
@@ -292,14 +295,16 @@ fn test_drain_events_integration() {
         let event_data = TestEventData::new();
 
         // Create config
-        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
-        assert!(!config.is_null());
+        let builder = dash_spv_ffi_config_builder_regtest();
+        assert!(!builder.is_null());
 
         // Set data directory
         let temp_dir = TempDir::new().unwrap();
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+        dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+        dash_spv_ffi_config_builder_set_validation_mode(builder, FFIValidationMode::None);
+
+        let config = dash_spv_ffi_config_builder_build(builder);
 
         // Create client
         let client = dash_spv_ffi_client_new(config);
@@ -358,13 +363,15 @@ fn test_drain_events_concurrent_with_callbacks() {
         let event_data = TestEventData::new();
 
         // Create config and client
-        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
-        assert!(!config.is_null());
+        let builder = dash_spv_ffi_config_builder_regtest();
+        assert!(!builder.is_null());
 
         let temp_dir = TempDir::new().unwrap();
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+        dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+        dash_spv_ffi_config_builder_set_validation_mode(builder, FFIValidationMode::None);
+
+        let config = dash_spv_ffi_config_builder_build(builder);
 
         let client = dash_spv_ffi_client_new(config);
         assert!(!client.is_null());
@@ -434,13 +441,15 @@ fn test_drain_events_callback_lifecycle() {
 
         let event_data = TestEventData::new();
 
-        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
-        assert!(!config.is_null());
+        let builder = dash_spv_ffi_config_builder_regtest();
+        assert!(!builder.is_null());
 
         let temp_dir = TempDir::new().unwrap();
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+        dash_spv_ffi_config_builder_set_storage_path(builder, path.as_ptr());
+        dash_spv_ffi_config_builder_set_validation_mode(builder, FFIValidationMode::None);
+
+        let config = dash_spv_ffi_config_builder_build(builder);
 
         let client = dash_spv_ffi_client_new(config);
         assert!(!client.is_null());

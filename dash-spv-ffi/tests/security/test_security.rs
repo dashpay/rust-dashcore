@@ -50,7 +50,7 @@ mod tests {
             // Config functions
             assert_eq!(dash_spv_ffi_config_set_data_dir(ptr::null_mut(), ptr::null()),
                       FFIErrorCode::NullPointer as i32);
-            assert_eq!(dash_spv_ffi_config_set_validation_mode(ptr::null_mut(), FFIValidationMode::Basic),
+            assert_eq!(dash_spv_ffi_config_builder_set_validation_mode(ptr::null_mut(), FFIValidationMode::Basic),
                       FFIErrorCode::NullPointer as i32);
             assert_eq!(dash_spv_ffi_config_add_peer(ptr::null_mut(), ptr::null()),
                       FFIErrorCode::NullPointer as i32);
@@ -74,9 +74,11 @@ mod tests {
     fn test_use_after_free_prevention() {
         unsafe {
             let temp_dir = TempDir::new().unwrap();
-            let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+            let builder = dash_spv_ffi_config_builder_regtest();
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
-            dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+            dash_spv_ffi_config_builder_set_data_dir(builder, path.as_ptr());
+
+            let config = dash_spv_ffi_config_builder_build(builder);
 
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null());
@@ -93,7 +95,7 @@ mod tests {
             dash_spv_ffi_config_destroy(config);
 
             // Using config after free should fail
-            let result = dash_spv_ffi_config_set_max_peers(config, 10);
+            let result = dash_spv_ffi_config_builder_set_max_peers(builder, 10);
             assert_ne!(result, FFIErrorCode::Success as i32);
         }
     }
@@ -106,7 +108,7 @@ mod tests {
             let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
 
             // Test setting max peers to u32::MAX
-            let result = dash_spv_ffi_config_set_max_peers(config, u32::MAX);
+            let result = dash_spv_ffi_config_builder_set_max_peers(config, u32::MAX);
             assert_eq!(result, FFIErrorCode::Success as i32);
 
             // Test large array allocation

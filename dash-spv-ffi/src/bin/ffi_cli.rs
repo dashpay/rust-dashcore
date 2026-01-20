@@ -8,7 +8,6 @@ use std::time::Duration;
 use clap::{Arg, ArgAction, Command, ValueEnum};
 
 use dash_spv_ffi::*;
-use key_wallet_ffi::FFINetwork;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum NetworkOpt {
@@ -108,12 +107,20 @@ fn main() {
         .get_matches();
 
     // Map network
-    let network = match matches.get_one::<String>("network").map(|s| s.as_str()) {
-        Some("mainnet") => FFINetwork::Dash,
-        Some("testnet") => FFINetwork::Testnet,
-        Some("regtest") => FFINetwork::Regtest,
-        _ => FFINetwork::Dash,
+    let cfg_builder = match matches.get_one::<String>("network").map(|s| s.as_str()) {
+        Some("mainnet") => dash_spv_ffi_config_builder_mainnet(),
+        Some("testnet") => dash_spv_ffi_config_builder_testnet(),
+        Some("regtest") => dash_spv_ffi_config_builder_regtest(),
+        _ => dash_spv_ffi_config_builder_mainnet(),
     };
+
+    if cfg_builder.is_null() {
+        eprintln!(
+            "Failed to allocate config: {}",
+            ffi_string_to_rust(dash_spv_ffi_get_last_error())
+        );
+        std::process::exit(1);
+    }
 
     let disable_filter_sync = matches.get_flag("no-filters");
 
@@ -124,28 +131,21 @@ fn main() {
         let _ = dash_spv_ffi_init_logging(level_c.as_ptr(), true, std::ptr::null(), 0);
 
         // Build config
-        let cfg = dash_spv_ffi_config_new(network);
-        if cfg.is_null() {
-            eprintln!(
-                "Failed to allocate config: {}",
-                ffi_string_to_rust(dash_spv_ffi_get_last_error())
-            );
-            std::process::exit(1);
-        }
-
-        let _ = dash_spv_ffi_config_set_filter_load(cfg, !disable_filter_sync);
+        let _ = dash_spv_ffi_config_builder_set_filter_load(cfg_builder, !disable_filter_sync);
 
         if let Some(workers) = matches.get_one::<u32>("workers") {
-            let _ = dash_spv_ffi_config_set_worker_threads(cfg, *workers);
+            let _ = dash_spv_ffi_config_builder_set_worker_threads(cfg_builder, *workers);
         }
 
         if let Some(height) = matches.get_one::<u32>("start-height") {
-            let _ = dash_spv_ffi_config_set_start_from_height(cfg, *height);
+            let _ = dash_spv_ffi_config_builder_set_start_from_height(cfg_builder, *height);
         }
 
         if matches.get_flag("no-masternodes") {
-            let _ = dash_spv_ffi_config_set_masternode_sync_enabled(cfg, false);
+            let _ = dash_spv_ffi_config_builder_set_masternode_sync_enabled(cfg_builder, false);
         }
+
+        let cfg = dash_spv_ffi_config_builder_build(cfg_builder);
 
         if let Some(peers) = matches.get_many::<String>("peer") {
             for p in peers {

@@ -215,12 +215,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_inv_message_with_mempool() {
-        let (mut network, mut storage, mut sync_manager, mut config, mempool_state, event_tx) =
+        let (mut network, mut storage, mut sync_manager, config, mempool_state, event_tx) =
             setup_test_components().await;
-
-        // Enable mempool tracking
-        config.enable_mempool_tracking = true;
-        config.fetch_mempool_transactions = true;
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,

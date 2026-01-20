@@ -588,7 +588,7 @@ int32_t dash_spv_ffi_config_set_data_dir(struct FFIClientConfig *config,
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_set_validation_mode(struct FFIClientConfig *config,
+int32_t dash_spv_ffi_config_builder_set_validation_mode(struct FFIClientConfig *config,
                                                 enum DashSpvValidationMode mode)
 ;
 
@@ -600,7 +600,7 @@ int32_t dash_spv_ffi_config_set_validation_mode(struct FFIClientConfig *config,
  * - The caller must ensure the config pointer remains valid for the duration of this call
  */
 
-int32_t dash_spv_ffi_config_set_max_peers(struct FFIClientConfig *config,
+int32_t dash_spv_ffi_config_builder_set_max_peers(struct FFIClientConfig *config,
                                           uint32_t max_peers)
 ;
 
@@ -718,7 +718,7 @@ void dash_spv_ffi_config_destroy(struct FFIClientConfig *config)
  * # Safety
  * - `config` must be a valid pointer to an FFIClientConfig
  */
- int32_t dash_spv_ffi_config_set_worker_threads(struct FFIClientConfig *config, uint32_t threads) ;
+ int32_t dash_spv_ffi_config_builder_set_worker_threads(struct FFIClientConfig *config, uint32_t threads) ;
 
 /**
  * Enables or disables mempool tracking

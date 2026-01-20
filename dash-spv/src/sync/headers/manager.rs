@@ -12,8 +12,8 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::headers::validate_headers;
 use crate::types::{ChainState, HashedBlockHeader};
+use crate::validation::{BlockHeaderValidator, Validator};
 use crate::ValidationMode;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -66,7 +66,7 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
         // WalletState removed - wallet functionality is now handled externally
 
         // Create checkpoint manager based on network
-        let checkpoints = match config.network {
+        let checkpoints = match config.network() {
             dashcore::Network::Dash => mainnet_checkpoints(),
             dashcore::Network::Testnet => testnet_checkpoints(),
             _ => Vec::new(), // No checkpoints for other networks
@@ -179,8 +179,8 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             }
         }
 
-        if self.config.validation_mode != ValidationMode::None {
-            validate_headers(&cached_headers).map_err(|e| {
+        if self.config.validation_mode() != ValidationMode::None {
+            BlockHeaderValidator::new().validate(&cached_headers).map_err(|e| {
                 let error = format!("Header validation failed: {}", e);
                 tracing::error!(error);
                 SyncError::Validation(error)
@@ -297,7 +297,7 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
                     // Normal sync from genesis
                     let genesis_hash = self
                         .config
-                        .network
+                        .network()
                         .known_genesis_block_hash()
                         .unwrap_or(BlockHash::from_byte_array([0; 32]));
                     vec![genesis_hash]
@@ -430,7 +430,7 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
                         } else {
                             // Use network genesis as fallback
                             let genesis_hash =
-                                self.config.network.known_genesis_block_hash().ok_or_else(
+                                self.config.network().known_genesis_block_hash().ok_or_else(
                                     || SyncError::Storage("No known genesis hash".to_string()),
                                 )?;
                             tracing::info!("Starting from network genesis: {}", genesis_hash);
@@ -676,7 +676,7 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
                 .map(|h| h.block_hash())
                 .ok_or_else(|| SyncError::MissingDependency("no tip header found".to_string()))?
         } else {
-            self.config.network.known_genesis_block_hash().ok_or_else(|| {
+            self.config.network().known_genesis_block_hash().ok_or_else(|| {
                 SyncError::MissingDependency("no genesis block hash for network".to_string())
             })?
         };

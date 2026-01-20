@@ -4,7 +4,8 @@
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
-use dash_spv::{ClientConfig, DashSpvClient, LevelFilter};
+use dash_spv::ClientConfigBuilder;
+use dash_spv::{DashSpvClient, LevelFilter};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
@@ -17,9 +18,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _logging_guard = dash_spv::init_console_logging(LevelFilter::INFO)?;
 
     // Create SPV client configuration
-    let config = ClientConfig::testnet()
-        .with_storage_path("./.tmp/spv-with-wallet-example-storage")
-        .with_validation_mode(dash_spv::ValidationMode::Full);
+    let config = ClientConfigBuilder::testnet()
+        .storage_path("./.tmp/spv-with-wallet-example-storage")
+        .validation_mode(dash_spv::ValidationMode::Full)
+        .enable_mempool_tracking(true)
+        .build()?;
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await?;
@@ -28,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_manager = DiskStorageManager::new(&config).await?;
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
     // Create the SPV client with all components
     let mut client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;

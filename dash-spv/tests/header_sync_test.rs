@@ -1,13 +1,14 @@
 //! Integration tests for header synchronization functionality.
 
 use dash_spv::{
-    client::{ClientConfig, DashSpvClient},
+    client::DashSpvClient,
     network::PeerNetworkManager,
     storage::{BlockHeaderStorage, ChainStateStorage, DiskStorageManager},
     sync::{HeaderSyncManager, ReorgConfig},
     types::{ChainState, ValidationMode},
+    ClientConfigBuilder,
 };
-use dashcore::{block::Header as BlockHeader, block::Version, Network};
+use dashcore::{block::Header as BlockHeader, block::Version};
 use dashcore_hashes::Hash;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
@@ -22,9 +23,11 @@ async fn test_header_sync_with_client_integration() {
     let _ = env_logger::try_init();
 
     // Test header sync integration with the full client
-    let config = ClientConfig::new(Network::Dash)
-        .with_validation_mode(ValidationMode::Basic)
-        .with_storage_path(TempDir::new().expect("Failed to create tmp dir").path());
+    let config = ClientConfigBuilder::mainnet()
+        .validation_mode(ValidationMode::Basic)
+        .storage_path(TempDir::new().expect("Failed to create tmp dir").path())
+        .build()
+        .expect("Valid config");
 
     // Create network manager
     let network_manager =
@@ -34,7 +37,7 @@ async fn test_header_sync_with_client_integration() {
     let storage_manager = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
     let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await;
     assert!(client.is_ok(), "Client creation should succeed");
@@ -87,21 +90,21 @@ fn create_test_header_chain_from(start: usize, count: usize) -> Vec<BlockHeader>
 #[tokio::test]
 async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let config = ClientConfig::regtest().with_storage_path(temp_dir.path());
+    let config =
+        ClientConfigBuilder::regtest().storage_path(temp_dir.path()).build().expect("Valid config");
     let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     let headers = create_test_header_chain(header_count);
     let expected_tip_hash = headers.last().unwrap().block_hash();
 
     // Create and store chain state
-    let mut chain_state = ChainState::new_for_network(Network::Dash);
+    let mut chain_state = ChainState::new_for_network(config.network());
     chain_state.sync_base_height = sync_base_height;
     storage.store_chain_state(&chain_state).await.expect("Failed to store chain state");
     storage.store_headers(&headers).await.expect("Failed to store headers");
 
     // Create HeaderSyncManager and load from storage
-    let config = ClientConfig::new(Network::Dash);
-    let chain_state_arc = Arc::new(RwLock::new(ChainState::new_for_network(Network::Dash)));
+    let chain_state_arc = Arc::new(RwLock::new(ChainState::new_for_network(config.network())));
     let mut header_sync = HeaderSyncManager::<DiskStorageManager, PeerNetworkManager>::new(
         &config,
         ReorgConfig::default(),

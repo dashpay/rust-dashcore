@@ -1,5 +1,6 @@
 //! Integration tests for peer networking
 
+use dash_spv::ClientConfigBuilder;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,18 +15,18 @@ use dash_spv::types::ValidationMode;
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
+
 /// Create a test configuration with the given network
 fn create_test_config(network: Network) -> ClientConfig {
-    let mut config = ClientConfig::new(network);
-
-    config.storage_path = TempDir::new().unwrap().path().to_path_buf();
-
-    config.validation_mode = ValidationMode::Basic;
-    config.enable_filters = false;
-    config.enable_masternodes = false;
-    config.max_peers = 3;
-    config.peers = vec![]; // Will be populated by DNS discovery
-    config
+    ClientConfigBuilder::default()
+        .network(network)
+        .storage_path(TempDir::new().unwrap().path())
+        .validation_mode(ValidationMode::Basic)
+        .enable_filters(false)
+        .enable_masternodes(false)
+        .max_peers(3)
+        .build()
+        .expect("Valid config")
 }
 
 #[tokio::test]
@@ -42,7 +43,7 @@ async fn test_peer_connection() {
     let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
     let mut client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
@@ -86,7 +87,8 @@ async fn test_peer_persistence() {
         let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
         // Create wallet manager
-        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let wallet =
+            Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
         let mut client =
             DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet)
@@ -111,7 +113,8 @@ async fn test_peer_persistence() {
         let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
         // Create wallet manager
-        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let wallet =
+            Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
         let mut client =
             DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
@@ -140,7 +143,9 @@ async fn test_peer_disconnection() {
     let mut config = create_test_config(Network::Regtest);
 
     // Add manual test peers (would need actual regtest nodes running)
-    config.peers = vec!["127.0.0.1:19899".parse().unwrap(), "127.0.0.1:19898".parse().unwrap()];
+    config
+        .add_peer("127.0.0.1:19899".parse().unwrap())
+        .add_peer("127.0.0.1:19898".parse().unwrap());
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
@@ -149,7 +154,7 @@ async fn test_peer_disconnection() {
     let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
     let client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
@@ -174,7 +179,7 @@ async fn test_max_peer_limit() {
     let mut config = create_test_config(Network::Testnet);
 
     // Add at least one peer to avoid "No peers specified" error
-    config.peers = vec!["127.0.0.1:19999".parse().unwrap()];
+    config.add_peer("127.0.0.1:19999".parse().unwrap());
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
@@ -184,7 +189,7 @@ async fn test_max_peer_limit() {
         DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network())));
 
     let _client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
