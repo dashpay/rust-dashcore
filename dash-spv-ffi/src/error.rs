@@ -8,7 +8,7 @@ static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FFIErrorCode {
+pub enum SpvFFIErrorCode {
     Success = 0,
     NullPointer = 1,
     InvalidArgument = 2,
@@ -49,21 +49,21 @@ pub extern "C" fn dash_spv_ffi_clear_error() {
     clear_last_error();
 }
 
-impl From<SpvError> for FFIErrorCode {
+impl From<SpvError> for SpvFFIErrorCode {
     fn from(err: SpvError) -> Self {
         match err {
-            SpvError::ChannelFailure(_, _) => FFIErrorCode::RuntimeError,
-            SpvError::Network(_) => FFIErrorCode::NetworkError,
-            SpvError::Storage(_) => FFIErrorCode::StorageError,
-            SpvError::Validation(_) => FFIErrorCode::ValidationError,
-            SpvError::Sync(_) => FFIErrorCode::SyncError,
-            SpvError::Io(_) => FFIErrorCode::RuntimeError,
-            SpvError::Config(_) => FFIErrorCode::ConfigError,
-            SpvError::Parse(_) => FFIErrorCode::ValidationError,
-            SpvError::Logging(_) => FFIErrorCode::RuntimeError,
-            SpvError::Wallet(_) => FFIErrorCode::WalletError,
-            SpvError::QuorumLookupError(_) => FFIErrorCode::ValidationError,
-            SpvError::General(_) => FFIErrorCode::Unknown,
+            SpvError::ChannelFailure(_, _) => SpvFFIErrorCode::RuntimeError,
+            SpvError::Network(_) => SpvFFIErrorCode::NetworkError,
+            SpvError::Storage(_) => SpvFFIErrorCode::StorageError,
+            SpvError::Validation(_) => SpvFFIErrorCode::ValidationError,
+            SpvError::Sync(_) => SpvFFIErrorCode::SyncError,
+            SpvError::Io(_) => SpvFFIErrorCode::RuntimeError,
+            SpvError::Config(_) => SpvFFIErrorCode::ConfigError,
+            SpvError::Parse(_) => SpvFFIErrorCode::ValidationError,
+            SpvError::Logging(_) => SpvFFIErrorCode::RuntimeError,
+            SpvError::Wallet(_) => SpvFFIErrorCode::WalletError,
+            SpvError::QuorumLookupError(_) => SpvFFIErrorCode::ValidationError,
+            SpvError::General(_) => SpvFFIErrorCode::Unknown,
         }
     }
 }
@@ -81,13 +81,13 @@ pub fn handle_error<T, E: std::fmt::Display>(result: Result<T, E>) -> Option<T> 
     }
 }
 
-pub fn handle_error_code<E: std::fmt::Display + Into<FFIErrorCode>>(
+pub fn handle_error_code<E: std::fmt::Display + Into<SpvFFIErrorCode>>(
     result: Result<(), E>,
-) -> FFIErrorCode {
+) -> SpvFFIErrorCode {
     match result {
         Ok(()) => {
             clear_last_error();
-            FFIErrorCode::Success
+            SpvFFIErrorCode::Success
         }
         Err(e) => {
             set_last_error(&e.to_string());
@@ -106,7 +106,7 @@ macro_rules! ffi_result {
             }
             Err(e) => {
                 $crate::error::set_last_error(&e.to_string());
-                return $crate::error::FFIErrorCode::from(e) as i32;
+                return $crate::error::SpvFFIErrorCode::from(e) as i32;
             }
         }
     };
@@ -117,7 +117,7 @@ macro_rules! null_check {
     ($ptr:expr) => {
         if $ptr.is_null() {
             $crate::error::set_last_error("Null pointer provided");
-            return $crate::error::FFIErrorCode::NullPointer as i32;
+            return $crate::error::SpvFFIErrorCode::NullPointer as i32;
         }
     };
     ($ptr:expr, $ret:expr) => {

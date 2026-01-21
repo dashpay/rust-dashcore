@@ -151,7 +151,7 @@ fn main() {
             for p in peers {
                 let c = CString::new(p.as_str()).unwrap();
                 let rc = dash_spv_ffi_config_add_peer(cfg, c.as_ptr());
-                if rc != FFIErrorCode::Success as i32 {
+                if rc != SpvFFIErrorCode::Success as i32 {
                     eprintln!(
                         "Invalid peer {}: {}",
                         p,
@@ -187,7 +187,7 @@ fn main() {
 
         // Start client
         let rc = dash_spv_ffi_client_start(client);
-        if rc != FFIErrorCode::Success as i32 {
+        if rc != SpvFFIErrorCode::Success as i32 {
             eprintln!("Start failed: {}", ffi_string_to_rust(dash_spv_ffi_get_last_error()));
             std::process::exit(1);
         }
@@ -202,7 +202,7 @@ fn main() {
             Some(on_completion),
             ptr::null_mut(),
         );
-        if rc != FFIErrorCode::Success as i32 {
+        if rc != SpvFFIErrorCode::Success as i32 {
             eprintln!("Sync failed: {}", ffi_string_to_rust(dash_spv_ffi_get_last_error()));
             std::process::exit(1);
         }

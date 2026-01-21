@@ -3,7 +3,7 @@ use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::{set_last_error, FFIErrorCode};
+use crate::{set_last_error, SpvFFIErrorCode};
 use dash_spv::{LogFileConfig, LoggingConfig};
 
 /// Static storage for the logging guard to keep it alive for the FFI lifetime.
@@ -39,12 +39,12 @@ pub unsafe extern "C" fn dash_spv_ffi_init_logging(
                         "Invalid log level '{}'. Valid: error, warn, info, debug, trace",
                         s
                     ));
-                    return FFIErrorCode::InvalidArgument as i32;
+                    return SpvFFIErrorCode::InvalidArgument as i32;
                 }
             },
             Err(e) => {
                 set_last_error(&format!("Invalid UTF-8 in log level: {}", e));
-                return FFIErrorCode::InvalidArgument as i32;
+                return SpvFFIErrorCode::InvalidArgument as i32;
             }
         }
     };
@@ -59,7 +59,7 @@ pub unsafe extern "C" fn dash_spv_ffi_init_logging(
             }),
             Err(e) => {
                 set_last_error(&format!("Invalid UTF-8 in log directory: {}", e));
-                return FFIErrorCode::InvalidArgument as i32;
+                return SpvFFIErrorCode::InvalidArgument as i32;
             }
         }
     };
@@ -77,11 +77,11 @@ pub unsafe extern "C" fn dash_spv_ffi_init_logging(
             if LOGGING_GUARD.set(guard).is_err() {
                 tracing::warn!("Logging already initialized, ignoring subsequent init");
             }
-            FFIErrorCode::Success as i32
+            SpvFFIErrorCode::Success as i32
         }
         Err(e) => {
             set_last_error(&format!("Failed to initialize logging: {}", e));
-            FFIErrorCode::RuntimeError as i32
+            SpvFFIErrorCode::RuntimeError as i32
         }
     }
 }

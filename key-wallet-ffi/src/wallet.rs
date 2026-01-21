@@ -804,3 +804,63 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
         ),
     }
 }
+
+/// Add a Platform Payment account (DIP-17)
+///
+/// Platform Payment accounts use the derivation path: m/9'/coinType/17'/account'/key_class'/index
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `account_index` is the hardened account index in the derivation path
+/// - `key_class` is the hardened key class (typically 0 for main addresses)
+#[no_mangle]
+pub unsafe extern "C" fn wallet_add_platform_payment_account(
+    wallet: *mut FFIWallet,
+    account_index: c_uint,
+    key_class: c_uint,
+) -> FFIAccountResult {
+    use key_wallet::account::AccountType;
+
+    if wallet.is_null() {
+        return FFIAccountResult::error(
+            crate::error::FFIErrorCode::InvalidInput,
+            "Wallet is null".to_string(),
+        );
+    }
+
+    let w = &mut *wallet;
+    let wallet_mut = match w.inner_mut() {
+        Some(w) => w,
+        None => {
+            return FFIAccountResult::error(
+                crate::error::FFIErrorCode::InvalidState,
+                "Wallet is immutable".to_string(),
+            );
+        }
+    };
+
+    // Create the Platform Payment account type
+    let account_type = AccountType::PlatformPayment {
+        account: account_index,
+        key_class,
+    };
+
+    match wallet_mut.add_account(account_type, None) {
+        Ok(()) => {
+            // Get the account we just added
+            if let Some(account) = wallet_mut.accounts.account_of_type(account_type) {
+                let ffi_account = crate::types::FFIAccount::new(account);
+                return FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)));
+            }
+            FFIAccountResult::error(
+                crate::error::FFIErrorCode::WalletError,
+                "Failed to retrieve account after adding".to_string(),
+            )
+        }
+        Err(e) => FFIAccountResult::error(
+            crate::error::FFIErrorCode::WalletError,
+            format!("Failed to add Platform Payment account: {}", e),
+        ),
+    }
+}

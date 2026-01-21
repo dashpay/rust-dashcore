@@ -1,4 +1,4 @@
-use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy, FFIString};
+use crate::{null_check, set_last_error, SpvFFIErrorCode, FFIMempoolStrategy, FFIString};
 use dash_spv::{ClientConfig, ValidationMode};
 use key_wallet_ffi::FFINetwork;
 use std::ffi::CStr;
@@ -78,11 +78,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_data_dir(
     match CStr::from_ptr(path).to_str() {
         Ok(path_str) => {
             config.storage_path = Some(path_str.into());
-            FFIErrorCode::Success as i32
+            SpvFFIErrorCode::Success as i32
         }
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in path: {}", e));
-            FFIErrorCode::InvalidArgument as i32
+            SpvFFIErrorCode::InvalidArgument as i32
         }
     }
 }
@@ -101,7 +101,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_validation_mode(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.validation_mode = mode.into();
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Sets the maximum number of peers to connect to
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.max_peers = max_peers;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 // Note: dash-spv doesn't have min_peers, only max_peers
@@ -159,7 +159,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
         Ok(s) => s.trim(),
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
 
@@ -167,13 +167,13 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     if let Ok(ip) = addr_str.parse::<IpAddr>() {
         let sock = SocketAddr::new(ip, default_port);
         cfg.peers.push(sock);
-        return FFIErrorCode::Success as i32;
+        return SpvFFIErrorCode::Success as i32;
     }
 
     // If not, must be a hostname - reject empty or missing hostname
     if addr_str.is_empty() || addr_str.starts_with(':') {
         set_last_error("Empty or missing hostname");
-        return FFIErrorCode::InvalidArgument as i32;
+        return SpvFFIErrorCode::InvalidArgument as i32;
     }
 
     let addr_with_port = if addr_str.contains(':') {
@@ -186,16 +186,16 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
         Ok(mut iter) => match iter.next() {
             Some(sock) => {
                 cfg.peers.push(sock);
-                FFIErrorCode::Success as i32
+                SpvFFIErrorCode::Success as i32
             }
             None => {
                 set_last_error(&format!("Failed to resolve address: {}", addr_str));
-                FFIErrorCode::InvalidArgument as i32
+                SpvFFIErrorCode::InvalidArgument as i32
             }
         },
         Err(e) => {
             set_last_error(&format!("Invalid address {} ({})", addr_str, e));
-            FFIErrorCode::InvalidArgument as i32
+            SpvFFIErrorCode::InvalidArgument as i32
         }
     }
 }
@@ -220,11 +220,11 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_user_agent(
             // Store as-is; normalization/length capping is applied at handshake build time
             let cfg = unsafe { &mut *((*config).inner as *mut ClientConfig) };
             cfg.user_agent = Some(agent_str.to_string());
-            FFIErrorCode::Success as i32
+            SpvFFIErrorCode::Success as i32
         }
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in user agent: {}", e));
-            FFIErrorCode::InvalidArgument as i32
+            SpvFFIErrorCode::InvalidArgument as i32
         }
     }
 }
@@ -243,7 +243,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_relay_transactions(
 
     let _config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     // relay_transactions not directly settable in current ClientConfig
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Sets whether to load bloom filters
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_filter_load(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.enable_filters = load_filters;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Restrict connections strictly to configured peers (disable DNS discovery and peer store)
@@ -276,7 +276,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_restrict_to_configured_peers(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.restrict_to_configured_peers = restrict_peers;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Enables or disables masternode synchronization
@@ -293,7 +293,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_masternode_sync_enabled(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.enable_masternodes = enable;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Gets the network type from the configuration
@@ -380,7 +380,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_worker_threads(
     null_check!(config);
     let cfg = &mut *config;
     cfg.worker_threads = threads;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 // Mempool configuration functions
@@ -399,7 +399,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_tracking(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.enable_mempool_tracking = enable;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Sets the mempool synchronization strategy
@@ -416,7 +416,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_strategy(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.mempool_strategy = strategy.into();
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Sets the maximum number of mempool transactions to track
@@ -433,7 +433,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.max_mempool_transactions = max_transactions as usize;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Sets whether to fetch full mempool transaction data
@@ -450,7 +450,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.fetch_mempool_transactions = fetch;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Sets whether to persist mempool state to disk
@@ -467,7 +467,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.persist_mempool = persist;
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Gets whether mempool tracking is enabled
@@ -520,5 +520,5 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.start_from_height = Some(height);
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }

@@ -11,7 +11,9 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_account::FFIManagedAccount;
+use crate::managed_platform_account::FFIManagedPlatformAccount;
 use crate::wallet_manager::FFIWalletManager;
+use key_wallet::account::account_collection::PlatformPaymentAccountKey;
 
 /// Opaque handle to a managed account collection
 pub struct FFIManagedAccountCollection {
@@ -1068,4 +1070,143 @@ pub unsafe extern "C" fn managed_account_collection_summary_free(
 
         // The summary struct itself is dropped automatically when the Box is dropped
     }
+}
+
+// Platform Payment Account functions
+
+/// FFI-compatible key for Platform Payment accounts
+#[repr(C)]
+pub struct FFIPlatformPaymentAccountKey {
+    /// Account index (hardened)
+    pub account: c_uint,
+    /// Key class (hardened)
+    pub key_class: c_uint,
+}
+
+/// Get a Platform Payment account by account index and key class
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_get_platform_payment_account(
+    collection: *const FFIManagedAccountCollection,
+    account_index: c_uint,
+    key_class: c_uint,
+) -> *mut FFIManagedPlatformAccount {
+    if collection.is_null() {
+        return ptr::null_mut();
+    }
+
+    let collection = &*collection;
+    let key = PlatformPaymentAccountKey {
+        account: account_index,
+        key_class,
+    };
+
+    match collection.collection.platform_payment_accounts.get(&key) {
+        Some(account) => {
+            match FFIManagedPlatformAccount::new(account) {
+                Some(ffi_account) => Box::into_raw(Box::new(ffi_account)),
+                None => ptr::null_mut(), // Not a PlatformPayment account type
+            }
+        }
+        None => ptr::null_mut(),
+    }
+}
+
+/// Get all Platform Payment account keys
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `out_keys` must be a valid pointer to store the keys array
+/// - `out_count` must be a valid pointer to store the count
+/// - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_get_platform_payment_keys(
+    collection: *const FFIManagedAccountCollection,
+    out_keys: *mut *mut FFIPlatformPaymentAccountKey,
+    out_count: *mut usize,
+) -> bool {
+    if collection.is_null() || out_keys.is_null() || out_count.is_null() {
+        return false;
+    }
+
+    let collection = &*collection;
+    let keys: Vec<FFIPlatformPaymentAccountKey> = collection
+        .collection
+        .platform_payment_accounts
+        .keys()
+        .map(|k| FFIPlatformPaymentAccountKey {
+            account: k.account,
+            key_class: k.key_class,
+        })
+        .collect();
+
+    if keys.is_empty() {
+        *out_keys = ptr::null_mut();
+        *out_count = 0;
+        return true;
+    }
+
+    let mut boxed_slice = keys.into_boxed_slice();
+    let ptr = boxed_slice.as_mut_ptr();
+    let len = boxed_slice.len();
+    std::mem::forget(boxed_slice);
+
+    *out_keys = ptr;
+    *out_count = len;
+    true
+}
+
+/// Free a Platform Payment account keys array
+///
+/// # Safety
+///
+/// - `keys` must be a valid pointer to an array created by `managed_account_collection_get_platform_payment_keys`
+/// - `count` must match the count returned by `managed_account_collection_get_platform_payment_keys`
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_free_platform_payment_keys(
+    keys: *mut FFIPlatformPaymentAccountKey,
+    count: usize,
+) {
+    if !keys.is_null() && count > 0 {
+        let _ = Vec::from_raw_parts(keys, count, count);
+    }
+}
+
+/// Check if there are any Platform Payment accounts in the collection
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_has_platform_payment_accounts(
+    collection: *const FFIManagedAccountCollection,
+) -> bool {
+    if collection.is_null() {
+        return false;
+    }
+
+    let collection = &*collection;
+    !collection.collection.platform_payment_accounts.is_empty()
+}
+
+/// Get the number of Platform Payment accounts in the collection
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_platform_payment_count(
+    collection: *const FFIManagedAccountCollection,
+) -> c_uint {
+    if collection.is_null() {
+        return 0;
+    }
+
+    let collection = &*collection;
+    collection.collection.platform_payment_accounts.len() as c_uint
 }

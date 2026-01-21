@@ -1,4 +1,4 @@
-use crate::{null_check, set_last_error, FFIDashSpvClient, FFIErrorCode};
+use crate::{null_check, set_last_error, FFIDashSpvClient, SpvFFIErrorCode};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -21,7 +21,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
         Ok(s) => s,
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in transaction: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
 
@@ -29,7 +29,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
         Ok(b) => b,
         Err(e) => {
             set_last_error(&format!("Invalid hex in transaction: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
 
@@ -37,7 +37,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
         Ok(t) => t,
         Err(e) => {
             set_last_error(&format!("Invalid transaction: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
 
@@ -68,10 +68,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
     });
 
     match result {
-        Ok(_) => FFIErrorCode::Success as i32,
+        Ok(_) => SpvFFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&format!("Failed to broadcast transaction: {}", e));
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }

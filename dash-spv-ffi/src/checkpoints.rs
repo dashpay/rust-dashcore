@@ -1,4 +1,4 @@
-use crate::{set_last_error, FFIArray, FFIErrorCode};
+use crate::{set_last_error, FFIArray, SpvFFIErrorCode};
 use dash_spv::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use dashcore::hashes::Hash;
 use dashcore::Network;
@@ -33,23 +33,23 @@ pub unsafe extern "C" fn dash_spv_ffi_checkpoint_latest(
 ) -> i32 {
     if out_height.is_null() || out_hash.is_null() {
         set_last_error("Null output pointer provided");
-        return FFIErrorCode::NullPointer as i32;
+        return SpvFFIErrorCode::NullPointer as i32;
     }
     let mgr = match manager_for_network(network) {
         Ok(m) => m,
         Err(e) => {
             set_last_error(&e);
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
     if let Some(cp) = mgr.last_checkpoint() {
         *out_height = cp.height;
         let hash = cp.block_hash.to_byte_array();
         std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        FFIErrorCode::Success as i32
+        SpvFFIErrorCode::Success as i32
     } else {
         set_last_error("No checkpoints available for network");
-        FFIErrorCode::NotImplemented as i32
+        SpvFFIErrorCode::NotImplemented as i32
     }
 }
 
@@ -67,23 +67,23 @@ pub unsafe extern "C" fn dash_spv_ffi_checkpoint_before_height(
 ) -> i32 {
     if out_height.is_null() || out_hash.is_null() {
         set_last_error("Null output pointer provided");
-        return FFIErrorCode::NullPointer as i32;
+        return SpvFFIErrorCode::NullPointer as i32;
     }
     let mgr = match manager_for_network(network) {
         Ok(m) => m,
         Err(e) => {
             set_last_error(&e);
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
     if let Some(cp) = mgr.last_checkpoint_before_height(height) {
         *out_height = cp.height;
         let hash = cp.block_hash.to_byte_array();
         std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        FFIErrorCode::Success as i32
+        SpvFFIErrorCode::Success as i32
     } else {
         set_last_error("No checkpoint at or before given height");
-        FFIErrorCode::ValidationError as i32
+        SpvFFIErrorCode::ValidationError as i32
     }
 }
 
@@ -101,23 +101,23 @@ pub unsafe extern "C" fn dash_spv_ffi_checkpoint_before_timestamp(
 ) -> i32 {
     if out_height.is_null() || out_hash.is_null() {
         set_last_error("Null output pointer provided");
-        return FFIErrorCode::NullPointer as i32;
+        return SpvFFIErrorCode::NullPointer as i32;
     }
     let mgr = match manager_for_network(network) {
         Ok(m) => m,
         Err(e) => {
             set_last_error(&e);
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
     if let Some(cp) = mgr.last_checkpoint_before_timestamp(timestamp) {
         *out_height = cp.height;
         let hash = cp.block_hash.to_byte_array();
         std::ptr::copy_nonoverlapping(hash.as_ptr(), out_hash, 32);
-        FFIErrorCode::Success as i32
+        SpvFFIErrorCode::Success as i32
     } else {
         set_last_error("No checkpoint at or before given timestamp");
-        FFIErrorCode::ValidationError as i32
+        SpvFFIErrorCode::ValidationError as i32
     }
 }
 

@@ -14,6 +14,7 @@ pub mod error;
 pub mod keys;
 pub mod managed_account;
 pub mod managed_account_collection;
+pub mod managed_platform_account;
 pub mod managed_wallet;
 pub mod mnemonic;
 pub mod transaction;
@@ -29,16 +30,27 @@ pub mod bip38;
 
 // Test modules are now included in each source file
 
-// Re-export main types for convenience
-pub use error::{FFIError, FFIErrorCode};
-pub use types::{FFIBalance, FFINetwork, FFIWallet};
-pub use utxo::FFIUTXO;
-pub use wallet_manager::{
-    wallet_manager_create, wallet_manager_describe, wallet_manager_free,
-    wallet_manager_free_string, wallet_manager_free_wallet_ids, wallet_manager_get_wallet,
-    wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids, wallet_manager_wallet_count,
-    FFIWalletManager,
-};
+// Re-export all types and functions for unified access
+pub use account::*;
+pub use account_collection::*;
+pub use account_derivation::*;
+pub use address::*;
+pub use address_pool::*;
+pub use derivation::*;
+pub use error::*;
+pub use keys::*;
+pub use managed_account::*;
+pub use managed_account_collection::*;
+pub use managed_platform_account::*;
+pub use managed_wallet::*;
+pub use mnemonic::*;
+pub use transaction::*;
+pub use transaction_checking::*;
+pub use types::*;
+pub use utils::*;
+pub use utxo::*;
+pub use wallet::*;
+pub use wallet_manager::*;
 
 // ============================================================================
 // Initialization and Version

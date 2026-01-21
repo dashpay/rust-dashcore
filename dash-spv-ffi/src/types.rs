@@ -4,15 +4,7 @@ use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
-/// Opaque handle to the wallet manager owned by the SPV client.
-///
-/// This is intentionally zero-sized so it can be used purely as an FFI handle
-/// while still allowing Rust to cast to the underlying key-wallet manager
-/// implementation when necessary.
-#[repr(C)]
-pub struct FFIWalletManager {
-    _private: [u8; 0],
-}
+// FFIWalletManager is now re-exported from key-wallet-ffi
 
 #[repr(C)]
 pub struct FFIString {

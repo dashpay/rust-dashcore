@@ -1,4 +1,4 @@
-use crate::{set_last_error, FFIDashSpvClient, FFIErrorCode};
+use crate::{set_last_error, FFIDashSpvClient, SpvFFIErrorCode};
 use dashcore::hashes::Hash;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::QuorumHash;
@@ -19,7 +19,7 @@ pub struct FFIResult {
 }
 
 impl FFIResult {
-    fn error(code: FFIErrorCode, message: &str) -> Self {
+    fn error(code: SpvFFIErrorCode, message: &str) -> Self {
         set_last_error(message);
         FFIResult {
             error_code: code as i32,
@@ -83,24 +83,24 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
 ) -> FFIResult {
     // Validate client pointer
     if client.is_null() {
-        return FFIResult::error(FFIErrorCode::NullPointer, "Null client pointer");
+        return FFIResult::error(SpvFFIErrorCode::NullPointer, "Null client pointer");
     }
 
     // Validate quorum_hash pointer
     if quorum_hash.is_null() {
-        return FFIResult::error(FFIErrorCode::NullPointer, "Null quorum_hash pointer");
+        return FFIResult::error(SpvFFIErrorCode::NullPointer, "Null quorum_hash pointer");
     }
 
     // Validate output buffer pointer
     if out_pubkey.is_null() {
-        return FFIResult::error(FFIErrorCode::NullPointer, "Null out_pubkey pointer");
+        return FFIResult::error(SpvFFIErrorCode::NullPointer, "Null out_pubkey pointer");
     }
 
     // Validate buffer size - quorum public keys are 48 bytes
     const QUORUM_PUBKEY_SIZE: usize = 48;
     if out_pubkey_size < QUORUM_PUBKEY_SIZE {
         return FFIResult::error(
-            FFIErrorCode::InvalidArgument,
+            SpvFFIErrorCode::InvalidArgument,
             &format!(
                 "Buffer too small: {} bytes provided, {} bytes required",
                 out_pubkey_size, QUORUM_PUBKEY_SIZE
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     let inner_guard = match client.inner.lock() {
         Ok(guard) => guard,
         Err(_) => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Failed to lock client mutex");
+            return FFIResult::error(SpvFFIErrorCode::RuntimeError, "Failed to lock client mutex");
         }
     };
 
@@ -123,7 +123,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     let spv_client = match inner_guard.as_ref() {
         Some(client) => client,
         None => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Client not initialized");
+            return FFIResult::error(SpvFFIErrorCode::RuntimeError, "Client not initialized");
         }
     };
 
@@ -141,7 +141,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
         Some(engine) => engine,
         None => {
             return FFIResult::error(
-                FFIErrorCode::RuntimeError,
+                SpvFFIErrorCode::RuntimeError,
                 "Masternode list engine not initialized. Core SDK may still be syncing.",
             );
         }
@@ -155,7 +155,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
                 // Quorum exists but not at requested height - provide helpful info
                 let height_list: Vec<u32> = heights.iter().copied().collect();
                 return FFIResult::error(
-                    FFIErrorCode::ValidationError,
+                    SpvFFIErrorCode::ValidationError,
                     &format!(
                         "Quorum type {} with hash {:x} exists but not at height {}. Available at heights: {:?}",
                         quorum_type, quorum_hash, core_chain_locked_height, height_list
@@ -185,7 +185,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
             };
 
             FFIResult::error(
-                FFIErrorCode::ValidationError,
+                SpvFFIErrorCode::ValidationError,
                 &format!(
                     "Quorum not found: type={}, hash={:x}. Core SDK has {} masternode lists ranging from height {} to {}. The quorum may not exist or the Core SDK may still be syncing.",
                     quorum_type, quorum_hash, total_lists, min_height, max_height
@@ -209,12 +209,12 @@ pub unsafe extern "C" fn ffi_dash_spv_get_platform_activation_height(
 ) -> FFIResult {
     // Validate client pointer
     if client.is_null() {
-        return FFIResult::error(FFIErrorCode::NullPointer, "Null client pointer");
+        return FFIResult::error(SpvFFIErrorCode::NullPointer, "Null client pointer");
     }
 
     // Validate output pointer
     if out_height.is_null() {
-        return FFIResult::error(FFIErrorCode::NullPointer, "Null out_height pointer");
+        return FFIResult::error(SpvFFIErrorCode::NullPointer, "Null out_height pointer");
     }
 
     // Get the client reference
@@ -224,7 +224,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_platform_activation_height(
     let inner_guard = match client.inner.lock() {
         Ok(guard) => guard,
         Err(_) => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Failed to lock client mutex");
+            return FFIResult::error(SpvFFIErrorCode::RuntimeError, "Failed to lock client mutex");
         }
     };
 
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_platform_activation_height(
             }
         }
         None => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Client not initialized");
+            return FFIResult::error(SpvFFIErrorCode::RuntimeError, "Client not initialized");
         }
     };
 

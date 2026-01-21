@@ -161,17 +161,6 @@ typedef struct FFIEventCallbacks {
 } FFIEventCallbacks;
 
 /**
- * Opaque handle to the wallet manager owned by the SPV client.
- *
- * This is intentionally zero-sized so it can be used purely as an FFI handle
- * while still allowing Rust to cast to the underlying key-wallet manager
- * implementation when necessary.
- */
-typedef struct FFIWalletManager {
-  uint8_t _private[0];
-} FFIWalletManager;
-
-/**
  * Handle for Core SDK that can be passed to Platform SDK
  */
 typedef struct CoreSDKHandle {
@@ -508,7 +497,7 @@ int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
  *
  * A pointer to the wallet manager wrapper, or NULL if the client is not initialized.
  */
- struct FFIWalletManager *dash_spv_ffi_client_get_wallet_manager(struct FFIDashSpvClient *client) ;
+ FFIWalletManager *dash_spv_ffi_client_get_wallet_manager(struct FFIDashSpvClient *client) ;
 
 /**
  * Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
@@ -521,7 +510,7 @@ int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
  * - `manager` must either be null or a pointer previously returned by
  *   `dash_spv_ffi_client_get_wallet_manager`.
  */
- void dash_spv_ffi_wallet_manager_free(struct FFIWalletManager *manager) ;
+ void dash_spv_ffi_wallet_manager_free(FFIWalletManager *manager) ;
 
  struct FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network) ;
 

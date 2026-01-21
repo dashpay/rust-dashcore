@@ -1,9 +1,9 @@
 use crate::{
-    null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
-    FFIEventCallbacks, FFISpvStats, FFISyncProgress, FFIWalletManager,
+    null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, SpvFFIErrorCode,
+    FFIEventCallbacks, FFISpvStats, FFISyncProgress,
 };
-// Import wallet types from key-wallet-ffi
-use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
+// FFIWalletManager is re-exported from key-wallet-ffi in lib.rs
+use crate::FFIWalletManager;
 
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::SyncStage;
@@ -376,7 +376,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_drain_events(client: *mut FFIDashSp
     null_check!(client);
     let client = &*client;
     client.drain_events_internal();
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
@@ -455,10 +455,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
     });
 
     match result {
-        Ok(()) => FFIErrorCode::Success as i32,
+        Ok(()) => SpvFFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -509,11 +509,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
                     }
                 }
             }
-            FFIErrorCode::Success as i32
+            SpvFFIErrorCode::Success as i32
         }
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -528,10 +528,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 
     let client = &mut (*client);
     match stop_client_internal(client) {
-        Ok(()) => FFIErrorCode::Success as i32,
+        Ok(()) => SpvFFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -606,10 +606,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
     });
 
     match result {
-        Ok(_) => FFIErrorCode::Success as i32,
+        Ok(_) => SpvFFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -844,7 +844,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     // Store thread handle
     client.active_threads.lock().unwrap().push(sync_handle);
 
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 // Filter header progress updates are included in the detailed sync progress callback.
@@ -866,10 +866,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpv
     let client = &mut (*client);
 
     match stop_client_internal(client) {
-        Ok(()) => FFIErrorCode::Success as i32,
+        Ok(()) => SpvFFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -967,7 +967,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_hash(
     null_check!(client);
     if out_hash.is_null() {
         set_last_error("Null out_hash pointer");
-        return FFIErrorCode::NullPointer as i32;
+        return SpvFFIErrorCode::NullPointer as i32;
     }
 
     let client = &(*client);
@@ -994,15 +994,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_hash(
             let bytes = hash.to_byte_array();
             // SAFETY: out_hash points to a buffer with at least 32 bytes
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_hash, 32);
-            FFIErrorCode::Success as i32
+            SpvFFIErrorCode::Success as i32
         }
         Ok(None) => {
             set_last_error("No tip hash available");
-            FFIErrorCode::StorageError as i32
+            SpvFFIErrorCode::StorageError as i32
         }
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -1020,7 +1020,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_height(
     null_check!(client);
     if out_height.is_null() {
         set_last_error("Null out_height pointer");
-        return FFIErrorCode::NullPointer as i32;
+        return SpvFFIErrorCode::NullPointer as i32;
     }
 
     let client = &(*client);
@@ -1045,11 +1045,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_height(
     match result {
         Ok(height) => {
             *out_height = height;
-            FFIErrorCode::Success as i32
+            SpvFFIErrorCode::Success as i32
         }
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -1088,10 +1088,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
     });
 
     match result {
-        Ok(_) => FFIErrorCode::Success as i32,
+        Ok(_) => SpvFFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -1146,7 +1146,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     *event_callbacks = callbacks;
 
     tracing::debug!("Event callbacks set successfully");
-    FFIErrorCode::Success as i32
+    SpvFFIErrorCode::Success as i32
 }
 
 /// Destroy the client and free associated resources.
@@ -1245,13 +1245,57 @@ pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
     });
 
     match result {
-        Ok(_) => FFIErrorCode::Success as i32,
+        Ok(_) => SpvFFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&format!("Failed to rescan blockchain: {}", e));
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
+
+// TODO: Implement when DashSpvClient gains enable_mempool_tracking method
+// /// Enable mempool tracking with a given strategy.
+// ///
+// /// # Safety
+// /// - `client` must be a valid, non-null pointer.
+// #[no_mangle]
+// pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
+//     client: *mut FFIDashSpvClient,
+//     strategy: FFIMempoolStrategy,
+// ) -> i32 {
+//     null_check!(client);
+//
+//     let client = &(*client);
+//     let inner = client.inner.clone();
+//
+//     let mempool_strategy = strategy.into();
+//
+//     let result = client.runtime.block_on(async {
+//         let mut spv_client = {
+//             let mut guard = inner.lock().unwrap();
+//             match guard.take() {
+//                 Some(client) => client,
+//                 None => {
+//                     return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+//                         "Client not initialized".to_string(),
+//                     )))
+//                 }
+//             }
+//         };
+//         let res = spv_client.enable_mempool_tracking(mempool_strategy).await;
+//         let mut guard = inner.lock().unwrap();
+//         *guard = Some(spv_client);
+//         res
+//     });
+//
+//     match result {
+//         Ok(()) => SpvFFIErrorCode::Success as i32,
+//         Err(e) => {
+//             set_last_error(&e.to_string());
+//             SpvFFIErrorCode::from(e) as i32
+//         }
+//     }
+// }
 
 /// Record that we attempted to send a transaction by its txid.
 ///
@@ -1269,7 +1313,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
         Ok(s) => s,
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in txid: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
 
@@ -1277,7 +1321,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
         Ok(t) => t,
         Err(e) => {
             set_last_error(&format!("Invalid txid: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
+            return SpvFFIErrorCode::InvalidArgument as i32;
         }
     };
 
@@ -1303,10 +1347,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
     });
 
     match result {
-        Ok(()) => FFIErrorCode::Success as i32,
+        Ok(()) => SpvFFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
+            SpvFFIErrorCode::from(e) as i32
         }
     }
 }
@@ -1342,7 +1386,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_wallet_manager(
         let runtime = client.runtime.clone();
 
         // Create the FFIWalletManager with the cloned Arc
-        let manager = KeyWalletFFIWalletManager::from_arc(wallet_arc, runtime);
+        let manager = FFIWalletManager::from_arc(wallet_arc, runtime);
 
         Box::into_raw(Box::new(manager)) as *mut FFIWalletManager
     } else {
@@ -1366,5 +1410,5 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_manager_free(manager: *mut FFIWalle
         return;
     }
 
-    key_wallet_ffi::wallet_manager::wallet_manager_free(manager as *mut KeyWalletFFIWalletManager);
+    key_wallet_ffi::wallet_manager::wallet_manager_free(manager as *mut FFIWalletManager);
 }

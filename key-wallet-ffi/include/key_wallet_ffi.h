@@ -264,6 +264,14 @@ typedef struct FFIManagedAccount FFIManagedAccount;
 typedef struct FFIManagedAccountCollection FFIManagedAccountCollection;
 
 /*
+ Opaque managed platform account handle
+
+ This wraps a ManagedAccount of PlatformPayment type and adds
+ Platform-specific credit balance tracking.
+ */
+typedef struct FFIManagedPlatformAccount FFIManagedPlatformAccount;
+
+/*
  Opaque type for a private key (SecretKey)
  */
 typedef struct FFIPrivateKey FFIPrivateKey;
@@ -638,6 +646,38 @@ typedef struct {
      */
     bool has_provider_platform_keys;
 } FFIManagedAccountCollectionSummary;
+
+/*
+ FFI-compatible key for Platform Payment accounts
+ */
+typedef struct {
+    /*
+     Account index (hardened)
+     */
+    unsigned int account;
+    /*
+     Key class (hardened)
+     */
+    unsigned int key_class;
+} FFIPlatformPaymentAccountKey;
+
+/*
+ FFI Result type for ManagedPlatformAccount operations
+ */
+typedef struct {
+    /*
+     The managed platform account handle if successful, NULL if error
+     */
+    FFIManagedPlatformAccount *account;
+    /*
+     Error code (0 = success)
+     */
+    int32_t error_code;
+    /*
+     Error message (NULL if success, must be freed by caller if not NULL)
+     */
+    char *error_message;
+} FFIManagedPlatformAccountResult;
 
 /*
  Transaction output for building (legacy structure)
@@ -3007,6 +3047,219 @@ void managed_account_collection_summary_free(FFIManagedAccountCollectionSummary 
 ;
 
 /*
+ Get a Platform Payment account by account index and key class
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
+ */
+
+FFIManagedPlatformAccount *managed_account_collection_get_platform_payment_account(const FFIManagedAccountCollection *collection,
+                                                                                   unsigned int account_index,
+                                                                                   unsigned int key_class)
+;
+
+/*
+ Get all Platform Payment account keys
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `out_keys` must be a valid pointer to store the keys array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
+ */
+
+bool managed_account_collection_get_platform_payment_keys(const FFIManagedAccountCollection *collection,
+                                                          FFIPlatformPaymentAccountKey **out_keys,
+                                                          size_t *out_count)
+;
+
+/*
+ Free a Platform Payment account keys array
+
+ # Safety
+
+ - `keys` must be a valid pointer to an array created by `managed_account_collection_get_platform_payment_keys`
+ - `count` must match the count returned by `managed_account_collection_get_platform_payment_keys`
+ */
+
+void managed_account_collection_free_platform_payment_keys(FFIPlatformPaymentAccountKey *keys,
+                                                           size_t count)
+;
+
+/*
+ Check if there are any Platform Payment accounts in the collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_platform_payment_accounts(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the number of Platform Payment accounts in the collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+unsigned int managed_account_collection_platform_payment_count(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the network of a managed platform account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns `FFINetwork::Dash` if the account is null
+ */
+ FFINetwork managed_platform_account_get_network(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the account index of a managed platform account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns 0 if the account is null
+ */
+ uint32_t managed_platform_account_get_account_index(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the key class of a managed platform account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns 0 if the account is null
+ */
+ uint32_t managed_platform_account_get_key_class(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Check if a managed platform account is watch-only
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns false if the account is null
+ */
+ bool managed_platform_account_get_is_watch_only(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the credit balance of a managed platform account
+
+ The credit balance is Platform-specific (1000 credits = 1 duff).
+ This value must be set via `managed_platform_account_set_credit_balance`.
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns 0 if the account is null
+ */
+ uint64_t managed_platform_account_get_credit_balance(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Set the credit balance of a managed platform account
+
+ The credit balance is Platform-specific (1000 credits = 1 duff).
+ This should be called by the Platform layer to update the balance.
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ */
+
+void managed_platform_account_set_credit_balance(FFIManagedPlatformAccount *account,
+                                                 uint64_t credit_balance)
+;
+
+/*
+ Get the duff balance of a managed platform account
+
+ This is the credit balance divided by 1000 (1000 credits = 1 duff).
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns 0 if the account is null
+ */
+ uint64_t managed_platform_account_get_duff_balance(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the number of funded addresses in a managed platform account
+
+ A funded address is one that has been used (has received funds).
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns 0 if the account is null
+ */
+
+uint32_t managed_platform_account_get_funded_address_count(const FFIManagedPlatformAccount *account)
+;
+
+/*
+ Get the total number of addresses in a managed platform account
+
+ This includes both used and unused addresses in the pool.
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns 0 if the account is null
+ */
+
+uint32_t managed_platform_account_get_total_address_count(const FFIManagedPlatformAccount *account)
+;
+
+/*
+ Get the address pool from a managed platform account
+
+ Platform accounts only have a single address pool.
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - The returned pool must be freed with `address_pool_free` when no longer needed
+ - Returns NULL if the account is null or has no address pool
+ */
+
+FFIAddressPool *managed_platform_account_get_address_pool(const FFIManagedPlatformAccount *account)
+;
+
+/*
+ Free a managed platform account handle
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount that was allocated by this library
+ - The pointer must not be used after calling this function
+ - This function must only be called once per allocation
+ */
+
+void managed_platform_account_free(FFIManagedPlatformAccount *account)
+;
+
+/*
+ Free a managed platform account result's error message (if any)
+
+ Note: This does NOT free the account handle itself - use managed_platform_account_free for that
+
+ # Safety
+
+ - `result` must be a valid pointer to an FFIManagedPlatformAccountResult
+ - The error_message field must be either null or a valid CString allocated by this library
+ */
+ void managed_platform_account_result_free_error(FFIManagedPlatformAccountResult *result) ;
+
+/*
  Get the next unused receive address
 
  Generates the next unused receive address for the specified account.
@@ -3892,6 +4145,23 @@ FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
                                                      FFIAccountType account_type,
                                                      unsigned int account_index,
                                                      const char *xpub_string)
+;
+
+/*
+ Add a Platform Payment account (DIP-17)
+
+ Platform Payment accounts use the derivation path: m/9'/coinType/17'/account'/key_class'/index
+
+ # Safety
+
+ - `wallet` must be a valid pointer to an FFIWallet
+ - `account_index` is the hardened account index in the derivation path
+ - `key_class` is the hardened key class (typically 0 for main addresses)
+ */
+
+FFIAccountResult wallet_add_platform_payment_account(FFIWallet *wallet,
+                                                     unsigned int account_index,
+                                                     unsigned int key_class)
 ;
 
 /*
