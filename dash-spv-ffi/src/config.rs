@@ -1,4 +1,4 @@
-use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy, FFIString};
+use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy};
 use dash_spv::{ClientConfig, ValidationMode};
 use key_wallet_ffi::FFINetwork;
 use std::ffi::CStr;
@@ -85,40 +85,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_data_dir(
             FFIErrorCode::InvalidArgument as i32
         }
     }
-}
-
-/// Sets the validation mode for the SPV client
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_validation_mode(
-    config: *mut FFIClientConfig,
-    mode: FFIValidationMode,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.validation_mode = mode.into();
-    FFIErrorCode::Success as i32
-}
-
-/// Sets the maximum number of peers to connect to
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_max_peers(
-    config: *mut FFIClientConfig,
-    max_peers: u32,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.max_peers = max_peers;
-    FFIErrorCode::Success as i32
 }
 
 // Note: dash-spv doesn't have min_peers, only max_peers
@@ -229,40 +195,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_user_agent(
     }
 }
 
-/// Sets whether to relay transactions (currently a no-op)
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_relay_transactions(
-    config: *mut FFIClientConfig,
-    _relay: bool,
-) -> i32 {
-    null_check!(config);
-
-    let _config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    // relay_transactions not directly settable in current ClientConfig
-    FFIErrorCode::Success as i32
-}
-
-/// Sets whether to load bloom filters
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_filter_load(
-    config: *mut FFIClientConfig,
-    load_filters: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.enable_filters = load_filters;
-    FFIErrorCode::Success as i32
-}
-
 /// Restrict connections strictly to configured peers (disable DNS discovery and peer store)
 ///
 /// # Safety
@@ -313,27 +245,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_network(
     config.network.into()
 }
 
-/// Gets the data directory path from the configuration
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig or null
-/// - If null or no data directory is set, returns an FFIString with null pointer
-/// - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
-    config: *const FFIClientConfig,
-) -> FFIString {
-    if config.is_null() {
-        return FFIString {
-            ptr: std::ptr::null_mut(),
-            length: 0,
-        };
-    }
-
-    let config = unsafe { &*((*config).inner as *const ClientConfig) };
-    FFIString::new(&config.storage_path.to_string_lossy())
-}
-
 /// Destroys an FFIClientConfig and frees its memory
 ///
 /// # Safety
@@ -361,22 +272,6 @@ impl FFIClientConfig {
         unsafe { (*(self.inner as *const ClientConfig)).clone() }
     }
 }
-
-/// Sets the number of Tokio worker threads for the FFI runtime (0 = auto)
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_worker_threads(
-    config: *mut FFIClientConfig,
-    threads: u32,
-) -> i32 {
-    null_check!(config);
-    let cfg = &mut *config;
-    cfg.worker_threads = threads;
-    FFIErrorCode::Success as i32
-}
-
 // Mempool configuration functions
 
 /// Enables or disables mempool tracking
@@ -413,23 +308,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_strategy(
     FFIErrorCode::Success as i32
 }
 
-/// Sets the maximum number of mempool transactions to track
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
-    config: *mut FFIClientConfig,
-    max_transactions: u32,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.max_mempool_transactions = max_transactions as usize;
-    FFIErrorCode::Success as i32
-}
-
 /// Sets whether to fetch full mempool transaction data
 ///
 /// # Safety
@@ -462,40 +340,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.persist_mempool = persist;
     FFIErrorCode::Success as i32
-}
-
-/// Gets whether mempool tracking is enabled
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig or null
-/// - If null, returns false as default
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
-    config: *const FFIClientConfig,
-) -> bool {
-    if config.is_null() {
-        return false;
-    }
-
-    let config = unsafe { &*((*config).inner as *const ClientConfig) };
-    config.enable_mempool_tracking
-}
-
-/// Gets the mempool synchronization strategy
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig or null
-/// - If null, returns FFIMempoolStrategy::FetchAll as default
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
-    config: *const FFIClientConfig,
-) -> FFIMempoolStrategy {
-    if config.is_null() {
-        return FFIMempoolStrategy::FetchAll;
-    }
-
-    let config = unsafe { &*((*config).inner as *const ClientConfig) };
-    config.mempool_strategy.into()
 }
 
 // Checkpoint sync configuration functions

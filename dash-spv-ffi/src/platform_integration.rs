@@ -28,41 +28,6 @@ impl FFIResult {
     }
 }
 
-/// Creates a CoreSDKHandle from an FFIDashSpvClient
-///
-/// # Safety
-///
-/// This function is unsafe because:
-/// - The caller must ensure the client pointer is valid
-/// - The returned handle must be properly released with ffi_dash_spv_release_core_handle
-#[no_mangle]
-pub unsafe extern "C" fn ffi_dash_spv_get_core_handle(
-    client: *mut FFIDashSpvClient,
-) -> *mut CoreSDKHandle {
-    if client.is_null() {
-        set_last_error("Null client pointer");
-        return ptr::null_mut();
-    }
-
-    Box::into_raw(Box::new(CoreSDKHandle {
-        client,
-    }))
-}
-
-/// Releases a CoreSDKHandle
-///
-/// # Safety
-///
-/// This function is unsafe because:
-/// - The caller must ensure the handle pointer is valid
-/// - The handle must not be used after this call
-#[no_mangle]
-pub unsafe extern "C" fn ffi_dash_spv_release_core_handle(handle: *mut CoreSDKHandle) {
-    if !handle.is_null() {
-        let _ = Box::from_raw(handle);
-    }
-}
-
 /// Gets a quorum public key from the Core chain
 ///
 /// # Safety

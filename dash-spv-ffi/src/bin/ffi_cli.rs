@@ -75,12 +75,6 @@ fn main() {
                 .help("Peer address host:port (repeatable)"),
         )
         .arg(
-            Arg::new("workers")
-                .long("workers")
-                .value_parser(clap::value_parser!(u32))
-                .help("Tokio worker threads (0=auto)"),
-        )
-        .arg(
             Arg::new("log-level")
                 .long("log-level")
                 .value_parser(["error", "warn", "info", "debug", "trace"])
@@ -99,12 +93,6 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .help("Disable masternode list synchronization"),
         )
-        .arg(
-            Arg::new("no-filters")
-                .long("no-filters")
-                .action(ArgAction::SetTrue)
-                .help("Disable compact filter synchronization"),
-        )
         .get_matches();
 
     // Map network
@@ -114,8 +102,6 @@ fn main() {
         Some("regtest") => FFINetwork::Regtest,
         _ => FFINetwork::Dash,
     };
-
-    let disable_filter_sync = matches.get_flag("no-filters");
 
     unsafe {
         // Initialize tracing/logging via FFI so `tracing::info!` emits output
@@ -131,12 +117,6 @@ fn main() {
                 ffi_string_to_rust(dash_spv_ffi_get_last_error())
             );
             std::process::exit(1);
-        }
-
-        let _ = dash_spv_ffi_config_set_filter_load(cfg, !disable_filter_sync);
-
-        if let Some(workers) = matches.get_one::<u32>("workers") {
-            let _ = dash_spv_ffi_config_set_worker_threads(cfg, *workers);
         }
 
         if let Some(height) = matches.get_one::<u32>("start-height") {
@@ -214,13 +194,9 @@ fn main() {
             if !prog_ptr.is_null() {
                 let prog = &*prog_ptr;
                 let headers_done = SYNC_COMPLETED.load(Ordering::SeqCst);
-                let filters_complete = if disable_filter_sync || !prog.filter_sync_available {
-                    false
-                } else {
-                    prog.filter_header_height >= prog.header_height
-                        && prog.last_synced_filter_height >= prog.filter_header_height
-                };
-                if headers_done && (filters_complete || disable_filter_sync) {
+                let filters_complete = prog.filter_header_height >= prog.header_height
+                    && prog.last_synced_filter_height >= prog.filter_header_height;
+                if headers_done && filters_complete {
                     dash_spv_ffi_sync_progress_destroy(prog_ptr);
                     break;
                 }

@@ -67,7 +67,6 @@ mod tests {
 
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-            dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
 
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null(), "Failed to create client");
@@ -241,7 +240,7 @@ mod tests {
                 client,
             };
 
-            extern "C" fn reentrant_callback(
+            unsafe extern "C" fn reentrant_callback(
                 _success: bool,
                 _error: *const c_char,
                 user_data: *mut c_void,
@@ -265,7 +264,7 @@ mod tests {
                     let start_time = Instant::now();
 
                     // Try to call test_sync which is a simpler operation
-                    let test_result = unsafe { dash_spv_ffi_client_test_sync(data.client) };
+                    let test_result = client_test_sync(&*data.client);
                     let elapsed = start_time.elapsed();
 
                     // If this takes too long, it might indicate a deadlock
