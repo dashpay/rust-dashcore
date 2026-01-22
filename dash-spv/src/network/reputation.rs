@@ -87,10 +87,6 @@ const MAX_BAN_COUNT: u32 = 1000;
 
 const MAX_ACTION_COUNT: u64 = 1_000_000;
 
-fn default_instant() -> Instant {
-    Instant::now()
-}
-
 fn clamp_peer_score<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where
     D: Deserializer<'de>,
@@ -149,7 +145,7 @@ pub struct PeerReputation {
     pub banned_until: Option<Instant>,
 
     /// Last time the reputation was updated
-    #[serde(skip, default = "default_instant")]
+    #[serde(skip, default = "Instant::now")]
     pub last_update: Instant,
 
     /// Total number of positive actions
@@ -176,7 +172,7 @@ impl Default for PeerReputation {
             score: 0,
             ban_count: 0,
             banned_until: None,
-            last_update: default_instant(),
+            last_update: Instant::now(),
             positive_actions: 0,
             negative_actions: 0,
             connection_attempts: 0,
