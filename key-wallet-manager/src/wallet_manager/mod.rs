@@ -54,6 +54,8 @@ pub struct AddressGenerationResult {
 pub struct CheckTransactionsResult {
     /// Wallets that found the transaction relevant
     pub affected_wallets: Vec<WalletId>,
+    /// Set to false if the transaction was already stored and is being re-processed (e.g., during rescan)
+    pub is_new_transaction: bool,
     /// New addresses generated during gap limit maintenance
     pub new_addresses: Vec<Address>,
 }
@@ -485,6 +487,10 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 // If the transaction is relevant
                 if check_result.is_relevant {
                     result.affected_wallets.push(wallet_id);
+                    // If any wallet reports this as new, mark result as new
+                    if check_result.is_new_transaction {
+                        result.is_new_transaction = true;
+                    }
                     // Note: balance update is already handled in check_transaction
                 }
 

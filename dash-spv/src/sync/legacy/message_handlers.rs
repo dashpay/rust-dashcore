@@ -681,14 +681,17 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
 
         drop(wallet);
 
-        if !result.relevant_txids.is_empty() {
+        let total_relevant = result.relevant_tx_count();
+        if total_relevant > 0 {
             tracing::info!(
-                "💰 Found {} relevant transactions in block {} at height {}",
-                result.relevant_txids.len(),
+                "Found {} relevant transactions ({} new, {} existing) in block {} at height {}",
+                total_relevant,
+                result.new_txids.len(),
+                result.existing_txids.len(),
                 block_hash,
                 block_height
             );
-            for txid in &result.relevant_txids {
+            for txid in result.relevant_txids() {
                 tracing::debug!("  - Transaction: {}", txid);
             }
         }

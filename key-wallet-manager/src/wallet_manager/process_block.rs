@@ -33,7 +33,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             let check_result = self.check_transaction_in_all_wallets(tx, context, true).await;
 
             if !check_result.affected_wallets.is_empty() {
-                result.relevant_txids.push(tx.txid());
+                if check_result.is_new_transaction {
+                    result.new_txids.push(tx.txid());
+                } else {
+                    result.existing_txids.push(tx.txid());
+                }
             }
 
             result.new_addresses.extend(check_result.new_addresses);

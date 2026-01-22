@@ -45,9 +45,9 @@ impl WalletInterface for MockWallet {
         let mut processed = self.processed_blocks.lock().await;
         processed.push((block.block_hash(), height));
 
-        // Return txids of all transactions in block as "relevant"
         BlockProcessingResult {
-            relevant_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
+            new_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
+            existing_txids: Vec::new(),
             new_addresses: Vec::new(),
         }
     }

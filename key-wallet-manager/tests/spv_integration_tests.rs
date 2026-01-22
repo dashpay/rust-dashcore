@@ -62,10 +62,13 @@ async fn test_block_processing() {
     let block = Block::dummy(100, vec![tx1.clone(), tx2.clone(), tx3.clone()]);
     let result = manager.process_block(&block, 100).await;
 
-    assert_eq!(result.relevant_txids.len(), 2);
-    assert!(result.relevant_txids.contains(&tx1.txid()));
-    assert!(result.relevant_txids.contains(&tx2.txid()));
-    assert!(!result.relevant_txids.contains(&tx3.txid()));
+    // Both transactions should be new (first time seen)
+    assert_eq!(result.new_txids.len(), 2);
+    assert!(result.new_txids.contains(&tx1.txid()));
+    assert!(result.new_txids.contains(&tx2.txid()));
+    assert!(!result.new_txids.contains(&tx3.txid()));
+    // No existing transactions during initial processing
+    assert!(result.existing_txids.is_empty());
     assert_eq!(result.new_addresses.len(), 2);
 
     let addresses_after = manager.monitored_addresses();
@@ -91,7 +94,8 @@ async fn test_block_processing_result_empty() {
     let block = Block::dummy(100, vec![tx1, tx2]);
     let result = manager.process_block(&block, 100).await;
 
-    assert!(result.relevant_txids.is_empty());
+    assert!(result.new_txids.is_empty());
+    assert!(result.existing_txids.is_empty());
     assert!(result.new_addresses.is_empty());
 }
 
@@ -238,5 +242,50 @@ async fn test_immature_balance_matures_during_block_processing() {
         wallet_info.balance().immature(),
         0,
         "Immature balance should be zero after maturity"
+    );
+}
+
+/// Test that rescanning a block correctly distinguishes new vs existing transactions
+#[tokio::test]
+async fn test_block_rescan_marks_transactions_as_existing() {
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+    let _wallet_id = manager
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
+        .expect("Failed to create wallet");
+
+    let addresses = manager.monitored_addresses();
+    assert!(!addresses.is_empty());
+
+    // Create a block with a transaction to our wallet
+    let tx1 = Transaction::dummy(&addresses[0], 0..0, &[100_000]);
+    let block = Block::dummy(100, vec![tx1.clone()]);
+
+    // First processing - transaction should be new
+    let result1 = manager.process_block(&block, 100).await;
+
+    assert_eq!(result1.new_txids.len(), 1, "First processing should have 1 new transaction");
+    assert!(
+        result1.existing_txids.is_empty(),
+        "First processing should have no existing transactions"
+    );
+    assert!(result1.new_txids.contains(&tx1.txid()));
+
+    // Get transaction history count before rescan
+    let wallet_info = manager.get_all_wallet_infos().values().next().unwrap();
+    let tx_history_count = wallet_info.transaction_history().len();
+
+    // Second processing (simulating rescan) - transaction should be existing
+    let result2 = manager.process_block(&block, 100).await;
+
+    assert!(result2.new_txids.is_empty(), "Rescan should have no new transactions");
+    assert_eq!(result2.existing_txids.len(), 1, "Rescan should have 1 existing transaction");
+    assert!(result2.existing_txids.contains(&tx1.txid()));
+
+    // Verify transaction history count hasn't changed
+    let wallet_info = manager.get_all_wallet_infos().values().next().unwrap();
+    assert_eq!(
+        wallet_info.transaction_history().len(),
+        tx_history_count,
+        "Transaction history count should not increase on rescan"
     );
 }
