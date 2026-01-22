@@ -157,9 +157,6 @@ fn test_event_callbacks_setup() {
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
         dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
 
-        // Set validation mode to basic for faster testing
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::Basic);
-
         // Create client
         let client = dash_spv_ffi_client_new(config);
         assert!(!client.is_null());
@@ -244,7 +241,6 @@ fn test_enhanced_event_callbacks() {
         let temp_dir = TempDir::new().unwrap();
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
         dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
 
         // Create client
         let client = dash_spv_ffi_client_new(config);
@@ -299,7 +295,6 @@ fn test_drain_events_integration() {
         let temp_dir = TempDir::new().unwrap();
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
         dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
 
         // Create client
         let client = dash_spv_ffi_client_new(config);
@@ -364,7 +359,6 @@ fn test_drain_events_concurrent_with_callbacks() {
         let temp_dir = TempDir::new().unwrap();
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
         dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
 
         let client = dash_spv_ffi_client_new(config);
         assert!(!client.is_null());
@@ -440,7 +434,6 @@ fn test_drain_events_callback_lifecycle() {
         let temp_dir = TempDir::new().unwrap();
         let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
         dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
 
         let client = dash_spv_ffi_client_new(config);
         assert!(!client.is_null());

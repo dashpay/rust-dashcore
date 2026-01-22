@@ -21,10 +21,6 @@ mod tests {
             let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
             assert_eq!(error_str, "Test error message");
         }
-
-        dash_spv_ffi_clear_error();
-        let error_ptr = dash_spv_ffi_get_last_error();
-        assert!(error_ptr.is_null());
     }
 
     #[test]

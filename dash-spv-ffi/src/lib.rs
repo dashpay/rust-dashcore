@@ -39,7 +39,6 @@ mod test_client_lifecycle;
 #[path = "../tests/unit/test_async_operations.rs"]
 mod test_async_operations;
 
-mod broadcast;
 #[cfg(test)]
 #[path = "../tests/unit/test_memory_management.rs"]
 mod test_memory_management;
