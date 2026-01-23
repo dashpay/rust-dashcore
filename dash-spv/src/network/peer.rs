@@ -590,27 +590,6 @@ impl Peer {
                             raw_message.payload.cmd()
                         );
 
-                        if raw_message.payload.cmd() == "headers2" {
-                            tracing::info!("🎉 Received Headers2 message from {}!", self.address);
-                        }
-
-                        if let NetworkMessage::Block(ref block) = raw_message.payload {
-                            let block_hash = block.block_hash();
-                            tracing::info!(
-                                "Successfully decoded block {} from {}",
-                                block_hash,
-                                self.address
-                            );
-                        }
-
-                        if let NetworkMessage::Headers2(ref headers2) = raw_message.payload {
-                            tracing::info!(
-                                "Successfully decoded Headers2 message from {} with {} compressed headers",
-                                self.address,
-                                headers2.headers.len()
-                            );
-                        }
-
                         return Ok(Some(raw_message.payload));
                     }
                     Err(e) => {
