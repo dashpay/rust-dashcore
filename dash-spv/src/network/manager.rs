@@ -1409,25 +1409,6 @@ impl NetworkManager for PeerNetworkManager {
         self.get_last_message_peer_id().await
     }
 
-    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
-        // Get the last peer that sent us a message
-        let peer_id = self.get_last_message_peer_id().await;
-
-        if peer_id.0 == 0 {
-            return Err(NetworkError::ConnectionFailed("No peer to update".to_string()));
-        }
-
-        // Find the peer's address from the last message data
-        let last_msg_peer = self.last_message_peer.lock().await;
-        if let Some(addr) = &*last_msg_peer {
-            // For now, just log it as we don't have a mutable peer manager
-            // In a real implementation, we'd store this preference
-            tracing::info!("Updated peer {} DSQ preference to: {}", addr, wants_dsq);
-        }
-
-        Ok(())
-    }
-
     async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
         // Get the last peer that sent us a message
         let last_msg_peer = self.last_message_peer.lock().await;

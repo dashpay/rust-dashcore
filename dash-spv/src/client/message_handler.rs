@@ -293,10 +293,6 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
             }
             NetworkMessage::SendDsq(wants_dsq) => {
                 tracing::info!("Received SendDsq message - peer wants DSQ messages: {}", wants_dsq);
-                // Store peer's DSQ preference
-                if let Err(e) = self.network.update_peer_dsq_preference(*wants_dsq).await {
-                    tracing::error!("Failed to update peer DSQ preference: {}", e);
-                }
 
                 // Send our own SendDsq(false) in response - we're an SPV client and don't want DSQ messages
                 tracing::info!("Sending SendDsq(false) to indicate we don't want DSQ messages");
