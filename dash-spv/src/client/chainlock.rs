@@ -6,6 +6,7 @@
 //! - ChainLock validation updates
 //! - Pending ChainLock validation
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::error::{Result, SpvError};
@@ -21,6 +22,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Process and validate a ChainLock.
     pub async fn process_chainlock(
         &mut self,
+        peer_address: SocketAddr,
         chainlock: dashcore::ephemerealdata::chain_lock::ChainLock,
     ) -> Result<()> {
         tracing::info!(
@@ -40,7 +42,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             {
                 // Penalize the peer that relayed the invalid ChainLock
                 let reason = format!("Invalid ChainLock: {}", e);
-                let _ = self.network.penalize_last_message_peer_invalid_chainlock(&reason).await;
+                self.network.penalize_peer_invalid_chainlock(peer_address, &reason).await;
                 return Err(SpvError::Validation(e));
             }
         }
@@ -87,6 +89,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Process and validate an InstantSendLock.
     pub(super) async fn process_instantsendlock(
         &mut self,
+        peer_address: SocketAddr,
         islock: dashcore::ephemerealdata::instant_lock::InstantLock,
     ) -> Result<()> {
         tracing::info!("Processing InstantSendLock for tx {}", islock.txid);
@@ -107,7 +110,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             tracing::warn!("{}", reason);
 
             // Ban the peer using the reputation system
-            let _ = self.network.penalize_last_message_peer_invalid_instantlock(&reason).await;
+            self.network.penalize_peer_invalid_instantlock(peer_address, &reason).await;
 
             return Err(SpvError::Validation(e));
         }

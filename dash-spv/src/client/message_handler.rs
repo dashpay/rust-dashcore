@@ -3,7 +3,7 @@
 use crate::client::ClientConfig;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
-use crate::network::NetworkManager;
+use crate::network::{Message, NetworkManager};
 use crate::storage::StorageManager;
 use crate::sync::legacy::SyncManager;
 use crate::types::{MempoolState, SpvEvent};
@@ -47,17 +47,17 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
     }
 
     /// Handle incoming network messages during monitoring.
-    pub async fn handle_network_message(
-        &mut self,
-        message: &dashcore::network::message::NetworkMessage,
-    ) -> Result<()> {
+    pub async fn handle_network_message(&mut self, message: &Message) -> Result<()> {
         use dashcore::network::message::NetworkMessage;
 
-        tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(message));
+        tracing::debug!(
+            "Client handling network message: {:?}",
+            std::mem::discriminant(message.inner())
+        );
 
         // First check if this is a message that ONLY the sync manager handles
         // These messages can be moved to the sync manager without cloning
-        match message {
+        match message.inner() {
             NetworkMessage::Headers2(ref headers2) => {
                 tracing::info!(
                     "📋 Received Headers2 message with {} compressed headers",
@@ -89,22 +89,11 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
             }
             NetworkMessage::CFHeaders(ref cf_headers) => {
                 // Try to include the peer address for better diagnostics
-                let peer_addr = self.network.get_last_message_peer_addr().await;
-                match peer_addr {
-                    Some(addr) => {
-                        tracing::info!(
-                            "📨 Client received CFHeaders message with {} filter headers from {}",
-                            cf_headers.filter_hashes.len(),
-                            addr
-                        );
-                    }
-                    None => {
-                        tracing::info!(
-                            "📨 Client received CFHeaders message with {} filter headers (peer unknown)",
-                            cf_headers.filter_hashes.len()
-                        );
-                    }
-                }
+                tracing::info!(
+                    "📨 Client received CFHeaders message with {} filter headers from {}",
+                    cf_headers.filter_hashes.len(),
+                    message.peer_address()
+                );
                 // Move to sync manager without cloning
                 return self
                     .sync_manager
@@ -164,23 +153,15 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
         }
 
         // Then handle client-specific message processing
-        match message {
+        match message.inner() {
             NetworkMessage::Headers(headers) => {
                 // For post-sync headers, we need special handling
                 if self.sync_manager.is_synced() && !headers.is_empty() {
-                    let peer_addr = self.network.get_last_message_peer_addr().await;
-                    if let Some(addr) = peer_addr {
-                        tracing::info!(
+                    tracing::info!(
                             "📋 Post-sync headers received from {} ({} headers), additional processing may be needed",
-                            addr,
+                            message.peer_address(),
                             headers.len()
                         );
-                    } else {
-                        tracing::info!(
-                            "📋 Post-sync headers received ({} headers), additional processing may be needed",
-                            headers.len()
-                        );
-                    }
                 }
             }
             NetworkMessage::Block(block) => {
@@ -194,7 +175,10 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
 
                 // 1) Ensure header processing and chain tip update for this block
                 //    Route the header through the sequential sync manager as a Headers message
-                let headers_msg = NetworkMessage::Headers(vec![block.header]);
+                let headers_msg = Message::new(
+                    message.peer_address(),
+                    NetworkMessage::Headers(vec![block.header]),
+                );
                 if let Err(e) = self
                     .sync_manager
                     .handle_message(&headers_msg, &mut *self.network, &mut *self.storage)
@@ -297,7 +281,10 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
             }
             _ => {
                 // Ignore other message types for now
-                tracing::debug!("Received network message: {:?}", std::mem::discriminant(message));
+                tracing::debug!(
+                    "Received network message: {:?}",
+                    std::mem::discriminant(message.inner())
+                );
             }
         }
 

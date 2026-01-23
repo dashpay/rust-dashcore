@@ -193,21 +193,11 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
             stop_hash,
         };
 
-        // Log with peer if available
-        let peer_addr = network.get_last_message_peer_addr().await;
-        match peer_addr {
-            Some(addr) => tracing::debug!(
-                "Sending GetCFilters: start_height={}, stop_hash={}, to {}",
-                start_height,
-                stop_hash,
-                addr
-            ),
-            None => tracing::debug!(
-                "Sending GetCFilters: start_height={}, stop_hash={}",
-                start_height,
-                stop_hash
-            ),
-        }
+        tracing::debug!(
+            "Sending GetCFilters: start_height={}, stop_hash={}",
+            start_height,
+            stop_hash
+        );
 
         network
             .send_message(NetworkMessage::GetCFilters(get_cfilters))

@@ -8,10 +8,11 @@
 //! The failure indicates a race condition or inconsistency in how filter headers
 //! are calculated, stored, or verified across multiple batches.
 
+use dash_spv::network::{Message, MessageRouter};
 use dash_spv::{
     client::ClientConfig,
     error::{NetworkError, SyncError},
-    network::NetworkManager,
+    network::{MessageType, NetworkManager},
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::legacy::filters::FilterSyncManager,
 };
@@ -26,18 +27,21 @@ use dashcore_hashes::{sha256d, Hash};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::TempDir;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::Mutex;
 
 /// Mock network manager for testing filter sync
 #[derive(Debug)]
 struct MockNetworkManager {
     sent_messages: Vec<NetworkMessage>,
+    message_router: MessageRouter,
 }
 
 impl MockNetworkManager {
     fn new() -> Self {
         Self {
             sent_messages: Vec::new(),
+            message_router: MessageRouter::default(),
         }
     }
 
@@ -62,10 +66,6 @@ impl NetworkManager for MockNetworkManager {
         Ok(())
     }
 
-    async fn receive_message(&mut self) -> Result<Option<NetworkMessage>, NetworkError> {
-        Ok(None)
-    }
-
     fn is_connected(&self) -> bool {
         true
     }
@@ -78,6 +78,10 @@ impl NetworkManager for MockNetworkManager {
         self
     }
 
+    async fn subscribe(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+        self.message_router.new_subscriber(types)
+    }
+
     async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
         Ok(Some(100))
     }
@@ -87,10 +91,6 @@ impl NetworkManager for MockNetworkManager {
         _service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool {
         true
-    }
-
-    async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {
-        dash_spv::types::PeerId(1)
     }
 }
 

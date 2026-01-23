@@ -8,25 +8,75 @@ pub mod manager;
 pub mod peer;
 pub mod pool;
 pub mod reputation;
+mod subscriptions;
 
 #[cfg(test)]
 mod tests;
 
-use async_trait::async_trait;
-
 use crate::error::NetworkResult;
+use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::BlockHash;
-
 pub use handshake::{HandshakeManager, HandshakeState};
 pub use manager::PeerNetworkManager;
 pub use peer::Peer;
+use std::net::SocketAddr;
+pub use subscriptions::{Message, MessageRouter};
+use tokio::sync::mpsc::UnboundedReceiver;
+
+/// Message types that subscribers can subscribe to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MessageType {
+    /// Block headers (uncompressed).
+    Headers,
+    /// Block headers (compressed).
+    Headers2,
+    /// Compact filter headers.
+    CFHeaders,
+    /// Compact filters.
+    CFilter,
+    /// Full blocks.
+    Block,
+    /// Masternode list diffs.
+    MnListDiff,
+    /// Quorum rotation info.
+    QRInfo,
+    /// ChainLock signatures.
+    CLSig,
+    /// InstantSend locks.
+    ISLock,
+    /// Inventory announcements.
+    Inv,
+}
+
+impl MessageType {
+    /// Check if a NetworkMessage matches this type.
+    pub fn matches(&self, msg: &NetworkMessage) -> bool {
+        matches!(
+            (self, msg),
+            (MessageType::Headers, NetworkMessage::Headers(_))
+                | (MessageType::Headers2, NetworkMessage::Headers2(_))
+                | (MessageType::CFHeaders, NetworkMessage::CFHeaders(_))
+                | (MessageType::CFilter, NetworkMessage::CFilter(_))
+                | (MessageType::Block, NetworkMessage::Block(_))
+                | (MessageType::MnListDiff, NetworkMessage::MnListDiff(_))
+                | (MessageType::QRInfo, NetworkMessage::QRInfo(_))
+                | (MessageType::CLSig, NetworkMessage::CLSig(_))
+                | (MessageType::ISLock, NetworkMessage::ISLock(_))
+                | (MessageType::Inv, NetworkMessage::Inv(_))
+        )
+    }
+}
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]
 pub trait NetworkManager: Send + Sync + 'static {
     /// Convert to Any for downcasting.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Subscribe to specific message types.
+    /// Returns a receiver that yields only messages of the subscribed types.
+    async fn subscribe(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message>;
 
     /// Connect to the network.
     async fn connect(&mut self) -> NetworkResult<()>;
@@ -36,9 +86,6 @@ pub trait NetworkManager: Send + Sync + 'static {
 
     /// Send a message to a peer.
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()>;
-
-    /// Receive a message from a peer.
-    async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>>;
 
     /// Check if connected to any peers.
     fn is_connected(&self) -> bool;
@@ -54,18 +101,6 @@ pub trait NetworkManager: Send + Sync + 'static {
         &self,
         service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool;
-
-    /// Get the peer ID of the last peer that sent us a message.
-    /// Returns PeerId(0) if no message has been received yet.
-    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        crate::types::PeerId(0) // Default implementation
-    }
-
-    /// Get the socket address of the last peer that sent us a message.
-    /// Default implementation returns None; implementations with peer tracking can override.
-    async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
-        None
-    }
 
     /// Request QRInfo from the network.
     ///
@@ -101,37 +136,27 @@ pub trait NetworkManager: Send + Sync + 'static {
         Ok(())
     }
 
-    /// Penalize the last peer that sent us a message by adjusting reputation.
+    /// Penalize a peer by address by adjusting reputation.
     /// Default implementation is a no-op for managers without reputation.
-    async fn penalize_last_message_peer(
-        &self,
-        _score_change: i32,
-        _reason: &str,
-    ) -> NetworkResult<()> {
-        Ok(())
-    }
+    async fn penalize_peer(&self, _address: SocketAddr, _score_change: i32, _reason: &str) {}
 
-    /// Convenience: penalize last peer for an invalid ChainLock.
-    async fn penalize_last_message_peer_invalid_chainlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        self.penalize_last_message_peer(
+    /// Penalize a peer by address for an invalid ChainLock.
+    async fn penalize_peer_invalid_chainlock(&self, address: SocketAddr, reason: &str) {
+        self.penalize_peer(
+            address,
             crate::network::reputation::misbehavior_scores::INVALID_CHAINLOCK,
             reason,
         )
-        .await
+        .await;
     }
 
-    /// Convenience: penalize last peer for an invalid InstantLock.
-    async fn penalize_last_message_peer_invalid_instantlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        self.penalize_last_message_peer(
+    /// Penalize a peer by address for an invalid InstantLock.
+    async fn penalize_peer_invalid_instantlock(&self, peer_address: SocketAddr, reason: &str) {
+        self.penalize_peer(
+            peer_address,
             crate::network::reputation::misbehavior_scores::INVALID_INSTANTLOCK,
             reason,
         )
-        .await
+        .await;
     }
 }

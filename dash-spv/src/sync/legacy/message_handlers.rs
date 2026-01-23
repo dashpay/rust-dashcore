@@ -8,7 +8,7 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 
 use crate::error::{SyncError, SyncResult};
-use crate::network::NetworkManager;
+use crate::network::{Message, NetworkManager};
 use crate::storage::StorageManager;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
@@ -19,12 +19,12 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
     /// Handle incoming network messages with phase filtering
     pub async fn handle_message(
         &mut self,
-        message: &NetworkMessage,
+        message: &Message,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
         // Special handling for blocks - they can arrive at any time due to filter matches
-        if let NetworkMessage::Block(block) = message {
+        if let NetworkMessage::Block(block) = message.inner() {
             // Always handle blocks when they arrive, regardless of phase
             // This is important because we request blocks when filters match
             tracing::info!(
@@ -49,17 +49,17 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         }
 
         // Check if this message is expected in the current phase
-        if !self.is_message_expected_in_phase(message) {
+        if !self.is_message_expected_in_phase(message.inner()) {
             tracing::debug!(
                 "Ignoring unexpected {:?} message in phase {}",
-                std::mem::discriminant(message),
+                std::mem::discriminant(message.inner()),
                 self.current_phase.name()
             );
             return Ok(());
         }
 
         // Route to appropriate handler based on current phase
-        match (&mut self.current_phase, message) {
+        match (&mut self.current_phase, message.inner()) {
             (
                 SyncPhase::DownloadingHeaders {
                     ..
@@ -83,6 +83,12 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                 },
                 NetworkMessage::CFHeaders(cfheaders),
             ) => {
+                tracing::debug!(
+                    "📨 Received CFHeaders ({} headers) from {} (stop_hash={})",
+                    cfheaders.filter_hashes.len(),
+                    message.peer_address(),
+                    cfheaders.stop_hash
+                );
                 self.handle_cfheaders_message(cfheaders, network, storage).await?;
             }
 
@@ -427,15 +433,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        // Log source peer for CFHeaders batches when possible
-        if let Some(addr) = network.get_last_message_peer_addr().await {
-            tracing::debug!(
-                "📨 Received CFHeaders ({} headers) from {} (stop_hash={})",
-                cfheaders.filter_hashes.len(),
-                addr,
-                cfheaders.stop_hash
-            );
-        }
         let continue_sync =
             self.filter_sync.handle_cfheaders_message(cfheaders.clone(), storage, network).await?;
 
@@ -481,20 +478,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        // Include peer address when available for diagnostics
-        let peer_addr = network.get_last_message_peer_addr().await;
-        match peer_addr {
-            Some(addr) => {
-                tracing::debug!(
-                    "📨 Received CFilter for block {} from {}",
-                    cfilter.block_hash,
-                    addr
-                );
-            }
-            None => {
-                tracing::debug!("📨 Received CFilter for block {}", cfilter.block_hash);
-            }
-        }
+        tracing::debug!("📨 Received CFilter for block {}", cfilter.block_hash);
 
         let mut wallet = self.wallet.write().await;
 
