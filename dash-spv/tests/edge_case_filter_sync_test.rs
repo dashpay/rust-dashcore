@@ -10,7 +10,7 @@ use dash_spv::{
     error::NetworkResult,
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
-    sync::filters::FilterSyncManager,
+    sync::legacy::filters::FilterSyncManager,
 };
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::message::NetworkMessage,

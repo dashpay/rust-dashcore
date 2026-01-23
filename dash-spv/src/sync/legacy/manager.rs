@@ -6,7 +6,9 @@ use crate::client::ClientConfig;
 use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::{FilterSyncManager, HeaderSyncManager, MasternodeSyncManager, ReorgConfig};
+use crate::sync::legacy::{
+    FilterSyncManager, HeaderSyncManager, MasternodeSyncManager, ReorgConfig,
+};
 use crate::types::{SharedFilterHeights, SyncProgress};
 use crate::{SpvStats, SyncError};
 use dashcore::prelude::CoreBlockHeight;
