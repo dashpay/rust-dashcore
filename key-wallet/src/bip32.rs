@@ -375,8 +375,8 @@ impl bincode::Encode for ExtendedPrivKey {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for ExtendedPrivKey {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> bincode::Decode<C> for ExtendedPrivKey {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let network = Network::decode(decoder)?;
@@ -402,8 +402,8 @@ impl bincode::Decode for ExtendedPrivKey {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for ExtendedPrivKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPrivKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let network = Network::borrow_decode(decoder)?;
@@ -498,8 +498,8 @@ impl bincode::Encode for ExtendedPubKey {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for ExtendedPubKey {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> bincode::Decode<C> for ExtendedPubKey {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let network = Network::decode(decoder)?;
@@ -525,8 +525,8 @@ impl bincode::Decode for ExtendedPubKey {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for ExtendedPubKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPubKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let network = Network::borrow_decode(decoder)?;
@@ -956,8 +956,8 @@ impl bincode::Encode for DerivationPath {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for DerivationPath {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> bincode::Decode<C> for DerivationPath {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         Ok(DerivationPath(Vec::<ChildNumber>::decode(decoder)?))
@@ -965,8 +965,8 @@ impl bincode::Decode for DerivationPath {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for DerivationPath {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> bincode::BorrowDecode<'de, C> for DerivationPath {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         Ok(DerivationPath(Vec::<ChildNumber>::borrow_decode(decoder)?))
