@@ -179,9 +179,4 @@ impl NetworkManager for MockNetworkManager {
             crate::types::PeerId(0)
         }
     }
-
-    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
-        // Mock implementation - do nothing
-        Ok(())
-    }
 }

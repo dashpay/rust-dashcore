@@ -76,9 +76,6 @@ pub trait NetworkManager: Send + Sync + 'static {
         None
     }
 
-    /// Update the DSQ (CoinJoin queue) message preference for the current peer.
-    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()>;
-
     /// Mark that the current peer has sent us Headers2 messages.
     async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
         Ok(()) // Default implementation

@@ -10,7 +10,7 @@
 
 use dash_spv::{
     client::ClientConfig,
-    error::{NetworkError, NetworkResult, SyncError},
+    error::{NetworkError, SyncError},
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::filters::FilterSyncManager,
@@ -96,10 +96,6 @@ impl NetworkManager for MockNetworkManager {
 
     async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {
         dash_spv::types::PeerId(1)
-    }
-
-    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
-        Ok(())
     }
 }
 
