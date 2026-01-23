@@ -19,7 +19,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-dash-network = "0.41.1"
+dash-network = "0.42.0"
 ```
 
 ### Basic Example
