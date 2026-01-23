@@ -4,7 +4,9 @@
 
 use crate::bip32::{ChildNumber, DerivationPath};
 use crate::dip9::DerivationPathReference;
-use crate::transaction_checking::transaction_router::AccountTypeToCheck;
+use crate::transaction_checking::transaction_router::{
+    AccountTypeToCheck, PlatformAccountConversionError,
+};
 use crate::Network;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
@@ -94,40 +96,45 @@ pub enum AccountType {
     },
 }
 
-impl From<AccountType> for AccountTypeToCheck {
-    fn from(value: AccountType) -> Self {
+impl TryFrom<AccountType> for AccountTypeToCheck {
+    type Error = PlatformAccountConversionError;
+
+    fn try_from(value: AccountType) -> Result<Self, Self::Error> {
         match value {
             AccountType::Standard {
                 standard_account_type,
                 ..
             } => match standard_account_type {
-                StandardAccountType::BIP44Account => AccountTypeToCheck::StandardBIP44,
-                StandardAccountType::BIP32Account => AccountTypeToCheck::StandardBIP32,
+                StandardAccountType::BIP44Account => Ok(AccountTypeToCheck::StandardBIP44),
+                StandardAccountType::BIP32Account => Ok(AccountTypeToCheck::StandardBIP32),
             },
             AccountType::CoinJoin {
                 ..
-            } => AccountTypeToCheck::CoinJoin,
-            AccountType::IdentityRegistration => AccountTypeToCheck::IdentityRegistration,
+            } => Ok(AccountTypeToCheck::CoinJoin),
+            AccountType::IdentityRegistration => Ok(AccountTypeToCheck::IdentityRegistration),
             AccountType::IdentityTopUp {
                 ..
-            } => AccountTypeToCheck::IdentityTopUp,
+            } => Ok(AccountTypeToCheck::IdentityTopUp),
             AccountType::IdentityTopUpNotBoundToIdentity => {
-                AccountTypeToCheck::IdentityTopUpNotBound
+                Ok(AccountTypeToCheck::IdentityTopUpNotBound)
             }
-            AccountType::IdentityInvitation => AccountTypeToCheck::IdentityInvitation,
-            AccountType::ProviderVotingKeys => AccountTypeToCheck::ProviderVotingKeys,
-            AccountType::ProviderOwnerKeys => AccountTypeToCheck::ProviderOwnerKeys,
-            AccountType::ProviderOperatorKeys => AccountTypeToCheck::ProviderOperatorKeys,
-            AccountType::ProviderPlatformKeys => AccountTypeToCheck::ProviderPlatformKeys,
+            AccountType::IdentityInvitation => Ok(AccountTypeToCheck::IdentityInvitation),
+            AccountType::ProviderVotingKeys => Ok(AccountTypeToCheck::ProviderVotingKeys),
+            AccountType::ProviderOwnerKeys => Ok(AccountTypeToCheck::ProviderOwnerKeys),
+            AccountType::ProviderOperatorKeys => Ok(AccountTypeToCheck::ProviderOperatorKeys),
+            AccountType::ProviderPlatformKeys => Ok(AccountTypeToCheck::ProviderPlatformKeys),
             AccountType::DashpayReceivingFunds {
                 ..
-            } => AccountTypeToCheck::DashpayReceivingFunds,
+            } => Ok(AccountTypeToCheck::DashpayReceivingFunds),
             AccountType::DashpayExternalAccount {
                 ..
-            } => AccountTypeToCheck::DashpayExternalAccount,
+            } => Ok(AccountTypeToCheck::DashpayExternalAccount),
             AccountType::PlatformPayment {
                 ..
-            } => AccountTypeToCheck::PlatformPayment,
+            } => {
+                // Platform Payment accounts (DIP-17) operate on Dash Platform, not Core chain.
+                Err(PlatformAccountConversionError)
+            }
         }
     }
 }

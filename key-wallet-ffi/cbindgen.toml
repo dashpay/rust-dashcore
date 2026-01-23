@@ -34,21 +34,22 @@ exclude = []
 prefix = ""
 item_types = ["functions", "enums", "structs", "typedefs", "opaque", "constants"]
 
-# Force these to be forward-declared only:
+# Opaque types with Swift-compatible bodies (unsigned char _private[0] allows Swift to import)
 [export.body]
-"FFIPrivateKey" = ""
-"FFIExtendedPrivateKey" = ""
-"FFIPublicKey" = ""
-"FFIExtendedPublicKey" = ""
-"FFIWalletManager" = ""
-"FFIWallet" = ""
-"FFIAccount" = ""
-"FFIBLSAccount" = ""
-"FFIEdDSAAccount" = ""
-"FFIManagedAccount" = ""
-"FFIAccountCollection" = ""
-"FFIManagedAccountCollection" = ""
-"FFIAddressPool" = ""
+"FFIPrivateKey" = "{ unsigned char _private[0]; }"
+"FFIExtendedPrivateKey" = "{ unsigned char _private[0]; }"
+"FFIPublicKey" = "{ unsigned char _private[0]; }"
+"FFIExtendedPublicKey" = "{ unsigned char _private[0]; }"
+"FFIWalletManager" = "{ unsigned char _private[0]; }"
+"FFIWallet" = "{ unsigned char _private[0]; }"
+"FFIAccount" = "{ unsigned char _private[0]; }"
+"FFIBLSAccount" = "{ unsigned char _private[0]; }"
+"FFIEdDSAAccount" = "{ unsigned char _private[0]; }"
+"FFIManagedAccount" = "{ unsigned char _private[0]; }"
+"FFIManagedPlatformAccount" = "{ unsigned char _private[0]; }"
+"FFIAccountCollection" = "{ unsigned char _private[0]; }"
+"FFIManagedAccountCollection" = "{ unsigned char _private[0]; }"
+"FFIAddressPool" = "{ unsigned char _private[0]; }"
 
 [export.rename]
 # Rename types to match C conventions

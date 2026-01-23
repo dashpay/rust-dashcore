@@ -4,7 +4,7 @@
 //! specific accounts within a ManagedAccountCollection.
 
 use super::transaction_router::AccountTypeToCheck;
-use crate::account::{ManagedAccount, ManagedAccountCollection};
+use crate::account::{ManagedAccountCollection, ManagedCoreAccount};
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::Address;
@@ -42,9 +42,12 @@ pub struct TransactionCheckResult {
     pub new_addresses: Vec<Address>,
 }
 
-/// Enum representing the type of account that matched with embedded data
+/// Enum representing the type of Core account that matched with embedded data
+///
+/// Note: Platform Payment accounts (DIP-17) are NOT included here as they
+/// operate on Dash Platform, not the Core chain.
 #[derive(Debug, Clone)]
-pub enum AccountTypeMatch {
+pub enum CoreAccountTypeMatch {
     /// Standard BIP44 account with index and involved addresses
     StandardBIP44 {
         account_index: u32,
@@ -105,25 +108,18 @@ pub enum AccountTypeMatch {
         account_index: u32,
         involved_addresses: Vec<AddressInfo>,
     },
-    /// Platform Payment account (DIP-17)
-    /// Note: Platform addresses are NOT used in Core chain transactions
-    PlatformPayment {
-        account_index: u32,
-        key_class: u32,
-        involved_addresses: Vec<AddressInfo>,
-    },
 }
 
-impl AccountTypeMatch {
+impl CoreAccountTypeMatch {
     /// Get all involved addresses (both receive and change combined)
     pub fn all_involved_addresses(&self) -> Vec<AddressInfo> {
         match self {
-            AccountTypeMatch::StandardBIP44 {
+            CoreAccountTypeMatch::StandardBIP44 {
                 involved_receive_addresses,
                 involved_change_addresses,
                 ..
             }
-            | AccountTypeMatch::StandardBIP32 {
+            | CoreAccountTypeMatch::StandardBIP32 {
                 involved_receive_addresses,
                 involved_change_addresses,
                 ..
@@ -132,44 +128,40 @@ impl AccountTypeMatch {
                 all.extend(involved_change_addresses.clone());
                 all
             }
-            AccountTypeMatch::CoinJoin {
+            CoreAccountTypeMatch::CoinJoin {
                 involved_addresses,
                 ..
             } => involved_addresses.clone(),
-            AccountTypeMatch::IdentityRegistration {
+            CoreAccountTypeMatch::IdentityRegistration {
                 involved_addresses,
             }
-            | AccountTypeMatch::IdentityTopUp {
+            | CoreAccountTypeMatch::IdentityTopUp {
                 involved_addresses,
                 ..
             }
-            | AccountTypeMatch::IdentityTopUpNotBound {
+            | CoreAccountTypeMatch::IdentityTopUpNotBound {
                 involved_addresses,
             }
-            | AccountTypeMatch::IdentityInvitation {
+            | CoreAccountTypeMatch::IdentityInvitation {
                 involved_addresses,
             }
-            | AccountTypeMatch::ProviderVotingKeys {
+            | CoreAccountTypeMatch::ProviderVotingKeys {
                 involved_addresses,
             }
-            | AccountTypeMatch::ProviderOwnerKeys {
+            | CoreAccountTypeMatch::ProviderOwnerKeys {
                 involved_addresses,
             }
-            | AccountTypeMatch::ProviderOperatorKeys {
+            | CoreAccountTypeMatch::ProviderOperatorKeys {
                 involved_addresses,
             }
-            | AccountTypeMatch::ProviderPlatformKeys {
+            | CoreAccountTypeMatch::ProviderPlatformKeys {
                 involved_addresses,
             } => involved_addresses.clone(),
-            AccountTypeMatch::DashpayReceivingFunds {
+            CoreAccountTypeMatch::DashpayReceivingFunds {
                 involved_addresses,
                 ..
             }
-            | AccountTypeMatch::DashpayExternalAccount {
-                involved_addresses,
-                ..
-            }
-            | AccountTypeMatch::PlatformPayment {
+            | CoreAccountTypeMatch::DashpayExternalAccount {
                 involved_addresses,
                 ..
             } => involved_addresses.clone(),
@@ -179,31 +171,27 @@ impl AccountTypeMatch {
     /// Get the account index if applicable
     pub fn account_index(&self) -> Option<u32> {
         match self {
-            AccountTypeMatch::StandardBIP44 {
+            CoreAccountTypeMatch::StandardBIP44 {
                 account_index,
                 ..
             }
-            | AccountTypeMatch::StandardBIP32 {
+            | CoreAccountTypeMatch::StandardBIP32 {
                 account_index,
                 ..
             }
-            | AccountTypeMatch::CoinJoin {
+            | CoreAccountTypeMatch::CoinJoin {
                 account_index,
                 ..
             }
-            | AccountTypeMatch::IdentityTopUp {
+            | CoreAccountTypeMatch::IdentityTopUp {
                 account_index,
                 ..
             } => Some(*account_index),
-            AccountTypeMatch::DashpayReceivingFunds {
+            CoreAccountTypeMatch::DashpayReceivingFunds {
                 account_index,
                 ..
             }
-            | AccountTypeMatch::DashpayExternalAccount {
-                account_index,
-                ..
-            }
-            | AccountTypeMatch::PlatformPayment {
+            | CoreAccountTypeMatch::DashpayExternalAccount {
                 account_index,
                 ..
             } => Some(*account_index),
@@ -214,48 +202,45 @@ impl AccountTypeMatch {
     /// Convert to AccountTypeToCheck for routing
     pub fn to_account_type_to_check(&self) -> AccountTypeToCheck {
         match self {
-            AccountTypeMatch::StandardBIP44 {
+            CoreAccountTypeMatch::StandardBIP44 {
                 ..
             } => AccountTypeToCheck::StandardBIP44,
-            AccountTypeMatch::StandardBIP32 {
+            CoreAccountTypeMatch::StandardBIP32 {
                 ..
             } => AccountTypeToCheck::StandardBIP32,
-            AccountTypeMatch::CoinJoin {
+            CoreAccountTypeMatch::CoinJoin {
                 ..
             } => AccountTypeToCheck::CoinJoin,
-            AccountTypeMatch::IdentityRegistration {
+            CoreAccountTypeMatch::IdentityRegistration {
                 ..
             } => AccountTypeToCheck::IdentityRegistration,
-            AccountTypeMatch::IdentityTopUp {
+            CoreAccountTypeMatch::IdentityTopUp {
                 ..
             } => AccountTypeToCheck::IdentityTopUp,
-            AccountTypeMatch::IdentityTopUpNotBound {
+            CoreAccountTypeMatch::IdentityTopUpNotBound {
                 ..
             } => AccountTypeToCheck::IdentityTopUpNotBound,
-            AccountTypeMatch::IdentityInvitation {
+            CoreAccountTypeMatch::IdentityInvitation {
                 ..
             } => AccountTypeToCheck::IdentityInvitation,
-            AccountTypeMatch::ProviderVotingKeys {
+            CoreAccountTypeMatch::ProviderVotingKeys {
                 ..
             } => AccountTypeToCheck::ProviderVotingKeys,
-            AccountTypeMatch::ProviderOwnerKeys {
+            CoreAccountTypeMatch::ProviderOwnerKeys {
                 ..
             } => AccountTypeToCheck::ProviderOwnerKeys,
-            AccountTypeMatch::ProviderOperatorKeys {
+            CoreAccountTypeMatch::ProviderOperatorKeys {
                 ..
             } => AccountTypeToCheck::ProviderOperatorKeys,
-            AccountTypeMatch::ProviderPlatformKeys {
+            CoreAccountTypeMatch::ProviderPlatformKeys {
                 ..
             } => AccountTypeToCheck::ProviderPlatformKeys,
-            AccountTypeMatch::DashpayReceivingFunds {
+            CoreAccountTypeMatch::DashpayReceivingFunds {
                 ..
             } => AccountTypeToCheck::DashpayReceivingFunds,
-            AccountTypeMatch::DashpayExternalAccount {
+            CoreAccountTypeMatch::DashpayExternalAccount {
                 ..
             } => AccountTypeToCheck::DashpayExternalAccount,
-            AccountTypeMatch::PlatformPayment {
-                ..
-            } => AccountTypeToCheck::PlatformPayment,
         }
     }
 }
@@ -264,7 +249,7 @@ impl AccountTypeMatch {
 #[derive(Debug, Clone)]
 pub struct AccountMatch {
     /// The type of account that matched with embedded data
-    pub account_type_match: AccountTypeMatch,
+    pub account_type_match: CoreAccountTypeMatch,
     /// Value received by this account
     pub received: u64,
     /// Value sent from this account
@@ -387,18 +372,12 @@ impl ManagedAccountCollection {
                 }
                 matches
             }
-            AccountTypeToCheck::PlatformPayment => {
-                // Platform Payment addresses (DIP-17) are NOT used in Core chain transactions.
-                // They are only for Platform-side payments. This account type should never match
-                // any Core chain transaction by design.
-                Vec::new()
-            }
         }
     }
 
     /// Check indexed accounts (BTreeMap of accounts)
     fn check_indexed_accounts(
-        accounts: &alloc::collections::BTreeMap<u32, ManagedAccount>,
+        accounts: &alloc::collections::BTreeMap<u32, ManagedCoreAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();
@@ -411,7 +390,7 @@ impl ManagedAccountCollection {
     }
 }
 
-impl ManagedAccount {
+impl ManagedCoreAccount {
     /// Classify an address within this account
     pub fn classify_address(&self, address: &Address) -> AddressClassification {
         match &self.account_type {
@@ -555,7 +534,7 @@ impl ManagedAccount {
             }
         }
 
-        // Create the appropriate AccountTypeMatch based on account type
+        // Create the appropriate CoreAccountTypeMatch based on account type
         let has_addresses = !involved_receive_addresses.is_empty()
             || !involved_change_addresses.is_empty()
             || !involved_other_addresses.is_empty()
@@ -569,14 +548,14 @@ impl ManagedAccount {
                     ..
                 } => match standard_account_type {
                     crate::account::account_type::StandardAccountType::BIP44Account => {
-                        AccountTypeMatch::StandardBIP44 {
+                        CoreAccountTypeMatch::StandardBIP44 {
                             account_index: index.unwrap_or(0),
                             involved_receive_addresses,
                             involved_change_addresses,
                         }
                     }
                     crate::account::account_type::StandardAccountType::BIP32Account => {
-                        AccountTypeMatch::StandardBIP32 {
+                        CoreAccountTypeMatch::StandardBIP32 {
                             account_index: index.unwrap_or(0),
                             involved_receive_addresses,
                             involved_change_addresses,
@@ -585,7 +564,7 @@ impl ManagedAccount {
                 },
                 ManagedAccountType::CoinJoin {
                     ..
-                } => AccountTypeMatch::CoinJoin {
+                } => CoreAccountTypeMatch::CoinJoin {
                     account_index: index.unwrap_or(0),
                     // For CoinJoin, use both receive addresses and other addresses
                     // since CoinJoin addresses can be classified as either
@@ -597,66 +576,64 @@ impl ManagedAccount {
                 },
                 ManagedAccountType::IdentityRegistration {
                     ..
-                } => AccountTypeMatch::IdentityRegistration {
+                } => CoreAccountTypeMatch::IdentityRegistration {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::IdentityTopUp {
                     ..
-                } => AccountTypeMatch::IdentityTopUp {
+                } => CoreAccountTypeMatch::IdentityTopUp {
                     account_index: index.unwrap_or(0),
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::IdentityTopUpNotBoundToIdentity {
                     ..
-                } => AccountTypeMatch::IdentityTopUpNotBound {
+                } => CoreAccountTypeMatch::IdentityTopUpNotBound {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::IdentityInvitation {
                     ..
-                } => AccountTypeMatch::IdentityInvitation {
+                } => CoreAccountTypeMatch::IdentityInvitation {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::ProviderVotingKeys {
                     ..
-                } => AccountTypeMatch::ProviderVotingKeys {
+                } => CoreAccountTypeMatch::ProviderVotingKeys {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::ProviderOwnerKeys {
                     ..
-                } => AccountTypeMatch::ProviderOwnerKeys {
+                } => CoreAccountTypeMatch::ProviderOwnerKeys {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::ProviderOperatorKeys {
                     ..
-                } => AccountTypeMatch::ProviderOperatorKeys {
+                } => CoreAccountTypeMatch::ProviderOperatorKeys {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::ProviderPlatformKeys {
                     ..
-                } => AccountTypeMatch::ProviderPlatformKeys {
+                } => CoreAccountTypeMatch::ProviderPlatformKeys {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::DashpayReceivingFunds {
                     ..
-                } => AccountTypeMatch::DashpayReceivingFunds {
+                } => CoreAccountTypeMatch::DashpayReceivingFunds {
                     account_index: index.unwrap_or(0),
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::DashpayExternalAccount {
                     ..
-                } => AccountTypeMatch::DashpayExternalAccount {
+                } => CoreAccountTypeMatch::DashpayExternalAccount {
                     account_index: index.unwrap_or(0),
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::PlatformPayment {
-                    account,
-                    key_class,
                     ..
-                } => AccountTypeMatch::PlatformPayment {
-                    account_index: *account,
-                    key_class: *key_class,
-                    involved_addresses: involved_other_addresses,
-                },
+                } => {
+                    // Platform Payment accounts (DIP-17) operate on Dash Platform, not Core chain.
+                    // They should never be checked for Core chain transactions.
+                    return None;
+                }
             };
 
             Some(AccountMatch {
@@ -700,27 +677,27 @@ impl ManagedAccount {
             }
 
             if !involved_addresses.is_empty() {
-                // Create the appropriate AccountTypeMatch for identity accounts
+                // Create the appropriate CoreAccountTypeMatch for identity accounts
                 let account_type_match = match &self.account_type {
                     ManagedAccountType::IdentityRegistration {
                         ..
-                    } => AccountTypeMatch::IdentityRegistration {
+                    } => CoreAccountTypeMatch::IdentityRegistration {
                         involved_addresses,
                     },
                     ManagedAccountType::IdentityTopUp {
                         ..
-                    } => AccountTypeMatch::IdentityTopUp {
+                    } => CoreAccountTypeMatch::IdentityTopUp {
                         account_index: index.unwrap_or(0),
                         involved_addresses,
                     },
                     ManagedAccountType::IdentityTopUpNotBoundToIdentity {
                         ..
-                    } => AccountTypeMatch::IdentityTopUpNotBound {
+                    } => CoreAccountTypeMatch::IdentityTopUpNotBound {
                         involved_addresses,
                     },
                     ManagedAccountType::IdentityInvitation {
                         ..
-                    } => AccountTypeMatch::IdentityInvitation {
+                    } => CoreAccountTypeMatch::IdentityInvitation {
                         involved_addresses,
                     },
                     _ => {
@@ -769,7 +746,7 @@ impl ManagedAccount {
                             // Get the address info
                             if let Some(address_info) = addresses.addresses.get(&addr_index) {
                                 return Some(AccountMatch {
-                                    account_type_match: AccountTypeMatch::ProviderVotingKeys {
+                                    account_type_match: CoreAccountTypeMatch::ProviderVotingKeys {
                                         involved_addresses: vec![address_info.clone()],
                                     },
                                     received: 0,
@@ -809,7 +786,7 @@ impl ManagedAccount {
                             // Get the address info
                             if let Some(address_info) = addresses.addresses.get(&addr_index) {
                                 return Some(AccountMatch {
-                                    account_type_match: AccountTypeMatch::ProviderOwnerKeys {
+                                    account_type_match: CoreAccountTypeMatch::ProviderOwnerKeys {
                                         involved_addresses: vec![address_info.clone()],
                                     },
                                     received: 0,
@@ -854,7 +831,7 @@ impl ManagedAccount {
                         let operator_key_bytes: &[u8; 48] = operator_public_key.as_ref();
                         if bls_key.len() == 48 && bls_key.as_slice() == operator_key_bytes {
                             return Some(AccountMatch {
-                                account_type_match: AccountTypeMatch::ProviderOperatorKeys {
+                                account_type_match: CoreAccountTypeMatch::ProviderOperatorKeys {
                                     involved_addresses: vec![address_info.clone()],
                                 },
                                 received: 0,
@@ -899,9 +876,10 @@ impl ManagedAccount {
                             // Get the address info
                             if let Some(address_info) = addresses.addresses.get(&addr_index) {
                                 return Some(AccountMatch {
-                                    account_type_match: AccountTypeMatch::ProviderPlatformKeys {
-                                        involved_addresses: vec![address_info.clone()],
-                                    },
+                                    account_type_match:
+                                        CoreAccountTypeMatch::ProviderPlatformKeys {
+                                            involved_addresses: vec![address_info.clone()],
+                                        },
                                     received: 0,
                                     sent: 0,
                                     received_for_credit_conversion: 0,
@@ -1005,8 +983,8 @@ mod tests {
 
     #[test]
     fn test_coinjoin_account_type_match_no_change_addresses() {
-        // Create a CoinJoin AccountTypeMatch - note it only has involved_addresses, no split
-        let coinjoin_match = AccountTypeMatch::CoinJoin {
+        // Create a CoinJoin CoreAccountTypeMatch - note it only has involved_addresses, no split
+        let coinjoin_match = CoreAccountTypeMatch::CoinJoin {
             account_index: 5,
             involved_addresses: vec![], // Empty for simplicity
         };
@@ -1025,7 +1003,7 @@ mod tests {
     #[test]
     fn test_standard_accounts_have_separate_receive_and_change() {
         // Test StandardBIP44 account has both receive and change addresses
-        let bip44_match = AccountTypeMatch::StandardBIP44 {
+        let bip44_match = CoreAccountTypeMatch::StandardBIP44 {
             account_index: 0,
             involved_receive_addresses: vec![],
             involved_change_addresses: vec![],
@@ -1035,7 +1013,7 @@ mod tests {
         assert_eq!(bip44_match.account_index(), Some(0));
 
         // Test StandardBIP32 account also has separate receive and change addresses
-        let bip32_match = AccountTypeMatch::StandardBIP32 {
+        let bip32_match = CoreAccountTypeMatch::StandardBIP32 {
             account_index: 1,
             involved_receive_addresses: vec![],
             involved_change_addresses: vec![],

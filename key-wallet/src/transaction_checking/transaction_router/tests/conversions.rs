@@ -1,4 +1,4 @@
-//! Tests for From trait conversions from ManagedAccountType to AccountTypeToCheck
+//! Tests for TryFrom trait conversions from ManagedAccountType to AccountTypeToCheck
 
 use crate::account::account_type::StandardAccountType;
 use crate::bip32::DerivationPath;
@@ -23,7 +23,7 @@ fn test_single_pool() -> AddressPool {
 }
 
 #[test]
-fn test_from_standard_bip44_account() {
+fn test_try_from_standard_bip44_account() {
     let managed_account = ManagedAccountType::Standard {
         index: 0,
         standard_account_type: StandardAccountType::BIP44Account,
@@ -31,12 +31,12 @@ fn test_from_standard_bip44_account() {
         internal_addresses: test_address_pool(AddressPoolType::Internal),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::StandardBIP44);
 }
 
 #[test]
-fn test_from_standard_bip32_account() {
+fn test_try_from_standard_bip32_account() {
     let managed_account = ManagedAccountType::Standard {
         index: 0,
         standard_account_type: StandardAccountType::BIP32Account,
@@ -44,104 +44,116 @@ fn test_from_standard_bip32_account() {
         internal_addresses: test_address_pool(AddressPoolType::Internal),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::StandardBIP32);
 }
 
 #[test]
-fn test_from_coinjoin_account() {
+fn test_try_from_coinjoin_account() {
     let managed_account = ManagedAccountType::CoinJoin {
         index: 0,
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::CoinJoin);
 }
 
 #[test]
-fn test_from_identity_registration() {
+fn test_try_from_identity_registration() {
     let managed_account = ManagedAccountType::IdentityRegistration {
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::IdentityRegistration);
 }
 
 #[test]
-fn test_from_identity_topup() {
+fn test_try_from_identity_topup() {
     let managed_account = ManagedAccountType::IdentityTopUp {
         registration_index: 1,
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::IdentityTopUp);
 }
 
 #[test]
-fn test_from_identity_topup_not_bound() {
+fn test_try_from_identity_topup_not_bound() {
     let managed_account = ManagedAccountType::IdentityTopUpNotBoundToIdentity {
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::IdentityTopUpNotBound);
 }
 
 #[test]
-fn test_from_identity_invitation() {
+fn test_try_from_identity_invitation() {
     let managed_account = ManagedAccountType::IdentityInvitation {
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::IdentityInvitation);
 }
 
 #[test]
-fn test_from_provider_voting_keys() {
+fn test_try_from_provider_voting_keys() {
     let managed_account = ManagedAccountType::ProviderVotingKeys {
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::ProviderVotingKeys);
 }
 
 #[test]
-fn test_from_provider_owner_keys() {
+fn test_try_from_provider_owner_keys() {
     let managed_account = ManagedAccountType::ProviderOwnerKeys {
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::ProviderOwnerKeys);
 }
 
 #[test]
-fn test_from_provider_operator_keys() {
+fn test_try_from_provider_operator_keys() {
     let managed_account = ManagedAccountType::ProviderOperatorKeys {
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::ProviderOperatorKeys);
 }
 
 #[test]
-fn test_from_provider_platform_keys() {
+fn test_try_from_provider_platform_keys() {
     let managed_account = ManagedAccountType::ProviderPlatformKeys {
         addresses: test_single_pool(),
     };
 
-    let check_type: AccountTypeToCheck = managed_account.into();
+    let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::ProviderPlatformKeys);
 }
 
 #[test]
-fn test_from_ref_standard_bip44_account() {
+fn test_try_from_platform_payment_fails() {
+    let managed_account = ManagedAccountType::PlatformPayment {
+        account: 0,
+        key_class: 0,
+        addresses: test_single_pool(),
+    };
+
+    let result: Result<AccountTypeToCheck, _> = managed_account.try_into();
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_try_from_ref_standard_bip44_account() {
     let managed_account = ManagedAccountType::Standard {
         index: 0,
         standard_account_type: StandardAccountType::BIP44Account,
@@ -149,12 +161,12 @@ fn test_from_ref_standard_bip44_account() {
         internal_addresses: test_address_pool(AddressPoolType::Internal),
     };
 
-    let check_type: AccountTypeToCheck = (&managed_account).into();
+    let check_type: AccountTypeToCheck = (&managed_account).try_into().unwrap();
     assert_eq!(check_type, AccountTypeToCheck::StandardBIP44);
 }
 
 #[test]
-fn test_from_ref_all_account_types() {
+fn test_try_from_ref_all_account_types() {
     // Test all account types using reference conversion
     let test_cases = vec![
         (
@@ -225,7 +237,19 @@ fn test_from_ref_all_account_types() {
     ];
 
     for (managed_account, expected) in test_cases {
-        let check_type: AccountTypeToCheck = (&managed_account).into();
+        let check_type: AccountTypeToCheck = (&managed_account).try_into().unwrap();
         assert_eq!(check_type, expected);
     }
+}
+
+#[test]
+fn test_try_from_ref_platform_payment_fails() {
+    let managed_account = ManagedAccountType::PlatformPayment {
+        account: 0,
+        key_class: 0,
+        addresses: test_single_pool(),
+    };
+
+    let result: Result<AccountTypeToCheck, _> = (&managed_account).try_into();
+    assert!(result.is_err());
 }
