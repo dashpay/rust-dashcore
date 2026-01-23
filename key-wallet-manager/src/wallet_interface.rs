@@ -12,10 +12,24 @@ use dashcore::{Address, Block, Transaction, Txid};
 /// Result of processing a block through the wallet
 #[derive(Debug, Default, Clone)]
 pub struct BlockProcessingResult {
-    /// Transaction IDs that were relevant to the wallet
-    pub relevant_txids: Vec<Txid>,
+    /// Transaction IDs that were newly discovered
+    pub new_txids: Vec<Txid>,
+    /// Transaction IDs that were already in wallet history
+    pub existing_txids: Vec<Txid>,
     /// New addresses generated during gap limit maintenance
     pub new_addresses: Vec<Address>,
+}
+
+impl BlockProcessingResult {
+    /// Returns all relevant transaction IDs (new and existing)
+    pub fn relevant_txids(&self) -> impl Iterator<Item = &Txid> {
+        self.new_txids.iter().chain(self.existing_txids.iter())
+    }
+
+    /// Returns the count of all relevant transactions (new and existing)
+    pub fn relevant_tx_count(&self) -> usize {
+        self.new_txids.len() + self.existing_txids.len()
+    }
 }
 
 /// Trait for wallet implementations to receive SPV events

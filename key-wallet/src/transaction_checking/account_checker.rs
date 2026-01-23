@@ -30,6 +30,8 @@ pub enum AddressClassification {
 pub struct TransactionCheckResult {
     /// Whether the transaction belongs to any account
     pub is_relevant: bool,
+    /// Set to false if the transaction was already stored and is being re-processed (e.g., during rescan)
+    pub is_new_transaction: bool,
     /// Accounts that the transaction affects
     pub affected_accounts: Vec<AccountMatch>,
     /// Total value received by our accounts
@@ -282,6 +284,7 @@ impl ManagedAccountCollection {
     ) -> TransactionCheckResult {
         let mut result = TransactionCheckResult {
             is_relevant: false,
+            is_new_transaction: true,
             affected_accounts: Vec::new(),
             total_received: 0,
             total_sent: 0,
