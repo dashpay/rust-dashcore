@@ -239,7 +239,7 @@ impl HandshakeManager {
 
     /// Send version message.
     async fn send_version(&mut self, connection: &mut Peer) -> NetworkResult<()> {
-        let version_message = self.build_version_message(connection.peer_info().address)?;
+        let version_message = self.build_version_message(connection.address())?;
         connection.send_message(NetworkMessage::Version(version_message)).await?;
         tracing::debug!("Sent version message");
         Ok(())

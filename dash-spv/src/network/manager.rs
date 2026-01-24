@@ -22,7 +22,6 @@ use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
 use crate::network::{HandshakeManager, NetworkManager, Peer};
-use crate::types::PeerInfo;
 use async_trait::async_trait;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
@@ -432,16 +431,7 @@ impl PeerNetworkManager {
                                 );
                                 // Check if peer supports headers2
                                 let peer_guard = peer.read().await;
-                                if peer_guard
-                                    .peer_info()
-                                    .services
-                                    .map(|s| {
-                                        dashcore::network::constants::ServiceFlags::from(s).has(
-                                            dashcore::network::constants::NODE_HEADERS_COMPRESSED,
-                                        )
-                                    })
-                                    .unwrap_or(false)
-                                {
+                                if peer_guard.supports_headers2() {
                                     log::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
                                 }
                                 drop(peer_guard);
@@ -838,10 +828,8 @@ impl PeerNetworkManager {
             let mut filter_peer = None;
             for (addr, peer) in &peers {
                 let peer_guard = peer.read().await;
-                let peer_info = peer_guard.peer_info();
-                drop(peer_guard);
 
-                if peer_info.supports_compact_filters() {
+                if peer_guard.supports_compact_filters() {
                     filter_peer = Some(*addr);
                     break;
                 }
@@ -867,7 +855,7 @@ impl PeerNetworkManager {
             if let Some(current_addr) = *current_sync_peer {
                 if let Some((_, peer)) = peers.iter().find(|(addr, _)| *addr == current_addr) {
                     let peer_guard = peer.read().await;
-                    if peer_guard.peer_info().supports_headers2() {
+                    if peer_guard.supports_headers2() {
                         selected = Some(current_addr);
                     }
                 }
@@ -876,7 +864,7 @@ impl PeerNetworkManager {
             if selected.is_none() {
                 for (addr, peer) in &peers {
                     let peer_guard = peer.read().await;
-                    if peer_guard.peer_info().supports_headers2() {
+                    if peer_guard.supports_headers2() {
                         selected = Some(*addr);
                         break;
                     }
@@ -1315,21 +1303,6 @@ impl NetworkManager for PeerNetworkManager {
         self.connected_peer_count.load(Ordering::Relaxed)
     }
 
-    fn peer_info(&self) -> Vec<PeerInfo> {
-        let pool = self.pool.clone();
-        tokio::task::block_in_place(move || {
-            tokio::runtime::Handle::current().block_on(async {
-                let peers = pool.get_all_peers().await;
-                let mut infos = Vec::new();
-                for (_, peer) in peers.iter() {
-                    let peer_guard = peer.read().await;
-                    infos.push(peer_guard.peer_info());
-                }
-                infos
-            })
-        })
-    }
-
     async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
         let peers = self.pool.get_all_peers().await;
 
@@ -1343,18 +1316,10 @@ impl NetworkManager for PeerNetworkManager {
 
         for (addr, peer) in peers.iter() {
             let peer_guard = peer.read().await;
-            let peer_info = peer_guard.peer_info();
+
             peer_count += 1;
 
-            log::debug!(
-                "get_peer_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}",
-                addr,
-                peer_info.best_height,
-                peer_info.version,
-                peer_info.connected
-            );
-
-            if let Some(peer_height) = peer_info.best_height {
+            if let Some(peer_height) = peer_guard.best_height() {
                 if peer_height > 0 {
                     best_height = best_height.max(peer_height);
                     log::debug!(
@@ -1379,20 +1344,12 @@ impl NetworkManager for PeerNetworkManager {
         }
     }
 
-    async fn has_peer_with_service(
-        &self,
-        service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> bool {
+    async fn has_peer_with_service(&self, service_flags: ServiceFlags) -> bool {
         let peers = self.pool.get_all_peers().await;
 
         for (_, peer) in peers.iter() {
             let peer_guard = peer.read().await;
-            let peer_info = peer_guard.peer_info();
-            if peer_info
-                .services
-                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
-                .unwrap_or(false)
-            {
+            if peer_guard.has_service(service_flags) {
                 return true;
             }
         }
@@ -1401,7 +1358,7 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn has_headers2_peer(&self) -> bool {
-        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
+        self.has_peer_with_service(ServiceFlags::NODE_HEADERS_COMPRESSED).await
     }
 
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {

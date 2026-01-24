@@ -79,7 +79,7 @@ pub use error::{
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
 pub use tracing::level_filters::LevelFilter;
-pub use types::{ChainState, FilterMatch, PeerInfo, SpvStats, SyncProgress, ValidationMode};
+pub use types::{ChainState, FilterMatch, SpvStats, SyncProgress, ValidationMode};
 
 // Re-export commonly used dashcore types
 pub use dashcore::{Address, BlockHash, Network, OutPoint, QuorumHash, ScriptBuf};

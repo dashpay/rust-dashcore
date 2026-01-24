@@ -227,38 +227,6 @@ mod tests {
     }
 
     #[test]
-    fn test_peer_info_all_none() {
-        let info = dash_spv::PeerInfo {
-            address: "127.0.0.1:9999".parse().unwrap(),
-            connected: false,
-            last_seen: std::time::SystemTime::now(),
-            version: None,
-            services: None,
-            user_agent: None,
-            best_height: None,
-            wants_dsq_messages: None,
-            has_sent_headers2: false,
-        };
-
-        let ffi_info = FFIPeerInfo::from(info);
-        assert_eq!(ffi_info.connected, 0);
-        assert_eq!(ffi_info.version, 0);
-        assert_eq!(ffi_info.services, 0);
-        assert_eq!(ffi_info.best_height, 0);
-
-        unsafe {
-            let addr_str = FFIString::from_ptr(ffi_info.address.ptr).unwrap();
-            assert_eq!(addr_str, "127.0.0.1:9999");
-
-            let agent_str = FFIString::from_ptr(ffi_info.user_agent.ptr).unwrap();
-            assert_eq!(agent_str, "");
-
-            dash_spv_ffi_string_destroy(ffi_info.address);
-            dash_spv_ffi_string_destroy(ffi_info.user_agent);
-        }
-    }
-
-    #[test]
     fn test_concurrent_ffi_string_creation() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;

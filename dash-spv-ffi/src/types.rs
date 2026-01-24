@@ -1,6 +1,6 @@
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::types::{DetailedSyncProgress, MempoolRemovalReason, SyncStage};
-use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
+use dash_spv::{ChainState, SpvStats, SyncProgress};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
@@ -231,39 +231,6 @@ impl From<SpvStats> for FFISpvStats {
             bytes_received: stats.bytes_received,
             bytes_sent: stats.bytes_sent,
             uptime: stats.uptime.as_secs(),
-        }
-    }
-}
-
-#[repr(C)]
-pub struct FFIPeerInfo {
-    pub address: FFIString,
-    pub connected: u64,
-    pub last_seen: u64,
-    pub version: u32,
-    pub services: u64,
-    pub user_agent: FFIString,
-    pub best_height: u32,
-}
-
-impl From<PeerInfo> for FFIPeerInfo {
-    fn from(info: PeerInfo) -> Self {
-        FFIPeerInfo {
-            address: FFIString::new(&info.address.to_string()),
-            connected: if info.connected {
-                1
-            } else {
-                0
-            },
-            last_seen: info
-                .last_seen
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or(std::time::Duration::from_secs(0))
-                .as_secs(),
-            version: info.version.unwrap_or(0),
-            services: info.services.unwrap_or(0),
-            user_agent: FFIString::new(info.user_agent.as_deref().unwrap_or("")),
-            best_height: info.best_height.unwrap_or(0),
         }
     }
 }

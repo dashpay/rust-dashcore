@@ -83,10 +83,6 @@ impl NetworkManager for MockNetworkManager {
         1
     }
 
-    fn peer_info(&self) -> Vec<dash_spv::types::PeerInfo> {
-        Vec::new()
-    }
-
     async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
         Ok(Some(100))
     }

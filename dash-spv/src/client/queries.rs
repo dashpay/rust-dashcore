@@ -27,11 +27,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.network.peer_count()
     }
 
-    /// Get information about connected peers.
-    pub fn peer_info(&self) -> Vec<crate::types::PeerInfo> {
-        self.network.peer_info()
-    }
-
     /// Get the number of connected peers (async version).
     pub async fn get_peer_count(&self) -> usize {
         self.network.peer_count()

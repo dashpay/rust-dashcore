@@ -1,5 +1,6 @@
 //! Dash peer connection management.
 
+use dashcore::network::constants::ServiceFlags;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,7 +15,6 @@ use dashcore::Network;
 
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::constants::PING_INTERVAL;
-use crate::types::PeerInfo;
 
 /// Internal state for the TCP connection
 struct ConnectionState {
@@ -122,6 +122,24 @@ impl Peer {
             sent_sendheaders2: false,
             consecutive_resyncs: 0,
         })
+    }
+
+    pub fn best_height(&self) -> Option<u32> {
+        self.best_height
+    }
+
+    /// Check if peer supports compact filters (BIP 157/158).
+    pub fn supports_compact_filters(&self) -> bool {
+        self.has_service(ServiceFlags::COMPACT_FILTERS)
+    }
+
+    /// Check if peer supports headers2 compression (DIP-0025).
+    pub fn supports_headers2(&self) -> bool {
+        self.has_service(ServiceFlags::NODE_HEADERS_COMPRESSED)
+    }
+
+    pub fn has_service(&self, flags: ServiceFlags) -> bool {
+        self.services.map(|s| ServiceFlags::from(s).has(flags)).unwrap_or(false)
     }
 
     /// Connect to the peer (instance method for compatibility).
@@ -661,21 +679,6 @@ impl Peer {
 
         // Connection is healthy
         true
-    }
-
-    /// Get peer information.
-    pub fn peer_info(&self) -> PeerInfo {
-        PeerInfo {
-            address: self.address,
-            connected: self.is_connected(),
-            last_seen: self.connected_at.unwrap_or(SystemTime::UNIX_EPOCH),
-            version: self.version,
-            services: self.services,
-            user_agent: self.user_agent.clone(),
-            best_height: self.best_height,
-            wants_dsq_messages: None, // We don't track this yet
-            has_sent_headers2: false, // Will be tracked by the connection pool
-        }
     }
 
     /// Get connection statistics.
