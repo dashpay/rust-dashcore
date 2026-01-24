@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time;
 
@@ -69,7 +69,7 @@ pub struct PeerNetworkManager {
     /// Disable headers2 after decompression failure
     headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Dispatcher for unbounded and message-type filtered message distribution.
-    message_dispatcher: Arc<RwLock<MessageDispatcher>>,
+    message_dispatcher: Arc<Mutex<MessageDispatcher>>,
 }
 
 impl PeerNetworkManager {
@@ -107,7 +107,7 @@ impl PeerNetworkManager {
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
-            message_dispatcher: Arc::new(RwLock::new(MessageDispatcher::default())),
+            message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
         })
     }
 
@@ -116,7 +116,7 @@ impl PeerNetworkManager {
         &mut self,
         message_types: &[MessageType],
     ) -> UnboundedReceiver<Message> {
-        self.message_dispatcher.write().await.message_receiver(message_types)
+        self.message_dispatcher.lock().await.message_receiver(message_types)
     }
 
     /// Start the network manager
@@ -286,7 +286,7 @@ impl PeerNetworkManager {
         reputation_manager: Arc<PeerReputationManager>,
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
-        message_dispatcher: Arc<RwLock<MessageDispatcher>>,
+        message_dispatcher: Arc<Mutex<MessageDispatcher>>,
     ) {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
@@ -445,7 +445,7 @@ impl PeerNetworkManager {
                                         // Forward as regular Headers message
                                         let headers_msg = NetworkMessage::Headers(headers);
                                         let message = Message::new(msg.peer_address(), headers_msg);
-                                        message_dispatcher.write().await.dispatch(&message);
+                                        message_dispatcher.lock().await.dispatch(&message);
                                         continue; // Already sent, don't forward the original Headers2
                                     }
                                     Err(e) => {
@@ -498,7 +498,7 @@ impl PeerNetworkManager {
                             }
                         }
 
-                        message_dispatcher.write().await.dispatch(&msg);
+                        message_dispatcher.lock().await.dispatch(&msg);
                     }
                     Ok(None) => {
                         // No message available, continue immediately
@@ -1089,7 +1089,7 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
-        self.message_dispatcher.write().await.message_receiver(types)
+        self.message_dispatcher.lock().await.message_receiver(types)
     }
 
     async fn connect(&mut self) -> NetworkResult<()> {
