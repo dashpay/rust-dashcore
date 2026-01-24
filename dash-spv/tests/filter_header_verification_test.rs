@@ -8,7 +8,7 @@
 //! The failure indicates a race condition or inconsistency in how filter headers
 //! are calculated, stored, or verified across multiple batches.
 
-use dash_spv::network::{Message, MessageRouter};
+use dash_spv::network::{Message, MessageDispatcher};
 use dash_spv::{
     client::ClientConfig,
     error::{NetworkError, SyncError},
@@ -34,14 +34,14 @@ use tokio::sync::Mutex;
 #[derive(Debug)]
 struct MockNetworkManager {
     sent_messages: Vec<NetworkMessage>,
-    message_router: MessageRouter,
+    message_dispatcher: MessageDispatcher,
 }
 
 impl MockNetworkManager {
     fn new() -> Self {
         Self {
             sent_messages: Vec::new(),
-            message_router: MessageRouter::default(),
+            message_dispatcher: MessageDispatcher::default(),
         }
     }
 
@@ -78,8 +78,11 @@ impl NetworkManager for MockNetworkManager {
         self
     }
 
-    async fn subscribe(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
-        self.message_router.new_subscriber(types)
+    async fn message_receiver(
+        &mut self,
+        message_types: &[MessageType],
+    ) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.message_receiver(message_types)
     }
 
     async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {

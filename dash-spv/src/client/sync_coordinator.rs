@@ -78,9 +78,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let mut last_emitted_filters_downloaded: u64 = 0;
         let mut last_emitted_phase_name: Option<String> = None;
 
-        let mut subscriptions = self
+        let mut message_receiver = self
             .network
-            .subscribe(&[
+            .message_receiver(&[
                 MessageType::Headers,
                 MessageType::Headers2,
                 MessageType::CFHeaders,
@@ -431,7 +431,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         }
                     }
                 }
-                received = subscriptions.recv() => {
+                received = message_receiver.recv() => {
                     match received {
                         None => {
                             tracing::info!("Network message subscription channel closed.");

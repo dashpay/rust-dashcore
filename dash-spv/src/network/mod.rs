@@ -5,11 +5,12 @@ pub mod constants;
 pub mod discovery;
 pub mod handshake;
 pub mod manager;
+mod message_dispatcher;
 pub mod peer;
 pub mod pool;
 pub mod reputation;
-mod subscriptions;
 
+mod message_type;
 #[cfg(test)]
 mod tests;
 
@@ -19,54 +20,11 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::BlockHash;
 pub use handshake::{HandshakeManager, HandshakeState};
 pub use manager::PeerNetworkManager;
+pub use message_dispatcher::{Message, MessageDispatcher};
+pub use message_type::MessageType;
 pub use peer::Peer;
 use std::net::SocketAddr;
-pub use subscriptions::{Message, MessageRouter};
 use tokio::sync::mpsc::UnboundedReceiver;
-
-/// Message types that subscribers can subscribe to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MessageType {
-    /// Block headers (uncompressed).
-    Headers,
-    /// Block headers (compressed).
-    Headers2,
-    /// Compact filter headers.
-    CFHeaders,
-    /// Compact filters.
-    CFilter,
-    /// Full blocks.
-    Block,
-    /// Masternode list diffs.
-    MnListDiff,
-    /// Quorum rotation info.
-    QRInfo,
-    /// ChainLock signatures.
-    CLSig,
-    /// InstantSend locks.
-    ISLock,
-    /// Inventory announcements.
-    Inv,
-}
-
-impl MessageType {
-    /// Check if a NetworkMessage matches this type.
-    pub fn matches(&self, msg: &NetworkMessage) -> bool {
-        matches!(
-            (self, msg),
-            (MessageType::Headers, NetworkMessage::Headers(_))
-                | (MessageType::Headers2, NetworkMessage::Headers2(_))
-                | (MessageType::CFHeaders, NetworkMessage::CFHeaders(_))
-                | (MessageType::CFilter, NetworkMessage::CFilter(_))
-                | (MessageType::Block, NetworkMessage::Block(_))
-                | (MessageType::MnListDiff, NetworkMessage::MnListDiff(_))
-                | (MessageType::QRInfo, NetworkMessage::QRInfo(_))
-                | (MessageType::CLSig, NetworkMessage::CLSig(_))
-                | (MessageType::ISLock, NetworkMessage::ISLock(_))
-                | (MessageType::Inv, NetworkMessage::Inv(_))
-        )
-    }
-}
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]
@@ -74,9 +32,8 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Convert to Any for downcasting.
     fn as_any(&self) -> &dyn std::any::Any;
 
-    /// Subscribe to specific message types.
-    /// Returns a receiver that yields only messages of the subscribed types.
-    async fn subscribe(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message>;
+    /// Creates and returns a receiver that yields only messages of the matching the provided message types.
+    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message>;
 
     /// Connect to the network.
     async fn connect(&mut self) -> NetworkResult<()>;

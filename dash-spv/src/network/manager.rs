@@ -20,7 +20,9 @@ use crate::network::pool::PeerPool;
 use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
-use crate::network::{HandshakeManager, Message, MessageRouter, MessageType, NetworkManager, Peer};
+use crate::network::{
+    HandshakeManager, Message, MessageDispatcher, MessageType, NetworkManager, Peer,
+};
 use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
 use dashcore::network::constants::ServiceFlags;
@@ -66,8 +68,8 @@ pub struct PeerNetworkManager {
     connected_peer_count: Arc<AtomicUsize>,
     /// Disable headers2 after decompression failure
     headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
-    /// Router for unbounded stream/topic-based messaging.
-    message_router: Arc<RwLock<MessageRouter>>,
+    /// Dispatcher for unbounded and message-type filtered message distribution.
+    message_dispatcher: Arc<RwLock<MessageDispatcher>>,
 }
 
 impl PeerNetworkManager {
@@ -105,14 +107,16 @@ impl PeerNetworkManager {
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
-            message_router: Arc::new(RwLock::new(MessageRouter::default())),
+            message_dispatcher: Arc::new(RwLock::new(MessageDispatcher::default())),
         })
     }
 
-    /// Subscribe to specific message types.
-    /// Returns a receiver that yields only messages of the subscribed types.
-    pub async fn subscribe(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
-        self.message_router.write().await.new_subscriber(types)
+    /// Creates and returns a receiver that yields only messages of the matching the provided message types.
+    pub async fn message_receiver(
+        &mut self,
+        message_types: &[MessageType],
+    ) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.write().await.message_receiver(message_types)
     }
 
     /// Start the network manager
@@ -198,7 +202,7 @@ impl PeerNetworkManager {
         let user_agent = self.user_agent.clone();
         let connected_peer_count = self.connected_peer_count.clone();
         let headers2_disabled = self.headers2_disabled.clone();
-        let message_router = self.message_router.clone();
+        let message_dispatcher = self.message_dispatcher.clone();
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -238,7 +242,7 @@ impl PeerNetworkManager {
                                 reputation_manager.clone(),
                                 connected_peer_count.clone(),
                                 headers2_disabled.clone(),
-                                message_router,
+                                message_dispatcher,
                             )
                             .await;
                         }
@@ -282,7 +286,7 @@ impl PeerNetworkManager {
         reputation_manager: Arc<PeerReputationManager>,
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
-        message_router: Arc<RwLock<MessageRouter>>,
+        message_dispatcher: Arc<RwLock<MessageDispatcher>>,
     ) {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
@@ -441,7 +445,7 @@ impl PeerNetworkManager {
                                         // Forward as regular Headers message
                                         let headers_msg = NetworkMessage::Headers(headers);
                                         let message = Message::new(msg.peer_address(), headers_msg);
-                                        message_router.read().await.route(&message);
+                                        message_dispatcher.read().await.dispatch(&message);
                                         continue; // Already sent, don't forward the original Headers2
                                     }
                                     Err(e) => {
@@ -494,7 +498,7 @@ impl PeerNetworkManager {
                             }
                         }
 
-                        message_router.read().await.route(&msg);
+                        message_dispatcher.read().await.dispatch(&msg);
                     }
                     Ok(None) => {
                         // No message available, continue immediately
@@ -1072,7 +1076,7 @@ impl Clone for PeerNetworkManager {
             exclusive_mode: self.exclusive_mode,
             connected_peer_count: self.connected_peer_count.clone(),
             headers2_disabled: self.headers2_disabled.clone(),
-            message_router: self.message_router.clone(),
+            message_dispatcher: self.message_dispatcher.clone(),
         }
     }
 }
@@ -1084,8 +1088,8 @@ impl NetworkManager for PeerNetworkManager {
         self
     }
 
-    async fn subscribe(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
-        self.message_router.write().await.new_subscriber(types)
+    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.write().await.message_receiver(types)
     }
 
     async fn connect(&mut self) -> NetworkResult<()> {

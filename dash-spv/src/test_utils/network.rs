@@ -1,5 +1,5 @@
 use crate::error::{NetworkError, NetworkResult};
-use crate::network::{Message, MessageRouter, MessageType, NetworkManager};
+use crate::network::{Message, MessageDispatcher, MessageType, NetworkManager};
 use async_trait::async_trait;
 use dashcore::{
     block::Header as BlockHeader, network::constants::ServiceFlags,
@@ -19,7 +19,7 @@ pub struct MockNetworkManager {
     connected: bool,
     connected_peer: SocketAddr,
     headers_chain: Vec<BlockHeader>,
-    message_router: MessageRouter,
+    message_dispatcher: MessageDispatcher,
 }
 
 impl MockNetworkManager {
@@ -29,7 +29,7 @@ impl MockNetworkManager {
             connected: true,
             connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
             headers_chain: Vec::new(),
-            message_router: MessageRouter::default(),
+            message_dispatcher: MessageDispatcher::default(),
         }
     }
 
@@ -101,8 +101,8 @@ impl NetworkManager for MockNetworkManager {
         self
     }
 
-    async fn subscribe(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
-        self.message_router.new_subscriber(types)
+    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.message_receiver(types)
     }
 
     async fn connect(&mut self) -> NetworkResult<()> {
@@ -125,7 +125,7 @@ impl NetworkManager for MockNetworkManager {
             let headers = self.process_getheaders(getheaders);
             if !headers.is_empty() {
                 let message = Message::new(self.connected_peer, NetworkMessage::Headers(headers));
-                self.message_router.route(&message);
+                self.message_dispatcher.dispatch(&message);
             }
         }
 

@@ -1,6 +1,6 @@
 //! Tests for edge case handling in filter header sync, particularly at the tip.
 
-use dash_spv::network::{Message, MessageRouter, MessageType};
+use dash_spv::network::{Message, MessageDispatcher, MessageType};
 use dash_spv::{
     client::ClientConfig,
     error::NetworkResult,
@@ -39,14 +39,14 @@ fn create_mock_filter_header(height: u32) -> FilterHeader {
 /// Mock network manager that captures sent messages
 struct MockNetworkManager {
     sent_messages: Arc<Mutex<Vec<NetworkMessage>>>,
-    message_router: MessageRouter,
+    message_dispatcher: MessageDispatcher,
 }
 
 impl MockNetworkManager {
     fn new() -> Self {
         Self {
             sent_messages: Arc::new(Mutex::new(Vec::new())),
-            message_router: MessageRouter::default(),
+            message_dispatcher: MessageDispatcher::default(),
         }
     }
 
@@ -61,8 +61,11 @@ impl NetworkManager for MockNetworkManager {
         self
     }
 
-    async fn subscribe(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
-        self.message_router.new_subscriber(types)
+    async fn message_receiver(
+        &mut self,
+        message_types: &[MessageType],
+    ) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.message_receiver(message_types)
     }
 
     async fn connect(&mut self) -> NetworkResult<()> {
