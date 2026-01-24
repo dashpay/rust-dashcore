@@ -148,8 +148,8 @@ macro_rules! hash_trait_impls {
         }
 
         #[cfg(feature = "bincode")]
-        impl<$($gen: $gent),*> bincode::Decode for Hash<$($gen),*> {
-            fn decode<D: bincode::de::Decoder>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        impl<C $(, $gen: $gent)*> bincode::Decode<C> for Hash<$($gen),*> {
+            fn decode<D: bincode::de::Decoder<Context = C>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
                 use crate::Hash;
                 // Decode a fixed-length byte array and then create the Hash
                 let bytes: [u8; $bits / 8] = <[u8; $bits / 8]>::decode(decoder)?;
@@ -158,8 +158,8 @@ macro_rules! hash_trait_impls {
         }
 
         #[cfg(feature = "bincode")]
-        impl<'de, $($gen: $gent),*> bincode::BorrowDecode<'de> for Hash<$($gen),*> {
-            fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        impl<'de, C $(, $gen: $gent)*> bincode::BorrowDecode<'de, C> for Hash<$($gen),*> {
+            fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
                 use std::convert::TryInto;
                 // Decode a borrowed reference to a byte slice
                 let bytes: &[u8] = bincode::BorrowDecode::borrow_decode(decoder)?;

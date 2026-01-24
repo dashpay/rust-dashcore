@@ -3,7 +3,7 @@ members = ["dash", "dash-network", "dash-network-ffi", "hashes", "internals", "f
 resolver = "2"
 
 [workspace.package]
-version = "0.41.0"
+version = "0.41.1"
 
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }

@@ -32,16 +32,16 @@ macro_rules! bincode_impl {
             }
         }
 
-        impl<$($gen: $gent),*> bincode::Decode for $t<$($gen),*> {
-            fn decode<D: bincode::de::Decoder>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        impl<C $(, $gen: $gent)*> bincode::Decode<C> for $t<$($gen),*> {
+            fn decode<D: bincode::de::Decoder<Context = C>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
                 // Decode a fixed-length byte array and then reconstruct via from_byte_array
                 let bytes: [u8; $len] = <[u8; $len]>::decode(decoder)?;
                 Ok(Self::from_byte_array(bytes))
             }
         }
 
-        impl<'de, $($gen: $gent),*> bincode::BorrowDecode<'de> for $t<$($gen),*> {
-            fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        impl<'de, C $(, $gen: $gent)*> bincode::BorrowDecode<'de, C> for $t<$($gen),*> {
+            fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
                 // Decode a borrowed reference, then use from_bytes_ref (and clone, since our type is Copy)
                 use std::convert::TryInto;
 

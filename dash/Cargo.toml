@@ -62,8 +62,8 @@ bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optiona
 hex_lit = "0.1.1"
 anyhow = { version= "1.0" }
 hex = { version= "0.4" }
-bincode = { version= "=2.0.0-rc.3", optional = true }
-bincode_derive = { version= "=2.0.0-rc.3", optional = true }
+bincode = { version = "2.0.1", optional = true }
+bincode_derive = { version = "2.0.1", optional = true }
 blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900", optional = true }
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.8.1"
@@ -76,7 +76,7 @@ serde_json = "1.0.140"
 serde_test = "1.0.177"
 serde_derive = "1.0.219"
 secp256k1 = { features = [ "recovery", "rand", "hashes" ], version="0.30.0" }
-bincode = { version= "=2.0.0-rc.3" }
+bincode = { version = "2.0.1" }
 assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"

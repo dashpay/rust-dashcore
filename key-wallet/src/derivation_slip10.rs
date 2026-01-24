@@ -523,8 +523,8 @@ impl bincode::Encode for ExtendedEd25519PrivKey {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for ExtendedEd25519PrivKey {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> bincode::Decode<C> for ExtendedEd25519PrivKey {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         Ok(ExtendedEd25519PrivKey {
@@ -555,8 +555,8 @@ impl bincode::Encode for ExtendedEd25519PubKey {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for ExtendedEd25519PubKey {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> bincode::Decode<C> for ExtendedEd25519PubKey {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let network = Network::decode(decoder)?;
@@ -580,20 +580,20 @@ impl bincode::Decode for ExtendedEd25519PubKey {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for ExtendedEd25519PrivKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedEd25519PrivKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        <Self as bincode::Decode>::decode(decoder)
+        <Self as bincode::Decode<C>>::decode(decoder)
     }
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for ExtendedEd25519PubKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedEd25519PubKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        <Self as bincode::Decode>::decode(decoder)
+        <Self as bincode::Decode<C>>::decode(decoder)
     }
 }
 
