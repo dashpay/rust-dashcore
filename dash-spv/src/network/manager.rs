@@ -445,7 +445,7 @@ impl PeerNetworkManager {
                                         // Forward as regular Headers message
                                         let headers_msg = NetworkMessage::Headers(headers);
                                         let message = Message::new(msg.peer_address(), headers_msg);
-                                        message_dispatcher.read().await.dispatch(&message);
+                                        message_dispatcher.write().await.dispatch(&message);
                                         continue; // Already sent, don't forward the original Headers2
                                     }
                                     Err(e) => {
@@ -498,7 +498,7 @@ impl PeerNetworkManager {
                             }
                         }
 
-                        message_dispatcher.read().await.dispatch(&msg);
+                        message_dispatcher.write().await.dispatch(&msg);
                     }
                     Ok(None) => {
                         // No message available, continue immediately

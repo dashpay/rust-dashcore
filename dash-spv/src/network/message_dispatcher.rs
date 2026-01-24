@@ -71,15 +71,12 @@ impl MessageDispatcher {
         receiver
     }
 
-    /// Distributes a message to all subscribers interested in its type.
-    pub fn dispatch(&self, message: &Message) {
+    /// Distributes a message to all subscribers interested in its type. Prunes dead senders automatically.
+    pub fn dispatch(&mut self, message: &Message) {
         let message_type = MessageType::from(message);
-        let Some(senders) = self.senders.get(&message_type) else {
-            return;
+        if let Some(senders) = self.senders.get_mut(&message_type) {
+            senders.retain(|sender| sender.send(message.clone()).is_ok());
         };
-        for sender in senders {
-            let _ = sender.send(message.clone());
-        }
     }
 }
 
@@ -123,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_no_subscribers() {
-        let message_dispatcher = MessageDispatcher::default();
+        let mut message_dispatcher = MessageDispatcher::default();
         let msg = Message::new(test_socket_address(1), NetworkMessage::Headers(vec![]));
 
         // Should not panic with no subscribers
