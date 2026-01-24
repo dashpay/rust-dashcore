@@ -17,9 +17,10 @@ use dashcore::network::message::NetworkMessage;
 ///
 /// Syntax for entries:
 /// - `Name` for unit variants (e.g., `Verack`)
-/// - `Name { .. }` for variants with data (e.g., `Headers { .. }`)
+/// - `Name (..)` for tuple variants with data (e.g., `Headers (..)`)
+/// - `Name { .. }` for struct variants (e.g., `Unknown { .. }`)
 macro_rules! define_message_types {
-    ($($(#[$meta:meta])* $variant:ident $({ $($field:tt)* })?),* $(,)?) => {
+    ($($(#[$meta:meta])* $variant:ident $( ( $($tuple:tt)* ) )? $( { $($field:tt)* } )?),* $(,)?) => {
         /// Message types that subscribers can subscribe to.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum MessageType {
@@ -29,7 +30,7 @@ macro_rules! define_message_types {
         impl From<&Message> for MessageType {
             fn from(value: &Message) -> Self {
                 match value.inner() {
-                    $(NetworkMessage::$variant $({ $($field)* })? => MessageType::$variant,)*
+                    $(NetworkMessage::$variant $( ( $($tuple)* ) )? $( { $($field)* } )? => MessageType::$variant,)*
                 }
             }
         }
@@ -38,97 +39,132 @@ macro_rules! define_message_types {
 
 define_message_types! {
     /// `version`
-    Version { .. },
+    Version (..),
     /// `verack`
     Verack,
     /// `addr`
-    Addr { .. },
+    Addr (..),
     /// `inv`
-    Inv { .. },
+    Inv (..),
     /// `getdata`
-    GetData { .. },
+    GetData (..),
     /// `notfound`
-    NotFound { .. },
+    NotFound (..),
     /// `getblocks`
-    GetBlocks { .. },
+    GetBlocks (..),
     /// `getheaders`
-    GetHeaders { .. },
+    GetHeaders (..),
     /// `mempool`
     MemPool,
     /// `tx`
-    Tx { .. },
+    Tx (..),
     /// `block`
-    Block { .. },
+    Block (..),
     /// `headers`
-    Headers { .. },
+    Headers (..),
     /// `sendheaders`
     SendHeaders,
     /// `getheaders2`
-    GetHeaders2 { .. },
+    GetHeaders2 (..),
     /// `sendheaders2`
     SendHeaders2,
     /// `headers2`
-    Headers2 { .. },
+    Headers2 (..),
     /// `getaddr`
     GetAddr,
     /// `ping`
-    Ping { .. },
+    Ping (..),
     /// `pong`
-    Pong { .. },
+    Pong (..),
     /// `merkleblock`
-    MerkleBlock { .. },
+    MerkleBlock (..),
     /// `filterload`
-    FilterLoad { .. },
+    FilterLoad (..),
     /// `filteradd`
-    FilterAdd { .. },
+    FilterAdd (..),
     /// `filterclear`
     FilterClear,
     /// `getcfilters`
-    GetCFilters { .. },
+    GetCFilters (..),
     /// `cfilter`
-    CFilter { .. },
+    CFilter (..),
     /// `getcfheaders`
-    GetCFHeaders { .. },
+    GetCFHeaders (..),
     /// `cfheaders`
-    CFHeaders { .. },
+    CFHeaders (..),
     /// `getcfcheckpt`
-    GetCFCheckpt { .. },
+    GetCFCheckpt (..),
     /// `cfcheckpt`
-    CFCheckpt { .. },
+    CFCheckpt (..),
     /// `sendcmpct`
-    SendCmpct { .. },
+    SendCmpct (..),
     /// `cmpctblock`
-    CmpctBlock { .. },
+    CmpctBlock (..),
     /// `getblocktxn`
-    GetBlockTxn { .. },
+    GetBlockTxn (..),
     /// `blocktxn`
-    BlockTxn { .. },
+    BlockTxn (..),
     /// `alert`
-    Alert { .. },
+    Alert (..),
     /// `reject`
-    Reject { .. },
+    Reject (..),
     /// `feefilter`
-    FeeFilter { .. },
+    FeeFilter (..),
     /// `wtxidrelay`
     WtxidRelay,
     /// `addrv2`
-    AddrV2 { .. },
+    AddrV2 (..),
     /// `sendaddrv2`
     SendAddrV2,
     /// `getmnlistd`
-    GetMnListD { .. },
+    GetMnListD (..),
     /// `mnlistdiff`
-    MnListDiff { .. },
+    MnListDiff (..),
     /// `getqrinfo`
-    GetQRInfo { .. },
+    GetQRInfo (..),
     /// `qrinfo`
-    QRInfo { .. },
+    QRInfo (..),
     /// `clsig`
-    CLSig { .. },
+    CLSig (..),
     /// `isdlock`
-    ISLock { .. },
+    ISLock (..),
     /// `senddsq`
-    SendDsq { .. },
+    SendDsq (..),
     /// Unknown message type
     Unknown { .. },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::test_socket_address;
+
+    #[test]
+    fn from_message_unit_variant() {
+        let addr = test_socket_address(1);
+
+        let msg = Message::new(addr, NetworkMessage::SendHeaders);
+        assert_eq!(MessageType::from(&msg), MessageType::SendHeaders);
+    }
+
+    #[test]
+    fn from_message_tuple_variant() {
+        let addr = test_socket_address(1);
+
+        let msg = Message::new(addr, NetworkMessage::Alert(vec![]));
+        assert_eq!(MessageType::from(&msg), MessageType::Alert);
+    }
+
+    #[test]
+    fn from_message_unknown_variant() {
+        use dashcore::network::message::CommandString;
+
+        let addr = test_socket_address(1);
+        let unknown_msg = NetworkMessage::Unknown {
+            command: CommandString::try_from_static("test").unwrap(),
+            payload: vec![],
+        };
+        let msg = Message::new(addr, unknown_msg);
+        assert_eq!(MessageType::from(&msg), MessageType::Unknown);
+    }
 }
