@@ -6,7 +6,7 @@
 //! - [`Message`]: Wraps a `NetworkMessage` with the originating peer address
 //! - [`MessageDispatcher`]: Manages channels and dispatches messages to interested parties
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 
 use dashcore::network::message::NetworkMessage;
@@ -64,8 +64,9 @@ impl MessageDispatcher {
         message_types: &[MessageType],
     ) -> UnboundedReceiver<Message> {
         let (sender, receiver) = unbounded_channel();
-        for message_type in message_types {
-            self.senders.entry(*message_type).or_default().push(sender.clone());
+        let unique_types: HashSet<MessageType> = message_types.iter().copied().collect();
+        for message_type in unique_types {
+            self.senders.entry(message_type).or_default().push(sender.clone());
         }
         receiver
     }
@@ -209,5 +210,21 @@ mod tests {
 
         assert_eq!(receiver.recv().await.unwrap(), headers_msg);
         assert_eq!(receiver.recv().await.unwrap(), inv_msg);
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_message_types_no_duplicate_delivery() {
+        let mut message_dispatcher = MessageDispatcher::default();
+        let mut receiver = message_dispatcher.message_receiver(&[
+            MessageType::Headers,
+            MessageType::Headers,
+            MessageType::Headers,
+        ]);
+
+        let msg = Message::new(test_socket_address(1), NetworkMessage::Headers(vec![]));
+        message_dispatcher.dispatch(&msg);
+
+        assert_eq!(receiver.recv().await.unwrap(), msg);
+        assert!(receiver.try_recv().is_err());
     }
 }
