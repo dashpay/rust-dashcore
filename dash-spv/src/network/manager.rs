@@ -62,8 +62,6 @@ pub struct PeerNetworkManager {
     mempool_strategy: MempoolStrategy,
     /// Last peer that sent us a message
     last_message_peer: Arc<Mutex<Option<SocketAddr>>>,
-    /// Track which peers have sent us Headers2 messages
-    peers_sent_headers2: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Optional user agent to advertise
     user_agent: Option<String>,
     /// Exclusive mode: restrict to configured peers only (no DNS or peer store)
@@ -121,7 +119,6 @@ impl PeerNetworkManager {
             data_dir,
             mempool_strategy: config.mempool_strategy,
             last_message_peer: Arc::new(Mutex::new(None)),
-            peers_sent_headers2: Arc::new(Mutex::new(HashSet::new())),
             user_agent: config.user_agent.clone(),
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
@@ -1123,7 +1120,6 @@ impl Clone for PeerNetworkManager {
             data_dir: self.data_dir.clone(),
             mempool_strategy: self.mempool_strategy,
             last_message_peer: self.last_message_peer.clone(),
-            peers_sent_headers2: self.peers_sent_headers2.clone(),
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
             connected_peer_count: self.connected_peer_count.clone(),
@@ -1357,33 +1353,8 @@ impl NetworkManager for PeerNetworkManager {
         false
     }
 
-    async fn has_headers2_peer(&self) -> bool {
-        self.has_peer_with_service(ServiceFlags::NODE_HEADERS_COMPRESSED).await
-    }
-
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
         // Call the instance method to avoid code duplication
         self.get_last_message_peer_id().await
-    }
-
-    async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
-        // Get the last peer that sent us a message
-        let last_msg_peer = self.last_message_peer.lock().await;
-        if let Some(addr) = &*last_msg_peer {
-            let mut peers_sent_headers2 = self.peers_sent_headers2.lock().await;
-            peers_sent_headers2.insert(*addr);
-            tracing::info!("Marked peer {} as having sent Headers2", addr);
-        }
-        Ok(())
-    }
-
-    async fn peer_has_sent_headers2(&self) -> bool {
-        // Check if the current sync peer has sent us Headers2
-        let current_peer = self.current_sync_peer.lock().await;
-        if let Some(peer_addr) = &*current_peer {
-            let peers_sent_headers2 = self.peers_sent_headers2.lock().await;
-            return peers_sent_headers2.contains(peer_addr);
-        }
-        false
     }
 }
