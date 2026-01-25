@@ -16,12 +16,12 @@ use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
-use crate::network::persist::PeerStore;
 use crate::network::pool::PeerPool;
 use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
 use crate::network::{HandshakeManager, NetworkManager, Peer};
+use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
@@ -38,7 +38,7 @@ pub struct PeerNetworkManager {
     /// AddrV2 handler
     addrv2_handler: Arc<AddrV2Handler>,
     /// Peer persistence
-    peer_store: Arc<PeerStore>,
+    peer_store: Arc<PersistentPeerStorage>,
     /// Peer reputation manager
     reputation_manager: Arc<PeerReputationManager>,
     /// Network type
@@ -79,23 +79,12 @@ impl PeerNetworkManager {
 
         let discovery = DnsDiscovery::new().await?;
         let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
-        let peer_store = PeerStore::new(config.network, data_dir.clone());
+
+        let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
 
         let reputation_manager = Arc::new(PeerReputationManager::new());
 
-        // Load reputation data if available
-        let reputation_path = data_dir.join("peer_reputation.json");
-
-        // Ensure the directory exists before attempting to load
-        if let Some(parent_dir) = reputation_path.parent() {
-            if !parent_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(parent_dir) {
-                    log::warn!("Failed to create directory for reputation data: {}", e);
-                }
-            }
-        }
-
-        if let Err(e) = reputation_manager.load_from_storage(&reputation_path).await {
+        if let Err(e) = reputation_manager.load_from_storage(&peer_store).await {
             log::warn!("Failed to load peer reputation data: {}", e);
         }
 
@@ -632,7 +621,6 @@ impl PeerNetworkManager {
         let reputation_manager = self.reputation_manager.clone();
         let peer_search_started = self.peer_search_started.clone();
         let initial_peers = self.initial_peers.clone();
-        let data_dir = self.data_dir.clone();
         let connected_peer_count = self.connected_peer_count.clone();
 
         // Check if we're in exclusive mode (explicit flag or peers configured)
@@ -787,8 +775,7 @@ impl PeerNetworkManager {
                     }
 
                     // Save reputation data periodically
-                    let storage_path = data_dir.join("peer_reputation.json");
-                    if let Err(e) = reputation_manager.save_to_storage(&storage_path).await {
+                    if let Err(e) = reputation_manager.save_to_storage(&*peer_store).await {
                         log::warn!("Failed to save reputation data: {}", e);
                     }
                 }
@@ -1080,8 +1067,7 @@ impl PeerNetworkManager {
         }
 
         // Save reputation data before shutdown
-        let reputation_path = self.data_dir.join("peer_reputation.json");
-        if let Err(e) = self.reputation_manager.save_to_storage(&reputation_path).await {
+        if let Err(e) = self.reputation_manager.save_to_storage(&*self.peer_store).await {
             log::warn!("Failed to save reputation data on shutdown: {}", e);
         }
 

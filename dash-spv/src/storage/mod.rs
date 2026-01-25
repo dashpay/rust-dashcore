@@ -1,15 +1,15 @@
 //! Storage abstraction for the Dash SPV client.
 
-pub(crate) mod io;
-
 pub mod types;
 
 mod blocks;
 mod chainstate;
 mod filters;
+mod io;
 mod lockfile;
 mod masternode;
 mod metadata;
+mod peers;
 mod segments;
 mod transactions;
 
@@ -40,6 +40,7 @@ pub use crate::storage::filters::FilterHeaderStorage;
 pub use crate::storage::filters::FilterStorage;
 pub use crate::storage::masternode::MasternodeStateStorage;
 pub use crate::storage::metadata::MetadataStorage;
+pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
 pub use crate::storage::transactions::TransactionStorage;
 
 pub use types::*;

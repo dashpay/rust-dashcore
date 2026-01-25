@@ -5,17 +5,14 @@
 //! implements automatic banning for excessive misbehavior, and provides reputation
 //! decay over time for recovery.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-use crate::storage::io::atomic_write;
-
-/// Maximum misbehavior score before a peer is banned
-const MAX_MISBEHAVIOR_SCORE: i32 = 100;
+use crate::storage::PeerStorage;
 
 /// Misbehavior score thresholds for different violations
 pub mod misbehavior_scores {
@@ -80,22 +77,75 @@ const DECAY_INTERVAL: Duration = Duration::from_secs(60 * 60); // 1 hour
 /// Amount to decay reputation score per interval
 const DECAY_AMOUNT: i32 = 5;
 
+/// Maximum misbehavior score before a peer is banned
+const MAX_MISBEHAVIOR_SCORE: i32 = 100;
+
 /// Minimum score (most positive reputation)
-const MIN_SCORE: i32 = -50;
+const MIN_MISBEHAVIOR_SCORE: i32 = -50;
+
+const MAX_BAN_COUNT: u32 = 1000;
+
+const MAX_ACTION_COUNT: u64 = 1_000_000;
+
+fn clamp_peer_score<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut v = i32::deserialize(deserializer)?;
+
+    if v < MIN_MISBEHAVIOR_SCORE {
+        log::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
+        v = MIN_MISBEHAVIOR_SCORE
+    } else if v > MAX_MISBEHAVIOR_SCORE {
+        log::warn!("Peer has invalid score {v}, clamping to max {MAX_MISBEHAVIOR_SCORE}");
+        v = MAX_MISBEHAVIOR_SCORE
+    }
+
+    Ok(v)
+}
+
+fn clamp_peer_ban_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut v = u32::deserialize(deserializer)?;
+
+    if v > MAX_BAN_COUNT {
+        log::warn!("Peer has excessive ban count {v}, clamping to {MAX_BAN_COUNT}");
+        v = MAX_BAN_COUNT
+    }
+
+    Ok(v)
+}
+
+fn clamp_peer_connection_attempts<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut v = u64::deserialize(deserializer)?;
+
+    v = v.min(MAX_ACTION_COUNT);
+
+    Ok(v)
+}
 
 /// Peer reputation entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerReputation {
     /// Current misbehavior score
+    #[serde(deserialize_with = "clamp_peer_score")]
     pub score: i32,
 
     /// Number of times this peer has been banned
+    #[serde(deserialize_with = "clamp_peer_ban_count")]
     pub ban_count: u32,
 
     /// Time when the peer was banned (if currently banned)
+    #[serde(skip)]
     pub banned_until: Option<Instant>,
 
     /// Last time the reputation was updated
+    #[serde(skip, default = "Instant::now")]
     pub last_update: Instant,
 
     /// Total number of positive actions
@@ -105,24 +155,15 @@ pub struct PeerReputation {
     pub negative_actions: u64,
 
     /// Connection count
+    #[serde(deserialize_with = "clamp_peer_connection_attempts")]
     pub connection_attempts: u64,
 
     /// Successful connection count
     pub successful_connections: u64,
 
     /// Last connection time
+    #[serde(skip)]
     pub last_connection: Option<Instant>,
-}
-
-// Custom serialization for PeerReputation
-#[derive(Serialize, Deserialize)]
-struct SerializedPeerReputation {
-    score: i32,
-    ban_count: u32,
-    positive_actions: u64,
-    negative_actions: u64,
-    connection_attempts: u64,
-    successful_connections: u64,
 }
 
 impl Default for PeerReputation {
@@ -171,7 +212,7 @@ impl PeerReputation {
             // Cap at a reasonable maximum to avoid excessive decay
             let intervals_i32 = intervals.min(i32::MAX as u64) as i32;
             let decay = intervals_i32.saturating_mul(DECAY_AMOUNT);
-            self.score = (self.score - decay).max(MIN_SCORE);
+            self.score = (self.score - decay).max(MIN_MISBEHAVIOR_SCORE);
             self.last_update = now;
         }
 
@@ -235,7 +276,7 @@ impl PeerReputationManager {
         // Update score
         let old_score = reputation.score;
         reputation.score =
-            (reputation.score + score_change).clamp(MIN_SCORE, MAX_MISBEHAVIOR_SCORE);
+            (reputation.score + score_change).clamp(MIN_MISBEHAVIOR_SCORE, MAX_MISBEHAVIOR_SCORE);
 
         // Track positive/negative actions
         if score_change > 0 {
@@ -406,114 +447,40 @@ impl PeerReputationManager {
     }
 
     /// Save reputation data to persistent storage
-    pub async fn save_to_storage(&self, path: &std::path::Path) -> std::io::Result<()> {
+    pub async fn save_to_storage(&self, storage: &impl PeerStorage) -> std::io::Result<()> {
         let reputations = self.reputations.read().await;
 
-        // Convert to serializable format
-        let data: Vec<(SocketAddr, SerializedPeerReputation)> = reputations
-            .iter()
-            .map(|(addr, rep)| {
-                let serialized = SerializedPeerReputation {
-                    score: rep.score,
-                    ban_count: rep.ban_count,
-                    positive_actions: rep.positive_actions,
-                    negative_actions: rep.negative_actions,
-                    connection_attempts: rep.connection_attempts,
-                    successful_connections: rep.successful_connections,
-                };
-                (*addr, serialized)
-            })
-            .collect();
-
-        let json = serde_json::to_string_pretty(&data)?;
-        atomic_write(path, json.as_bytes()).await.map_err(std::io::Error::other)
+        storage.save_peers_reputation(&reputations).await.map_err(std::io::Error::other)
     }
 
     /// Load reputation data from persistent storage
-    pub async fn load_from_storage(&self, path: &std::path::Path) -> std::io::Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-
-        let json = tokio::fs::read_to_string(path).await?;
-        let data: Vec<(SocketAddr, SerializedPeerReputation)> = serde_json::from_str(&json)?;
+    pub async fn load_from_storage(&self, storage: &impl PeerStorage) -> std::io::Result<()> {
+        let data = storage.load_peers_reputation().await.map_err(std::io::Error::other)?;
 
         let mut reputations = self.reputations.write().await;
         let mut loaded_count = 0;
         let mut skipped_count = 0;
 
-        for (addr, serialized) in data {
-            // Validate score is within expected range
-            let score = if serialized.score < MIN_SCORE {
-                log::warn!(
-                    "Peer {} has invalid score {} (below minimum), clamping to {}",
-                    addr,
-                    serialized.score,
-                    MIN_SCORE
-                );
-                MIN_SCORE
-            } else if serialized.score > MAX_MISBEHAVIOR_SCORE {
-                log::warn!(
-                    "Peer {} has invalid score {} (above maximum), clamping to {}",
-                    addr,
-                    serialized.score,
-                    MAX_MISBEHAVIOR_SCORE
-                );
-                MAX_MISBEHAVIOR_SCORE
-            } else {
-                serialized.score
-            };
-
-            // Validate ban count is reasonable (max 1000 bans)
-            const MAX_BAN_COUNT: u32 = 1000;
-            let ban_count = if serialized.ban_count > MAX_BAN_COUNT {
-                log::warn!(
-                    "Peer {} has excessive ban count {}, clamping to {}",
-                    addr,
-                    serialized.ban_count,
-                    MAX_BAN_COUNT
-                );
-                MAX_BAN_COUNT
-            } else {
-                serialized.ban_count
-            };
-
-            // Validate action counts are reasonable (max 1 million actions)
-            const MAX_ACTION_COUNT: u64 = 1_000_000;
-            let positive_actions = serialized.positive_actions.min(MAX_ACTION_COUNT);
-            let negative_actions = serialized.negative_actions.min(MAX_ACTION_COUNT);
-            let connection_attempts = serialized.connection_attempts.min(MAX_ACTION_COUNT);
-            let successful_connections = serialized.successful_connections.min(MAX_ACTION_COUNT);
-
+        for (addr, mut reputation) in data {
             // Validate successful connections don't exceed attempts
-            let successful_connections = successful_connections.min(connection_attempts);
+            reputation.successful_connections =
+                reputation.successful_connections.min(reputation.connection_attempts);
 
             // Skip entry if data appears corrupted
-            if positive_actions == MAX_ACTION_COUNT || negative_actions == MAX_ACTION_COUNT {
+            if reputation.positive_actions > MAX_ACTION_COUNT
+                || reputation.negative_actions > MAX_ACTION_COUNT
+            {
                 log::warn!("Skipping peer {} with potentially corrupted action counts", addr);
                 skipped_count += 1;
                 continue;
             }
 
-            let rep = PeerReputation {
-                score,
-                ban_count,
-                banned_until: None,
-                last_update: Instant::now(),
-                positive_actions,
-                negative_actions,
-                connection_attempts,
-                successful_connections,
-                last_connection: None,
-            };
-
             // Apply initial decay based on ban count
-            let mut rep = rep;
-            if rep.ban_count > 0 {
-                rep.score = rep.score.max(50); // Start with higher score for previously banned peers
+            if reputation.ban_count > 0 {
+                reputation.score = reputation.score.max(50); // Start with higher score for previously banned peers
             }
 
-            reputations.insert(addr, rep);
+            reputations.insert(addr, reputation);
             loaded_count += 1;
         }
 
