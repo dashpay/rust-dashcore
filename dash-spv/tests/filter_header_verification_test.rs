@@ -14,7 +14,6 @@ use dash_spv::{
     network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::legacy::filters::FilterSyncManager,
-    types::PeerInfo,
 };
 use dashcore::{
     block::{Header as BlockHeader, Version},
@@ -73,10 +72,6 @@ impl NetworkManager for MockNetworkManager {
 
     fn peer_count(&self) -> usize {
         1
-    }
-
-    fn peer_info(&self) -> Vec<PeerInfo> {
-        vec![]
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

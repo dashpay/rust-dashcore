@@ -47,9 +47,6 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Get the number of connected peers.
     fn peer_count(&self) -> usize;
 
-    /// Get peer information.
-    fn peer_info(&self) -> Vec<crate::types::PeerInfo>;
-
     /// Get the best block height reported by connected peers.
     async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>>;
 

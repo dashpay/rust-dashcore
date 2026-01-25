@@ -57,15 +57,6 @@ async fn test_peer_connection() {
     let peer_count = client.peer_count();
     assert!(peer_count > 0, "Should have connected to at least one peer");
 
-    // Get peer info
-    let peer_info = client.peer_info();
-    assert_eq!(peer_info.len(), peer_count);
-
-    println!("Connected to {} peers:", peer_count);
-    for info in peer_info {
-        println!("  - {} (version: {:?})", info.address, info.version);
-    }
-
     // Stop the client
     client.stop().await.unwrap();
 }

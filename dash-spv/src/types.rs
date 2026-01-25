@@ -402,55 +402,6 @@ pub enum ValidationMode {
     None,
 }
 
-/// Peer information.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PeerInfo {
-    /// Peer address.
-    pub address: std::net::SocketAddr,
-
-    /// Connection state.
-    pub connected: bool,
-
-    /// Last seen time.
-    pub last_seen: SystemTime,
-
-    /// Peer version.
-    pub version: Option<u32>,
-
-    /// Peer services.
-    pub services: Option<u64>,
-
-    /// User agent.
-    pub user_agent: Option<String>,
-
-    /// Best height reported by peer.
-    pub best_height: Option<u32>,
-
-    /// Whether this peer wants to receive DSQ (CoinJoin queue) messages.
-    pub wants_dsq_messages: Option<bool>,
-
-    /// Whether this peer has actually sent us Headers2 messages (not just supports it).
-    pub has_sent_headers2: bool,
-}
-
-impl PeerInfo {
-    /// Check if peer supports compact filters (BIP 157/158).
-    pub fn supports_compact_filters(&self) -> bool {
-        use dashcore::network::constants::ServiceFlags;
-
-        self.services
-            .map(|s| ServiceFlags::from(s).has(ServiceFlags::COMPACT_FILTERS))
-            .unwrap_or(false)
-    }
-
-    /// Check if peer supports headers2 compression (DIP-0025).
-    pub fn supports_headers2(&self) -> bool {
-        use dashcore::network::constants::{ServiceFlags, NODE_HEADERS_COMPRESSED};
-
-        self.services.map(|s| ServiceFlags::from(s).has(NODE_HEADERS_COMPRESSED)).unwrap_or(false)
-    }
-}
-
 /// Filter match result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilterMatch {

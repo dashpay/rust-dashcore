@@ -10,7 +10,6 @@ use dashcore_hashes::Hash;
 
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::NetworkManager;
-use crate::types::PeerInfo;
 
 /// Mock network manager for testing
 pub struct MockNetworkManager {
@@ -142,24 +141,6 @@ impl NetworkManager for MockNetworkManager {
             1
         } else {
             0
-        }
-    }
-
-    fn peer_info(&self) -> Vec<PeerInfo> {
-        if self.connected {
-            vec![PeerInfo {
-                address: "127.0.0.1:9999".parse().unwrap(),
-                connected: true,
-                last_seen: std::time::SystemTime::now(),
-                version: Some(70015),
-                services: Some(1),
-                user_agent: Some("/MockPeer:1.0.0/".to_string()),
-                best_height: Some(self.headers_chain.len() as u32),
-                wants_dsq_messages: None,
-                has_sent_headers2: false,
-            }]
-        } else {
-            vec![]
         }
     }
 
