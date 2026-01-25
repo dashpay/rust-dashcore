@@ -64,11 +64,6 @@ impl<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> MessageHandle
                     headers2.headers.len()
                 );
 
-                // Track that this peer has sent us Headers2
-                if let Err(e) = self.network.mark_peer_sent_headers2().await {
-                    tracing::error!("Failed to mark peer sent headers2: {}", e);
-                }
-
                 // Move to sync manager without cloning
                 return self
                     .sync_manager

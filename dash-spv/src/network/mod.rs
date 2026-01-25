@@ -56,11 +56,6 @@ pub trait NetworkManager: Send + Sync + 'static {
         service_flags: dashcore::network::constants::ServiceFlags,
     ) -> bool;
 
-    /// Check if any connected peer supports headers2 compression.
-    async fn has_headers2_peer(&self) -> bool {
-        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
-    }
-
     /// Get the peer ID of the last peer that sent us a message.
     /// Returns PeerId(0) if no message has been received yet.
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
@@ -71,16 +66,6 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Default implementation returns None; implementations with peer tracking can override.
     async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
         None
-    }
-
-    /// Mark that the current peer has sent us Headers2 messages.
-    async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
-        Ok(()) // Default implementation
-    }
-
-    /// Check if the current peer has sent us Headers2 messages.
-    async fn peer_has_sent_headers2(&self) -> bool {
-        false // Default implementation
     }
 
     /// Request QRInfo from the network.
