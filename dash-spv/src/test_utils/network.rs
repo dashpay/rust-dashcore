@@ -20,6 +20,7 @@ pub struct MockNetworkManager {
     connected_peer: SocketAddr,
     headers_chain: Vec<BlockHeader>,
     message_dispatcher: MessageDispatcher,
+    sent_messages: Vec<NetworkMessage>,
 }
 
 impl MockNetworkManager {
@@ -30,6 +31,7 @@ impl MockNetworkManager {
             connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
             headers_chain: Vec::new(),
             message_dispatcher: MessageDispatcher::default(),
+            sent_messages: Vec::new(),
         }
     }
 
@@ -87,6 +89,10 @@ impl MockNetworkManager {
             Vec::new()
         }
     }
+
+    pub fn sent_messages(&self) -> &Vec<NetworkMessage> {
+        &self.sent_messages
+    }
 }
 
 impl Default for MockNetworkManager {
@@ -128,6 +134,8 @@ impl NetworkManager for MockNetworkManager {
                 self.message_dispatcher.dispatch(&message);
             }
         }
+
+        self.sent_messages.push(message);
 
         Ok(())
     }

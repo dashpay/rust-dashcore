@@ -1,10 +1,8 @@
 //! Tests for edge case handling in filter header sync, particularly at the tip.
 
-use dash_spv::network::{Message, MessageDispatcher, MessageType};
+use dash_spv::test_utils::MockNetworkManager;
 use dash_spv::{
     client::ClientConfig,
-    error::NetworkResult,
-    network::NetworkManager,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::legacy::filters::FilterSyncManager,
 };
@@ -15,73 +13,7 @@ use dashcore::{
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::Mutex;
-
-/// Mock network manager that captures sent messages
-struct MockNetworkManager {
-    sent_messages: Arc<Mutex<Vec<NetworkMessage>>>,
-    message_dispatcher: MessageDispatcher,
-}
-
-impl MockNetworkManager {
-    fn new() -> Self {
-        Self {
-            sent_messages: Arc::new(Mutex::new(Vec::new())),
-            message_dispatcher: MessageDispatcher::default(),
-        }
-    }
-
-    async fn get_sent_messages(&self) -> Vec<NetworkMessage> {
-        self.sent_messages.lock().await.clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl NetworkManager for MockNetworkManager {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    async fn message_receiver(
-        &mut self,
-        message_types: &[MessageType],
-    ) -> UnboundedReceiver<Message> {
-        self.message_dispatcher.message_receiver(message_types)
-    }
-
-    async fn connect(&mut self) -> NetworkResult<()> {
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> NetworkResult<()> {
-        Ok(())
-    }
-
-    async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
-        self.sent_messages.lock().await.push(message);
-        Ok(())
-    }
-
-    fn is_connected(&self) -> bool {
-        true
-    }
-
-    fn peer_count(&self) -> usize {
-        1
-    }
-
-    async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
-        Ok(Some(100))
-    }
-
-    async fn has_peer_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> bool {
-        true
-    }
-}
 
 #[tokio::test]
 async fn test_filter_sync_at_tip_edge_case() {
@@ -115,7 +47,7 @@ async fn test_filter_sync_at_tip_edge_case() {
     assert!(!result.unwrap(), "Should not start sync when already at tip");
 
     // Verify no messages were sent
-    let sent_messages = network.get_sent_messages().await;
+    let sent_messages = network.sent_messages();
     assert_eq!(sent_messages.len(), 0, "Should not send any messages when at tip");
 }
 
@@ -146,7 +78,7 @@ async fn test_no_invalid_getcfheaders_at_tip() {
     assert!(result.unwrap(), "Should start sync when behind by 1 block");
 
     // Check the sent message
-    let sent_messages = network.get_sent_messages().await;
+    let sent_messages = network.sent_messages();
     assert_eq!(sent_messages.len(), 1, "Should send exactly one message");
 
     match &sent_messages[0] {

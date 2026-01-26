@@ -8,18 +8,16 @@
 //! The failure indicates a race condition or inconsistency in how filter headers
 //! are calculated, stored, or verified across multiple batches.
 
-use dash_spv::network::{Message, MessageDispatcher};
+use dash_spv::test_utils::MockNetworkManager;
 use dash_spv::{
     client::ClientConfig,
-    error::{NetworkError, SyncError},
-    network::{MessageType, NetworkManager},
+    error::SyncError,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
     sync::legacy::filters::FilterSyncManager,
 };
 use dashcore::{
     block::Header as BlockHeader,
     hash_types::{FilterHash, FilterHeader},
-    network::message::NetworkMessage,
     network::message_filter::CFHeaders,
     BlockHash, Network,
 };
@@ -27,75 +25,7 @@ use dashcore_hashes::{sha256d, Hash};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::Mutex;
-
-/// Mock network manager for testing filter sync
-#[derive(Debug)]
-struct MockNetworkManager {
-    sent_messages: Vec<NetworkMessage>,
-    message_dispatcher: MessageDispatcher,
-}
-
-impl MockNetworkManager {
-    fn new() -> Self {
-        Self {
-            sent_messages: Vec::new(),
-            message_dispatcher: MessageDispatcher::default(),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn clear_sent_messages(&mut self) {
-        self.sent_messages.clear();
-    }
-}
-
-#[async_trait::async_trait]
-impl NetworkManager for MockNetworkManager {
-    async fn connect(&mut self) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    async fn send_message(&mut self, message: NetworkMessage) -> Result<(), NetworkError> {
-        self.sent_messages.push(message);
-        Ok(())
-    }
-
-    fn is_connected(&self) -> bool {
-        true
-    }
-
-    fn peer_count(&self) -> usize {
-        1
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    async fn message_receiver(
-        &mut self,
-        message_types: &[MessageType],
-    ) -> UnboundedReceiver<Message> {
-        self.message_dispatcher.message_receiver(message_types)
-    }
-
-    async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
-        Ok(Some(100))
-    }
-
-    async fn has_peer_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> bool {
-        true
-    }
-}
 
 /// Create test filter headers with proper chain linkage
 fn create_test_cfheaders_message(
