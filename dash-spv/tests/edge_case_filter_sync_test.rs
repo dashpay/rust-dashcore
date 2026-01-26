@@ -10,31 +10,13 @@ use dash_spv::{
 };
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::message::NetworkMessage,
-    BlockHash, Network,
+    Network,
 };
-use dashcore_hashes::Hash;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::Mutex;
-
-/// Create a mock block header
-fn create_mock_header(height: u32, prev_hash: BlockHash) -> BlockHeader {
-    BlockHeader {
-        version: dashcore::block::Version::ONE,
-        prev_blockhash: prev_hash,
-        merkle_root: dashcore::hash_types::TxMerkleNode::all_zeros(),
-        time: 1234567890 + height,
-        bits: dashcore::pow::CompactTarget::from_consensus(0x1d00ffff),
-        nonce: height,
-    }
-}
-
-/// Create a mock filter header
-fn create_mock_filter_header(height: u32) -> FilterHeader {
-    FilterHeader::from_slice(&[height as u8; 32]).unwrap()
-}
 
 /// Mock network manager that captures sent messages
 struct MockNetworkManager {
@@ -114,17 +96,9 @@ async fn test_filter_sync_at_tip_edge_case() {
     let mut network = MockNetworkManager::new();
 
     // Set up storage with headers and filter headers at the same height (tip)
-    let height = 100;
-    let mut headers = Vec::new();
-    let mut filter_headers = Vec::new();
-    let mut prev_hash = BlockHash::all_zeros();
-
-    for i in 1..=height {
-        let header = create_mock_header(i, prev_hash);
-        prev_hash = header.block_hash();
-        headers.push(header);
-        filter_headers.push(create_mock_filter_header(i));
-    }
+    const TIP_HEIGHT: u32 = 100;
+    let headers = BlockHeader::dummy_batch(0..TIP_HEIGHT + 1);
+    let filter_headers = FilterHeader::dummy_batch(0..TIP_HEIGHT + 1);
 
     storage.store_headers(&headers).await.unwrap();
     storage.store_filter_headers(&filter_headers).await.unwrap();
@@ -132,8 +106,8 @@ async fn test_filter_sync_at_tip_edge_case() {
     // Verify initial state
     let tip_height = storage.get_tip_height().await.unwrap();
     let filter_tip_height = storage.get_filter_tip_height().await.unwrap().unwrap();
-    assert_eq!(tip_height, height - 1); // 0-indexed
-    assert_eq!(filter_tip_height, height - 1); // 0-indexed
+    assert_eq!(tip_height, TIP_HEIGHT); // 0-indexed
+    assert_eq!(filter_tip_height, TIP_HEIGHT); // 0-indexed
 
     // Try to start filter sync when already at tip
     let result = filter_sync.start_sync_headers(&mut network, &mut storage).await;
@@ -157,23 +131,11 @@ async fn test_no_invalid_getcfheaders_at_tip() {
         .expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
-    // Create a scenario where we're one block behind
-    let height = 100;
-    let mut headers = Vec::new();
-    let mut filter_headers = Vec::new();
-    let mut prev_hash = BlockHash::all_zeros();
-
-    // Store headers up to height
-    for i in 1..=height {
-        let header = create_mock_header(i, prev_hash);
-        prev_hash = header.block_hash();
-        headers.push(header);
-    }
-
-    // Store filter headers up to height - 1
-    for i in 1..=(height - 1) {
-        filter_headers.push(create_mock_filter_header(i));
-    }
+    // Create a scenario where we're one filter header behind
+    // FilterHeader at TIP_HEIGHT is the one missing
+    const TIP_HEIGHT: u32 = 99;
+    let headers = BlockHeader::dummy_batch(0..TIP_HEIGHT + 1);
+    let filter_headers = FilterHeader::dummy_batch(0..TIP_HEIGHT);
 
     storage.store_headers(&headers).await.unwrap();
     storage.store_filter_headers(&filter_headers).await.unwrap();
@@ -191,10 +153,9 @@ async fn test_no_invalid_getcfheaders_at_tip() {
         NetworkMessage::GetCFHeaders(get_cf_headers) => {
             // The critical check: start_height must be <= height of stop_hash
             assert_eq!(
-                get_cf_headers.start_height,
-                height - 1,
+                get_cf_headers.start_height, TIP_HEIGHT,
                 "Start height should be {}",
-                height - 1
+                TIP_HEIGHT
             );
             // We can't easily verify the stop_hash height here, but the request should be valid
             println!(
