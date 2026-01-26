@@ -1,21 +1,25 @@
-use std::any::Any;
-use std::collections::VecDeque;
-
+use crate::error::{NetworkError, NetworkResult};
+use crate::network::{Message, MessageDispatcher, MessageType, NetworkManager};
 use async_trait::async_trait;
 use dashcore::{
     block::Header as BlockHeader, network::constants::ServiceFlags,
     network::message::NetworkMessage, network::message_blockdata::GetHeadersMessage, BlockHash,
 };
 use dashcore_hashes::Hash;
+use std::any::Any;
+use std::net::SocketAddr;
+use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::error::{NetworkError, NetworkResult};
-use crate::network::NetworkManager;
+pub fn test_socket_address(id: u8) -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, id], id as u16))
+}
 
 /// Mock network manager for testing
 pub struct MockNetworkManager {
     connected: bool,
-    messages: VecDeque<NetworkMessage>,
+    connected_peer: SocketAddr,
     headers_chain: Vec<BlockHeader>,
+    message_dispatcher: MessageDispatcher,
 }
 
 impl MockNetworkManager {
@@ -23,8 +27,9 @@ impl MockNetworkManager {
     pub fn new() -> Self {
         Self {
             connected: true,
-            messages: VecDeque::new(),
+            connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
             headers_chain: Vec::new(),
+            message_dispatcher: MessageDispatcher::default(),
         }
     }
 
@@ -96,6 +101,10 @@ impl NetworkManager for MockNetworkManager {
         self
     }
 
+    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.message_receiver(types)
+    }
+
     async fn connect(&mut self) -> NetworkResult<()> {
         self.connected = true;
         Ok(())
@@ -103,7 +112,6 @@ impl NetworkManager for MockNetworkManager {
 
     async fn disconnect(&mut self) -> NetworkResult<()> {
         self.connected = false;
-        self.messages.clear();
         Ok(())
     }
 
@@ -116,20 +124,12 @@ impl NetworkManager for MockNetworkManager {
         if let NetworkMessage::GetHeaders(ref getheaders) = message {
             let headers = self.process_getheaders(getheaders);
             if !headers.is_empty() {
-                self.messages.push_back(NetworkMessage::Headers(headers));
+                let message = Message::new(self.connected_peer, NetworkMessage::Headers(headers));
+                self.message_dispatcher.dispatch(&message);
             }
         }
 
         Ok(())
-    }
-
-    async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
-        if !self.connected {
-            return Err(NetworkError::NotConnected);
-        }
-
-        // Then check our internal queue
-        Ok(self.messages.pop_front())
     }
 
     fn is_connected(&self) -> bool {
@@ -150,14 +150,5 @@ impl NetworkManager for MockNetworkManager {
 
     async fn has_peer_with_service(&self, _service_flags: ServiceFlags) -> bool {
         self.connected
-    }
-
-    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        // For mock, always return PeerId(1) when connected
-        if self.connected {
-            crate::types::PeerId(1)
-        } else {
-            crate::types::PeerId(0)
-        }
     }
 }

@@ -3,9 +3,10 @@
 #[cfg(test)]
 mod tests {
     use crate::client::{ClientConfig, MessageHandler};
+    use crate::network::Message;
     use crate::storage::DiskStorageManager;
     use crate::sync::legacy::SyncManager;
-    use crate::test_utils::MockNetworkManager;
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
     use crate::types::{MempoolState, SpvEvent, SpvStats};
     use crate::ChainState;
     use dashcore::block::Header as BlockHeader;
@@ -69,7 +70,7 @@ mod tests {
         let headers2 = dashcore::network::message_headers2::Headers2Message {
             headers: vec![],
         };
-        let message = NetworkMessage::Headers2(headers2);
+        let message = Message::new(test_socket_address(1), NetworkMessage::Headers2(headers2));
 
         // Handle the message
         let result = handler.handle_network_message(&message).await;
@@ -115,7 +116,7 @@ mod tests {
             new_quorums: vec![],
             quorums_chainlock_signatures: vec![],
         };
-        let message = NetworkMessage::MnListDiff(mnlistdiff);
+        let message = Message::new(test_socket_address(1), NetworkMessage::MnListDiff(mnlistdiff));
 
         // Handle the message
         let result = handler.handle_network_message(&message).await;
@@ -144,7 +145,7 @@ mod tests {
             previous_filter_header: dashcore::hash_types::FilterHeader::from([0u8; 32]),
             filter_hashes: vec![],
         };
-        let message = NetworkMessage::CFHeaders(cfheaders);
+        let message = Message::new(test_socket_address(1), NetworkMessage::CFHeaders(cfheaders));
 
         // Handle the message
         let result = handler.handle_network_message(&message).await;
@@ -172,7 +173,7 @@ mod tests {
             block_hash: BlockHash::from([0u8; 32]),
             filter: vec![],
         };
-        let message = NetworkMessage::CFilter(cfilter);
+        let message = Message::new(test_socket_address(1), NetworkMessage::CFilter(cfilter));
 
         // Handle the message - should be passed to sync manager
         let result = handler.handle_network_message(&message).await;
@@ -206,7 +207,7 @@ mod tests {
             },
             txdata: vec![],
         };
-        let message = NetworkMessage::Block(block.clone());
+        let message = Message::new(test_socket_address(1), NetworkMessage::Block(block.clone()));
 
         // Handle the message
         let result = handler.handle_network_message(&message).await;
@@ -234,7 +235,7 @@ mod tests {
 
         // Create an Inv message with transaction
         let inv = vec![Inventory::Transaction(dashcore::Txid::all_zeros())];
-        let message = NetworkMessage::Inv(inv);
+        let message = Message::new(test_socket_address(1), NetworkMessage::Inv(inv));
 
         // Handle the message
         let result = handler.handle_network_message(&message).await;
@@ -267,7 +268,7 @@ mod tests {
             output: vec![],
             special_transaction_payload: None,
         };
-        let message = NetworkMessage::Tx(tx.clone());
+        let message = Message::new(test_socket_address(1), NetworkMessage::Tx(tx.clone()));
 
         // Handle the message
         let result = handler.handle_network_message(&message).await;
@@ -300,7 +301,7 @@ mod tests {
             block_hash: BlockHash::from([0u8; 32]),
             signature: dashcore::bls_sig_utils::BLSSignature::from([0u8; 96]),
         };
-        let message = NetworkMessage::CLSig(chainlock);
+        let message = Message::new(test_socket_address(1), NetworkMessage::CLSig(chainlock));
 
         // Handle the message
         let result = handler.handle_network_message(&message).await;
@@ -323,7 +324,7 @@ mod tests {
         );
 
         // Create a Ping message
-        let message = NetworkMessage::Ping(12345);
+        let message = Message::new(test_socket_address(1), NetworkMessage::Ping(12345));
 
         // Handle the message
         let result = handler.handle_network_message(&message).await;
@@ -352,7 +353,7 @@ mod tests {
         let headers2 = dashcore::network::message_headers2::Headers2Message {
             headers: vec![], // Empty headers might cause validation error
         };
-        let message = NetworkMessage::Headers2(headers2);
+        let message = Message::new(test_socket_address(1), NetworkMessage::Headers2(headers2));
 
         // Handle the message - error should be propagated
         let result = handler.handle_network_message(&message).await;

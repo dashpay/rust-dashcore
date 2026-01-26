@@ -15,6 +15,7 @@ use dashcore::Network;
 
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::constants::PING_INTERVAL;
+use crate::network::Message;
 
 /// Internal state for the TCP connection
 struct ConnectionState {
@@ -362,7 +363,7 @@ impl Peer {
     }
 
     /// Receive a message from the peer.
-    pub async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
+    pub async fn receive_message(&mut self) -> NetworkResult<Option<Message>> {
         // First check if we have a state
         let state_arc = self
             .state
@@ -608,7 +609,7 @@ impl Peer {
                             raw_message.payload.cmd()
                         );
 
-                        return Ok(Some(raw_message.payload));
+                        return Ok(Some(Message::new(self.address, raw_message.payload)));
                     }
                     Err(e) => {
                         tracing::warn!(

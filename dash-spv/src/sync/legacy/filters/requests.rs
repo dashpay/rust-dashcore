@@ -174,27 +174,12 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
 
         self.active_filter_requests.insert(range, active_request);
 
-        // Include peer info when available
-        let peer_addr = network.get_last_message_peer_addr().await;
-        match peer_addr {
-            Some(addr) => {
-                tracing::debug!(
-                    "📡 Sent filter request for range {}-{} to {} (now {} active)",
-                    request.start_height,
-                    request.end_height,
-                    addr,
-                    self.active_filter_requests.len()
-                );
-            }
-            None => {
-                tracing::debug!(
-                    "📡 Sent filter request for range {}-{} (now {} active)",
-                    request.start_height,
-                    request.end_height,
-                    self.active_filter_requests.len()
-                );
-            }
-        }
+        tracing::debug!(
+            "📡 Sent filter request for range {}-{} (now {} active)",
+            request.start_height,
+            request.end_height,
+            self.active_filter_requests.len()
+        );
 
         // Apply delay only for retry requests to avoid hammering peers
         if request.is_retry && FILTER_RETRY_DELAY_MS > 0 {

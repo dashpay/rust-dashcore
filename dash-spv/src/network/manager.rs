@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time;
 
@@ -20,13 +20,16 @@ use crate::network::pool::PeerPool;
 use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
-use crate::network::{HandshakeManager, NetworkManager, Peer};
+use crate::network::{
+    HandshakeManager, Message, MessageDispatcher, MessageType, NetworkManager, Peer,
+};
 use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::CompressionState;
 use dashcore::Network;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
 /// Peer network manager
@@ -45,9 +48,6 @@ pub struct PeerNetworkManager {
     network: Network,
     /// Shutdown token
     shutdown_token: CancellationToken,
-    /// Channel for incoming messages
-    message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
-    message_rx: Arc<Mutex<mpsc::Receiver<(SocketAddr, NetworkMessage)>>>,
     /// Background tasks
     tasks: Arc<Mutex<JoinSet<()>>>,
     /// Initial peer addresses
@@ -60,8 +60,6 @@ pub struct PeerNetworkManager {
     data_dir: PathBuf,
     /// Mempool strategy from config
     mempool_strategy: MempoolStrategy,
-    /// Last peer that sent us a message
-    last_message_peer: Arc<Mutex<Option<SocketAddr>>>,
     /// Optional user agent to advertise
     user_agent: Option<String>,
     /// Exclusive mode: restrict to configured peers only (no DNS or peer store)
@@ -70,13 +68,13 @@ pub struct PeerNetworkManager {
     connected_peer_count: Arc<AtomicUsize>,
     /// Disable headers2 after decompression failure
     headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
+    /// Dispatcher for unbounded and message-type filtered message distribution.
+    message_dispatcher: Arc<Mutex<MessageDispatcher>>,
 }
 
 impl PeerNetworkManager {
     /// Create a new peer network manager
     pub async fn new(config: &ClientConfig) -> Result<Self, Error> {
-        let (message_tx, message_rx) = mpsc::channel(1000);
-
         let discovery = DnsDiscovery::new().await?;
         let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
 
@@ -99,20 +97,26 @@ impl PeerNetworkManager {
             reputation_manager,
             network: config.network,
             shutdown_token: CancellationToken::new(),
-            message_tx,
-            message_rx: Arc::new(Mutex::new(message_rx)),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
             initial_peers: config.peers.clone(),
             peer_search_started: Arc::new(Mutex::new(None)),
             current_sync_peer: Arc::new(Mutex::new(None)),
             data_dir,
             mempool_strategy: config.mempool_strategy,
-            last_message_peer: Arc::new(Mutex::new(None)),
             user_agent: config.user_agent.clone(),
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
+            message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
         })
+    }
+
+    /// Creates and returns a receiver that yields only messages of the matching the provided message types.
+    pub async fn message_receiver(
+        &mut self,
+        message_types: &[MessageType],
+    ) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.lock().await.message_receiver(message_types)
     }
 
     /// Start the network manager
@@ -191,7 +195,6 @@ impl PeerNetworkManager {
 
         let pool = self.pool.clone();
         let network = self.network;
-        let message_tx = self.message_tx.clone();
         let addrv2_handler = self.addrv2_handler.clone();
         let shutdown_token = self.shutdown_token.clone();
         let reputation_manager = self.reputation_manager.clone();
@@ -199,6 +202,7 @@ impl PeerNetworkManager {
         let user_agent = self.user_agent.clone();
         let connected_peer_count = self.connected_peer_count.clone();
         let headers2_disabled = self.headers2_disabled.clone();
+        let message_dispatcher = self.message_dispatcher.clone();
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -233,12 +237,12 @@ impl PeerNetworkManager {
                             Self::start_peer_reader(
                                 addr,
                                 pool.clone(),
-                                message_tx,
                                 addrv2_handler,
                                 shutdown_token,
                                 reputation_manager.clone(),
                                 connected_peer_count.clone(),
                                 headers2_disabled.clone(),
+                                message_dispatcher,
                             )
                             .await;
                         }
@@ -277,12 +281,12 @@ impl PeerNetworkManager {
     async fn start_peer_reader(
         addr: SocketAddr,
         pool: Arc<PeerPool>,
-        message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
         addrv2_handler: Arc<AddrV2Handler>,
         shutdown_token: CancellationToken,
         reputation_manager: Arc<PeerReputationManager>,
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
+        message_dispatcher: Arc<Mutex<MessageDispatcher>>,
     ) {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
@@ -340,7 +344,7 @@ impl PeerNetworkManager {
                         log::debug!("Received {:?} from {}", msg.cmd(), addr);
 
                         // Handle some messages directly
-                        match &msg {
+                        match &msg.inner() {
                             NetworkMessage::SendAddrV2 => {
                                 addrv2_handler.handle_sendaddrv2(addr).await;
                                 continue; // Don't forward to client
@@ -440,13 +444,8 @@ impl PeerNetworkManager {
                                         );
                                         // Forward as regular Headers message
                                         let headers_msg = NetworkMessage::Headers(headers);
-                                        if message_tx.send((addr, headers_msg)).await.is_err() {
-                                            log::warn!(
-                                                "Breaking peer reader loop for {} - failed to send decompressed headers",
-                                                addr
-                                            );
-                                            break;
-                                        }
+                                        let message = Message::new(msg.peer_address(), headers_msg);
+                                        message_dispatcher.lock().await.dispatch(&message);
                                         continue; // Already sent, don't forward the original Headers2
                                     }
                                     Err(e) => {
@@ -499,11 +498,7 @@ impl PeerNetworkManager {
                             }
                         }
 
-                        // Forward message to client
-                        if message_tx.send((addr, msg)).await.is_err() {
-                            log::warn!("Breaking peer reader loop for {} - failed to send message to client channel (iteration {})", addr, loop_iteration);
-                            break;
-                        }
+                        message_dispatcher.lock().await.dispatch(&msg);
                     }
                     Ok(None) => {
                         // No message available, continue immediately
@@ -1003,32 +998,6 @@ impl PeerNetworkManager {
         reputations.into_iter().map(|(addr, rep)| (addr, (rep.score, rep.is_banned()))).collect()
     }
 
-    /// Get the last peer that sent us a message
-    pub async fn get_last_message_peer(&self) -> Option<SocketAddr> {
-        let last_peer = self.last_message_peer.lock().await;
-        *last_peer
-    }
-
-    /// Get the last message peer as a PeerId
-    pub async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        if let Some(addr) = self.get_last_message_peer().await {
-            // Simple hash-based mapping from SocketAddr to PeerId
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            addr.hash(&mut hasher);
-            crate::types::PeerId(hasher.finish())
-        } else {
-            // Default to PeerId(0) if no peer available
-            crate::types::PeerId(0)
-        }
-    }
-
-    /// Get the socket address of the last peer that sent a message
-    pub async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
-        let last_peer = self.last_message_peer.lock().await;
-        *last_peer
-    }
-
     /// Ban a specific peer manually
     pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Manually banning peer {} - reason: {}", addr, reason);
@@ -1097,19 +1066,17 @@ impl Clone for PeerNetworkManager {
             reputation_manager: self.reputation_manager.clone(),
             network: self.network,
             shutdown_token: self.shutdown_token.clone(),
-            message_tx: self.message_tx.clone(),
-            message_rx: self.message_rx.clone(),
             tasks: self.tasks.clone(),
             initial_peers: self.initial_peers.clone(),
             peer_search_started: self.peer_search_started.clone(),
             current_sync_peer: self.current_sync_peer.clone(),
             data_dir: self.data_dir.clone(),
             mempool_strategy: self.mempool_strategy,
-            last_message_peer: self.last_message_peer.clone(),
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
             connected_peer_count: self.connected_peer_count.clone(),
             headers2_disabled: self.headers2_disabled.clone(),
+            message_dispatcher: self.message_dispatcher.clone(),
         }
     }
 }
@@ -1119,6 +1086,10 @@ impl Clone for PeerNetworkManager {
 impl NetworkManager for PeerNetworkManager {
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.lock().await.message_receiver(types)
     }
 
     async fn connect(&mut self) -> NetworkResult<()> {
@@ -1160,117 +1131,66 @@ impl NetworkManager for PeerNetworkManager {
         } // end match
     } // end send_message
 
-    async fn penalize_last_message_peer(
-        &self,
-        score_change: i32,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        // Get the last peer that sent us a message
-        if let Some(addr) = self.get_last_message_peer().await {
-            self.reputation_manager.update_reputation(addr, score_change, reason).await;
-        }
-        Ok(())
+    async fn penalize_peer(&self, address: SocketAddr, score_change: i32, reason: &str) {
+        self.reputation_manager.update_reputation(address, score_change, reason).await;
     }
 
-    async fn penalize_last_message_peer_invalid_chainlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        if let Some(addr) = self.get_last_message_peer().await {
-            match self.disconnect_peer(&addr, reason).await {
-                Ok(()) => {
-                    log::warn!(
-                        "Peer {} disconnected for invalid ChainLock enforcement: {}",
-                        addr,
-                        reason
-                    );
-                }
-                Err(err) => {
-                    log::error!(
-                        "Failed to disconnect peer {} after invalid ChainLock enforcement ({}): {}",
-                        addr,
-                        reason,
-                        err
-                    );
-                }
+    async fn penalize_peer_invalid_chainlock(&self, address: SocketAddr, reason: &str) {
+        match self.disconnect_peer(&address, reason).await {
+            Ok(()) => {
+                log::warn!(
+                    "Peer {} disconnected for invalid ChainLock enforcement: {}",
+                    address,
+                    reason
+                );
             }
-
-            // Apply misbehavior score and a short temporary ban
-            self.reputation_manager
-                .update_reputation(addr, misbehavior_scores::INVALID_CHAINLOCK, reason)
-                .await;
-
-            // Short ban: 10 minutes for relaying invalid ChainLock
-            self.reputation_manager
-                .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
-                .await;
-        }
-        Ok(())
-    }
-
-    async fn penalize_last_message_peer_invalid_instantlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        if let Some(addr) = self.get_last_message_peer().await {
-            // Apply misbehavior score and a short temporary ban
-            self.reputation_manager
-                .update_reputation(addr, misbehavior_scores::INVALID_INSTANTLOCK, reason)
-                .await;
-
-            // Short ban: 10 minutes for relaying invalid InstantLock
-            self.reputation_manager
-                .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
-                .await;
-
-            match self.disconnect_peer(&addr, reason).await {
-                Ok(()) => {
-                    log::warn!(
-                        "Peer {} disconnected for invalid InstantLock enforcement: {}",
-                        addr,
-                        reason
-                    );
-                }
-                Err(err) => {
-                    log::error!(
-                        "Failed to disconnect peer {} after invalid InstantLock enforcement ({}): {}",
-                        addr,
-                        reason,
-                        err
-                    );
-                }
+            Err(err) => {
+                log::error!(
+                    "Failed to disconnect peer {} after invalid ChainLock enforcement ({}): {}",
+                    address,
+                    reason,
+                    err
+                );
             }
         }
-        Ok(())
+
+        // Apply misbehavior score and a short temporary ban
+        self.reputation_manager
+            .update_reputation(address, misbehavior_scores::INVALID_CHAINLOCK, reason)
+            .await;
+
+        // Short ban: 10 minutes for relaying invalid ChainLock
+        self.reputation_manager
+            .temporary_ban_peer(address, Duration::from_secs(10 * 60), reason)
+            .await;
     }
 
-    async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
-        let mut rx = self.message_rx.lock().await;
+    async fn penalize_peer_invalid_instantlock(&self, address: SocketAddr, reason: &str) {
+        // Apply misbehavior score and a short temporary ban
+        self.reputation_manager
+            .update_reputation(address, misbehavior_scores::INVALID_INSTANTLOCK, reason)
+            .await;
 
-        // Use a timeout to prevent indefinite blocking when peers disconnect
-        match tokio::time::timeout(MESSAGE_RECEIVE_TIMEOUT, rx.recv()).await {
-            Ok(Some((addr, msg))) => {
-                // Store the last message peer
-                let mut last_peer = self.last_message_peer.lock().await;
-                *last_peer = Some(addr);
-                drop(last_peer);
+        // Short ban: 10 minutes for relaying invalid InstantLock
+        self.reputation_manager
+            .temporary_ban_peer(address, Duration::from_secs(10 * 60), reason)
+            .await;
 
-                // Reduce verbosity for common sync messages
-                match &msg {
-                    NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
-                        // Headers and filters are logged by the sync managers - reduced verbosity
-                        log::debug!("Delivering {} from {} to client", msg.cmd(), addr);
-                    }
-                    _ => {
-                        log::trace!("Delivering {:?} from {} to client", msg.cmd(), addr);
-                    }
-                }
-                Ok(Some(msg))
+        match self.disconnect_peer(&address, reason).await {
+            Ok(()) => {
+                log::warn!(
+                    "Peer {} disconnected for invalid InstantLock enforcement: {}",
+                    address,
+                    reason
+                );
             }
-            Ok(None) => Ok(None),
-            Err(_) => {
-                // Timeout - no message available
-                Ok(None)
+            Err(err) => {
+                log::error!(
+                    "Failed to disconnect peer {} after invalid InstantLock enforcement ({}): {}",
+                    address,
+                    reason,
+                    err
+                );
             }
         }
     }
@@ -1337,10 +1257,5 @@ impl NetworkManager for PeerNetworkManager {
         }
 
         false
-    }
-
-    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        // Call the instance method to avoid code duplication
-        self.get_last_message_peer_id().await
     }
 }
