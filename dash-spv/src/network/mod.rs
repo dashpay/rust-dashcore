@@ -8,13 +8,13 @@ pub mod manager;
 mod message_dispatcher;
 pub mod peer;
 pub mod pool;
-pub mod reputation;
+mod reputation;
 
 mod message_type;
 #[cfg(test)]
 mod tests;
 
-use crate::error::NetworkResult;
+use crate::{error::NetworkResult, network::reputation::ChangeReason};
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::BlockHash;
@@ -23,6 +23,7 @@ pub use manager::PeerNetworkManager;
 pub use message_dispatcher::{Message, MessageDispatcher};
 pub use message_type::MessageType;
 pub use peer::Peer;
+pub(crate) use reputation::PeerReputation;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -95,25 +96,15 @@ pub trait NetworkManager: Send + Sync + 'static {
 
     /// Penalize a peer by address by adjusting reputation.
     /// Default implementation is a no-op for managers without reputation.
-    async fn penalize_peer(&self, _address: SocketAddr, _score_change: i32, _reason: &str) {}
+    async fn penalize_peer(&self, _address: SocketAddr, _reason: ChangeReason) {}
 
     /// Penalize a peer by address for an invalid ChainLock.
-    async fn penalize_peer_invalid_chainlock(&self, address: SocketAddr, reason: &str) {
-        self.penalize_peer(
-            address,
-            crate::network::reputation::misbehavior_scores::INVALID_CHAINLOCK,
-            reason,
-        )
-        .await;
+    async fn penalize_peer_invalid_chainlock(&self, address: SocketAddr) {
+        self.penalize_peer(address, ChangeReason::InvalidChainLock).await;
     }
 
     /// Penalize a peer by address for an invalid InstantLock.
-    async fn penalize_peer_invalid_instantlock(&self, peer_address: SocketAddr, reason: &str) {
-        self.penalize_peer(
-            peer_address,
-            crate::network::reputation::misbehavior_scores::INVALID_INSTANTLOCK,
-            reason,
-        )
-        .await;
+    async fn penalize_peer_invalid_instantlock(&self, peer_address: SocketAddr) {
+        self.penalize_peer(peer_address, ChangeReason::InvalidInstantLock).await;
     }
 }

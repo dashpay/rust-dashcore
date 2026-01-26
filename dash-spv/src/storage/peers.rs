@@ -10,7 +10,7 @@ use dashcore::{
 
 use crate::{
     error::StorageResult,
-    network::reputation::PeerReputation,
+    network::PeerReputation,
     storage::{io::atomic_write, PersistentStorage},
     StorageError,
 };
@@ -97,11 +97,11 @@ impl PeerStorage for PersistentPeerStorage {
             return Ok(Vec::new());
         };
 
-        let mut peers = Vec::new();
-
         let peers = tokio::task::spawn_blocking(move || {
             let file = File::open(&peers_file)?;
             let mut reader = BufReader::new(file);
+
+            let mut peers = Vec::new();
 
             loop {
                 match AddrV2Message::consensus_decode(&mut reader) {
@@ -116,7 +116,6 @@ impl PeerStorage for PersistentPeerStorage {
                     }
                 }
             }
-
             Ok(peers)
         })
         .await
