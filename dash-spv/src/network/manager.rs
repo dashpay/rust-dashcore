@@ -76,7 +76,7 @@ impl PeerNetworkManager {
     /// Create a new peer network manager
     pub async fn new(config: &ClientConfig) -> Result<Self, Error> {
         let discovery = DnsDiscovery::new().await?;
-        let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
+        let data_dir = config.storage_path.clone();
 
         let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
 

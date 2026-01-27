@@ -22,13 +22,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Create configuration with filter support
-    let config = ClientConfig::mainnet().without_masternodes(); // Skip masternode sync for this example
+    let config = ClientConfig::mainnet()
+        .with_storage_path("./.tmp/filter-sync-example-storage")
+        .without_masternodes(); // Skip masternode sync for this example
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
-    let storage_manager = DiskStorageManager::new("./.tmp/filter-sync-example-storage").await?;
+    let storage_manager = DiskStorageManager::new(&config).await?;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));

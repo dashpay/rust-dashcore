@@ -17,14 +17,12 @@ use tokio::sync::Mutex;
 
 #[tokio::test]
 async fn test_filter_sync_at_tip_edge_case() {
-    let config = ClientConfig::new(Network::Dash);
-    let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
-        FilterSyncManager::new(&config, received_heights);
+    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
 
-    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
-        .await
-        .expect("Failed to create tmp storage");
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+
+    let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     // Set up storage with headers and filter headers at the same height (tip)
@@ -53,14 +51,12 @@ async fn test_filter_sync_at_tip_edge_case() {
 
 #[tokio::test]
 async fn test_no_invalid_getcfheaders_at_tip() {
-    let config = ClientConfig::new(Network::Dash);
-    let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
-        FilterSyncManager::new(&config, received_heights);
+    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
 
-    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
-        .await
-        .expect("Failed to create tmp storage");
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+
+    let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     // Create a scenario where we're one filter header behind
