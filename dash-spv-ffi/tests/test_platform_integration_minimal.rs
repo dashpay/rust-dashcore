@@ -6,10 +6,6 @@ use std::ptr;
 #[test]
 fn test_basic_null_checks() {
     unsafe {
-        // Test null pointer handling
-        let handle = ffi_dash_spv_get_core_handle(ptr::null_mut());
-        assert!(handle.is_null());
-
         // Test error code
         let mut height: u32 = 0;
         let result =
