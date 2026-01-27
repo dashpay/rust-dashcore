@@ -42,25 +42,6 @@ typedef enum FFIMempoolStrategy {
 
 typedef struct FFIDashSpvClient FFIDashSpvClient;
 
-/**
- * FFI-safe array that transfers ownership of memory to the C caller.
- *
- * # Safety
- *
- * This struct represents memory that has been allocated by Rust but ownership
- * has been transferred to the C caller. The caller is responsible for:
- * - Not accessing the memory after it has been freed
- * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
- * - Ensuring the data, len, and capacity fields remain consistent
- */
-typedef struct FFIArray {
-  void *data;
-  uintptr_t len;
-  uintptr_t capacity;
-  uintptr_t elem_size;
-  uintptr_t elem_align;
-} FFIArray;
-
 typedef struct FFIClientConfig {
   void *inner;
   uint32_t worker_threads;
@@ -187,6 +168,25 @@ typedef struct FFIResult {
 } FFIResult;
 
 /**
+ * FFI-safe array that transfers ownership of memory to the C caller.
+ *
+ * # Safety
+ *
+ * This struct represents memory that has been allocated by Rust but ownership
+ * has been transferred to the C caller. The caller is responsible for:
+ * - Not accessing the memory after it has been freed
+ * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
+ * - Ensuring the data, len, and capacity fields remain consistent
+ */
+typedef struct FFIArray {
+  void *data;
+  uintptr_t len;
+  uintptr_t capacity;
+  uintptr_t elem_size;
+  uintptr_t elem_align;
+} FFIArray;
+
+/**
  * FFI-safe representation of an unconfirmed transaction
  *
  * # Safety
@@ -262,18 +262,6 @@ int32_t dash_spv_ffi_checkpoint_before_timestamp(FFINetwork network,
                                                  uint32_t timestamp,
                                                  uint32_t *out_height,
                                                  uint8_t *out_hash)
-;
-
-/**
- * Get all checkpoints between two heights (inclusive).
- *
- * Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and
- * must free the array buffer using `dash_spv_ffi_array_destroy` when done.
- */
-
-struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
-                                                         uint32_t start_height,
-                                                         uint32_t end_height)
 ;
 
 /**

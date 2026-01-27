@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 66
+**Total Functions**: 65
 
 ## Table of Contents
 
@@ -125,7 +125,7 @@ Functions: 2
 
 ### Utility Functions
 
-Functions: 19
+Functions: 18
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -133,7 +133,6 @@ Functions: 19
 | `dash_spv_ffi_checkpoint_before_height` | Get the last checkpoint at or before a given height | checkpoints |
 | `dash_spv_ffi_checkpoint_before_timestamp` | Get the last checkpoint at or before a given UNIX timestamp (seconds) | checkpoints |
 | `dash_spv_ffi_checkpoint_latest` | Get the latest checkpoint for the given network | checkpoints |
-| `dash_spv_ffi_checkpoints_between_heights` | Get all checkpoints between two heights (inclusive) | checkpoints |
 | `dash_spv_ffi_client_clear_storage` | Clear all persisted SPV storage (headers, filters, metadata, sync state) | client |
 | `dash_spv_ffi_client_get_stats` | Get current runtime statistics for the SPV client | client |
 | `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
@@ -944,19 +943,6 @@ Get the latest checkpoint for the given network.  # Safety - `out_height` must b
 
 **Safety:**
 - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Module:** `checkpoints`
-
----
-
-#### `dash_spv_ffi_checkpoints_between_heights`
-
-```c
-dash_spv_ffi_checkpoints_between_heights(network: FFINetwork, start_height: u32, end_height: u32,) -> FFIArray
-```
-
-**Description:**
-Get all checkpoints between two heights (inclusive).  Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and must free the array buffer using `dash_spv_ffi_array_destroy` when done.
 
 **Module:** `checkpoints`
 
