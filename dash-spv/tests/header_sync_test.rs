@@ -95,14 +95,14 @@ async fn test_prepare_sync(sync_base_height: u32, header_count: usize) {
     let expected_tip_hash = headers.last().unwrap().block_hash();
 
     // Create and store chain state
-    let mut chain_state = ChainState::new_for_network(Network::Dash);
+    let mut chain_state = ChainState::new();
     chain_state.sync_base_height = sync_base_height;
     storage.store_chain_state(&chain_state).await.expect("Failed to store chain state");
     storage.store_headers(&headers).await.expect("Failed to store headers");
 
     // Create HeaderSyncManager and load from storage
     let config = ClientConfig::new(Network::Dash);
-    let chain_state_arc = Arc::new(RwLock::new(ChainState::new_for_network(Network::Dash)));
+    let chain_state_arc = Arc::new(RwLock::new(ChainState::new()));
     let mut header_sync = HeaderSyncManager::<DiskStorageManager, PeerNetworkManager>::new(
         &config,
         ReorgConfig::default(),

@@ -68,7 +68,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Update our confirmed chain tip
         state.last_chainlock_height = Some(chainlock.block_height);
-        state.last_chainlock_hash = Some(chainlock.block_hash);
 
         tracing::info!(
             "🔒 Updated confirmed chain tip to ChainLock at height {} ({})",

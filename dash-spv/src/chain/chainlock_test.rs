@@ -5,7 +5,7 @@ mod tests {
         storage::{BlockHeaderStorage, DiskStorageManager},
         types::ChainState,
     };
-    use dashcore::{Header, Network};
+    use dashcore::Header;
 
     #[tokio::test]
     async fn test_chainlock_processing() {
@@ -13,7 +13,7 @@ mod tests {
         let mut storage =
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let chainlock_manager = ChainLockManager::new(true);
-        let chain_state = ChainState::new_for_network(Network::Testnet);
+        let chain_state = ChainState::new();
 
         let chainlock = ChainLock::dummy(1000);
 
@@ -41,7 +41,7 @@ mod tests {
         let mut storage =
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let chainlock_manager = ChainLockManager::new(true);
-        let chain_state = ChainState::new_for_network(Network::Testnet);
+        let chain_state = ChainState::new();
 
         let chainlock1 = ChainLock::dummy(1000);
 
@@ -69,7 +69,7 @@ mod tests {
     #[tokio::test]
     async fn test_reorganization_protection() {
         let chainlock_manager = ChainLockManager::new(true);
-        let chain_state = ChainState::new_for_network(Network::Testnet);
+        let chain_state = ChainState::new();
         let mut storage =
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
 
