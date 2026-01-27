@@ -41,8 +41,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 .await
             {
                 // Penalize the peer that relayed the invalid ChainLock
-                let reason = format!("Invalid ChainLock: {}", e);
-                self.network.penalize_peer_invalid_chainlock(peer_address, &reason).await;
+                self.network.penalize_peer_invalid_chainlock(peer_address).await;
                 return Err(SpvError::Validation(e));
             }
         }
@@ -110,7 +109,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             tracing::warn!("{}", reason);
 
             // Ban the peer using the reputation system
-            self.network.penalize_peer_invalid_instantlock(peer_address, &reason).await;
+            self.network.penalize_peer_invalid_instantlock(peer_address).await;
 
             return Err(SpvError::Validation(e));
         }
