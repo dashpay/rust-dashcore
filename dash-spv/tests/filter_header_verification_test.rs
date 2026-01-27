@@ -17,7 +17,7 @@ use dash_spv::{
     sync::legacy::filters::FilterSyncManager,
 };
 use dashcore::{
-    block::{Header as BlockHeader, Version},
+    block::Header as BlockHeader,
     hash_types::{FilterHash, FilterHeader},
     network::message::NetworkMessage,
     network::message_filter::CFHeaders,
@@ -97,31 +97,6 @@ impl NetworkManager for MockNetworkManager {
     }
 }
 
-/// Create test headers for a given range
-fn create_test_headers_range(start_height: u32, count: u32) -> Vec<BlockHeader> {
-    let mut headers = Vec::new();
-
-    for i in 0..count {
-        let height = start_height + i;
-        let header = BlockHeader {
-            version: Version::from_consensus(1),
-            prev_blockhash: if height == 0 {
-                BlockHash::all_zeros()
-            } else {
-                // Create a deterministic previous hash
-                BlockHash::from_byte_array([((height - 1) % 256) as u8; 32])
-            },
-            merkle_root: dashcore::TxMerkleNode::from_byte_array([(height % 256) as u8; 32]),
-            time: 1234567890 + height,
-            bits: dashcore::CompactTarget::from_consensus(0x1d00ffff),
-            nonce: height,
-        };
-        headers.push(header);
-    }
-
-    headers
-}
-
 /// Create test filter headers with proper chain linkage
 fn create_test_cfheaders_message(
     start_height: u32,
@@ -181,7 +156,7 @@ async fn test_filter_header_verification_failure_reproduction() {
 
     // Step 1: Store initial headers to simulate having a synced header chain
     println!("Step 1: Setting up initial header chain...");
-    let initial_headers = create_test_headers_range(1000, 5000); // Headers 1000-4999
+    let initial_headers = BlockHeader::dummy_batch(1000..5000); // Headers 1000-4999
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
     let tip_height = storage.get_tip_height().await.unwrap();
@@ -345,7 +320,7 @@ async fn test_overlapping_batches_from_different_peers() {
 
     // Step 1: Set up headers for the full range we'll need
     println!("Step 1: Setting up header chain (heights 1-3000)...");
-    let initial_headers = create_test_headers_range(1, 3000); // Headers 1-2999
+    let initial_headers = BlockHeader::dummy_batch(1..3000); // Headers 1-2999
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
     let tip_height = storage.get_tip_height().await.unwrap();
@@ -520,7 +495,7 @@ async fn test_filter_header_verification_overlapping_batches() {
         FilterSyncManager::new(&config, received_heights);
 
     // Set up initial headers - start from 1 for proper sync
-    let initial_headers = create_test_headers_range(1, 2000);
+    let initial_headers = BlockHeader::dummy_batch(1..2000);
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
     // Start filter sync first (required for message processing)
@@ -618,7 +593,7 @@ async fn test_filter_header_verification_race_condition_simulation() {
         FilterSyncManager::new(&config, received_heights);
 
     // Set up headers - need enough for batch B (up to height 3000)
-    let initial_headers = create_test_headers_range(1, 3001);
+    let initial_headers = BlockHeader::dummy_batch(1..3001);
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
     // Simulate: Start sync, send request for batch A
