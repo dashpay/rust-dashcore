@@ -56,6 +56,13 @@ pub struct ManagedAccount {
     pub transactions: BTreeMap<Txid, TransactionRecord>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
+    /// Unresolved inputs - tracks transaction inputs where the UTXO wasn't found.
+    /// When blocks are processed out of order (e.g., during rescan), a transaction
+    /// might reference a UTXO that hasn't been created yet. This maps the OutPoint
+    /// to the Txid that tried to spend it, so we can update the transaction's
+    /// sent amount when the UTXO is later created.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub unresolved_inputs: BTreeMap<OutPoint, Txid>,
 }
 
 impl ManagedAccount {
@@ -69,6 +76,7 @@ impl ManagedAccount {
             balance: WalletBalance::default(),
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
+            unresolved_inputs: BTreeMap::new(),
         }
     }
 
