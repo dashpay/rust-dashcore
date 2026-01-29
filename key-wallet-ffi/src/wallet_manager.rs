@@ -831,7 +831,7 @@ pub unsafe extern "C" fn wallet_manager_current_height(
     // Get current height from network state if it exists
     let height = manager_ref.runtime.block_on(async {
         let manager_guard = manager_ref.manager.read().await;
-        manager_guard.current_height()
+        manager_guard.synced_height()
     });
 
     FFIError::set_success(error);

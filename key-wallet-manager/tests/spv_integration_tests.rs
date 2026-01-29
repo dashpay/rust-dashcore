@@ -69,7 +69,7 @@ async fn test_block_processing_result_empty() {
 }
 
 fn assert_wallet_heights(manager: &WalletManager<ManagedWalletInfo>, expected_height: u32) {
-    assert_eq!(manager.current_height(), expected_height, "height should be {}", expected_height);
+    assert_eq!(manager.synced_height(), expected_height, "height should be {}", expected_height);
     for wallet_info in manager.get_all_wallet_infos().values() {
         assert_eq!(
             wallet_info.synced_height(),

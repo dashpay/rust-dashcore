@@ -69,6 +69,12 @@ pub trait WalletInterface: Send + Sync + 'static {
         0
     }
 
+    /// Return the last fully processed height of the wallet.
+    fn synced_height(&self) -> CoreBlockHeight;
+
+    /// Update the wallet's synced height. This also triggers balance updates.
+    fn update_synced_height(&mut self, height: CoreBlockHeight);
+
     /// Provide a human-readable description of the wallet implementation.
     ///
     /// Implementations are encouraged to include high-level state such as the

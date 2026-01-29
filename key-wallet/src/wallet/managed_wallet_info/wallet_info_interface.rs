@@ -61,9 +61,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Update last synced timestamp
     fn update_last_synced(&mut self, timestamp: u64);
 
-    /// Get the synced height
-    fn synced_height(&self) -> CoreBlockHeight;
-
     /// Get all monitored addresses
     fn monitored_addresses(&self) -> Vec<DashAddress>;
 
@@ -102,6 +99,9 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         fee_level: FeeLevel,
         current_block_height: u32,
     ) -> Result<Transaction, TransactionError>;
+
+    /// Return the last fully processed height of the wallet.
+    fn synced_height(&self) -> CoreBlockHeight;
 
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
