@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 66
+**Total Functions**: 64
 
 ## Table of Contents
 
@@ -125,7 +125,7 @@ Functions: 2
 
 ### Utility Functions
 
-Functions: 19
+Functions: 17
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -135,7 +135,6 @@ Functions: 19
 | `dash_spv_ffi_checkpoint_latest` | Get the latest checkpoint for the given network | checkpoints |
 | `dash_spv_ffi_checkpoints_between_heights` | Get all checkpoints between two heights (inclusive) | checkpoints |
 | `dash_spv_ffi_client_clear_storage` | Clear all persisted SPV storage (headers, filters, metadata, sync state) | client |
-| `dash_spv_ffi_client_get_stats` | Get current runtime statistics for the SPV client | client |
 | `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
 | `dash_spv_ffi_client_get_tip_height` | Get the current chain tip height (absolute) | client |
 | `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an... | client |
@@ -143,7 +142,6 @@ Functions: 19
 | `dash_spv_ffi_client_rescan_blockchain` | Request a rescan of the blockchain from a given height (not yet implemented) | client |
 | `dash_spv_ffi_enable_test_mode` | No description | utils |
 | `dash_spv_ffi_init_logging` | Initialize logging for the SPV library | utils |
-| `dash_spv_ffi_spv_stats_destroy` | Destroy an `FFISpvStats` object returned by this crate | client |
 | `dash_spv_ffi_string_array_destroy` | Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents | types |
 | `dash_spv_ffi_string_destroy` | No description | types |
 | `dash_spv_ffi_version` | No description | utils |
@@ -978,22 +976,6 @@ Clear all persisted SPV storage (headers, filters, metadata, sync state).  # Saf
 
 ---
 
-#### `dash_spv_ffi_client_get_stats`
-
-```c
-dash_spv_ffi_client_get_stats(client: *mut FFIDashSpvClient,) -> *mut FFISpvStats
-```
-
-**Description:**
-Get current runtime statistics for the SPV client.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_client_get_tip_hash`
 
 ```c
@@ -1100,22 +1082,6 @@ Initialize logging for the SPV library.  # Arguments - `level`: Log level string
 
 ---
 
-#### `dash_spv_ffi_spv_stats_destroy`
-
-```c
-dash_spv_ffi_spv_stats_destroy(stats: *mut FFISpvStats) -> ()
-```
-
-**Description:**
-Destroy an `FFISpvStats` object returned by this crate.  # Safety - `stats` must be a pointer returned from this crate, or null.
-
-**Safety:**
-- `stats` must be a pointer returned from this crate, or null.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_string_array_destroy`
 
 ```c
@@ -1173,7 +1139,6 @@ Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
 - `FFIClientConfig` - Client configuration
 - `FFISyncProgress` - Synchronization progress
 - `FFIDetailedSyncProgress` - Detailed sync progress
-- `FFISpvStats` - SPV statistics
 - `FFITransaction` - Transaction information
 - `FFIUnconfirmedTransaction` - Unconfirmed transaction
 - `FFIEventCallbacks` - Event callback structure

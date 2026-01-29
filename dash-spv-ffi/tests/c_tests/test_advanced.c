@@ -88,17 +88,6 @@ void test_sync_progress() {
         dash_spv_ffi_sync_progress_destroy(progress);
     }
 
-    // Get stats
-    FFISpvStats* stats = dash_spv_ffi_client_get_stats(client);
-    if (stats != NULL) {
-        TEST_ASSERT(stats->headers_downloaded >= 0);
-        TEST_ASSERT(stats->filters_downloaded >= 0);
-        TEST_ASSERT(stats->bytes_received >= 0);
-        TEST_ASSERT(stats->bytes_sent >= 0);
-
-        dash_spv_ffi_spv_stats_destroy(stats);
-    }
-
     dash_spv_ffi_client_destroy(client);
     dash_spv_ffi_config_destroy(config);
 
@@ -118,7 +107,7 @@ void* concurrent_operations(void* arg) {
 
     for (int i = 0; i < 100; i++) {
         // Perform various operations
-        switch (i % 4) {
+        switch (i % 3) {
             case 0: {
                 // Get sync progress
                 FFISyncProgress* progress = dash_spv_ffi_client_get_sync_progress(data->client);
@@ -128,14 +117,6 @@ void* concurrent_operations(void* arg) {
                 break;
             }
             case 1: {
-                // Get stats
-                FFISpvStats* stats = dash_spv_ffi_client_get_stats(data->client);
-                if (stats != NULL) {
-                    dash_spv_ffi_spv_stats_destroy(stats);
-                }
-                break;
-            }
-            case 2: {
                 // Check address balance
                 FFIBalance* balance = dash_spv_ffi_client_get_address_balance(
                     data->client,
@@ -146,7 +127,7 @@ void* concurrent_operations(void* arg) {
                 }
                 break;
             }
-            case 3: {
+            case 2: {
                 // Watch/unwatch address
                 char addr[64];
                 snprintf(addr, sizeof(addr), "XjSgy6PaVCB3V4KhCiCDkaVbx9ewxe9R%02d", i);

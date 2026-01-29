@@ -143,10 +143,8 @@ mod tests {
 
                 // Do some operations
                 let progress = dash_spv_ffi_client_get_sync_progress(client);
-                let stats = dash_spv_ffi_client_get_stats(client);
 
                 dash_spv_ffi_sync_progress_destroy(progress);
-                dash_spv_ffi_spv_stats_destroy(stats);
 
                 dash_spv_ffi_client_destroy(client);
                 dash_spv_ffi_config_destroy(config);
@@ -177,7 +175,6 @@ mod tests {
             );
 
             assert!(dash_spv_ffi_client_get_sync_progress(std::ptr::null_mut()).is_null());
-            assert!(dash_spv_ffi_client_get_stats(std::ptr::null_mut()).is_null());
 
             // Test destroy with null (should be safe)
             dash_spv_ffi_client_destroy(std::ptr::null_mut());
@@ -195,12 +192,10 @@ mod tests {
 
             // Get initial state
             let progress1 = dash_spv_ffi_client_get_sync_progress(client);
-            let stats1 = dash_spv_ffi_client_get_stats(client);
 
             // State should be consistent
-            if !progress1.is_null() && !stats1.is_null() {
+            if !progress1.is_null() {
                 let progress = &*progress1;
-                let _stats = &*stats1;
 
                 // Basic consistency checks
                 assert!(
@@ -210,7 +205,6 @@ mod tests {
                 // headers_downloaded is u64, always >= 0
 
                 dash_spv_ffi_sync_progress_destroy(progress1);
-                dash_spv_ffi_spv_stats_destroy(stats1);
             }
 
             dash_spv_ffi_client_destroy(client);

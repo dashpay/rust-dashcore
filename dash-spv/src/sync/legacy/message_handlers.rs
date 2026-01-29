@@ -521,19 +521,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         let addresses = self.wallet.read().await.monitored_addresses();
         let matches = check_compact_filters_for_addresses(&input, addresses);
 
-        {
-            let mut stats_lock = self.stats.write().await;
-            stats_lock.filters_received += 1;
-            stats_lock.last_filter_received_time = Some(std::time::Instant::now());
-        }
-
         if !matches.is_empty() {
-            // Update filter match statistics
-            {
-                let mut stats = self.stats.write().await;
-                stats.filters_matched += 1;
-            }
-
             tracing::info!("🎯 Filter match found! Requesting block {}", cfilter.block_hash);
             // Request the full block
             let inv = Inventory::Block(cfilter.block_hash);

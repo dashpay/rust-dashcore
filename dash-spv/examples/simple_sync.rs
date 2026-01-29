@@ -38,11 +38,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Starting header synchronization...");
 
-    // Get some statistics
-    let stats = client.stats().await?;
-    println!("Headers downloaded: {}", stats.headers_downloaded);
-    println!("Bytes received: {}", stats.bytes_received);
-
     let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let shutdown_token = CancellationToken::new();
 

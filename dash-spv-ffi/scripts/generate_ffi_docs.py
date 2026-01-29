@@ -268,7 +268,6 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("- `FFIClientConfig` - Client configuration")
     md.append("- `FFISyncProgress` - Synchronization progress")
     md.append("- `FFIDetailedSyncProgress` - Detailed sync progress")
-    md.append("- `FFISpvStats` - SPV statistics")
     md.append("- `FFITransaction` - Transaction information")
     md.append("- `FFIUnconfirmedTransaction` - Unconfirmed transaction")
     md.append("- `FFIEventCallbacks` - Event callback structure")

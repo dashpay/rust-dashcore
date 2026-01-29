@@ -94,21 +94,6 @@ typedef struct FFIDetailedSyncProgress {
   int64_t sync_start_timestamp;
 } FFIDetailedSyncProgress;
 
-typedef struct FFISpvStats {
-  uint32_t connected_peers;
-  uint32_t total_peers;
-  uint32_t header_height;
-  uint32_t filter_height;
-  uint64_t headers_downloaded;
-  uint64_t filter_headers_downloaded;
-  uint64_t filters_downloaded;
-  uint64_t filters_matched;
-  uint64_t blocks_processed;
-  uint64_t bytes_received;
-  uint64_t bytes_sent;
-  uint64_t uptime;
-} FFISpvStats;
-
 typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);
 
 typedef void (*TransactionCallback)(const uint8_t (*txid)[32],
@@ -395,14 +380,6 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  struct FFISyncProgress *dash_spv_ffi_client_get_sync_progress(struct FFIDashSpvClient *client) ;
 
 /**
- * Get current runtime statistics for the SPV client.
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- */
- struct FFISpvStats *dash_spv_ffi_client_get_stats(struct FFIDashSpvClient *client) ;
-
-/**
  * Get the current chain tip hash (32 bytes) if available.
  *
  * # Safety
@@ -462,14 +439,6 @@ int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
  * - `progress` must be a pointer returned from this crate, or null.
  */
  void dash_spv_ffi_sync_progress_destroy(struct FFISyncProgress *progress) ;
-
-/**
- * Destroy an `FFISpvStats` object returned by this crate.
- *
- * # Safety
- * - `stats` must be a pointer returned from this crate, or null.
- */
- void dash_spv_ffi_spv_stats_destroy(struct FFISpvStats *stats) ;
 
 /**
  * Request a rescan of the blockchain from a given height (not yet implemented).

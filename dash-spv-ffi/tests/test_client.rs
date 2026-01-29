@@ -97,9 +97,6 @@ mod tests {
 
             let progress = dash_spv_ffi_client_get_sync_progress(std::ptr::null_mut());
             assert!(progress.is_null());
-
-            let stats = dash_spv_ffi_client_get_stats(std::ptr::null_mut());
-            assert!(stats.is_null());
         }
     }
 
@@ -128,13 +125,6 @@ mod tests {
         unsafe {
             let (config, _temp_dir) = create_test_config();
             let client = dash_spv_ffi_client_new(config);
-
-            let stats = dash_spv_ffi_client_get_stats(client);
-            if !stats.is_null() {
-                let _stats_ref = &*stats;
-                // headers_downloaded and bytes_received are u64, always >= 0
-                dash_spv_ffi_spv_stats_destroy(stats);
-            }
 
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);
