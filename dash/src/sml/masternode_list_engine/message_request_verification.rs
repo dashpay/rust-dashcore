@@ -88,21 +88,27 @@ impl MasternodeListEngine {
 
         // Extract the last 64 bits of the selection hash (equivalent to `selectionHash.GetUint64(3)` in C++)
         let request_id_bytes = request_id.to_byte_array();
-        // Just copying the core implementation
         let selection_hash_64 = u64::from_le_bytes(request_id_bytes[24..32].try_into().unwrap());
 
-        // Determine the quorum index based on DIP 24
+        // Determine the quorum index using Dash Core's bit extraction method:
+        // int n = log2(signingActiveQuorumCount);
+        // uint64_t signer = (((1ull << n) - 1) & (b >> (64 - n - 1)));
         let quorum_count = self.network.isd_llmq_type().active_quorum_count();
-        let n = quorum_count.ilog2();
-        let quorum_index_mask = (1 << n) - 1; // Extracts the last log2(quorum_count) bits
-        // Extract the last `n` bits from the selection hash
-        // Only God and maybe Odysseus knows why (64 - n - 1)
-        let quorum_index = quorum_index_mask & (selection_hash_64 >> (64 - n - 1)) as usize;
+        let n = (quorum_count as u64).ilog2();
+        let quorum_index_mask = (1u64 << n) - 1;
+        let quorum_index = (quorum_index_mask & (selection_hash_64 >> (64 - n - 1))) as i16;
 
-        // Retrieve the selected quorum
-        let quorum = quorums.get(quorum_index).expect("quorum index should always be within range");
+        // Find the quorum by its quorum_index field, NOT by array position
+        // This matches Dash Core: find_if(quorums, [signer](q) { return q->qc->quorumIndex == signer; })
+        let quorum =
+            quorums.iter().find(|q| q.quorum_entry.quorum_index == Some(quorum_index)).ok_or({
+                MessageVerificationError::QuorumIndexNotFound(
+                    quorum_index as u16,
+                    instant_lock.cyclehash,
+                )
+            })?;
 
-        Ok((quorum, request_id, quorum_index))
+        Ok((quorum, request_id, quorum_index as usize))
     }
 
     /// Verifies an Instant Lock (`InstantLock`) using the appropriate quorum from the rotated quorums.

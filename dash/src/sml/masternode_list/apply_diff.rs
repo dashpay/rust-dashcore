@@ -89,10 +89,8 @@ impl MasternodeList {
             }
         }
 
-        // Verify all slots have been filled
-        if quorum_sig_lookup.iter().any(Option::is_none) {
-            return Err(SmlError::IncompleteSignatureSet);
-        }
+        // Check if signatures are available (matches Dash Core fallback behavior)
+        let signatures_available = !quorum_sig_lookup.iter().any(Option::is_none);
 
         let mut rotating_sig = None;
 
@@ -105,29 +103,32 @@ impl MasternodeList {
                     let entry_hash = new_quorum.calculate_entry_hash();
                     let verifying_chain_lock_signature =
                         if new_quorum.llmq_type.is_rotating_quorum_type() {
-                            if rotating_sig.is_none() {
-                                if let Some(sig) = quorum_sig_lookup[idx] {
-                                    rotating_sig = Some(*sig)
-                                } else {
-                                    return Err(SmlError::IncompleteSignatureSet);
-                                }
+                            if rotating_sig.is_none()
+                                && let Some(sig) = quorum_sig_lookup.get(idx).copied().flatten()
+                            {
+                                rotating_sig = Some(*sig);
                             }
-                            if let Some(previous_chain_lock_sigs) = previous_chain_lock_sigs {
-                                if let Some(sig) = quorum_sig_lookup[idx] {
-                                    Some(VerifyingChainLockSignaturesType::Rotating([
-                                        previous_chain_lock_sigs[0],
-                                        previous_chain_lock_sigs[1],
-                                        previous_chain_lock_sigs[2],
-                                        *sig,
-                                    ]))
+                            if signatures_available {
+                                if let Some(previous_chain_lock_sigs) = previous_chain_lock_sigs {
+                                    quorum_sig_lookup.get(idx).copied().flatten().map(|sig| {
+                                        VerifyingChainLockSignaturesType::Rotating([
+                                            previous_chain_lock_sigs[0],
+                                            previous_chain_lock_sigs[1],
+                                            previous_chain_lock_sigs[2],
+                                            *sig,
+                                        ])
+                                    })
                                 } else {
-                                    return Err(SmlError::IncompleteSignatureSet);
+                                    None
                                 }
                             } else {
                                 None
                             }
                         } else {
-                            quorum_sig_lookup[idx]
+                            quorum_sig_lookup
+                                .get(idx)
+                                .copied()
+                                .flatten()
                                 .copied()
                                 .map(VerifyingChainLockSignaturesType::NonRotating)
                         };
@@ -135,7 +136,7 @@ impl MasternodeList {
                         quorum_entry: new_quorum,
                         verified: LLMQEntryVerificationStatus::Skipped(
                             LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
-                        ), // Default to unverified
+                        ),
                         commitment_hash,
                         entry_hash,
                         verifying_chain_lock_signature,

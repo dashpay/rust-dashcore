@@ -15,6 +15,7 @@ pub enum LLMQEntryVerificationSkipStatus {
     MissedList(CoreBlockHeight),
     UnknownBlock(BlockHash),
     OtherContext(String),
+    SignaturesUnavailable,
 }
 
 impl Display for LLMQEntryVerificationSkipStatus {
@@ -32,6 +33,9 @@ impl Display for LLMQEntryVerificationSkipStatus {
                 }
                 LLMQEntryVerificationSkipStatus::OtherContext(message) => {
                     format!("OtherContext({message})")
+                }
+                LLMQEntryVerificationSkipStatus::SignaturesUnavailable => {
+                    "SignaturesUnavailable".to_string()
                 }
             }
             .as_str(),
