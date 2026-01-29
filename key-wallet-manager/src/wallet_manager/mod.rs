@@ -27,6 +27,14 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 use zeroize::Zeroize;
 
+use crate::WalletEvent;
+#[cfg(feature = "std")]
+use tokio::sync::broadcast;
+
+/// Default capacity for the wallet event bus.
+#[cfg(feature = "std")]
+const DEFAULT_WALLET_EVENT_CAPACITY: usize = 1000;
+
 /// Unique identifier for a wallet (32-byte hash)
 pub type WalletId = [u8; 32];
 
@@ -76,6 +84,9 @@ pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
     wallet_infos: BTreeMap<WalletId, T>,
+    /// Event sender for wallet events
+    #[cfg(feature = "std")]
+    event_sender: broadcast::Sender<WalletEvent>,
 }
 
 impl<T: WalletInfoInterface> WalletManager<T> {
@@ -86,7 +97,23 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             synced_height: 0,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
+            #[cfg(feature = "std")]
+            event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
         }
+    }
+
+    /// Subscribe to wallet events.
+    ///
+    /// Returns a receiver that will receive all wallet events emitted by this manager.
+    #[cfg(feature = "std")]
+    pub fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
+        self.event_sender.subscribe()
+    }
+
+    /// Get a reference to the event sender for emitting events.
+    #[cfg(feature = "std")]
+    pub fn event_sender(&self) -> &broadcast::Sender<WalletEvent> {
+        &self.event_sender
     }
 
     /// Create a new wallet from mnemonic and add it to the manager
@@ -494,7 +521,31 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     if check_result.is_new_transaction {
                         result.is_new_transaction = true;
                     }
-                    // Note: balance update is already handled in check_transaction
+
+                    // Emit TransactionReceived events for each affected account
+                    #[cfg(feature = "std")]
+                    for account_match in &check_result.affected_accounts {
+                        let Some(account_index) = account_match.account_type_match.account_index()
+                        else {
+                            continue;
+                        };
+                        let amount = account_match.received as i64 - account_match.sent as i64;
+                        let addresses: Vec<Address> = account_match
+                            .account_type_match
+                            .all_involved_addresses()
+                            .into_iter()
+                            .map(|info| info.address)
+                            .collect();
+
+                        let event = WalletEvent::TransactionReceived {
+                            wallet_id,
+                            account_index,
+                            txid: tx.txid(),
+                            amount,
+                            addresses,
+                        };
+                        let _ = self.event_sender.send(event);
+                    }
                 }
 
                 result.new_addresses.extend(check_result.new_addresses);

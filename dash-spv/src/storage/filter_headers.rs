@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tokio::sync::RwLock;
 
 #[async_trait]
-pub trait FilterHeaderStorage {
+pub trait FilterHeaderStorage: Send + Sync + 'static {
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()>;
 
     async fn store_filter_headers_at_height(

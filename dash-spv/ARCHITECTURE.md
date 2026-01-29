@@ -29,33 +29,33 @@
 ### Current State: Production-Ready Structure ✅
 
 **Code Organization: EXCELLENT (A+)**
-- ✅ All major modules refactored into focused components
-- ✅ sync/filters/: 10 modules (4,281 lines)
-- ✅ sync/sequential/: 11 modules (4,785 lines)
+- ✅ Parallel event-driven sync architecture with 7 independent managers
+- ✅ SyncManager trait with standard event loop pattern
+- ✅ SyncEvent broadcast channel for inter-manager communication
 - ✅ client/: 8 modules (2,895 lines)
 - ✅ storage/disk/: 7 modules (2,458 lines)
 - ✅ All files under 1,500 lines (most under 500)
 
 **Critical Remaining Work:**
-- 🚨 **Security**: BLS signature validation (ChainLocks + InstantLocks) - 1-2 weeks effort
+- 🚨 **Security**: BLS signature validation (ChainLocks + InstantLocks)
 
 ### Key Architectural Strengths
 
 **EXCELLENT DESIGN:**
-- ✅ **Trait-based abstractions** (NetworkManager, StorageManager, WalletInterface)
-- ✅ **Sequential sync manager** with clear phase transitions
+- ✅ **Trait-based abstractions** (NetworkManager, StorageManager, WalletInterface, SyncManager)
+- ✅ **Parallel sync managers** running in independent tokio tasks
+- ✅ **Event-driven coordination** via typed SyncEvent broadcast channel
+- ✅ **Topic-based message routing** filters network messages by type
+- ✅ **Reactive progress aggregation** via watch channel streams
 - ✅ **Modular organization** with focused responsibilities
-- ✅ **Comprehensive error types** with clear categorization
 - ✅ **External wallet integration** with clean interface boundaries
-- ✅ **Lock ordering documented** to prevent deadlocks
-- ✅ **Performance optimizations** (cached headers, segmented storage, flow control)
-- ✅ **Strong test coverage** (242/243 tests passing)
+- ✅ **Performance optimizations** (parallel sync, cached headers, segmented storage)
 
 **AREAS FOR IMPROVEMENT:**
 - ⚠️ **BLS validation** required for mainnet security
 - ⚠️ **Integration tests** could be more comprehensive
 - ⚠️ **Resource limits** not yet enforced (connections, bandwidth)
-- ℹ️ **Type aliases** could improve ergonomics (optional - generic design is intentional and beneficial)
+- ℹ️ See `TODO_SYNC_ISSUES.md` for tracked sync-related issues
 
 ### Statistics
 
@@ -63,10 +63,9 @@
 |----------|-------|-------|
 | Total Files | 110+ | Well-organized module structure |
 | Total Lines | ~40,000 | All files appropriately sized |
+| Sync Managers | 7 | Block headers, filter headers, filters, blocks, masternodes, chainlock, instantsend |
 | Largest File | network/manager.rs | 1,322 lines - Acceptable complexity |
 | Module Count | 10+ | Well-separated concerns |
-| Test Coverage | 242/243 passing | 99.6% pass rate |
-| Major Modules Refactored | 4 | sync/filters/, sync/sequential/, client/, storage/disk/ |
 
 ---
 
@@ -77,7 +76,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     DashSpvClient<W,N,S>                    │
-│  (Main Orchestrator - 2,819 lines)                          │
+│  (Main Entry Point)                                         │
 └─────────────────────────────────────────────────────────────┘
            │              │              │
            ▼              ▼              ▼
@@ -87,44 +86,77 @@
     └───────────┘  └───────────┘  └───────────┘
            │
            ▼
-    ┌─────────────────────────────────────────┐
-    │     SyncManager               │
-    │  - HeadersSync                          │
-    │  - MasternodeSync                       │
-    │  - FilterSync (4,027 lines - TOO BIG)   │
-    └─────────────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────────┐
+    │                    SyncCoordinator                      │
+    │  - Spawns managers in parallel tokio tasks              │
+    │  - Aggregates progress reactively via watch channels    │
+    │  - Coordinates graceful shutdown                        │
+    └─────────────────────────────────────────────────────────┘
            │
            ▼
-    ┌──────────────┬──────────────┬──────────────┐
-    │  Validation  │  ChainLock   │    Bloom     │
-    │   Manager    │   Manager    │   Manager    │
-    └──────────────┴──────────────┴──────────────┘
+    ┌─────────────────────────────────────────────────────────┐
+    │              Parallel Sync Managers (7)                 │
+    ├──────────────┬──────────────┬──────────────┬────────────┤
+    │ BlockHeaders │ FilterHeaders│   Filters    │   Blocks   │
+    │   Manager    │   Manager    │   Manager    │   Manager  │
+    ├──────────────┼──────────────┼──────────────┼────────────┤
+    │  Masternodes │  ChainLock   │ InstantSend  │            │
+    │   Manager    │   Manager    │   Manager    │            │
+    └──────────────┴──────────────┴──────────────┴────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────────────────────────┐
+    │              SyncEvent Broadcast Channel                │
+    │  Inter-manager communication via typed events           │
+    └─────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow
 
 ```
-Network Messages → MessageHandler → SyncManager
-                                          │
-                                          ▼
-                              ┌─────────────────────┐
-                              │  Validation Manager │
-                              └─────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────┐
-                              │  Storage Manager    │
-                              └─────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────┐
-                              │  ChainState Update  │
-                              └─────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────┐
-                              │    Event Emission   │
-                              └─────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          Network Layer                                    │
+│  - Topic-based message routing to subscribed managers                    │
+│  - NetworkEvent broadcast for peer connection changes                    │
+└──────────────────────────────────────────────────────────────────────────┘
+                    │                           │
+                    │ Messages                  │ NetworkEvents
+                    ▼                           ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                      Manager Event Loop (per manager)                     │
+│  tokio::select! {                                                        │
+│    message = receiver.recv()  => handle_message()                        │
+│    event = sync_events.recv() => handle_sync_event()                     │
+│    network = network_rx.recv()=> handle_network_event()                  │
+│    _ = tick_interval.tick()   => tick() // timeouts, retries             │
+│  }                                                                       │
+└──────────────────────────────────────────────────────────────────────────┘
+                    │
+                    │ SyncEvents (broadcast)
+                    ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                       Event Flow Between Managers                         │
+│                                                                          │
+│  BlockHeadersManager ──BlockHeadersStored──> FilterHeadersManager        │
+│                      ──BlockHeaderSyncComplete──> MasternodesManager     │
+│                                                                          │
+│  FilterHeadersManager ──FilterHeadersStored──> FiltersManager            │
+│                                                                          │
+│  FiltersManager ──BlocksNeeded──> BlocksManager                          │
+│                                                                          │
+│  BlocksManager ──BlockProcessed──> FiltersManager (for gap limit rescan) │
+│                                                                          │
+│  SyncCoordinator ──SyncComplete──> External listeners                    │
+└──────────────────────────────────────────────────────────────────────────┘
+                    │
+                    │ Progress (watch channels)
+                    ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    Progress Aggregation Task                              │
+│  - Merges progress from all manager watch channels                       │
+│  - Updates SyncProgress reactively when any manager changes              │
+│  - Emits SyncComplete when all managers reach Synced state               │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -956,192 +988,158 @@ storage/disk/
 
 ---
 
-### 7. SYNC MODULE (16 files, ~12,000 lines) 🚨 **NEEDS MAJOR REFACTORING**
+### 7. SYNC MODULE - Parallel Event-Driven Architecture ✅ **PRODUCTION READY**
 
 #### Overview
-The sync module coordinates all blockchain synchronization. This is the most complex part of the codebase.
 
-#### `src/sync/mod.rs` (167 lines) ✅ GOOD
+The sync module uses a parallel, event-driven architecture where 7 independent managers run concurrently in their own tokio tasks, communicating via a broadcast event channel.
 
-**Purpose**: Module exports and common sync utilities.
+#### Architecture Summary
 
-**Analysis**:
-- **GOOD**: Clean module organization
-
-#### `src/sync/sequential/` (Module - Refactored) ✅ **COMPLETE**
-
-**Purpose**: Sequential synchronization manager - coordinates all sync phases.
-
-**REFACTORING STATUS**: Complete (2025-01-21)
-- ✅ Converted from single 2,246-line file to 11 focused modules
-- ✅ All 242 tests passing
-- ✅ Production ready
-
-**Module Structure**:
 ```
-sync/sequential/ (4,785 lines total across 11 modules)
-├── mod.rs (52 lines) - Module coordinator and re-exports
-├── manager.rs (234 lines) - Core SyncManager struct and accessors
-├── lifecycle.rs (225 lines) - Initialization, startup, and shutdown
-├── phase_execution.rs (519 lines) - Phase execution, transitions, timeout handling
-├── message_handlers.rs (808 lines) - Handlers for sync phase messages
-├── post_sync.rs (530 lines) - Handlers for post-sync messages (after initial sync)
-├── phases.rs (621 lines) - SyncPhase enum and phase-related types
-├── progress.rs (369 lines) - Progress tracking utilities
-├── recovery.rs (559 lines) - Recovery and error handling logic
-├── request_control.rs (410 lines) - Request flow control
-└── transitions.rs (458 lines) - Phase transition management
+SyncCoordinator
+├── BlockHeadersManager   - Downloads and validates block headers via checkpoints
+├── FilterHeadersManager  - Downloads BIP158 filter headers
+├── FiltersManager        - Downloads filters, matches against wallet
+├── BlocksManager         - Downloads matched blocks, processes through wallet
+├── MasternodesManager    - Synchronizes masternode list via QRInfo/MnListDiff
+├── ChainLockManager      - Receives and validates ChainLocks
+└── InstantSendManager    - Receives and validates InstantLocks
 ```
 
-**What it does**:
-- Coordinates header sync (via `HeaderSyncManagerWithReorg`)
-- Coordinates masternode list sync (via `MasternodeSyncManager`)
-- Coordinates filter sync (via `FilterSyncManager`)
-- Manages sync state machine through SyncPhase enum
-- Handles phase transitions with validation
-- Implements error recovery and retry logic
-- Tracks progress across all sync phases
-- Routes network messages to appropriate handlers
-- Handles post-sync maintenance (new blocks, filters, etc.)
+#### Core Components
 
-**Complex Types Used**:
-- **Generic constraints**: `<S: StorageManager, N: NetworkManager, W: WalletInterface>`
-- **State machine**: SyncPhase enum with strict sequential transitions
-- **Shared state**: Arc<RwLock<>> for wallet and stats
-- **Sub-managers**: Delegates to specialized sync managers
+##### `src/sync/sync_coordinator.rs` - Parallel Orchestration
 
-**Strengths**:
-- ✅ **EXCELLENT**: Clean module separation by responsibility
-- ✅ **EXCELLENT**: Sequential approach simplifies reasoning
-- ✅ **GOOD**: Clear phase boundaries and transitions
-- ✅ **GOOD**: Comprehensive error recovery
-- ✅ **GOOD**: All phases well-documented
-- ✅ **GOOD**: Lock ordering documented to prevent deadlocks
+The `SyncCoordinator` spawns each manager in its own tokio task for true parallel processing:
 
-#### `src/sync/filters/` (Module - Phase 1 Complete) ✅ **REFACTORED**
+- **Task spawning**: Each manager runs independently via `JoinSet`
+- **Progress aggregation**: Reactive progress updates via merged watch channel streams
+- **Event bus**: Broadcast channel for inter-manager communication
+- **Shutdown**: Graceful termination via `CancellationToken`
 
-**Purpose**: Compact filter synchronization logic.
+##### `src/sync/sync_manager.rs` - Manager Trait
 
-**REFACTORING STATUS**: Phase 1 Complete (2025-01-XX)
-- ✅ Converted from single 4,060-line file to module directory
-- ✅ Extracted types and constants to `types.rs` (89 lines)
-- ✅ Main logic in `manager_full.rs` (4,027 lines - awaiting Phase 2)
-- ✅ All 243 tests passing
+The `SyncManager` trait defines the interface all managers implement:
 
-**Previous state**: Single file with 4,027 lines - UNACCEPTABLE
-**Current state**: Module structure established - Phase 2 extraction needed
+```rust
+#[async_trait]
+pub trait SyncManager: Send + Sync + Debug {
+    fn identifier(&self) -> ManagerIdentifier;
+    fn state(&self) -> SyncState;
+    fn wanted_message_types(&self) -> &'static [MessageType];
 
-**What it does**:
-- Filter header sync (CFHeaders)
-- Compact filter download (CFilters)
-- Filter matching against wallet addresses
-- Gap detection and recovery
-- Request batching and flow control
-- Timeout and retry logic
-- Progress tracking and statistics
-- Peer selection and routing
+    async fn initialize(&mut self) -> SyncResult<()>;
+    async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    async fn handle_message(&mut self, msg: Message, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    async fn handle_sync_event(&mut self, event: &SyncEvent, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    fn progress(&self) -> SyncManagerProgress;
 
-**Phase 2 Accomplishment (2025-01-21)**:
-- ✅ All 8 modules successfully extracted
-- ✅ `manager.rs` - Core coordinator (342 lines)
-- ✅ `headers.rs` - CFHeaders sync (1,345 lines)
-- ✅ `download.rs` - CFilter download (659 lines)
-- ✅ `matching.rs` - Filter matching (454 lines)
-- ✅ `gaps.rs` - Gap detection (490 lines)
-- ✅ `retry.rs` - Retry logic (381 lines)
-- ✅ `stats.rs` - Statistics (234 lines)
-- ✅ `requests.rs` - Request management (248 lines)
-- ✅ `types.rs` - Type definitions (86 lines)
-- ✅ `mod.rs` - Module coordinator (42 lines)
-- ✅ `manager_full.rs` deleted
-- ✅ All 243 tests passing
-- ✅ Compilation successful
-
-**Final Module Structure:**
-```
-sync/filters/
-├── mod.rs (42 lines) - Module coordinator
-├── types.rs (86 lines) - Type definitions
-├── manager.rs (342 lines) - Core coordinator
-├── stats.rs (234 lines) - Statistics tracking
-├── retry.rs (381 lines) - Timeout/retry logic
-├── requests.rs (248 lines) - Request queues
-├── gaps.rs (490 lines) - Gap detection
-├── headers.rs (1,345 lines) - CFHeaders sync
-├── download.rs (659 lines) - CFilter download
-└── matching.rs (454 lines) - Filter matching
+    // Default implementation provides the main event loop
+    async fn run(mut self, context: SyncManagerTaskContext) -> SyncResult<ManagerIdentifier>;
+}
 ```
 
-**Analysis**:
-- ✅ **COMPLETE**: All refactoring objectives met
-- ✅ **MAINTAINABLE**: Clear module boundaries and responsibilities
-- ✅ **TESTABLE**: Each module can be tested independently
-- ✅ **DOCUMENTED**: Each module has focused documentation
-- ✅ **PRODUCTION READY**: All tests passing, no regressions
+The trait provides a default `run()` implementation with the standard event loop pattern:
+- Process incoming network messages
+- Handle sync events from other managers
+- React to network events (peer changes)
+- Periodic tick for timeouts and retries
 
-#### `src/sync/headers.rs` (705 lines) ⚠️ LARGE
+##### `src/sync/events.rs` - Event Types
 
-**Purpose**: Header synchronization logic.
+`SyncEvent` enables loose coupling between managers:
 
-**What it does**:
-- Downloads headers from peers
-- Validates header chain
-- Handles headers2 compression
-- Detects reorgs
+| Event | Emitter | Consumers |
+|-------|---------|-----------|
+| `BlockHeadersStored` | BlockHeadersManager | FilterHeadersManager, MasternodesManager |
+| `BlockHeaderSyncComplete` | BlockHeadersManager | MasternodesManager |
+| `FilterHeadersStored` | FilterHeadersManager | FiltersManager |
+| `FiltersSyncComplete` | FiltersManager | BlocksManager |
+| `BlocksNeeded` | FiltersManager | BlocksManager |
+| `BlockProcessed` | BlocksManager | FiltersManager (gap limit rescan) |
+| `ChainLockReceived` | ChainLockManager | External listeners |
+| `InstantLockReceived` | InstantSendManager | External listeners |
+| `SyncComplete` | Coordinator | External listeners |
 
-**Analysis**:
-- **GOOD**: Comprehensive header sync
-- **GOOD**: Headers2 support
-- **ISSUE**: Could be split into headers1 and headers2 modules
+##### `src/sync/progress.rs` - Aggregate Progress
 
-**Refactoring needed**:
-- ⚠️ **MEDIUM**: Split headers1 and headers2 into separate files
-- ⚠️ **LOW**: Add more documentation
+`SyncProgress` aggregates progress from all managers with type-safe accessors for each manager's progress type.
 
-#### `src/sync/headers_with_reorg.rs` (1,148 lines) 🚨 **TOO LARGE**
+#### Manager Modules
 
-**Purpose**: Header sync with reorganization detection.
+Each manager follows a consistent structure:
 
-**Analysis**:
-- **ISSUE**: 1,148 lines is too large
-- **GOOD**: Handles complex reorg scenarios
-- **ISSUE**: Overlaps with sync/headers.rs
+```
+sync/<manager>/
+├── mod.rs           - Module exports
+├── manager.rs       - Manager struct and core logic
+├── sync_manager.rs  - SyncManager trait implementation
+├── pipeline.rs      - Download pipeline (if applicable)
+└── progress.rs      - Progress tracking types
+```
 
-**Refactoring needed**:
-- ⚠️ **HIGH**: Merge with headers.rs or clearly separate concerns
-- ⚠️ **HIGH**: Split into smaller modules
+##### `src/sync/block_headers/` - Block Header Sync
 
-#### `src/sync/masternodes.rs` (775 lines) ⚠️ LARGE
+- Downloads headers in parallel using checkpoint-based segments
+- Pipeline buffers out-of-order responses and commits in order
+- Handles both initial sync and post-sync new block announcements
+- Emits `BlockHeadersStored` events as headers are committed
 
-**Purpose**: Masternode list synchronization.
+##### `src/sync/filter_headers/` - Filter Header Sync
 
-**What it does**:
-- Downloads masternode diffs
-- Updates masternode list engine
-- Validates quorums
+- Listens for `BlockHeadersStored` events to know download range
+- Downloads BIP158 filter headers in batches
+- Validates filter header chain continuity
+- Emits `FilterHeadersStored` events
 
-**Analysis**:
-- **GOOD**: Dash-specific functionality
-- **GOOD**: Proper validation
-- **ISSUE**: Could be split
+##### `src/sync/filters/` - Filter Download and Matching
 
-**Refactoring needed**:
-- ⚠️ **MEDIUM**: Split diff download and validation
+- Listens for `FilterHeadersStored` to know available filter headers
+- Downloads compact block filters
+- Matches filters against wallet addresses
+- Emits `BlocksNeeded` when matches found
+- Handles gap limit rescanning when wallet discovers new addresses
 
-#### Other sync files:
-- `chainlock_validation.rs` (231 lines) ✅ **GOOD**
-- `discovery.rs` (98 lines) ✅ **GOOD**
-- `embedded_data.rs` (118 lines) ✅ **GOOD**
-- `state.rs` (157 lines) ✅ **GOOD**
-- `validation.rs` (283 lines) ✅ **GOOD**
+##### `src/sync/blocks/` - Block Download and Processing
 
-**Overall Sync Module Assessment**:
-- ✅ **EXCELLENT**: sync/filters/ fully refactored (10 modules, 4,281 lines)
-- ✅ **EXCELLENT**: sync/sequential/ fully refactored (11 modules, 4,785 lines)
-- ✅ **EXCELLENT**: State machine clearly modeled in phases.rs
-- ✅ **EXCELLENT**: Error recovery consolidated in recovery.rs
-- ✅ **GOOD**: Sequential approach is sound
-- ✅ **GOOD**: Individual algorithms appear correct
+- Listens for `BlocksNeeded` events from FiltersManager
+- Downloads full blocks for matched heights
+- Processes blocks through wallet for transaction extraction
+- Emits `BlockProcessed` with any new addresses discovered
+
+##### `src/sync/masternodes/` - Masternode List Sync
+
+- Waits for `BlockHeaderSyncComplete` before starting
+- Uses QRInfo for quorum-based sync or MnListDiff for incremental updates
+- Updates masternode list engine with validated diffs
+- Emits `MasternodeStateUpdated` events
+
+##### `src/sync/chainlock/` - ChainLock Processing
+
+- Listens for ChainLock messages from network
+- Validates signatures (requires quorum data from masternodes)
+- Emits `ChainLockReceived` events
+
+##### `src/sync/instantsend/` - InstantSend Processing
+
+- Listens for InstantLock messages from network
+- Validates signatures
+- Emits `InstantLockReceived` events
+
+#### Legacy Module
+
+The previous sequential sync implementation is preserved in `src/sync/legacy/` for reference. This approach used phase-based sequential synchronization where each phase completed before the next began.
+
+#### Design Strengths
+
+- **True parallelism**: Headers, filters, and masternodes sync concurrently
+- **Loose coupling**: Managers communicate only via typed events
+- **Independent progress**: Each manager tracks its own state
+- **Graceful recovery**: Managers handle their own timeouts and retries
+- **Type-safe events**: Compile-time verification of event contracts
+- **Topic-based routing**: Network messages filtered by type before reaching managers
 
 ---
 
@@ -1420,36 +1418,41 @@ Validation module handles header validation, ChainLock verification, and Instant
 
 ## Complexity Metrics
 
+### Sync Module Structure
+
+| Manager | Module Path | Key Files | Description |
+|---------|-------------|-----------|-------------|
+| BlockHeadersManager | sync/block_headers/ | manager.rs, pipeline.rs, sync_manager.rs | Parallel header sync via checkpoints |
+| FilterHeadersManager | sync/filter_headers/ | manager.rs, pipeline.rs, sync_manager.rs | BIP158 filter header sync |
+| FiltersManager | sync/filters/ | manager.rs, pipeline.rs, sync_manager.rs | Filter download and wallet matching |
+| BlocksManager | sync/blocks/ | manager.rs, pipeline.rs, sync_manager.rs | Block download for matched heights |
+| MasternodesManager | sync/masternodes/ | manager.rs, pipeline.rs, sync_manager.rs | Masternode list via QRInfo/MnListDiff |
+| ChainLockManager | sync/chainlock/ | manager.rs, sync_manager.rs | ChainLock message handling |
+| InstantSendManager | sync/instantsend/ | manager.rs, sync_manager.rs | InstantLock message handling |
+
 ### File Complexity (Largest Files)
 
 | File | Lines | Complexity | Notes |
 |------|-------|------------|-------|
-| sync/filters/ | 10 modules (4,281 total) | ✅ EXCELLENT | Well-organized filter sync modules |
-| sync/sequential/ | 11 modules (4,785 total) | ✅ EXCELLENT | Sequential sync pipeline modules |
-| client/ | 8 modules (2,895 total) | ✅ EXCELLENT | Client functionality modules |
-| storage/disk/ | 7 modules (2,458 total) | ✅ EXCELLENT | Persistent storage modules |
-| network/manager.rs | 1,322 | ✅ ACCEPTABLE | Complex peer management logic |
-| sync/headers_with_reorg.rs | 1,148 | ✅ ACCEPTABLE | Reorg handling complexity justified |
-| types.rs | 1,064 | ✅ ACCEPTABLE | Core type definitions |
-| mempool_filter.rs | 793 | ✅ GOOD | Mempool management |
-| bloom/tests.rs | 799 | ✅ GOOD | Comprehensive bloom tests |
-| sync/masternodes.rs | 775 | ✅ GOOD | Masternode sync logic |
-
-**Note:** All files are now at acceptable complexity levels. The 1,000-1,500 line files contain inherently complex logic that justifies their size.
+| sync/ (total) | 60+ files | ✅ EXCELLENT | 7 parallel managers with consistent structure |
+| client/ | 8 modules | ✅ EXCELLENT | Client functionality modules |
+| storage/disk/ | 7 modules | ✅ EXCELLENT | Persistent storage modules |
+| network/manager.rs | ~1,300 | ✅ ACCEPTABLE | Complex peer management logic |
+| types.rs | ~1,065 | ✅ ACCEPTABLE | Core type definitions |
 
 ### Module Health
 
-| Module | Files | Lines | Health | Characteristics |
-|--------|-------|-------|--------|-----------------|
-| sync/ | 37 | ~12,000 | ✅ EXCELLENT | Filters and sequential both fully modularized |
-| client/ | 8 | ~2,895 | ✅ EXCELLENT | Clean separation: lifecycle, sync, progress, mempool, events |
-| storage/ | 13 | ~3,500 | ✅ EXCELLENT | Disk storage split into focused modules |
-| network/ | 14 | ~5,000 | ✅ GOOD | Handles peer management, connections, message routing |
-| chain/ | 10 | ~3,500 | ✅ GOOD | ChainLock, checkpoint, orphan pool management |
-| bloom/ | 6 | ~2,000 | ✅ GOOD | Bloom filter implementation for transaction filtering |
-| validation/ | 6 | ~2,000 | ⚠️ FAIR | Needs BLS validation implementation (security) |
-| error/ | 1 | 303 | ✅ EXCELLENT | Clean error hierarchy with thiserror |
-| types/ | 1 | 1,065 | ✅ ACCEPTABLE | Core type definitions, reasonable size |
+| Module | Files | Health | Characteristics |
+|--------|-------|--------|-----------------|
+| sync/ | 60+ | ✅ EXCELLENT | Parallel managers, SyncManager trait, event-driven |
+| client/ | 8 | ✅ EXCELLENT | Clean separation: lifecycle, sync, progress, mempool, events |
+| storage/ | 13 | ✅ EXCELLENT | Disk storage split into focused modules |
+| network/ | 14 | ✅ GOOD | Handles peer management, connections, message routing |
+| chain/ | 10 | ✅ GOOD | ChainLock, checkpoint, orphan pool management |
+| bloom/ | 6 | ✅ GOOD | Bloom filter implementation for transaction filtering |
+| validation/ | 6 | ⚠️ FAIR | Needs BLS validation implementation (security) |
+| error/ | 1 | ✅ EXCELLENT | Clean error hierarchy with thiserror |
+| types/ | 1 | ✅ ACCEPTABLE | Core type definitions, reasonable size |
 
 ---
 

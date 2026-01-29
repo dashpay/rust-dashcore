@@ -13,9 +13,11 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use log::info;
 use std::sync::Arc;
+use std::time::Duration;
 use tempfile::TempDir;
 use test_case::test_case;
 use tokio::sync::RwLock;
+use tokio::time::timeout;
 
 #[tokio::test]
 async fn test_header_sync_with_client_integration() {
@@ -40,14 +42,25 @@ async fn test_header_sync_with_client_integration() {
     let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await;
     assert!(client.is_ok(), "Client creation should succeed");
 
-    let client = client.unwrap();
+    let mut client = client.unwrap();
 
     // Verify client starts with empty state
-    let stats = client.sync_progress().await;
-    assert!(stats.is_ok());
+    client.start().await.unwrap();
 
-    let stats = stats.unwrap();
-    assert_eq!(stats.header_height, 0);
+    // Poll until the headers progress becomes available (async managers may not be ready immediately)
+    let result = timeout(Duration::from_secs(5), async {
+        loop {
+            let progress = client.sync_progress();
+            if let Ok(headers) = progress.headers() {
+                return headers.current_height();
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("Timed out waiting for headers progress to become available");
+
+    assert_eq!(result, 0);
 
     info!("Header sync client integration test completed");
 }

@@ -90,13 +90,6 @@ mod tests {
                 }
             }
 
-            let callbacks = FFICallbacks {
-                on_progress: Some(on_sync_progress),
-                on_completion: Some(on_sync_complete),
-                on_data: None,
-                user_data: &ctx as *const _ as *mut c_void,
-            };
-
             // Start the client
             let result = dash_spv_ffi_client_start(ctx.client);
 
@@ -152,52 +145,6 @@ mod tests {
                 assert_eq!(result, FFIErrorCode::Success as i32);
             }
 
-            // Set up event callbacks
-            let events = ctx.events.clone();
-
-            extern "C" fn on_block(height: u32, hash: *const c_char, user_data: *mut c_void) {
-                let ctx = unsafe { &*(user_data as *const IntegrationTestContext) };
-                let hash_str = if hash.is_null() {
-                    "null".to_string()
-                } else {
-                    unsafe { CStr::from_ptr(hash).to_str().unwrap().to_string() }
-                };
-                ctx.events.lock().unwrap().push(format!("New block at height {}: {}", height, hash_str));
-            }
-
-            extern "C" fn on_transaction(txid: *const c_char, confirmed: bool, user_data: *mut c_void) {
-                let ctx = unsafe { &*(user_data as *const IntegrationTestContext) };
-                let txid_str = if txid.is_null() {
-                    "null".to_string()
-                } else {
-                    unsafe { CStr::from_ptr(txid).to_str().unwrap().to_string() }
-                };
-                ctx.events.lock().unwrap().push(
-                    format!("Transaction {}: confirmed={}", txid_str, confirmed)
-                );
-            }
-
-            extern "C" fn on_balance(confirmed: u64, unconfirmed: u64, user_data: *mut c_void) {
-                let ctx = unsafe { &*(user_data as *const IntegrationTestContext) };
-                ctx.events.lock().unwrap().push(
-                    format!("Balance update: confirmed={}, unconfirmed={}", confirmed, unconfirmed)
-                );
-            }
-
-            let event_callbacks = FFIEventCallbacks {
-                on_block: Some(on_block),
-                on_transaction: Some(on_transaction),
-                on_balance_update: Some(on_balance),
-                on_mempool_transaction_added: None,
-                on_mempool_transaction_confirmed: None,
-                on_mempool_transaction_removed: None,
-                on_compact_filter_matched: None,
-                on_wallet_transaction: None,
-                user_data: &ctx as *const _ as *mut c_void,
-            };
-
-            dash_spv_ffi_client_set_event_callbacks(ctx.client, event_callbacks);
-
             // Start monitoring
             dash_spv_ffi_client_start(ctx.client);
 
@@ -226,13 +173,6 @@ mod tests {
 
             dash_spv_ffi_client_stop(ctx.client);
 
-            // Check events
-            let events_vec = ctx.events.lock().unwrap();
-            println!("Wallet monitoring events: {} total", events_vec.len());
-            for event in events_vec.iter().take(10) {
-                println!("  {}", event);
-            }
-
             ctx.cleanup();
         }
     }
@@ -251,37 +191,13 @@ mod tests {
             let test_tx_hex = "01000000000100000000000000001976a914000000000000000000000000000000000000000088ac00000000";
             let c_tx = CString::new(test_tx_hex).unwrap();
 
-            // Set up broadcast tracking
-            let broadcast_result = Arc::new(Mutex::new(None));
-            let result_clone = broadcast_result.clone();
-
-            extern "C" fn on_broadcast_complete(success: bool, error: *const c_char, user_data: *mut c_void) {
-                let result = unsafe { &*(user_data as *const Arc<Mutex<Option<(bool, String)>>>) };
-                let error_str = if error.is_null() {
-                    String::new()
-                } else {
-                    unsafe { CStr::from_ptr(error).to_str().unwrap().to_string() }
-                };
-                *result.lock().unwrap() = Some((success, error_str));
-            }
-
-            let callbacks = FFICallbacks {
-                on_progress: None,
-                on_completion: Some(on_broadcast_complete),
-                on_data: None,
-                user_data: &result_clone as *const _ as *mut c_void,
-            };
-
             // Broadcast transaction
             let result = dash_spv_ffi_client_broadcast_transaction(ctx.client, c_tx.as_ptr());
 
             // In a real test, we'd wait for the broadcast result
             thread::sleep(Duration::from_secs(2));
 
-            // Check result
-            if let Some((success, error)) = &*broadcast_result.lock().unwrap() {
-                println!("Broadcast result: success={}, error={}", success, error);
-            }
+            println!("Broadcast result: {}", result);
 
             dash_spv_ffi_client_stop(ctx.client);
             ctx.cleanup();

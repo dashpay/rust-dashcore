@@ -24,6 +24,7 @@ extern crate std;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
+pub mod events;
 pub mod wallet_interface;
 pub mod wallet_manager;
 
@@ -38,6 +39,7 @@ pub use dashcore::blockdata::transaction::Transaction;
 pub use dashcore::{OutPoint, TxIn, TxOut};
 
 // Export our high-level types
+pub use events::WalletEvent;
 pub use key_wallet::wallet::managed_wallet_info::coin_selection::{
     CoinSelector, SelectionResult, SelectionStrategy,
 };

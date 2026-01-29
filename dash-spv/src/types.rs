@@ -21,7 +21,7 @@ use dashcore::{
     hash_types::FilterHeader,
     network::constants::NetworkExt,
     sml::masternode_list_engine::MasternodeListEngine,
-    Amount, Block, BlockHash, Network, Transaction, Txid,
+    Amount, Block, BlockHash, ChainLock, Network, Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
 
@@ -669,18 +669,18 @@ pub enum SpvEvent {
 
     /// ChainLock received and validated.
     ChainLockReceived {
-        /// Block height of the ChainLock.
-        height: u32,
-        /// Block hash of the ChainLock.
-        hash: dashcore::BlockHash,
+        /// The complete ChainLock data.
+        chain_lock: ChainLock,
+        /// Whether the BLS signature was validated.
+        validated: bool,
     },
 
     /// InstantLock received and validated.
     InstantLockReceived {
-        /// Transaction ID locked by this InstantLock.
-        txid: Txid,
-        /// Transaction inputs locked by this InstantLock.
-        inputs: Vec<dashcore::OutPoint>,
+        /// The complete InstantLock data.
+        instant_lock: dashcore::ephemerealdata::instant_lock::InstantLock,
+        /// Whether the BLS signature was validated.
+        validated: bool,
     },
 
     /// Unconfirmed transaction added to mempool.

@@ -16,18 +16,30 @@
 namespace dash_spv_ffi {
 #endif  // __cplusplus
 
-typedef enum FFISyncStage {
-  Connecting = 0,
-  QueryingHeight = 1,
-  Downloading = 2,
-  Validating = 3,
-  Storing = 4,
-  DownloadingFilterHeaders = 5,
-  DownloadingFilters = 6,
-  DownloadingBlocks = 7,
-  Complete = 8,
-  Failed = 9,
-} FFISyncStage;
+/**
+ * SyncState exposed by the FFI as FFISyncState.
+ */
+typedef enum FFISyncState {
+  Initializing = 0,
+  WaitingForConnections = 1,
+  WaitForEvents = 2,
+  Syncing = 3,
+  Synced = 4,
+  Error = 5,
+} FFISyncState;
+
+/**
+ * Identifies which sync manager generated an event.
+ */
+typedef enum FFIManagerId {
+  Headers = 0,
+  FilterHeaders = 1,
+  Filters = 2,
+  Blocks = 3,
+  Masternodes = 4,
+  ChainLocks = 5,
+  InstantSend = 6,
+} FFIManagerId;
 
 typedef enum FFIMempoolStrategy {
   FetchAll = 0,
@@ -42,83 +54,115 @@ typedef struct FFIClientConfig {
 
 } FFIClientConfig;
 
-typedef struct FFIString {
-  char *ptr;
-  uintptr_t length;
-} FFIString;
-
-typedef struct FFISyncProgress {
-  uint32_t header_height;
-  uint32_t filter_header_height;
-  uint32_t masternode_height;
-  uint32_t peer_count;
-  bool filter_sync_available;
-  uint32_t filters_downloaded;
-  uint32_t last_synced_filter_height;
-} FFISyncProgress;
-
-typedef struct FFIDetailedSyncProgress {
-  uint32_t total_height;
+/**
+ * Progress for block headers synchronization.
+ */
+typedef struct FFIBlockHeadersProgress {
+  enum FFISyncState state;
+  uint32_t current_height;
+  uint32_t target_height;
+  uint32_t processed;
+  uint32_t buffered;
   double percentage;
-  double headers_per_second;
-  int64_t estimated_seconds_remaining;
-  enum FFISyncStage stage;
-  struct FFIString stage_message;
-  struct FFISyncProgress overview;
-  uint64_t total_headers;
-  int64_t sync_start_timestamp;
-} FFIDetailedSyncProgress;
+  uint64_t last_activity;
+} FFIBlockHeadersProgress;
 
-typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);
+/**
+ * Progress for filter headers synchronization.
+ */
+typedef struct FFIFilterHeadersProgress {
+  enum FFISyncState state;
+  uint32_t current_height;
+  uint32_t target_height;
+  uint32_t block_header_tip_height;
+  uint32_t processed;
+  double percentage;
+  uint64_t last_activity;
+} FFIFilterHeadersProgress;
 
-typedef void (*TransactionCallback)(const uint8_t (*txid)[32],
-                                    bool confirmed,
-                                    int64_t amount,
-                                    const char *addresses,
-                                    uint32_t block_height,
-                                    void *user_data);
+/**
+ * Progress for compact block filters synchronization.
+ */
+typedef struct FFIFiltersProgress {
+  enum FFISyncState state;
+  uint32_t current_height;
+  uint32_t target_height;
+  uint32_t filter_header_tip_height;
+  uint32_t downloaded;
+  uint32_t processed;
+  uint32_t matched;
+  double percentage;
+  uint64_t last_activity;
+} FFIFiltersProgress;
 
-typedef void (*BalanceCallback)(uint64_t confirmed, uint64_t unconfirmed, void *user_data);
+/**
+ * Progress for full block synchronization.
+ */
+typedef struct FFIBlocksProgress {
+  enum FFISyncState state;
+  uint32_t last_processed;
+  uint32_t requested;
+  uint32_t from_storage;
+  uint32_t downloaded;
+  uint32_t processed;
+  uint32_t relevant;
+  uint32_t transactions;
+  uint64_t last_activity;
+} FFIBlocksProgress;
 
-typedef void (*MempoolTransactionCallback)(const uint8_t (*txid)[32],
-                                           int64_t amount,
-                                           const char *addresses,
-                                           bool is_instant_send,
-                                           void *user_data);
+/**
+ * Progress for masternode list synchronization.
+ */
+typedef struct FFIMasternodesProgress {
+  enum FFISyncState state;
+  uint32_t current_height;
+  uint32_t target_height;
+  uint32_t block_header_tip_height;
+  uint32_t diffs_processed;
+  uint64_t last_activity;
+} FFIMasternodesProgress;
 
-typedef void (*MempoolConfirmedCallback)(const uint8_t (*txid)[32],
-                                         uint32_t block_height,
-                                         const uint8_t (*block_hash)[32],
-                                         void *user_data);
+/**
+ * Progress for ChainLock synchronization.
+ */
+typedef struct FFIChainLockProgress {
+  enum FFISyncState state;
+  uint32_t best_validated_height;
+  uint32_t valid;
+  uint32_t invalid;
+  uint64_t last_activity;
+} FFIChainLockProgress;
 
-typedef void (*MempoolRemovedCallback)(const uint8_t (*txid)[32], uint8_t reason, void *user_data);
+/**
+ * Progress for InstantSend synchronization.
+ */
+typedef struct FFIInstantSendProgress {
+  enum FFISyncState state;
+  uint32_t pending;
+  uint32_t valid;
+  uint32_t invalid;
+  uint64_t last_activity;
+} FFIInstantSendProgress;
 
-typedef void (*CompactFilterMatchedCallback)(const uint8_t (*block_hash)[32],
-                                             const char *matched_scripts,
-                                             const char *wallet_id,
-                                             void *user_data);
-
-typedef void (*WalletTransactionCallback)(const char *wallet_id,
-                                          uint32_t account_index,
-                                          const uint8_t (*txid)[32],
-                                          bool confirmed,
-                                          int64_t amount,
-                                          const char *addresses,
-                                          uint32_t block_height,
-                                          bool is_ours,
-                                          void *user_data);
-
-typedef struct FFIEventCallbacks {
-  BlockCallback on_block;
-  TransactionCallback on_transaction;
-  BalanceCallback on_balance_update;
-  MempoolTransactionCallback on_mempool_transaction_added;
-  MempoolConfirmedCallback on_mempool_transaction_confirmed;
-  MempoolRemovedCallback on_mempool_transaction_removed;
-  CompactFilterMatchedCallback on_compact_filter_matched;
-  WalletTransactionCallback on_wallet_transaction;
-  void *user_data;
-} FFIEventCallbacks;
+/**
+ * Aggregate progress for all sync managers.
+ * Provides a complete view of the parallel sync system's state.
+ */
+typedef struct FFISyncProgress {
+  enum FFISyncState state;
+  double percentage;
+  bool is_synced;
+  /**
+   * Per-manager progress (null if manager not started).
+   */
+  struct FFIBlockHeadersProgress *headers;
+  struct FFIFilterHeadersProgress *filter_headers;
+  struct FFIFiltersProgress *filters;
+  struct FFIBlocksProgress *blocks;
+  struct FFIMasternodesProgress *masternodes;
+  struct FFIChainLockProgress *chainlocks;
+  struct FFIInstantSendProgress *instantsend;
+} FFISyncProgress;
 
 /**
  * Opaque handle to the wallet manager owned by the SPV client.
@@ -130,6 +174,264 @@ typedef struct FFIEventCallbacks {
 typedef struct FFIWalletManager {
   uint8_t _private[0];
 } FFIWalletManager;
+
+/**
+ * Callback for SyncEvent::SyncStart
+ */
+typedef void (*OnSyncStartCallback)(enum FFIManagerId manager_id, void *user_data);
+
+/**
+ * Callback for SyncEvent::BlockHeadersStored
+ */
+typedef void (*OnBlockHeadersStoredCallback)(uint32_t tip_height, void *user_data);
+
+/**
+ * Callback for SyncEvent::BlockHeaderSyncComplete
+ */
+typedef void (*OnBlockHeaderSyncCompleteCallback)(uint32_t tip_height, void *user_data);
+
+/**
+ * Callback for SyncEvent::FilterHeadersStored
+ */
+typedef void (*OnFilterHeadersStoredCallback)(uint32_t start_height,
+                                              uint32_t end_height,
+                                              uint32_t tip_height,
+                                              void *user_data);
+
+/**
+ * Callback for SyncEvent::FilterHeadersSyncComplete
+ */
+typedef void (*OnFilterHeadersSyncCompleteCallback)(uint32_t tip_height, void *user_data);
+
+/**
+ * Callback for SyncEvent::FiltersStored
+ */
+typedef void (*OnFiltersStoredCallback)(uint32_t start_height, uint32_t end_height, void *user_data);
+
+/**
+ * Callback for SyncEvent::FiltersSyncComplete
+ */
+typedef void (*OnFiltersSyncCompleteCallback)(uint32_t tip_height, void *user_data);
+
+/**
+ * A block that needs to be downloaded (height + hash).
+ */
+typedef struct FFIBlockNeeded {
+  /**
+   * Block height
+   */
+  uint32_t height;
+  /**
+   * Block hash (32 bytes)
+   */
+  uint8_t hash[32];
+} FFIBlockNeeded;
+
+/**
+ * Callback for SyncEvent::BlocksNeeded
+ *
+ * The `blocks` pointer points to an array of `FFIBlockNeeded` structs.
+ * The pointer is borrowed and only valid for the duration of the callback.
+ * Callers must memcpy/duplicate any data they need to retain after the
+ * callback returns.
+ */
+typedef void (*OnBlocksNeededCallback)(const struct FFIBlockNeeded *blocks,
+                                       uint32_t count,
+                                       void *user_data);
+
+/**
+ * Callback for SyncEvent::BlockProcessed
+ *
+ * The `hash` pointer is borrowed and only valid for the duration of the
+ * callback. Callers must memcpy/duplicate it to retain the value after
+ * the callback returns.
+ */
+typedef void (*OnBlockProcessedCallback)(uint32_t height,
+                                         const uint8_t (*hash)[32],
+                                         uint32_t new_address_count,
+                                         void *user_data);
+
+/**
+ * Callback for SyncEvent::MasternodeStateUpdated
+ */
+typedef void (*OnMasternodeStateUpdatedCallback)(uint32_t height, void *user_data);
+
+/**
+ * Callback for SyncEvent::ChainLockReceived
+ *
+ * The `hash` and `signature` pointers are borrowed and only valid for the
+ * duration of the callback. Callers must memcpy/duplicate them to retain
+ * the values after the callback returns.
+ */
+typedef void (*OnChainLockReceivedCallback)(uint32_t height,
+                                            const uint8_t (*hash)[32],
+                                            const uint8_t (*signature)[96],
+                                            bool validated,
+                                            void *user_data);
+
+/**
+ * Callback for SyncEvent::InstantLockReceived
+ *
+ * The `txid` pointer is borrowed and only valid for the duration of the callback.
+ * The `instantlock_data` pointer points to the consensus-serialized InstantLock
+ * bytes and is only valid for the duration of the callback.
+ * Callers must memcpy/duplicate any data they need to retain.
+ */
+typedef void (*OnInstantLockReceivedCallback)(const uint8_t (*txid)[32],
+                                              const uint8_t *instantlock_data,
+                                              uintptr_t instantlock_len,
+                                              bool validated,
+                                              void *user_data);
+
+/**
+ * Callback for SyncEvent::ManagerError
+ *
+ * The `error` string pointer is borrowed and only valid for the duration
+ * of the callback. Callers must copy the string if they need to retain it
+ * after the callback returns.
+ */
+typedef void (*OnManagerErrorCallback)(enum FFIManagerId manager_id,
+                                       const char *error,
+                                       void *user_data);
+
+/**
+ * Callback for SyncEvent::SyncComplete
+ */
+typedef void (*OnSyncCompleteCallback)(uint32_t header_tip, void *user_data);
+
+/**
+ * Sync event callbacks - one callback per SyncEvent variant.
+ *
+ * Set only the callbacks you're interested in; unset callbacks will be ignored.
+ *
+ * All pointer parameters passed to callbacks (strings, hashes, arrays) are
+ * borrowed and only valid for the duration of the callback invocation.
+ * Callers must memcpy/duplicate any data they need to retain.
+ */
+typedef struct FFISyncEventCallbacks {
+  OnSyncStartCallback on_sync_start;
+  OnBlockHeadersStoredCallback on_block_headers_stored;
+  OnBlockHeaderSyncCompleteCallback on_block_header_sync_complete;
+  OnFilterHeadersStoredCallback on_filter_headers_stored;
+  OnFilterHeadersSyncCompleteCallback on_filter_headers_sync_complete;
+  OnFiltersStoredCallback on_filters_stored;
+  OnFiltersSyncCompleteCallback on_filters_sync_complete;
+  OnBlocksNeededCallback on_blocks_needed;
+  OnBlockProcessedCallback on_block_processed;
+  OnMasternodeStateUpdatedCallback on_masternode_state_updated;
+  OnChainLockReceivedCallback on_chainlock_received;
+  OnInstantLockReceivedCallback on_instantlock_received;
+  OnManagerErrorCallback on_manager_error;
+  OnSyncCompleteCallback on_sync_complete;
+  void *user_data;
+} FFISyncEventCallbacks;
+
+/**
+ * Callback for NetworkEvent::PeerConnected
+ *
+ * The `address` string pointer is borrowed and only valid for the duration
+ * of the callback. Callers must copy the string if they need to retain it
+ * after the callback returns.
+ */
+typedef void (*OnPeerConnectedCallback)(const char *address, void *user_data);
+
+/**
+ * Callback for NetworkEvent::PeerDisconnected
+ *
+ * The `address` string pointer is borrowed and only valid for the duration
+ * of the callback. Callers must copy the string if they need to retain it
+ * after the callback returns.
+ */
+typedef void (*OnPeerDisconnectedCallback)(const char *address, void *user_data);
+
+/**
+ * Callback for NetworkEvent::PeersUpdated
+ */
+typedef void (*OnPeersUpdatedCallback)(uint32_t connected_count,
+                                       uint32_t best_height,
+                                       void *user_data);
+
+/**
+ * Network event callbacks - one callback per NetworkEvent variant.
+ *
+ * Set only the callbacks you're interested in; unset callbacks will be ignored.
+ *
+ * All pointer parameters passed to callbacks (strings, addresses) are
+ * borrowed and only valid for the duration of the callback invocation.
+ * Callers must copy any data they need to retain.
+ */
+typedef struct FFINetworkEventCallbacks {
+  OnPeerConnectedCallback on_peer_connected;
+  OnPeerDisconnectedCallback on_peer_disconnected;
+  OnPeersUpdatedCallback on_peers_updated;
+  void *user_data;
+} FFINetworkEventCallbacks;
+
+/**
+ * Callback for WalletEvent::TransactionReceived
+ *
+ * The `wallet_id`, `addresses` string pointers and the `txid` hash pointer
+ * are borrowed and only valid for the duration of the callback. Callers must
+ * copy any data they need to retain after the callback returns.
+ */
+typedef void (*OnTransactionReceivedCallback)(const char *wallet_id,
+                                              uint32_t account_index,
+                                              const uint8_t (*txid)[32],
+                                              int64_t amount,
+                                              const char *addresses,
+                                              void *user_data);
+
+/**
+ * Callback for WalletEvent::BalanceUpdated
+ *
+ * The `wallet_id` string pointer is borrowed and only valid for the duration
+ * of the callback. Callers must copy the string if they need to retain it
+ * after the callback returns.
+ */
+typedef void (*OnBalanceUpdatedCallback)(const char *wallet_id,
+                                         uint64_t spendable,
+                                         uint64_t unconfirmed,
+                                         uint64_t immature,
+                                         uint64_t locked,
+                                         void *user_data);
+
+/**
+ * Wallet event callbacks - one callback per WalletEvent variant.
+ *
+ * Set only the callbacks you're interested in; unset callbacks will be ignored.
+ *
+ * All pointer parameters passed to callbacks (wallet IDs, txids, addresses)
+ * are borrowed and only valid for the duration of the callback invocation.
+ * Callers must copy any data they need to retain.
+ */
+typedef struct FFIWalletEventCallbacks {
+  OnTransactionReceivedCallback on_transaction_received;
+  OnBalanceUpdatedCallback on_balance_updated;
+  void *user_data;
+} FFIWalletEventCallbacks;
+
+/**
+ * Callback for sync progress updates.
+ *
+ * Called whenever the sync progress changes. The progress pointer is only
+ * valid for the duration of the callback. The caller must NOT free the
+ * progress pointer - it will be freed automatically after the callback returns.
+ */
+typedef void (*OnProgressUpdateCallback)(const struct FFISyncProgress *progress, void *user_data);
+
+/**
+ * Progress callback configuration.
+ */
+typedef struct FFIProgressCallback {
+  /**
+   * Callback function for progress updates.
+   */
+  OnProgressUpdateCallback on_progress;
+  /**
+   * User data passed to the callback.
+   */
+  void *user_data;
+} FFIProgressCallback;
 
 /**
  * FFIResult type for error handling
@@ -194,14 +496,6 @@ int32_t dash_spv_ffi_checkpoint_before_timestamp(FFINetwork network,
  struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIClientConfig *config) ;
 
 /**
- * Drain pending events and invoke configured callbacks (non-blocking).
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- */
- int32_t dash_spv_ffi_client_drain_events(struct FFIDashSpvClient *client) ;
-
-/**
  * Update the running client's configuration.
  *
  * # Safety
@@ -231,38 +525,26 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
  int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client) ;
 
 /**
- * Sync the SPV client to the chain tip with detailed progress updates.
+ * Start the SPV client and begin syncing in the background.
+ *
+ * This is the streamlined entry point that combines `start()` and continuous monitoring
+ * into a single non-blocking call. Use event callbacks (set via `set_sync_event_callbacks`,
+ * `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive notifications
+ * about sync progress, peer connections, and wallet activity.
+ *
+ * Workflow:
+ * 1. Configure event callbacks before calling `run()`
+ * 2. Call `run()` - it returns immediately after spawning background sync threads
+ * 3. Receive notifications via callbacks as sync progresses
+ * 4. Call `stop()` when done
  *
  * # Safety
- *
- * This function is unsafe because:
- * - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
- * - `user_data` must satisfy thread safety requirements:
- *   - If non-null, it must point to data that is safe to access from multiple threads
- *   - The caller must ensure proper synchronization if the data is mutable
- *   - The data must remain valid for the entire duration of the sync operation
- * - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread
- *
- * # Parameters
- *
- * - `client`: Pointer to the SPV client
- * - `progress_callback`: Optional callback invoked periodically with sync progress
- * - `completion_callback`: Optional callback invoked on completion
- * - `user_data`: Optional user data pointer passed to all callbacks
+ * - `client` must be a valid, non-null pointer to a created client.
  *
  * # Returns
- *
- * 0 on success, error code on failure
+ * 0 on success, error code on failure.
  */
-
-int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *client,
-                                                      void (*progress_callback)(const struct FFIDetailedSyncProgress*,
-                                                                                void*),
-                                                      void (*completion_callback)(bool,
-                                                                                  const char*,
-                                                                                  void*),
-                                                      void *user_data)
-;
+ int32_t dash_spv_ffi_client_run(struct FFIDashSpvClient *client) ;
 
 /**
  * Cancels the sync operation.
@@ -285,6 +567,19 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  * - `client` must be a valid, non-null pointer.
  */
  struct FFISyncProgress *dash_spv_ffi_client_get_sync_progress(struct FFIDashSpvClient *client) ;
+
+/**
+ * Get the current manager-based sync progress.
+ *
+ * Returns the new parallel sync system's progress with per-manager details.
+ * Use `dash_spv_ffi_manager_sync_progress_destroy` to free the returned struct.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ */
+
+struct FFISyncProgress *dash_spv_ffi_client_get_manager_sync_progress(struct FFIDashSpvClient *client)
+;
 
 /**
  * Get the current chain tip hash (32 bytes) if available.
@@ -311,17 +606,6 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  * - `client` must be a valid, non-null pointer.
  */
  int32_t dash_spv_ffi_client_clear_storage(struct FFIDashSpvClient *client) ;
-
-/**
- * Set event callbacks for the client.
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- */
-
-int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
-                                                struct FFIEventCallbacks callbacks)
-;
 
 /**
  * Destroy the client and free associated resources.
@@ -371,6 +655,102 @@ int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
  *   `dash_spv_ffi_client_get_wallet_manager`.
  */
  void dash_spv_ffi_wallet_manager_free(struct FFIWalletManager *manager) ;
+
+/**
+ * Set sync event callbacks for push-based event notifications.
+ *
+ * The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+ * Call this before calling run().
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ * - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
+ * - Callbacks must be thread-safe as they may be called from a background thread.
+ */
+
+int32_t dash_spv_ffi_client_set_sync_event_callbacks(struct FFIDashSpvClient *client,
+                                                     struct FFISyncEventCallbacks callbacks)
+;
+
+/**
+ * Clear sync event callbacks.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ */
+ int32_t dash_spv_ffi_client_clear_sync_event_callbacks(struct FFIDashSpvClient *client) ;
+
+/**
+ * Set network event callbacks for push-based event notifications.
+ *
+ * The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+ * Call this before calling run().
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ * - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
+ * - Callbacks must be thread-safe as they may be called from a background thread.
+ */
+
+int32_t dash_spv_ffi_client_set_network_event_callbacks(struct FFIDashSpvClient *client,
+                                                        struct FFINetworkEventCallbacks callbacks)
+;
+
+/**
+ * Clear network event callbacks.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ */
+ int32_t dash_spv_ffi_client_clear_network_event_callbacks(struct FFIDashSpvClient *client) ;
+
+/**
+ * Set wallet event callbacks for push-based event notifications.
+ *
+ * The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+ * Call this before calling run().
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ * - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
+ * - Callbacks must be thread-safe as they may be called from a background thread.
+ */
+
+int32_t dash_spv_ffi_client_set_wallet_event_callbacks(struct FFIDashSpvClient *client,
+                                                       struct FFIWalletEventCallbacks callbacks)
+;
+
+/**
+ * Clear wallet event callbacks.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ */
+ int32_t dash_spv_ffi_client_clear_wallet_event_callbacks(struct FFIDashSpvClient *client) ;
+
+/**
+ * Set progress callback for sync progress updates.
+ *
+ * The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+ * Call this before calling run().
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ * - The `callback` struct and its `user_data` must remain valid until the callback is cleared.
+ * - The callback must be thread-safe as it may be called from a background thread.
+ */
+
+int32_t dash_spv_ffi_client_set_progress_callback(struct FFIDashSpvClient *client,
+                                                  struct FFIProgressCallback callback)
+;
+
+/**
+ * Clear progress callback.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ */
+ int32_t dash_spv_ffi_client_clear_progress_callback(struct FFIDashSpvClient *client) ;
 
  struct FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network) ;
 
@@ -565,6 +945,70 @@ struct FFIResult ffi_dash_spv_get_quorum_public_key(struct FFIDashSpvClient *cli
 struct FFIResult ffi_dash_spv_get_platform_activation_height(struct FFIDashSpvClient *client,
                                                              uint32_t *out_height)
 ;
+
+/**
+ * Destroy an `FFIBlockHeadersProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_block_headers_progress_destroy(struct FFIBlockHeadersProgress *progress) ;
+
+/**
+ * Destroy an `FFIFilterHeadersProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_filter_headers_progress_destroy(struct FFIFilterHeadersProgress *progress) ;
+
+/**
+ * Destroy an `FFIFiltersProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_filters_progress_destroy(struct FFIFiltersProgress *progress) ;
+
+/**
+ * Destroy an `FFIBlocksProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_blocks_progress_destroy(struct FFIBlocksProgress *progress) ;
+
+/**
+ * Destroy an `FFIMasternodesProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_masternode_progress_destroy(struct FFIMasternodesProgress *progress) ;
+
+/**
+ * Destroy an `FFIChainLockProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_chainlock_progress_destroy(struct FFIChainLockProgress *progress) ;
+
+/**
+ * Destroy an `FFIInstantSendProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_instantsend_progress_destroy(struct FFIInstantSendProgress *progress) ;
+
+/**
+ * Destroy an `FFISyncProgress` object and all its nested pointers.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_manager_sync_progress_destroy(struct FFISyncProgress *progress) ;
 
 /**
  * Initialize logging for the SPV library.

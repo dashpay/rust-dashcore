@@ -9,10 +9,12 @@ use crate::{
 };
 
 #[async_trait]
-pub trait FilterStorage {
+pub trait FilterStorage: Send + Sync + 'static {
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()>;
 
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>>;
+
+    async fn filter_tip_height(&self) -> StorageResult<u32>;
 }
 
 pub struct PersistentFilterStorage {
@@ -55,5 +57,9 @@ impl FilterStorage for PersistentFilterStorage {
 
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
         self.filters.write().await.get_items(range).await
+    }
+
+    async fn filter_tip_height(&self) -> StorageResult<u32> {
+        Ok(self.filters.read().await.tip_height().unwrap_or(0))
     }
 }

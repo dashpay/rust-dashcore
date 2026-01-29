@@ -226,6 +226,10 @@ pub enum SyncError {
     /// Headers2 decompression failed - can trigger fallback to regular headers
     #[error("Headers2 decompression failed: {0}")]
     Headers2DecompressionFailed(String),
+
+    /// Masternode sync failed (QRInfo or MnListDiff processing error)
+    #[error("Masternode sync failed: {0}")]
+    MasternodeSyncFailed(String),
 }
 
 impl SyncError {
@@ -239,6 +243,7 @@ impl SyncError {
             SyncError::Network(_) => "network",
             SyncError::Storage(_) => "storage",
             SyncError::Headers2DecompressionFailed(_) => "headers2",
+            SyncError::MasternodeSyncFailed(_) => "masternode",
             // Deprecated variant - should not be used
             #[allow(deprecated)]
             SyncError::SyncFailed(_) => "unknown",
@@ -297,6 +302,24 @@ pub enum WalletError {
 
 /// Type alias for wallet operation results.
 pub type WalletResult<T> = std::result::Result<T, WalletError>;
+
+impl From<NetworkError> for SyncError {
+    fn from(err: NetworkError) -> Self {
+        SyncError::Network(err.to_string())
+    }
+}
+
+impl From<StorageError> for SyncError {
+    fn from(err: StorageError) -> Self {
+        SyncError::Storage(err.to_string())
+    }
+}
+
+impl From<ValidationError> for SyncError {
+    fn from(err: ValidationError) -> Self {
+        SyncError::Validation(err.to_string())
+    }
+}
 
 #[cfg(test)]
 mod tests {

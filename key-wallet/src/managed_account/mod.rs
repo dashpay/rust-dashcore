@@ -27,7 +27,7 @@ use dashcore::{Transaction, Txid};
 use managed_account_type::ManagedAccountType;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 pub mod address_pool;
 pub mod managed_account_collection;
@@ -44,7 +44,7 @@ pub mod transaction_record;
 /// metadata, and balance information. It is managed separately from
 /// the immutable Account structure.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreAccount {
     /// Account type with embedded address pools and index
     pub account_type: ManagedAccountType,
@@ -60,6 +60,10 @@ pub struct ManagedCoreAccount {
     pub transactions: BTreeMap<Txid, TransactionRecord>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
+    /// Outpoints spent by recorded transactions.
+    /// Rebuilt from `transactions` during deserialization.
+    #[cfg_attr(feature = "serde", serde(skip_serializing))]
+    spent_outpoints: HashSet<OutPoint>,
 }
 
 impl ManagedCoreAccount {
@@ -73,7 +77,13 @@ impl ManagedCoreAccount {
             balance: WalletCoreBalance::default(),
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
+            spent_outpoints: HashSet::new(),
         }
+    }
+
+    /// Check if an outpoint was spent by a previously recorded transaction.
+    fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
+        self.spent_outpoints.contains(outpoint)
     }
 
     /// Create a ManagedAccount from an Account
@@ -306,6 +316,22 @@ impl ManagedCoreAccount {
                                 txid,
                                 vout: vout as u32,
                             };
+
+                            // Check if this outpoint was already spent by a transaction we've seen.
+                            // This handles out-of-order block processing during rescan where a
+                            // spending transaction at a higher height may be processed before
+                            // the transaction that created the UTXO.
+                            // TODO: This is mostly needed for wallet rescan from storage with the
+                            //       there is a timing issue with event processing which might lead to
+                            //       invalid UTXO set / balances. There might be a way around it.
+                            if self.is_outpoint_spent(&outpoint) {
+                                tracing::debug!(
+                                    outpoint = %outpoint,
+                                    "Skipping UTXO already spent by previously processed transaction"
+                                );
+                                continue;
+                            }
+
                             let txout = dashcore::TxOut {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
@@ -323,9 +349,17 @@ impl ManagedCoreAccount {
                     }
                 }
 
-                // Remove UTXOs spent by this transaction
+                // Remove UTXOs spent by this transaction and track spent outpoints
                 for input in &tx.input {
-                    self.utxos.remove(&input.previous_output);
+                    self.spent_outpoints.insert(input.previous_output);
+
+                    if self.utxos.remove(&input.previous_output).is_some() {
+                        tracing::debug!(
+                            outpoint = %input.previous_output,
+                            txid = %tx.txid(),
+                            "Removed spent UTXO"
+                        );
+                    }
                 }
             }
             _ => {}
@@ -973,5 +1007,44 @@ impl ManagedAccountTrait for ManagedCoreAccount {
 
     fn utxos_mut(&mut self) -> &mut BTreeMap<OutPoint, Utxo> {
         &mut self.utxos
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for ManagedCoreAccount {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            account_type: ManagedAccountType,
+            network: Network,
+            metadata: AccountMetadata,
+            is_watch_only: bool,
+            balance: WalletCoreBalance,
+            transactions: BTreeMap<Txid, TransactionRecord>,
+            utxos: BTreeMap<OutPoint, Utxo>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        let spent_outpoints = helper
+            .transactions
+            .values()
+            .flat_map(|record| &record.transaction.input)
+            .map(|input| input.previous_output)
+            .collect();
+
+        Ok(ManagedCoreAccount {
+            account_type: helper.account_type,
+            network: helper.network,
+            metadata: helper.metadata,
+            is_watch_only: helper.is_watch_only,
+            balance: helper.balance,
+            transactions: helper.transactions,
+            utxos: helper.utxos,
+            spent_outpoints,
+        })
     }
 }

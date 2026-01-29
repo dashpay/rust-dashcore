@@ -809,4 +809,122 @@ mod tests {
             "total_transactions should not increase on rescan"
         );
     }
+
+    /// Test that UTXO is not created when a spending tx has already been stored
+    #[tokio::test]
+    async fn test_utxo_not_created_when_already_spent() {
+        let network = Network::Testnet;
+        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+            .expect("Should create wallet");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        // Get wallet addresses (we need two - one for receive, one for change)
+        let account =
+            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
+        let xpub = account.account_xpub;
+
+        let receive_address = managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have managed account")
+            .next_receive_address(Some(&xpub), true)
+            .expect("Should get address");
+
+        let change_address = managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have managed account")
+            .next_change_address(Some(&xpub), true)
+            .expect("Should get change address");
+
+        // Create the funding transaction
+        let funding_tx = create_transaction_to_address(&receive_address, 100_000);
+
+        // Create a spending transaction that:
+        // 1. Spends the funding tx's output
+        // 2. Sends change back to our wallet (so it WILL be detected as relevant)
+        let spend_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: 50_000, // Change back to us
+                script_pubkey: change_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+
+        // Process spending tx FIRST (out of order)
+        // This time it HAS an output to our wallet, so it should be stored
+        let spend_context = TransactionContext::InBlock {
+            height: 100,
+            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
+            timestamp: Some(1234567890),
+        };
+
+        let spend_result = managed_wallet
+            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true)
+            .await;
+
+        // Spending tx should be detected because of the change output
+        assert!(
+            spend_result.is_relevant,
+            "Spending transaction should be detected (has change output to our wallet)"
+        );
+        assert_eq!(spend_result.total_received, 50_000);
+        assert_eq!(spend_result.total_sent, 0); // Can't detect spend without UTXO
+
+        // Verify the transaction was stored
+        let account = managed_wallet.first_bip44_managed_account().expect("Should have account");
+        assert!(
+            account.transactions.contains_key(&spend_tx.txid()),
+            "Spending tx should be stored"
+        );
+
+        // One UTXO should exist (the change output from spend_tx)
+        assert_eq!(account.utxos.len(), 1, "Should have one UTXO (change output)");
+
+        // Now process the funding tx (which was spent by spend_tx that we already stored)
+        let fund_context = TransactionContext::InBlock {
+            height: 99,
+            block_hash: Some(BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash")),
+            timestamp: Some(1234567880),
+        };
+
+        let fund_result = managed_wallet
+            .check_core_transaction(&funding_tx, fund_context, &mut wallet, true)
+            .await;
+
+        // Funding tx should be detected
+        assert!(fund_result.is_relevant, "Funding transaction should be detected");
+        assert_eq!(fund_result.total_received, 100_000);
+
+        // Check UTXO state - the funding tx's UTXO should NOT have been added
+        // because the stored spend_tx spends it
+        let account = managed_wallet.first_bip44_managed_account().expect("Should have account");
+
+        // Should still only have one UTXO (the change from spend_tx)
+        assert_eq!(
+            account.utxos.len(),
+            1,
+            "Should still have only one UTXO (change), funding UTXO should not be added"
+        );
+
+        // The one UTXO should be the change output, not the funding output
+        let utxo = account.utxos.values().next().expect("Should have UTXO");
+        assert_eq!(
+            utxo.outpoint.txid,
+            spend_tx.txid(),
+            "UTXO should be from spend_tx (change), not funding_tx"
+        );
+        assert_eq!(utxo.txout.value, 50_000, "UTXO value should be 50k (change amount)");
+    }
 }

@@ -1,0 +1,69 @@
+//! Wallet events for notifying consumers of wallet state changes.
+//!
+//! These events are emitted by the WalletManager when significant wallet
+//! operations occur, allowing consumers to receive push-based notifications.
+
+use crate::wallet_manager::WalletId;
+use alloc::string::String;
+use alloc::vec::Vec;
+use dashcore::{Address, Txid};
+
+/// Events emitted by the wallet manager.
+///
+/// Each event represents a meaningful wallet state change that consumers
+/// may want to react to.
+#[derive(Debug, Clone)]
+pub enum WalletEvent {
+    /// A transaction relevant to the wallet was received.
+    TransactionReceived {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// Account index within the wallet.
+        account_index: u32,
+        /// Transaction ID.
+        txid: Txid,
+        /// Net amount change (positive for incoming, negative for outgoing).
+        amount: i64,
+        /// Addresses involved in the transaction.
+        addresses: Vec<Address>,
+    },
+    /// The wallet balance has changed.
+    BalanceUpdated {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// New spendable balance in duffs (confirmed and mature).
+        spendable: u64,
+        /// New unconfirmed balance in duffs.
+        unconfirmed: u64,
+        /// New immature balance (coinbase UTXOs not yet mature).
+        immature: u64,
+        /// New locked balance (UTXOs reserved for specific purposes like CoinJoin)
+        locked: u64,
+    },
+}
+
+impl WalletEvent {
+    /// Get a short description of this event for logging.
+    pub fn description(&self) -> String {
+        match self {
+            WalletEvent::TransactionReceived {
+                txid,
+                amount,
+                ..
+            } => {
+                format!("TransactionReceived(txid={}, amount={})", txid, amount)
+            }
+            WalletEvent::BalanceUpdated {
+                spendable,
+                unconfirmed,
+                immature,
+                ..
+            } => {
+                format!(
+                    "BalanceUpdated(spendable={}, unconfirmed={}, immature={})",
+                    spendable, unconfirmed, immature
+                )
+            }
+        }
+    }
+}

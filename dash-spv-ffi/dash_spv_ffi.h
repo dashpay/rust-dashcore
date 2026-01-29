@@ -336,7 +336,7 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
  * 0 on success, error code on failure
  */
 
-int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
+int32_t dash_spv_ffi_client_start_sync(struct FFIDashSpvClient *client,
                                         void (*completion_callback)(bool, const char*, void*),
                                         void *user_data)
 ;
@@ -382,7 +382,7 @@ int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
  * 0 on success, error code on failure
  */
 
-int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *client,
+int32_t dash_spv_ffi_client_start_sync_with_progress(struct FFIDashSpvClient *client,
                                                       void (*progress_callback)(const struct FFIDetailedSyncProgress*,
                                                                                 void*),
                                                       void (*completion_callback)(bool,

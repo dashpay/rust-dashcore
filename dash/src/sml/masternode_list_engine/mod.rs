@@ -33,6 +33,10 @@ use hashes::Hash;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+/// Depth offset between cycle boundary and work block (matches Dash Core WORK_DIFF_DEPTH)
+/// The mnListDiffH in QRInfo is at (cycle_height - WORK_DIFF_DEPTH), not at the cycle boundary itself
+pub const WORK_DIFF_DEPTH: u32 = 8;
+
 #[derive(Clone, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]

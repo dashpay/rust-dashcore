@@ -8,23 +8,25 @@
 //! - Configuration updates
 //! - Terminal UI accessors
 
+#[cfg(feature = "terminal-ui")]
+use crate::terminal::TerminalUI;
+use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
-#[cfg(feature = "terminal-ui")]
-use crate::terminal::TerminalUI;
-
+use super::{ClientConfig, StatusDisplay};
 use crate::chain::ChainLockManager;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
+use crate::storage::{
+    PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
+    PersistentFilterStorage, StorageManager,
+};
 use crate::sync::legacy::filters::FilterNotificationSender;
-use crate::sync::legacy::SyncManager;
-use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent};
+use crate::sync::SyncCoordinator;
+use crate::types::{ChainState, MempoolState, SpvEvent};
 use key_wallet_manager::wallet_interface::WalletInterface;
-
-use super::{ClientConfig, StatusDisplay};
 
 /// Main Dash SPV client with generic trait-based architecture.
 ///
@@ -104,40 +106,19 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) storage: Arc<Mutex<S>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
-    /// Synchronization manager for coordinating blockchain sync operations.
-    ///
-    /// # Architectural Design
-    ///
-    /// The sync manager is stored as a non-shared field (not wrapped in `Arc<Mutex<T>>`)
-    /// for the following reasons:
-    ///
-    /// 1. **Single Owner Pattern**: The sync manager is exclusively owned by the client,
-    ///    ensuring clear ownership and preventing concurrent access issues.
-    ///
-    /// 2. **Sequential Operations**: Blockchain synchronization is inherently sequential -
-    ///    headers must be validated in order, and sync phases must complete before
-    ///    progressing to the next phase.
-    ///
-    /// 3. **Simplified State Management**: Avoiding shared ownership eliminates complex
-    ///    synchronization issues and makes the sync state machine easier to reason about.
-    ///
-    /// ## Future Considerations
-    ///
-    /// If concurrent access becomes necessary (e.g., for monitoring sync progress from
-    /// multiple threads), consider:
-    /// - Using interior mutability patterns (`Arc<Mutex<SyncManager>>`)
-    /// - Extracting read-only state into a separate shared structure
-    /// - Implementing a message-passing architecture for sync commands
-    ///
-    /// The current design prioritizes simplicity and correctness over concurrent access.
-    pub(super) sync_manager: SyncManager<S, N, W>,
+    pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
+    pub(super) sync_coordinator: SyncCoordinator<
+        PersistentBlockHeaderStorage,
+        PersistentFilterHeaderStorage,
+        PersistentFilterStorage,
+        PersistentBlockStorage,
+        W,
+    >,
     pub(super) chainlock_manager: Arc<ChainLockManager>,
     pub(super) running: Arc<RwLock<bool>>,
     #[cfg(feature = "terminal-ui")]
     pub(super) terminal_ui: Option<Arc<TerminalUI>>,
     pub(super) filter_processor: Option<FilterNotificationSender>,
-    pub(super) progress_sender: Option<mpsc::UnboundedSender<DetailedSyncProgress>>,
-    pub(super) progress_receiver: Option<mpsc::UnboundedReceiver<DetailedSyncProgress>>,
     pub(super) event_tx: mpsc::UnboundedSender<SpvEvent>,
     pub(super) event_rx: Option<mpsc::UnboundedReceiver<SpvEvent>>,
     pub(super) mempool_state: Arc<RwLock<MempoolState>>,
@@ -165,12 +146,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Get reference to chainlock manager.
     pub fn chainlock_manager(&self) -> &Arc<ChainLockManager> {
         &self.chainlock_manager
-    }
-
-    /// Get mutable reference to sync manager (for testing).
-    #[cfg(test)]
-    pub fn sync_manager_mut(&mut self) -> &mut SyncManager<S, N, W> {
-        &mut self.sync_manager
     }
 
     // ============ State Queries ============
@@ -212,9 +187,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             let mut state = self.state.write().await;
             *state = ChainState::new_for_network(self.config.network);
         }
-
-        // Reset sync manager filter state (headers/filters progress trackers)
-        self.sync_manager.filter_sync_mut().clear_filter_state().await;
 
         // Reset mempool tracking (state and bloom filter)
         {
@@ -283,11 +255,5 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             &None,
             &self.config,
         )
-    }
-
-    /// Update the status display.
-    pub(super) async fn update_status_display(&self) {
-        let display = self.create_status_display().await;
-        display.update_status_display().await;
     }
 }
