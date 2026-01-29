@@ -6,7 +6,7 @@ use dashcore::{
 };
 use dashcore_hashes::Hash;
 
-use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
+use crate::chain::CheckpointManager;
 use crate::chain::{ChainTip, ChainTipManager, ChainWork};
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -48,7 +48,6 @@ pub struct HeaderSyncManager<S: StorageManager, N: NetworkManager> {
     config: ClientConfig,
     tip_manager: ChainTipManager,
     checkpoint_manager: CheckpointManager,
-    reorg_config: ReorgConfig,
     chain_state: Arc<RwLock<ChainState>>,
     syncing_headers: bool,
     last_sync_progress: std::time::Instant,
@@ -66,18 +65,12 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
         // WalletState removed - wallet functionality is now handled externally
 
         // Create checkpoint manager based on network
-        let checkpoints = match config.network {
-            dashcore::Network::Dash => mainnet_checkpoints(),
-            dashcore::Network::Testnet => testnet_checkpoints(),
-            _ => Vec::new(), // No checkpoints for other networks
-        };
-        let checkpoint_manager = CheckpointManager::new(checkpoints);
+        let checkpoint_manager = CheckpointManager::new(config.network);
 
         Ok(Self {
             config: config.clone(),
             tip_manager: ChainTipManager::new(reorg_config.max_forks),
             checkpoint_manager,
-            reorg_config,
             chain_state,
             syncing_headers: false,
             last_sync_progress: std::time::Instant::now(),
@@ -204,23 +197,7 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
             );
         }
 
-        // Step 3: Process the Entire Validated Batch
-
-        // Checkpoint Validation: Perform in-memory security check against checkpoints
-        for (index, cached_header) in cached_headers.iter().enumerate() {
-            let prospective_height = tip_height + (index as u32) + 1;
-
-            if self.reorg_config.enforce_checkpoints {
-                // Use cached hash to avoid redundant X11 computation in loop
-                let header_hash = cached_header.hash();
-                if !self.checkpoint_manager.validate_block(prospective_height, header_hash) {
-                    return Err(SyncError::Validation(format!(
-                        "Block at height {} does not match checkpoint",
-                        prospective_height
-                    )));
-                }
-            }
-        }
+        // Step 3: Process the Entire Batch
 
         storage
             .store_headers(headers)
@@ -599,48 +576,10 @@ impl<S: StorageManager, N: NetworkManager> HeaderSyncManager<S, N> {
 
         // No headers in storage, use checkpoint based on wallet creation time
         // TODO: Pass wallet creation time from client config
-        if let Some(checkpoint) = self.checkpoint_manager.get_sync_checkpoint(None) {
-            // Return checkpoint as starting point
-            // Note: We'll need to prepopulate headers from checkpoints for this to work properly
-            return Some((checkpoint.height, checkpoint.block_hash));
-        }
-
-        // No suitable checkpoint, start from genesis
-        None
-    }
-
-    /// Check if we can skip ahead to a checkpoint during sync
-    pub fn can_skip_to_checkpoint(
-        &self,
-        current_height: u32,
-        peer_height: u32,
-    ) -> Option<(u32, BlockHash)> {
-        // Don't skip if we're already close to the peer's tip
-        if peer_height.saturating_sub(current_height) < 1000 {
-            return None;
-        }
-
-        // Find next checkpoint after current height
-        let checkpoint_heights = self.checkpoint_manager.checkpoint_heights();
-
-        for height in checkpoint_heights {
-            // Skip if checkpoint is:
-            // 1. After our current position
-            // 2. Before or at peer's height (peer has it)
-            // 3. Far enough ahead to be worth skipping (at least 500 blocks)
-            if *height > current_height && *height <= peer_height && *height > current_height + 500
-            {
-                if let Some(checkpoint) = self.checkpoint_manager.get_checkpoint(*height) {
-                    tracing::info!(
-                        "Can skip from height {} to checkpoint at height {}",
-                        current_height,
-                        checkpoint.height
-                    );
-                    return Some((checkpoint.height, checkpoint.block_hash));
-                }
-            }
-        }
-        None
+        let (height, checkpoint) = self.checkpoint_manager.last_checkpoint_before_timestamp(0);
+        // Return checkpoint as starting point
+        // Note: We'll need to prepopulate headers from checkpoints for this to work properly
+        Some((height, *checkpoint.hash()))
     }
 
     /// Check if header sync is currently in progress
