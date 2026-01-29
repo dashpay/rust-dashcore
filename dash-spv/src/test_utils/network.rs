@@ -1,6 +1,7 @@
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::{Message, MessageDispatcher, MessageType, NetworkManager};
 use async_trait::async_trait;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{
     block::Header as BlockHeader, network::constants::ServiceFlags,
     network::message::NetworkMessage, network::message_blockdata::GetHeadersMessage, BlockHash,
@@ -19,6 +20,7 @@ pub struct MockNetworkManager {
     connected: bool,
     connected_peer: SocketAddr,
     headers_chain: Vec<BlockHeader>,
+    peer_best_height: Option<u32>,
     message_dispatcher: MessageDispatcher,
     sent_messages: Vec<NetworkMessage>,
 }
@@ -30,6 +32,7 @@ impl MockNetworkManager {
             connected: true,
             connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
             headers_chain: Vec::new(),
+            peer_best_height: None,
             message_dispatcher: MessageDispatcher::default(),
             sent_messages: Vec::new(),
         }
@@ -152,8 +155,8 @@ impl NetworkManager for MockNetworkManager {
         }
     }
 
-    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
-        Ok(Some(self.headers_chain.len() as u32))
+    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight> {
+        self.peer_best_height
     }
 
     async fn has_peer_with_service(&self, _service_flags: ServiceFlags) -> bool {

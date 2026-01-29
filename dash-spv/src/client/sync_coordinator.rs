@@ -219,13 +219,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         storage.get_tip_height().await.unwrap_or(0)
                     };
                     let current_height = current_tip_height;
-                    let peer_best = self
-                        .network
-                        .get_peer_best_height()
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(current_height);
+                    let peer_best =
+                        self.network.get_peer_best_height().await.unwrap_or(current_height);
 
                     // Calculate headers downloaded this second
                     if current_tip_height > last_height {
@@ -298,13 +293,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
                 {
                     // Build and emit a fresh DetailedSyncProgress snapshot reflecting current filter progress
-                    let peer_best = self
-                        .network
-                        .get_peer_best_height()
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(abs_header_height);
+                    let peer_best =
+                        self.network.get_peer_best_height().await.unwrap_or(abs_header_height);
 
                     let phase_snapshot = self.sync_manager.current_phase().clone();
                     let status_display = self.create_status_display().await;
