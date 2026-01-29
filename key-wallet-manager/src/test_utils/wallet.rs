@@ -1,4 +1,5 @@
 use crate::{wallet_interface::WalletInterface, BlockProcessingResult};
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction, Txid};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -12,6 +13,7 @@ pub struct MockWallet {
     processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
     // Map txid -> (net_amount, addresses)
     effects: TransactionEffectsMap,
+    synced_height: CoreBlockHeight,
 }
 
 impl MockWallet {
@@ -20,6 +22,7 @@ impl MockWallet {
             processed_blocks: Arc::new(Mutex::new(Vec::new())),
             processed_transactions: Arc::new(Mutex::new(Vec::new())),
             effects: Arc::new(Mutex::new(BTreeMap::new())),
+            synced_height: 0,
         }
     }
 
@@ -67,15 +70,27 @@ impl WalletInterface for MockWallet {
     fn monitored_addresses(&self) -> Vec<Address> {
         Vec::new()
     }
+
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
+    }
+
+    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+        self.synced_height = height;
+    }
 }
 
 /// Mock wallet that returns false for filter checks
 #[derive(Default)]
-pub struct NonMatchingMockWallet {}
+pub struct NonMatchingMockWallet {
+    synced_height: CoreBlockHeight,
+}
 
 impl NonMatchingMockWallet {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            synced_height: 0,
+        }
     }
 }
 
@@ -89,6 +104,14 @@ impl WalletInterface for NonMatchingMockWallet {
 
     fn monitored_addresses(&self) -> Vec<Address> {
         Vec::new()
+    }
+
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
+    }
+
+    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+        self.synced_height = height;
     }
 
     async fn describe(&self) -> String {

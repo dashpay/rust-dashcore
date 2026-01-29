@@ -42,7 +42,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             result.new_addresses.extend(check_result.new_addresses);
         }
 
-        self.update_height(height);
+        self.update_synced_height(height);
 
         result
     }
@@ -105,6 +105,17 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.wallet_infos.values().map(|info| info.birth_height()).min().unwrap_or(0)
     }
 
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
+    }
+
+    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+        self.synced_height = height;
+        for info in self.wallet_infos.values_mut() {
+            info.update_synced_height(height);
+        }
+    }
+
     async fn describe(&self) -> String {
         let wallet_count = self.wallet_infos.len();
         if wallet_count == 0 {
@@ -132,5 +143,28 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             self.network,
             details.join("\n")
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashcore::Network;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+
+    #[tokio::test]
+    async fn test_synced_height() {
+        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+        // Initial state
+        assert_eq!(manager.synced_height(), 0);
+        // Inrease synced height
+        manager.update_synced_height(1000);
+        assert_eq!(manager.synced_height(), 1000);
+        //Increase synced height again
+        manager.update_synced_height(5000);
+        assert_eq!(manager.synced_height(), 5000);
+        // Decrease synced height
+        manager.update_synced_height(10);
+        assert_eq!(manager.synced_height(), 10);
     }
 }
