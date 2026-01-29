@@ -87,11 +87,6 @@ mod tests {
                     dash_spv_ffi_sync_progress_destroy(progress);
                 }
 
-                let stats = dash_spv_ffi_client_get_stats(client);
-                if !stats.is_null() {
-                    dash_spv_ffi_spv_stats_destroy(stats);
-                }
-
                 dash_spv_ffi_client_destroy(client);
             }
 
@@ -280,12 +275,6 @@ mod tests {
             if !progress.is_null() {
                 // SyncProgress might contain strings or other allocated data
                 dash_spv_ffi_sync_progress_destroy(progress);
-            }
-
-            let stats = dash_spv_ffi_client_get_stats(client);
-            if !stats.is_null() {
-                // Stats might contain strings or other allocated data
-                dash_spv_ffi_spv_stats_destroy(stats);
             }
 
             dash_spv_ffi_client_destroy(client);

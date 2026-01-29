@@ -18,7 +18,7 @@ use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::legacy::SyncManager;
-use crate::types::{ChainState, MempoolState, SpvStats};
+use crate::types::{ChainState, MempoolState, SharedFilterHeights};
 use dashcore::network::constants::NetworkExt;
 use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -38,22 +38,16 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Initialize state for the network
         let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
-        let stats = Arc::new(RwLock::new(SpvStats::default()));
 
         // Wrap storage in Arc<Mutex>
         let storage = Arc::new(Mutex::new(storage));
 
         // Create sync manager
-        let received_filter_heights = stats.read().await.received_filter_heights.clone();
         tracing::info!("Creating sequential sync manager");
-        let sync_manager = SyncManager::new(
-            &config,
-            received_filter_heights,
-            wallet.clone(),
-            state.clone(),
-            stats.clone(),
-        )
-        .map_err(SpvError::Sync)?;
+        let received_filter_heights = SharedFilterHeights::new(Mutex::new(HashSet::new()));
+        let sync_manager =
+            SyncManager::new(&config, received_filter_heights, wallet.clone(), state.clone())
+                .map_err(SpvError::Sync)?;
 
         // Create ChainLock manager
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
@@ -70,7 +64,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         Ok(Self {
             config,
             state,
-            stats,
             network,
             storage,
             wallet,

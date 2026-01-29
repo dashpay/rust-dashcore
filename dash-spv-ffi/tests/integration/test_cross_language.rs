@@ -104,7 +104,6 @@ mod tests {
         // Check alignment of structs
         assert!(std::mem::align_of::<FFISyncProgress>() <= 8);
         assert!(std::mem::align_of::<FFIBalance>() <= 8);
-        assert!(std::mem::align_of::<FFISpvStats>() <= 8);
 
         // Verify FFIString is pointer-sized
         assert_eq!(std::mem::size_of::<FFIString>(), std::mem::size_of::<*mut c_char>());

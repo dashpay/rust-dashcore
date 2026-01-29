@@ -1,6 +1,6 @@
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::types::{DetailedSyncProgress, MempoolRemovalReason, SyncStage};
-use dash_spv::{ChainState, SpvStats, SyncProgress};
+use dash_spv::{ChainState, SyncProgress};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
@@ -196,41 +196,6 @@ impl From<ChainState> for FFIChainState {
                 &state.last_chainlock_hash.map(|h| h.to_string()).unwrap_or_default(),
             ),
             current_filter_tip: 0, // FilterHeader not directly convertible to u32
-        }
-    }
-}
-
-#[repr(C)]
-pub struct FFISpvStats {
-    pub connected_peers: u32,
-    pub total_peers: u32,
-    pub header_height: u32,
-    pub filter_height: u32,
-    pub headers_downloaded: u64,
-    pub filter_headers_downloaded: u64,
-    pub filters_downloaded: u64,
-    pub filters_matched: u64,
-    pub blocks_processed: u64,
-    pub bytes_received: u64,
-    pub bytes_sent: u64,
-    pub uptime: u64,
-}
-
-impl From<SpvStats> for FFISpvStats {
-    fn from(stats: SpvStats) -> Self {
-        FFISpvStats {
-            connected_peers: stats.connected_peers,
-            total_peers: stats.total_peers,
-            header_height: stats.header_height,
-            filter_height: stats.filter_height,
-            headers_downloaded: stats.headers_downloaded,
-            filter_headers_downloaded: stats.filter_headers_downloaded,
-            filters_downloaded: stats.filters_downloaded,
-            filters_matched: stats.filters_matched,
-            blocks_processed: stats.blocks_processed,
-            bytes_received: stats.bytes_received,
-            bytes_sent: stats.bytes_sent,
-            uptime: stats.uptime.as_secs(),
         }
     }
 }
