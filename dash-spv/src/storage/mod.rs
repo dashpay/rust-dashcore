@@ -4,6 +4,7 @@ pub mod types;
 
 mod block_headers;
 mod chainstate;
+mod filter_headers;
 mod filters;
 mod io;
 mod lockfile;
@@ -26,7 +27,8 @@ use tokio::sync::RwLock;
 use crate::error::StorageResult;
 use crate::storage::block_headers::{BlockHeaderTip, PersistentBlockHeaderStorage};
 use crate::storage::chainstate::PersistentChainStateStorage;
-use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
+use crate::storage::filter_headers::PersistentFilterHeaderStorage;
+use crate::storage::filters::PersistentFilterStorage;
 use crate::storage::lockfile::LockFile;
 use crate::storage::masternode::PersistentMasternodeStateStorage;
 use crate::storage::metadata::PersistentMetadataStorage;
@@ -36,7 +38,7 @@ use crate::{ChainState, ClientConfig};
 
 pub use crate::storage::block_headers::BlockHeaderStorage;
 pub use crate::storage::chainstate::ChainStateStorage;
-pub use crate::storage::filters::FilterHeaderStorage;
+pub use crate::storage::filter_headers::FilterHeaderStorage;
 pub use crate::storage::filters::FilterStorage;
 pub use crate::storage::masternode::MasternodeStateStorage;
 pub use crate::storage::metadata::MetadataStorage;
@@ -295,7 +297,7 @@ impl BlockHeaderStorage for DiskStorageManager {
 }
 
 #[async_trait]
-impl filters::FilterHeaderStorage for DiskStorageManager {
+impl FilterHeaderStorage for DiskStorageManager {
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
         self.filter_headers.write().await.store_filter_headers(headers).await
     }
