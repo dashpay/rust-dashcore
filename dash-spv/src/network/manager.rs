@@ -13,6 +13,7 @@ use tokio::time;
 use crate::client::config::MempoolStrategy;
 use crate::client::ClientConfig;
 use crate::error::{NetworkError, NetworkResult, SpvError as Error};
+use crate::event_bus::{EventBus, EventReceiver};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
@@ -21,7 +22,8 @@ use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
 use crate::network::{
-    HandshakeManager, Message, MessageDispatcher, MessageType, NetworkManager, Peer,
+    HandshakeManager, Message, MessageDispatcher, MessageType, NetworkEvent, NetworkManager,
+    NetworkRequest, Peer, RequestSender,
 };
 use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
@@ -30,7 +32,7 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::CompressionState;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Network;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 
 /// Peer network manager
@@ -71,6 +73,14 @@ pub struct PeerNetworkManager {
     headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Dispatcher for unbounded and message-type filtered message distribution.
     message_dispatcher: Arc<Mutex<MessageDispatcher>>,
+    /// Request queue sender, cloneable handle for sending requests to the network manager.
+    request_tx: UnboundedSender<NetworkRequest>,
+    /// Request queue receiver (consumed by send loop).
+    request_rx: Arc<Mutex<Option<UnboundedReceiver<NetworkRequest>>>>,
+    /// Round-robin counter for distributing requests across peers.
+    round_robin_counter: Arc<AtomicUsize>,
+    /// Network event bus for notifying about network/peer related changes.
+    network_event_bus: EventBus<NetworkEvent>,
 }
 
 impl PeerNetworkManager {
@@ -89,6 +99,9 @@ impl PeerNetworkManager {
 
         // Determine exclusive mode: either explicitly requested or peers were provided
         let exclusive_mode = config.restrict_to_configured_peers || !config.peers.is_empty();
+
+        // Create request queue for outgoing messages
+        let (request_tx, request_rx) = unbounded_channel();
 
         Ok(Self {
             pool: Arc::new(PeerPool::new()),
@@ -109,6 +122,10 @@ impl PeerNetworkManager {
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
             message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
+            request_tx,
+            request_rx: Arc::new(Mutex::new(Some(request_rx))),
+            round_robin_counter: Arc::new(AtomicUsize::new(0)),
+            network_event_bus: EventBus::default(),
         })
     }
 
@@ -118,6 +135,16 @@ impl PeerNetworkManager {
         message_types: &[MessageType],
     ) -> UnboundedReceiver<Message> {
         self.message_dispatcher.lock().await.message_receiver(message_types)
+    }
+
+    /// Get a RequestSender for queueing outgoing network requests.
+    pub fn request_sender(&self) -> RequestSender {
+        RequestSender::new(self.request_tx.clone())
+    }
+
+    /// Get the network event bus for sharing with other components.
+    pub fn network_event_bus(&self) -> &EventBus<NetworkEvent> {
+        &self.network_event_bus
     }
 
     /// Start the network manager
@@ -170,6 +197,9 @@ impl PeerNetworkManager {
         // Start maintenance loop
         self.start_maintenance_loop().await;
 
+        // Start request processing task for managers to queue outgoing messages
+        self.start_request_processor().await;
+
         Ok(())
     }
 
@@ -204,6 +234,7 @@ impl PeerNetworkManager {
         let connected_peer_count = self.connected_peer_count.clone();
         let headers2_disabled = self.headers2_disabled.clone();
         let message_dispatcher = self.message_dispatcher.clone();
+        let network_event_bus = self.network_event_bus.clone();
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -231,6 +262,21 @@ impl PeerNetworkManager {
                             // Increment connected peer counter on successful add
                             connected_peer_count.fetch_add(1, Ordering::Relaxed);
 
+                            // Emit peer connected event
+                            let count = connected_peer_count.load(Ordering::Relaxed);
+                            let addresses = pool.get_connected_addresses().await;
+                            let best_height = pool.get_best_height().await;
+                            network_event_bus.emit(&[
+                                NetworkEvent::PeerConnected {
+                                    address: addr,
+                                },
+                                NetworkEvent::PeersUpdated {
+                                    connected_count: count,
+                                    addresses,
+                                    best_height,
+                                },
+                            ]);
+
                             // Add to known addresses
                             addrv2_handler.add_known_address(addr, ServiceFlags::from(1)).await;
 
@@ -244,6 +290,7 @@ impl PeerNetworkManager {
                                 connected_peer_count.clone(),
                                 headers2_disabled.clone(),
                                 message_dispatcher,
+                                network_event_bus.clone(),
                             )
                             .await;
                         }
@@ -288,6 +335,7 @@ impl PeerNetworkManager {
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
         message_dispatcher: Arc<Mutex<MessageDispatcher>>,
+        network_event_bus: EventBus<NetworkEvent>,
     ) {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
@@ -591,6 +639,21 @@ impl PeerNetworkManager {
             if removed.is_some() {
                 // Decrement connected peer counter when a peer is removed
                 connected_peer_count.fetch_sub(1, Ordering::Relaxed);
+
+                // Emit peer disconnected event
+                let count = connected_peer_count.load(Ordering::Relaxed);
+                let addresses = pool.get_connected_addresses().await;
+                let best_height = pool.get_best_height().await;
+                network_event_bus.emit(&[
+                    NetworkEvent::PeerDisconnected {
+                        address: addr,
+                    },
+                    NetworkEvent::PeersUpdated {
+                        connected_count: count,
+                        addresses,
+                        best_height,
+                    },
+                ]);
             }
 
             headers2_disabled.lock().await.remove(&addr);
@@ -602,6 +665,69 @@ impl PeerNetworkManager {
                 reputation_manager
                     .update_reputation(addr, positive_scores::LONG_UPTIME, "Long connection uptime")
                     .await;
+            }
+        });
+    }
+
+    /// Start the request processing task for outgoing messages from managers via RequestSender.
+    async fn start_request_processor(&self) {
+        // Take the receiver (only one task can own it)
+        let request_rx = {
+            let mut rx_guard = self.request_rx.lock().await;
+            rx_guard.take()
+        };
+
+        let Some(mut request_rx) = request_rx else {
+            log::warn!("Request processor already started or receiver unavailable");
+            return;
+        };
+
+        let this = self.clone();
+        let shutdown_token = self.shutdown_token.clone();
+
+        let mut tasks = self.tasks.lock().await;
+        tasks.spawn(async move {
+            log::info!("Starting request processor task");
+            loop {
+                tokio::select! {
+                    request = request_rx.recv() => {
+                        match request {
+                            Some(NetworkRequest::SendMessage(msg)) => {
+                                log::debug!("Request processor: sending {}", msg.cmd());
+                                // Spawn each send concurrently to allow parallel requests across peers.
+                                let this = this.clone();
+                                tokio::spawn(async move {
+                                    let result = match &msg {
+                                        // Distribute across peers for parallel sync
+                                        NetworkMessage::GetCFHeaders(_)
+                                        | NetworkMessage::GetCFilters(_)
+                                        | NetworkMessage::GetData(_)
+                                        | NetworkMessage::GetMnListD(_)
+                                        | NetworkMessage::GetQRInfo(_)
+                                        | NetworkMessage::GetHeaders(_)
+                                        | NetworkMessage::GetHeaders2(_) => {
+                                            this.send_distributed(msg).await
+                                        }
+                                        _ => {
+                                            this.send_to_single_peer(msg).await
+                                        }
+                                    };
+                                    if let Err(e) = result {
+                                        log::error!("Request processor: failed to send message: {}", e);
+                                    }
+                                });
+                            }
+                            None => {
+                                log::info!("Request processor: channel closed");
+                                break;
+                            }
+                        }
+                    }
+                    _ = shutdown_token.cancelled() => {
+                        log::info!("Request processor: shutting down");
+                        break;
+                    }
+                }
             }
         });
     }
@@ -944,6 +1070,104 @@ impl PeerNetworkManager {
             .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
     }
 
+    /// Send a message distributed across connected peers using round-robin selection.
+    ///
+    /// Peer selection and message handling based on message type:
+    /// - Filters (GetCFHeaders/GetCFilters): requires peers that support compact filters
+    /// - Headers (GetHeaders/GetHeaders2): prefers headers2 peers, upgrades GetHeaders if supported
+    /// - Other (blocks, masternode data, etc.): uses all connected peers
+    async fn send_distributed(&self, message: NetworkMessage) -> NetworkResult<()> {
+        let peers = self.pool.get_all_peers().await;
+
+        if peers.is_empty() {
+            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
+        }
+
+        // Select eligible peers based on message type
+        let (selected_peers, require_capability) = match &message {
+            NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
+                // Filter requests require compact filter support
+                let filter_peers: Vec<_> = {
+                    let mut result = Vec::new();
+                    for (addr, peer) in &peers {
+                        let peer_guard = peer.read().await;
+                        if peer_guard.supports_compact_filters() {
+                            result.push((*addr, peer.clone()));
+                        }
+                    }
+                    result
+                };
+                (filter_peers, true)
+            }
+            NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => {
+                // Prefer headers2 peers, fall back to all
+                let headers2_peers: Vec<_> = {
+                    let mut result = Vec::new();
+                    for (addr, peer) in &peers {
+                        let peer_guard = peer.read().await;
+                        if peer_guard.supports_headers2()
+                            && !self.headers2_disabled.lock().await.contains(addr)
+                        {
+                            result.push((*addr, peer.clone()));
+                        }
+                    }
+                    result
+                };
+                if headers2_peers.is_empty() {
+                    (peers.clone(), false)
+                } else {
+                    (headers2_peers, false)
+                }
+            }
+            _ => {
+                // All other messages use all connected peers
+                (peers.clone(), false)
+            }
+        };
+
+        if selected_peers.is_empty() {
+            return if require_capability {
+                Err(NetworkError::ProtocolError("No peers support required capability".to_string()))
+            } else {
+                Err(NetworkError::ConnectionFailed("No connected peers".to_string()))
+            };
+        }
+
+        // Round-robin selection
+        let idx = self.round_robin_counter.fetch_add(1, Ordering::Relaxed) % selected_peers.len();
+        let (addr, peer) = &selected_peers[idx];
+
+        // Upgrade GetHeaders to GetHeaders2 if peer supports it
+        let message = match message {
+            NetworkMessage::GetHeaders(get_headers) => {
+                let peer_supports_headers2 = {
+                    let peer_guard = peer.read().await;
+                    peer_guard.can_request_headers2()
+                };
+                if peer_supports_headers2 && !self.headers2_disabled.lock().await.contains(addr) {
+                    log::debug!("Upgrading GetHeaders to GetHeaders2 for peer {}", addr);
+                    NetworkMessage::GetHeaders2(get_headers)
+                } else {
+                    NetworkMessage::GetHeaders(get_headers)
+                }
+            }
+            other => other,
+        };
+
+        log::debug!(
+            "Distributing {} request to peer {} (round-robin idx {})",
+            message.cmd(),
+            addr,
+            idx
+        );
+
+        let mut peer_guard = peer.write().await;
+        peer_guard
+            .send_message(message)
+            .await
+            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
+    }
+
     /// Broadcast a message to all connected peers
     pub async fn broadcast(&self, message: NetworkMessage) -> Vec<Result<(), Error>> {
         let peers = self.pool.get_all_peers().await;
@@ -1078,6 +1302,10 @@ impl Clone for PeerNetworkManager {
             connected_peer_count: self.connected_peer_count.clone(),
             headers2_disabled: self.headers2_disabled.clone(),
             message_dispatcher: self.message_dispatcher.clone(),
+            request_tx: self.request_tx.clone(),
+            request_rx: self.request_rx.clone(),
+            round_robin_counter: self.round_robin_counter.clone(),
+            network_event_bus: self.network_event_bus.clone(),
         }
     }
 }
@@ -1091,6 +1319,10 @@ impl NetworkManager for PeerNetworkManager {
 
     async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
         self.message_dispatcher.lock().await.message_receiver(types)
+    }
+
+    fn request_sender(&self) -> RequestSender {
+        PeerNetworkManager::request_sender(self)
     }
 
     async fn connect(&mut self) -> NetworkResult<()> {
@@ -1221,5 +1453,9 @@ impl NetworkManager for PeerNetworkManager {
         }
 
         false
+    }
+
+    fn subscribe_network_events(&self) -> EventReceiver<NetworkEvent> {
+        self.network_event_bus.subscribe()
     }
 }

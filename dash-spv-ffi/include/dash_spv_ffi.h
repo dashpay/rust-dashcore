@@ -16,18 +16,17 @@
 namespace dash_spv_ffi {
 #endif  // __cplusplus
 
-typedef enum FFISyncStage {
-  Connecting = 0,
-  QueryingHeight = 1,
-  Downloading = 2,
-  Validating = 3,
-  Storing = 4,
-  DownloadingFilterHeaders = 5,
-  DownloadingFilters = 6,
-  DownloadingBlocks = 7,
-  Complete = 8,
-  Failed = 9,
-} FFISyncStage;
+/**
+ * SyncState exposed by the FFI as FFISyncState.
+ */
+typedef enum FFISyncState {
+  Initializing = 0,
+  WaitingForConnections = 1,
+  WaitForEvents = 2,
+  Syncing = 3,
+  Synced = 4,
+  Error = 5,
+} FFISyncState;
 
 typedef enum DashSpvValidationMode {
   None = 0,
@@ -67,32 +66,114 @@ typedef struct FFIClientConfig {
 
 } FFIClientConfig;
 
-typedef struct FFIString {
-  char *ptr;
-  uintptr_t length;
-} FFIString;
-
-typedef struct FFISyncProgress {
-  uint32_t header_height;
-  uint32_t filter_header_height;
-  uint32_t masternode_height;
-  uint32_t peer_count;
-  bool filter_sync_available;
-  uint32_t filters_downloaded;
-  uint32_t last_synced_filter_height;
-} FFISyncProgress;
-
-typedef struct FFIDetailedSyncProgress {
-  uint32_t total_height;
+/**
+ * Progress for block headers synchronization.
+ */
+typedef struct FFIBlockHeadersProgress {
+  enum FFISyncState state;
+  uint32_t current_height;
+  uint32_t target_height;
+  uint32_t processed;
+  uint32_t buffered;
   double percentage;
-  double headers_per_second;
-  int64_t estimated_seconds_remaining;
-  enum FFISyncStage stage;
-  struct FFIString stage_message;
-  struct FFISyncProgress overview;
-  uint64_t total_headers;
-  int64_t sync_start_timestamp;
-} FFIDetailedSyncProgress;
+  uint64_t last_activity;
+} FFIBlockHeadersProgress;
+
+/**
+ * Progress for filter headers synchronization.
+ */
+typedef struct FFIFilterHeadersProgress {
+  enum FFISyncState state;
+  uint32_t current_height;
+  uint32_t target_height;
+  uint32_t block_header_tip_height;
+  uint32_t processed;
+  double percentage;
+  uint64_t last_activity;
+} FFIFilterHeadersProgress;
+
+/**
+ * Progress for compact block filters synchronization.
+ */
+typedef struct FFIFiltersProgress {
+  enum FFISyncState state;
+  uint32_t current_height;
+  uint32_t target_height;
+  uint32_t filter_header_tip_height;
+  uint32_t downloaded;
+  uint32_t processed;
+  uint32_t matched;
+  double percentage;
+  uint64_t last_activity;
+} FFIFiltersProgress;
+
+/**
+ * Progress for full block synchronization.
+ */
+typedef struct FFIBlocksProgress {
+  enum FFISyncState state;
+  uint32_t last_processed;
+  uint32_t requested;
+  uint32_t from_storage;
+  uint32_t downloaded;
+  uint32_t processed;
+  uint32_t relevant;
+  uint32_t transactions;
+  uint64_t last_activity;
+} FFIBlocksProgress;
+
+/**
+ * Progress for masternode list synchronization.
+ */
+typedef struct FFIMasternodesProgress {
+  enum FFISyncState state;
+  uint32_t current_height;
+  uint32_t target_height;
+  uint32_t block_header_tip_height;
+  uint32_t diffs_processed;
+  uint64_t last_activity;
+} FFIMasternodesProgress;
+
+/**
+ * Progress for ChainLock synchronization.
+ */
+typedef struct FFIChainLockProgress {
+  enum FFISyncState state;
+  uint32_t best_validated_height;
+  uint32_t valid;
+  uint32_t invalid;
+  uint64_t last_activity;
+} FFIChainLockProgress;
+
+/**
+ * Progress for InstantSend synchronization.
+ */
+typedef struct FFIInstantSendProgress {
+  enum FFISyncState state;
+  uint32_t pending;
+  uint32_t valid;
+  uint32_t invalid;
+  uint64_t last_activity;
+} FFIInstantSendProgress;
+
+/**
+ * Aggregate progress for all sync managers.
+ * Provides a complete view of the parallel sync system's state.
+ */
+typedef struct FFISyncProgress {
+  enum FFISyncState state;
+  double percentage;
+  /**
+   * Per-manager progress (null if manager not started).
+   */
+  struct FFIBlockHeadersProgress *headers;
+  struct FFIFilterHeadersProgress *filter_headers;
+  struct FFIFiltersProgress *filters;
+  struct FFIBlocksProgress *blocks;
+  struct FFIMasternodesProgress *masternodes;
+  struct FFIChainLockProgress *chainlocks;
+  struct FFIInstantSendProgress *instantsend;
+} FFISyncProgress;
 
 typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);
 
@@ -155,6 +236,11 @@ typedef struct FFIEventCallbacks {
 typedef struct FFIWalletManager {
   uint8_t _private[0];
 } FFIWalletManager;
+
+typedef struct FFIString {
+  char *ptr;
+  uintptr_t length;
+} FFIString;
 
 /**
  * Handle for Core SDK that can be passed to Platform SDK
@@ -326,6 +412,7 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
 /**
  * Sync the SPV client to the chain tip with detailed progress updates.
  *
+ *
  * # Safety
  *
  * This function is unsafe because:
@@ -339,7 +426,7 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
  * # Parameters
  *
  * - `client`: Pointer to the SPV client
- * - `progress_callback`: Optional callback invoked periodically with sync progress
+ * - `progress_callback`: Optional callback invoked periodically with sync progress (use `dash_spv_ffi_manager_sync_progress_destroy` to free)
  * - `completion_callback`: Optional callback invoked on completion
  * - `user_data`: Optional user data pointer passed to all callbacks
  *
@@ -349,7 +436,7 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
  */
 
 int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *client,
-                                                      void (*progress_callback)(const struct FFIDetailedSyncProgress*,
+                                                      void (*progress_callback)(const struct FFISyncProgress*,
                                                                                 void*),
                                                       void (*completion_callback)(bool,
                                                                                   const char*,
@@ -378,6 +465,19 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  * - `client` must be a valid, non-null pointer.
  */
  struct FFISyncProgress *dash_spv_ffi_client_get_sync_progress(struct FFIDashSpvClient *client) ;
+
+/**
+ * Get the current manager-based sync progress.
+ *
+ * Returns the new parallel sync system's progress with per-manager details.
+ * Use `dash_spv_ffi_manager_sync_progress_destroy` to free the returned struct.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer.
+ */
+
+struct FFISyncProgress *dash_spv_ffi_client_get_manager_sync_progress(struct FFIDashSpvClient *client)
+;
 
 /**
  * Get the current chain tip hash (32 bytes) if available.
@@ -877,6 +977,70 @@ void dash_spv_ffi_unconfirmed_transaction_destroy_addresses(struct FFIString *ad
  * - This function should only be called once per FFIUnconfirmedTransaction
  */
  void dash_spv_ffi_unconfirmed_transaction_destroy(struct FFIUnconfirmedTransaction *tx) ;
+
+/**
+ * Destroy an `FFIBlockHeadersProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_block_headers_progress_destroy(struct FFIBlockHeadersProgress *progress) ;
+
+/**
+ * Destroy an `FFIFilterHeadersProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_filter_headers_progress_destroy(struct FFIFilterHeadersProgress *progress) ;
+
+/**
+ * Destroy an `FFIFiltersProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_filters_progress_destroy(struct FFIFiltersProgress *progress) ;
+
+/**
+ * Destroy an `FFIBlocksProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_blocks_progress_destroy(struct FFIBlocksProgress *progress) ;
+
+/**
+ * Destroy an `FFIMasternodesProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_masternode_progress_destroy(struct FFIMasternodesProgress *progress) ;
+
+/**
+ * Destroy an `FFIChainLockProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_chainlock_progress_destroy(struct FFIChainLockProgress *progress) ;
+
+/**
+ * Destroy an `FFIInstantSendProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_instantsend_progress_destroy(struct FFIInstantSendProgress *progress) ;
+
+/**
+ * Destroy an `FFISyncProgress` object and all its nested pointers.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_manager_sync_progress_destroy(struct FFISyncProgress *progress) ;
 
 /**
  * Initialize logging for the SPV library.

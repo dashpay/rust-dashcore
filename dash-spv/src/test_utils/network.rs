@@ -1,15 +1,20 @@
 use crate::error::{NetworkError, NetworkResult};
-use crate::network::{Message, MessageDispatcher, MessageType, NetworkManager};
+use crate::event_bus::{EventBus, EventReceiver};
+use crate::network::{
+    Message, MessageDispatcher, MessageType, NetworkEvent, NetworkManager, NetworkRequest,
+    RequestSender,
+};
 use async_trait::async_trait;
+use dashcore::network::constants::ServiceFlags;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{
-    block::Header as BlockHeader, network::constants::ServiceFlags,
-    network::message::NetworkMessage, network::message_blockdata::GetHeadersMessage, BlockHash,
+    block::Header as BlockHeader, network::message::NetworkMessage,
+    network::message_blockdata::GetHeadersMessage, BlockHash,
 };
 use dashcore_hashes::Hash;
 use std::any::Any;
 use std::net::SocketAddr;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 pub fn test_socket_address(id: u8) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, id], id as u16))
@@ -23,11 +28,18 @@ pub struct MockNetworkManager {
     peer_best_height: Option<u32>,
     message_dispatcher: MessageDispatcher,
     sent_messages: Vec<NetworkMessage>,
+    /// Request sender for outgoing messages.
+    request_tx: UnboundedSender<NetworkRequest>,
+    /// Receiver generated in the constructor. Can be taken out of the struct for testing.
+    request_rx: Option<UnboundedReceiver<NetworkRequest>>,
+    /// Event bus for network events.
+    network_event_bus: EventBus<NetworkEvent>,
 }
 
 impl MockNetworkManager {
     /// Create a new mock network manager
     pub fn new() -> Self {
+        let (request_tx, request_rx) = unbounded_channel();
         Self {
             connected: true,
             connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
@@ -35,7 +47,14 @@ impl MockNetworkManager {
             peer_best_height: None,
             message_dispatcher: MessageDispatcher::default(),
             sent_messages: Vec::new(),
+            request_tx,
+            request_rx: Some(request_rx),
+            network_event_bus: EventBus::default(),
         }
+    }
+
+    pub fn take_receiver(&mut self) -> Option<UnboundedReceiver<NetworkRequest>> {
+        self.request_rx.take()
     }
 
     /// Add a chain of headers for testing
@@ -114,6 +133,10 @@ impl NetworkManager for MockNetworkManager {
         self.message_dispatcher.message_receiver(types)
     }
 
+    fn request_sender(&self) -> RequestSender {
+        RequestSender::new(self.request_tx.clone())
+    }
+
     async fn connect(&mut self) -> NetworkResult<()> {
         self.connected = true;
         Ok(())
@@ -161,5 +184,9 @@ impl NetworkManager for MockNetworkManager {
 
     async fn has_peer_with_service(&self, _service_flags: ServiceFlags) -> bool {
         self.connected
+    }
+
+    fn subscribe_network_events(&self) -> EventReceiver<NetworkEvent> {
+        self.network_event_bus.subscribe()
     }
 }

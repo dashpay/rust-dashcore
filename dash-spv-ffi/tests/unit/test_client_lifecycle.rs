@@ -193,20 +193,18 @@ mod tests {
             // Get initial state
             let progress1 = dash_spv_ffi_client_get_sync_progress(client);
 
-            // State should be consistent
-            if !progress1.is_null() {
-                let progress = &*progress1;
+            let progress = &*progress1;
+            let headers = &*progress.headers;
+            let filter_headers = &*progress.filter_headers;
 
-                // Basic consistency checks
-                assert!(
-                    progress.header_height <= progress.filter_header_height
-                        || progress.filter_header_height == 0
-                );
-                // headers_downloaded is u64, always >= 0
+            // Basic consistency checks
+            assert!(
+                headers.current_height <= filter_headers.target_height
+                    || filter_headers.current_height == 0
+            );
+            // headers_downloaded is u64, always >= 0
 
-                dash_spv_ffi_sync_progress_destroy(progress1);
-            }
-
+            dash_spv_ffi_sync_progress_destroy(progress1);
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);
         }

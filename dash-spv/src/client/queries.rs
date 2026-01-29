@@ -11,11 +11,12 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::AddressBalance;
 use dashcore::sml::llmq_type::LLMQType;
-use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::QuorumHash;
 use key_wallet_manager::wallet_interface::WalletInterface;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use super::DashSpvClient;
 
@@ -50,26 +51,25 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Get a reference to the masternode list engine.
     /// Returns None if masternode sync is not enabled in config.
-    pub fn masternode_list_engine(&self) -> Option<&MasternodeListEngine> {
-        self.sync_manager.masternode_list_engine()
-    }
-
-    /// Get the masternode list at a specific block height.
-    /// Returns None if the masternode list for that height is not available.
-    pub fn get_masternode_list_at_height(&self, height: u32) -> Option<&MasternodeList> {
-        self.masternode_list_engine().and_then(|engine| engine.masternode_lists.get(&height))
+    pub fn masternode_list_engine(&self) -> Result<Arc<RwLock<MasternodeListEngine>>> {
+        match self.masternode_engine {
+            Some(ref masternode_engine) => Ok(masternode_engine.clone()),
+            None => Err(SpvError::Config("Masternode list engine not initialized".to_string())),
+        }
     }
 
     /// Get a quorum entry by type and hash at a specific block height.
     /// Returns None if the quorum is not found.
-    pub fn get_quorum_at_height(
+    pub async fn get_quorum_at_height(
         &self,
         height: u32,
         quorum_type: LLMQType,
         quorum_hash: QuorumHash,
     ) -> Result<QualifiedQuorumEntry> {
+        let masternode_endine = self.masternode_list_engine()?;
+        let masternode_engine_guard = masternode_endine.read().await;
         // First check if we have the masternode list at this height
-        match self.get_masternode_list_at_height(height) {
+        match masternode_engine_guard.masternode_lists.get(&height) {
             Some(ml) => {
                 // We have the masternode list, now look for the quorum
                 match ml.quorums.get(&quorum_type) {
@@ -106,16 +106,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     }
                 }
             }
-            None => {
-                tracing::warn!(
-                    "No masternode list found at height {} - cannot retrieve quorum",
-                    height
-                );
-                Err(SpvError::QuorumLookupError(format!(
-                    "No masternode list found at height {}",
-                    height
-                )))
-            }
+            None => Err(SpvError::QuorumLookupError(format!(
+                "No masternode list found at height {}",
+                height
+            ))),
         }
     }
 

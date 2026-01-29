@@ -41,7 +41,6 @@ mod core;
 mod events;
 mod lifecycle;
 mod mempool;
-mod progress;
 mod queries;
 mod sync_coordinator;
 mod transactions;

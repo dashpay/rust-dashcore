@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use crate::types::FFIDetailedSyncProgress;
     use crate::*;
     use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
@@ -20,10 +19,7 @@ mod tests {
         data_received: Arc<Mutex<Vec<u8>>>,
     }
 
-    extern "C" fn test_progress_callback(
-        progress: *const FFIDetailedSyncProgress,
-        user_data: *mut c_void,
-    ) {
+    extern "C" fn test_progress_callback(progress: *const FFISyncProgress, user_data: *mut c_void) {
         let data = unsafe { &*(user_data as *const TestCallbackData) };
         data.progress_count.fetch_add(1, Ordering::SeqCst);
         if !progress.is_null() {
@@ -143,8 +139,8 @@ mod tests {
             thread::sleep(Duration::from_millis(100));
 
             // Check progress was in valid range
-            let last_progress = *test_data.last_progress.lock().unwrap();
-            assert!((0.0..=100.0).contains(&last_progress));
+            let percentage = *test_data.last_progress.lock().unwrap();
+            assert!((0.0..=1.0).contains(&percentage));
 
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);

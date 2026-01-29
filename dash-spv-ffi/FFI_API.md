@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 64
+**Total Functions**: 73
 
 ## Table of Contents
 
@@ -65,15 +65,17 @@ Functions: 25
 
 ### Synchronization
 
-Functions: 6
+Functions: 8
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_cancel_sync` | Cancels the sync operation | client |
+| `dash_spv_ffi_client_get_manager_sync_progress` | Get the current manager-based sync progress | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
 | `dash_spv_ffi_client_is_filter_sync_available` | Check if compact filter sync is currently available | client |
 | `dash_spv_ffi_client_sync_to_tip_with_progress` | Sync the SPV client to the chain tip with detailed progress updates | client |
 | `dash_spv_ffi_client_test_sync` | Performs a test synchronization of the SPV client  # Parameters - `client`:... | client |
+| `dash_spv_ffi_manager_sync_progress_destroy` | Destroy an `FFISyncProgress` object and all its nested pointers | types |
 | `dash_spv_ffi_sync_progress_destroy` | Destroy a `FFISyncProgress` object returned by this crate | client |
 
 ### Address Monitoring
@@ -125,11 +127,14 @@ Functions: 2
 
 ### Utility Functions
 
-Functions: 17
+Functions: 24
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_array_destroy` | No description | types |
+| `dash_spv_ffi_block_headers_progress_destroy` | Destroy an `FFIBlockHeadersProgress` object | types |
+| `dash_spv_ffi_blocks_progress_destroy` | Destroy an `FFIBlocksProgress` object | types |
+| `dash_spv_ffi_chainlock_progress_destroy` | Destroy an `FFIChainLockProgress` object | types |
 | `dash_spv_ffi_checkpoint_before_height` | Get the last checkpoint at or before a given height | checkpoints |
 | `dash_spv_ffi_checkpoint_before_timestamp` | Get the last checkpoint at or before a given UNIX timestamp (seconds) | checkpoints |
 | `dash_spv_ffi_checkpoint_latest` | Get the latest checkpoint for the given network | checkpoints |
@@ -141,7 +146,11 @@ Functions: 17
 | `dash_spv_ffi_client_record_send` | Record that we attempted to send a transaction by its txid | client |
 | `dash_spv_ffi_client_rescan_blockchain` | Request a rescan of the blockchain from a given height (not yet implemented) | client |
 | `dash_spv_ffi_enable_test_mode` | No description | utils |
+| `dash_spv_ffi_filter_headers_progress_destroy` | Destroy an `FFIFilterHeadersProgress` object | types |
+| `dash_spv_ffi_filters_progress_destroy` | Destroy an `FFIFiltersProgress` object | types |
 | `dash_spv_ffi_init_logging` | Initialize logging for the SPV library | utils |
+| `dash_spv_ffi_instantsend_progress_destroy` | Destroy an `FFIInstantSendProgress` object | types |
+| `dash_spv_ffi_masternode_progress_destroy` | Destroy an `FFIMasternodesProgress` object | types |
 | `dash_spv_ffi_string_array_destroy` | Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents | types |
 | `dash_spv_ffi_string_destroy` | No description | types |
 | `dash_spv_ffi_version` | No description | utils |
@@ -617,6 +626,22 @@ The client pointer must be valid and non-null.
 
 ---
 
+#### `dash_spv_ffi_client_get_manager_sync_progress`
+
+```c
+dash_spv_ffi_client_get_manager_sync_progress(client: *mut FFIDashSpvClient,) -> *mut FFISyncProgress
+```
+
+**Description:**
+Get the current manager-based sync progress.  Returns the new parallel sync system's progress with per-manager details. Use `dash_spv_ffi_manager_sync_progress_destroy` to free the returned struct.  # Safety - `client` must be a valid, non-null pointer.
+
+**Safety:**
+- `client` must be a valid, non-null pointer.
+
+**Module:** `client`
+
+---
+
 #### `dash_spv_ffi_client_get_sync_progress`
 
 ```c
@@ -652,11 +677,11 @@ Check if compact filter sync is currently available.  # Safety - `client` must b
 #### `dash_spv_ffi_client_sync_to_tip_with_progress`
 
 ```c
-dash_spv_ffi_client_sync_to_tip_with_progress(client: *mut FFIDashSpvClient, progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>, completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>, user_data: *mut c_void,) -> i32
+dash_spv_ffi_client_sync_to_tip_with_progress(client: *mut FFIDashSpvClient, progress_callback: Option<extern "C" fn(*const FFISyncProgress, *mut c_void)>, completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>, user_data: *mut c_void,) -> i32
 ```
 
 **Description:**
-Sync the SPV client to the chain tip with detailed progress updates.  # Safety  This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread  # Parameters  - `client`: Pointer to the SPV client - `progress_callback`: Optional callback invoked periodically with sync progress - `completion_callback`: Optional callback invoked on completion - `user_data`: Optional user data pointer passed to all callbacks  # Returns  0 on success, error code on failure
+Sync the SPV client to the chain tip with detailed progress updates.   # Safety  This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread  # Parameters  - `client`: Pointer to the SPV client - `progress_callback`: Optional callback invoked periodically with sync progress (use `dash_spv_ffi_manager_sync_progress_destroy` to free) - `completion_callback`: Optional callback invoked on completion - `user_data`: Optional user data pointer passed to all callbacks  # Returns  0 on success, error code on failure
 
 **Safety:**
 This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread
@@ -678,6 +703,22 @@ Performs a test synchronization of the SPV client  # Parameters - `client`: Poin
 This function is unsafe because it dereferences a raw pointer. The caller must ensure that the client pointer is valid.
 
 **Module:** `client`
+
+---
+
+#### `dash_spv_ffi_manager_sync_progress_destroy`
+
+```c
+dash_spv_ffi_manager_sync_progress_destroy(progress: *mut FFISyncProgress,) -> ()
+```
+
+**Description:**
+Destroy an `FFISyncProgress` object and all its nested pointers.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
 
 ---
 
@@ -899,6 +940,54 @@ dash_spv_ffi_array_destroy(arr: *mut FFIArray) -> ()
 
 ---
 
+#### `dash_spv_ffi_block_headers_progress_destroy`
+
+```c
+dash_spv_ffi_block_headers_progress_destroy(progress: *mut FFIBlockHeadersProgress,) -> ()
+```
+
+**Description:**
+Destroy an `FFIBlockHeadersProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
+
+---
+
+#### `dash_spv_ffi_blocks_progress_destroy`
+
+```c
+dash_spv_ffi_blocks_progress_destroy(progress: *mut FFIBlocksProgress) -> ()
+```
+
+**Description:**
+Destroy an `FFIBlocksProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
+
+---
+
+#### `dash_spv_ffi_chainlock_progress_destroy`
+
+```c
+dash_spv_ffi_chainlock_progress_destroy(progress: *mut FFIChainLockProgress,) -> ()
+```
+
+**Description:**
+Destroy an `FFIChainLockProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
+
+---
+
 #### `dash_spv_ffi_checkpoint_before_height`
 
 ```c
@@ -1066,6 +1155,38 @@ dash_spv_ffi_enable_test_mode() -> ()
 
 ---
 
+#### `dash_spv_ffi_filter_headers_progress_destroy`
+
+```c
+dash_spv_ffi_filter_headers_progress_destroy(progress: *mut FFIFilterHeadersProgress,) -> ()
+```
+
+**Description:**
+Destroy an `FFIFilterHeadersProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
+
+---
+
+#### `dash_spv_ffi_filters_progress_destroy`
+
+```c
+dash_spv_ffi_filters_progress_destroy(progress: *mut FFIFiltersProgress) -> ()
+```
+
+**Description:**
+Destroy an `FFIFiltersProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
+
+---
+
 #### `dash_spv_ffi_init_logging`
 
 ```c
@@ -1079,6 +1200,38 @@ Initialize logging for the SPV library.  # Arguments - `level`: Log level string
 - `level` and `log_dir` may be null or point to valid, NUL-terminated C strings.
 
 **Module:** `utils`
+
+---
+
+#### `dash_spv_ffi_instantsend_progress_destroy`
+
+```c
+dash_spv_ffi_instantsend_progress_destroy(progress: *mut FFIInstantSendProgress,) -> ()
+```
+
+**Description:**
+Destroy an `FFIInstantSendProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
+
+---
+
+#### `dash_spv_ffi_masternode_progress_destroy`
+
+```c
+dash_spv_ffi_masternode_progress_destroy(progress: *mut FFIMasternodesProgress,) -> ()
+```
+
+**Description:**
+Destroy an `FFIMasternodesProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
 
 ---
 

@@ -25,22 +25,21 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
-use crate::storage::block_headers::{BlockHeaderTip, PersistentBlockHeaderStorage};
 use crate::storage::chainstate::PersistentChainStateStorage;
-use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
 use crate::storage::lockfile::LockFile;
-use crate::storage::masternode::PersistentMasternodeStateStorage;
 use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
-use crate::types::{HashedBlock, MempoolState, UnconfirmedTransaction};
+use crate::types::{HashedBlock, HashedBlockHeader, MempoolState, UnconfirmedTransaction};
 use crate::{ChainState, ClientConfig};
 
-pub use crate::storage::block_headers::BlockHeaderStorage;
+pub use crate::storage::block_headers::{
+    BlockHeaderStorage, BlockHeaderTip, PersistentBlockHeaderStorage,
+};
 pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::chainstate::ChainStateStorage;
-pub use crate::storage::filters::FilterHeaderStorage;
-pub use crate::storage::filters::FilterStorage;
-pub use crate::storage::masternode::MasternodeStateStorage;
+pub use crate::storage::filters::{FilterHeaderStorage, PersistentFilterHeaderStorage};
+pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
+pub use crate::storage::masternode::{MasternodeStateStorage, PersistentMasternodeStateStorage};
 pub use crate::storage::metadata::MetadataStorage;
 pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
 pub use crate::storage::transactions::TransactionStorage;
@@ -75,6 +74,26 @@ pub trait StorageManager:
 
     /// Stops all background tasks and persists the data.
     async fn shutdown(&mut self);
+
+    /// Get shared reference to header storage for parallel access.
+    fn header_storage_ref(&self) -> Option<Arc<RwLock<PersistentBlockHeaderStorage>>> {
+        None
+    }
+
+    /// Get shared reference to filter header storage for parallel access.
+    fn filter_header_storage_ref(&self) -> Option<Arc<RwLock<PersistentFilterHeaderStorage>>> {
+        None
+    }
+
+    /// Get shared reference to filter storage for parallel access.
+    fn filter_storage_ref(&self) -> Option<Arc<RwLock<PersistentFilterStorage>>> {
+        None
+    }
+
+    /// Get shared reference to block storage for parallel access.
+    fn block_storage_ref(&self) -> Option<Arc<RwLock<PersistentBlockStorage>>> {
+        None
+    }
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -195,6 +214,41 @@ impl DiskStorageManager {
         }
     }
 
+    /// Get a reference to the block headers storage.
+    pub fn header_storage(&self) -> Arc<RwLock<PersistentBlockHeaderStorage>> {
+        Arc::clone(&self.block_headers)
+    }
+
+    /// Get a reference to the filter headers storage.
+    pub fn filter_header_storage(&self) -> Arc<RwLock<PersistentFilterHeaderStorage>> {
+        Arc::clone(&self.filter_headers)
+    }
+
+    /// Get a reference to the filters storage.
+    pub fn filter_storage(&self) -> Arc<RwLock<PersistentFilterStorage>> {
+        Arc::clone(&self.filters)
+    }
+
+    /// Get a reference to the block storage.
+    pub fn block_storage(&self) -> Arc<RwLock<PersistentBlockStorage>> {
+        Arc::clone(&self.block_storage)
+    }
+
+    /// Get a reference to the transaction storage.
+    pub fn transaction_storage(&self) -> Arc<RwLock<PersistentTransactionStorage>> {
+        Arc::clone(&self.transactions)
+    }
+
+    /// Get a reference to the metadata storage.
+    pub fn metadata_storage(&self) -> Arc<RwLock<PersistentMetadataStorage>> {
+        Arc::clone(&self.metadata)
+    }
+
+    /// Get a reference to the masternode state storage.
+    pub fn masternode_storage(&self) -> Arc<RwLock<PersistentMasternodeStateStorage>> {
+        Arc::clone(&self.masternodestate)
+    }
+
     async fn persist(&self) {
         let storage_path = &self.storage_path;
 
@@ -262,6 +316,22 @@ impl StorageManager for DiskStorageManager {
 
         self.persist().await;
     }
+
+    fn header_storage_ref(&self) -> Option<Arc<RwLock<PersistentBlockHeaderStorage>>> {
+        Some(Arc::clone(&self.block_headers))
+    }
+
+    fn filter_header_storage_ref(&self) -> Option<Arc<RwLock<PersistentFilterHeaderStorage>>> {
+        Some(Arc::clone(&self.filter_headers))
+    }
+
+    fn filter_storage_ref(&self) -> Option<Arc<RwLock<PersistentFilterStorage>>> {
+        Some(Arc::clone(&self.filters))
+    }
+
+    fn block_storage_ref(&self) -> Option<Arc<RwLock<PersistentBlockStorage>>> {
+        Some(Arc::clone(&self.block_storage))
+    }
 }
 
 #[async_trait]
@@ -276,6 +346,18 @@ impl BlockHeaderStorage for DiskStorageManager {
         height: u32,
     ) -> StorageResult<()> {
         self.block_headers.write().await.store_headers_at_height(headers, height).await
+    }
+
+    async fn store_hashed_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()> {
+        self.block_headers.write().await.store_hashed_headers(headers).await
+    }
+
+    async fn store_hashed_headers_at_height(
+        &mut self,
+        headers: &[HashedBlockHeader],
+        height: u32,
+    ) -> StorageResult<()> {
+        self.block_headers.write().await.store_hashed_headers_at_height(headers, height).await
     }
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
@@ -341,6 +423,10 @@ impl filters::FilterStorage for DiskStorageManager {
 
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
         self.filters.read().await.load_filters(range).await
+    }
+
+    async fn filter_tip_height(&self) -> StorageResult<u32> {
+        self.filters.read().await.filter_tip_height().await
     }
 }
 

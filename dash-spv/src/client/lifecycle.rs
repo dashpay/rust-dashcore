@@ -12,18 +12,25 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
-use crate::chain::ChainLockManager;
+use super::{ClientConfig, DashSpvClient};
+use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
+use crate::chain::ChainLockManager as LegacyChainLockManager;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
-use crate::sync::legacy::SyncManager;
-use crate::types::{ChainState, MempoolState, SharedFilterHeights};
+use crate::storage::{
+    PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
+    PersistentFilterStorage, StorageManager,
+};
+use crate::sync::{
+    BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
+    InstantSendManager, Managers, MasternodesManager, SyncCoordinator,
+};
+use crate::types::{ChainState, MempoolState};
 use dashcore::network::constants::NetworkExt;
+use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;
-
-use super::{ClientConfig, DashSpvClient};
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
@@ -39,21 +46,79 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Initialize state for the network
         let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
 
-        // Wrap storage in Arc<Mutex>
-        let storage = Arc::new(Mutex::new(storage));
+        let masternode_engine = {
+            if config.enable_masternodes {
+                Some(Arc::new(RwLock::new(MasternodeListEngine::default_for_network(
+                    config.network,
+                ))))
+            } else {
+                None
+            }
+        };
 
-        // Create sync manager
-        tracing::info!("Creating sequential sync manager");
-        let received_filter_heights = SharedFilterHeights::new(Mutex::new(HashSet::new()));
-        let sync_manager =
-            SyncManager::new(&config, received_filter_heights, wallet.clone(), state.clone())
-                .map_err(SpvError::Sync)?;
+        let mut managers: Managers<
+            PersistentBlockHeaderStorage,
+            PersistentFilterHeaderStorage,
+            PersistentFilterStorage,
+            PersistentBlockStorage,
+            W,
+        > = Managers::default();
+
+        let header_storage = storage.header_storage_ref().expect("Headers storage must exist");
+        let checkpoints = match config.network {
+            dashcore::Network::Dash => mainnet_checkpoints(),
+            dashcore::Network::Testnet => testnet_checkpoints(),
+            _ => Vec::new(),
+        };
+        let checkpoint_manager = Arc::new(CheckpointManager::new(checkpoints));
+        managers.block_headers =
+            Some(BlockHeadersManager::new(header_storage.clone(), checkpoint_manager));
+
+        if config.enable_filters {
+            let filter_headers_storage = storage
+                .filter_header_storage_ref()
+                .expect("Filters headers storage must exist if filters are enabled");
+            let filters_storage = storage
+                .filter_storage_ref()
+                .expect("Filters storage must exist if filters are enabled");
+            let blocks_storage = storage
+                .block_storage_ref()
+                .expect("Blocks storage must exist if filters are enabled");
+
+            managers.filter_headers = Some(FilterHeadersManager::new(
+                header_storage.clone(),
+                filter_headers_storage.clone(),
+            ));
+            managers.filters = Some(FiltersManager::new(
+                wallet.clone(),
+                header_storage.clone(),
+                filter_headers_storage,
+                filters_storage,
+            ));
+            managers.blocks =
+                Some(BlocksManager::new(wallet.clone(), header_storage.clone(), blocks_storage));
+        }
+
+        // Build masternode manager if enabled
+        if config.enable_masternodes {
+            let masternode_list_engine = masternode_engine
+                .clone()
+                .expect("Masternode list engine must exist if masternodes are enabled");
+            managers.masternode = Some(MasternodesManager::new(
+                header_storage.clone(),
+                masternode_list_engine.clone(),
+                config.network,
+            ));
+            managers.chainlock =
+                Some(ChainLockManager::new(header_storage.clone(), masternode_list_engine.clone()));
+            managers.instantsend = Some(InstantSendManager::new(masternode_list_engine.clone()));
+        }
+
+        // Create sync coordinator (managers are passed to start() later)
+        let sync_coordinator = SyncCoordinator::new(managers);
 
         // Create ChainLock manager
-        let chainlock_manager = Arc::new(ChainLockManager::new(true));
-
-        // Create progress channels
-        let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
+        let chainlock_manager = Arc::new(LegacyChainLockManager::new(true));
 
         // Create event channels
         let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -61,20 +126,22 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Create mempool state
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
 
+        // Wrap storage in Arc<Mutex>
+        let storage = Arc::new(Mutex::new(storage));
+
         Ok(Self {
             config,
             state,
             network,
             storage,
             wallet,
-            sync_manager,
+            masternode_engine,
+            sync_coordinator,
             chainlock_manager,
             running: Arc::new(RwLock::new(false)),
             #[cfg(feature = "terminal-ui")]
             terminal_ui: None,
             filter_processor: None,
-            progress_sender: Some(progress_sender),
-            progress_receiver: Some(progress_receiver),
             event_tx,
             event_rx: Some(event_rx),
             mempool_state,
@@ -128,21 +195,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Initialize genesis block if not already present
         self.initialize_genesis_block().await?;
 
-        // Load headers from storage if they exist
-        // This ensures the ChainState has headers loaded for both checkpoint and normal sync
-        let tip_height = {
-            let storage = self.storage.lock().await;
-            storage.get_tip_height().await.unwrap_or(0)
-        };
-        if tip_height > 0 {
-            tracing::info!("Found {} headers in storage, loading into sync manager...", tip_height);
-            let storage = self.storage.lock().await;
-            self.sync_manager.load_headers_from_storage(&storage).await
-        }
-
-        // Connect to network
-        self.network.connect().await?;
-
         {
             let mut running = self.running.write().await;
             *running = true;
@@ -168,6 +220,16 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 })
                 .await;
         }
+
+        // Start all sync tasks before connecting to the network to make sure initial connection
+        // events are handled correctly in the sync coordinator.
+        if let Err(e) = self.sync_coordinator.start(&mut self.network).await {
+            tracing::error!("Failed to start sync coordinator: {}", e);
+            return Err(SpvError::Sync(e));
+        }
+
+        // Connect to network
+        self.network.connect().await?;
 
         Ok(())
     }
@@ -303,12 +365,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                             "✅ Initialized from checkpoint at height {}, skipping {} headers",
                             checkpoint.height,
                             checkpoint.height
-                        );
-
-                        // Update the sync manager's cached flags from the checkpoint-initialized state
-                        self.sync_manager.update_chain_state_cache(checkpoint.height);
-                        tracing::info!(
-                            "Updated sync manager with checkpoint-initialized chain state"
                         );
 
                         return Ok(());

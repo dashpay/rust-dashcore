@@ -1,12 +1,12 @@
 use crate::{
-    null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
-    FFIEventCallbacks, FFISyncProgress, FFIWalletManager,
+    null_check, set_last_error, FFIClientConfig, FFIErrorCode, FFIEventCallbacks, FFISyncProgress,
+    FFIWalletManager,
 };
 // Import wallet types from key-wallet-ffi
 use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
 
 use dash_spv::storage::DiskStorageManager;
-use dash_spv::types::SyncStage;
+use dash_spv::sync::SyncState;
 use dash_spv::DashSpvClient;
 use dash_spv::Hash;
 use dashcore::Txid;
@@ -38,9 +38,9 @@ struct CallbackRegistry {
 
 /// Information stored for each callback
 enum CallbackInfo {
-    /// Detailed progress callbacks (used by sync_to_tip_with_progress)
-    Detailed {
-        progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>,
+    /// Sync progress callbacks (used by sync_to_tip_with_progress)
+    SyncProgress {
+        progress_callback: Option<extern "C" fn(*const FFISyncProgress, *mut c_void)>,
         completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
         user_data: *mut c_void,
     },
@@ -543,11 +543,12 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
         tracing::info!("Starting test sync...");
 
         // Get initial height
-        let start_height = match spv_client.sync_progress().await {
-            Ok(progress) => progress.header_height,
+        let progress = spv_client.sync_progress();
+        let start_height = match progress.headers() {
+            Ok(progress) => progress.current_height(),
             Err(e) => {
                 tracing::error!("Failed to get initial height: {}", e);
-                return Err(e);
+                return Err(e.into());
             }
         };
         tracing::info!("Initial height: {}", start_height);
@@ -556,13 +557,14 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
         tokio::time::sleep(Duration::from_secs(10)).await;
 
         // Check if headers increased
-        let end_height = match spv_client.sync_progress().await {
-            Ok(progress) => progress.header_height,
+        let progress = spv_client.sync_progress();
+        let end_height = match progress.headers() {
+            Ok(progress) => progress.current_height(),
             Err(e) => {
                 tracing::error!("Failed to get final height: {}", e);
                 let mut guard = client.inner.lock().unwrap();
                 *guard = Some(spv_client);
-                return Err(e);
+                return Err(e.into());
             }
         };
         tracing::info!("Final height: {}", end_height);
@@ -593,6 +595,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
 
 /// Sync the SPV client to the chain tip with detailed progress updates.
 ///
+///
 /// # Safety
 ///
 /// This function is unsafe because:
@@ -606,7 +609,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
 /// # Parameters
 ///
 /// - `client`: Pointer to the SPV client
-/// - `progress_callback`: Optional callback invoked periodically with sync progress
+/// - `progress_callback`: Optional callback invoked periodically with sync progress (use `dash_spv_ffi_manager_sync_progress_destroy` to free)
 /// - `completion_callback`: Optional callback invoked on completion
 /// - `user_data`: Optional user data pointer passed to all callbacks
 ///
@@ -616,7 +619,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     client: *mut FFIDashSpvClient,
-    progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>,
+    progress_callback: Option<extern "C" fn(*const FFISyncProgress, *mut c_void)>,
     completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
     user_data: *mut c_void,
 ) -> i32 {
@@ -625,7 +628,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let client = &(*client);
 
     // Register callbacks in the global registry
-    let callback_info = CallbackInfo::Detailed {
+    let callback_info = CallbackInfo::SyncProgress {
         progress_callback,
         completion_callback,
         user_data,
@@ -643,76 +646,72 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let runtime = client.runtime.clone();
     let sync_callbacks = client.sync_callbacks.clone();
 
-    // Take progress receiver from client
-    let progress_receiver = {
-        let mut guard = inner.lock().unwrap();
-        guard.as_mut().and_then(|c| c.take_progress_receiver())
-    };
+    // Get progress receiver from client (returns new SyncProgress type)
+    let mut receiver = inner.lock().unwrap().as_ref().unwrap().subscribe_progress();
 
     // Setup progress monitoring with safe callback access
-    if let Some(mut receiver) = progress_receiver {
+    {
         let runtime_handle = runtime.handle().clone();
         let sync_callbacks_clone = sync_callbacks.clone();
         let shutdown_token_monitor = client.shutdown_token.clone();
 
         let handle = std::thread::spawn(move || {
             runtime_handle.block_on(async move {
+                let mut completion_called = false;
+
                 loop {
                     tokio::select! {
-                        maybe_progress = receiver.recv() => {
-                            match maybe_progress {
-                                Some(progress) => {
-                                    // Handle callback in a thread-safe way
-                                    let should_stop = matches!(
-                                        progress.sync_stage,
-                                        SyncStage::Complete | SyncStage::Failed(_)
-                                    );
+                        result = receiver.changed() => {
+                            if result.is_err() {
+                                // Channel closed
+                                break;
+                            }
 
-                                    // Create FFI progress (stack-allocated to avoid double-free issues)
-                                    let mut ffi_progress = FFIDetailedSyncProgress::from(progress);
+                            let progress = receiver.borrow().clone();
+                            let state = progress.state();
 
-                                    // Call the callback using the registry
+                            // Create FFI progress for the callback
+                            let ffi_progress = FFISyncProgress::from(
+                                progress,
+                            );
+
+                            // Call progress callback
+                            {
+                                let cb_guard = sync_callbacks_clone.lock().unwrap();
+
+                                if let Some(ref callback_data) = *cb_guard {
+                                    let registry = CALLBACK_REGISTRY.lock().unwrap();
+                                    if let Some(CallbackInfo::SyncProgress {
+                                        progress_callback: Some(callback),
+                                        user_data,
+                                        ..
+                                    }) = registry.get(callback_data.callback_id)
                                     {
-                                        let cb_guard = sync_callbacks_clone.lock().unwrap();
-
-                                        if let Some(ref callback_data) = *cb_guard {
-                                            let registry = CALLBACK_REGISTRY.lock().unwrap();
-                                            if let Some(CallbackInfo::Detailed {
-                                                progress_callback: Some(callback),
-                                                user_data,
-                                                ..
-                                            }) = registry.get(callback_data.callback_id)
-                                            {
-                                                // SAFETY: The callback and user_data are safely stored in the registry
-                                                // and accessed through thread-safe mechanisms. The registry ensures
-                                                // proper lifetime management without raw pointer passing across threads.
-                                                callback(&ffi_progress, *user_data);
-
-                                                // Free any heap-allocated strings inside the progress struct
-                                                // to avoid leaking per-callback allocations (e.g., stage_message).
-                                                // Move stage_message out of the struct to avoid double-free.
-                                                unsafe {
-                                                    // Move stage_message out of the struct (not using ptr::read to avoid double-free)
-                                                    let stage_message = std::mem::replace(
-                                                        &mut ffi_progress.stage_message,
-                                                        crate::types::FFIString {
-                                                            ptr: std::ptr::null_mut(),
-                                                            length: 0,
-                                                        },
-                                                    );
-                                                    // Destroy stage_message allocated in FFIDetailedSyncProgress::from
-                                                    crate::types::dash_spv_ffi_string_destroy(stage_message);
-                                                    // ffi_progress will be dropped normally here; no Drop impl exists
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if should_stop {
-                                        break;
+                                        callback(&ffi_progress, *user_data);
                                     }
                                 }
-                                None => break,
+                            }
+
+                            // Call completion callback once when synced (but keep running)
+                            if !completion_called && state == SyncState::Synced {
+                                completion_called = true;
+                                let cb_guard = sync_callbacks_clone.lock().unwrap();
+                                if let Some(ref callback_data) = *cb_guard {
+                                    let registry = CALLBACK_REGISTRY.lock().unwrap();
+                                    if let Some(CallbackInfo::SyncProgress {
+                                        completion_callback: Some(callback),
+                                        user_data,
+                                        ..
+                                    }) = registry.get(callback_data.callback_id)
+                                    {
+                                        callback(true, std::ptr::null(), *user_data);
+                                    }
+                                }
+                            }
+
+                            // Stop on error
+                            if state == SyncState::Error {
+                                break;
                             }
                         }
                         _ = shutdown_token_monitor.cancelled() => {
@@ -780,7 +779,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
             let mut cb_guard = sync_callbacks_clone.lock().unwrap();
             if let Some(ref callback_data) = *cb_guard {
                 let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                if let Some(CallbackInfo::Detailed {
+                if let Some(CallbackInfo::SyncProgress {
                     completion_callback: Some(callback),
                     user_data,
                     ..
@@ -876,14 +875,54 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
                 }
             }
         };
-        let res = spv_client.sync_progress().await;
+        let res = spv_client.sync_progress();
         let mut guard = inner.lock().unwrap();
         *guard = Some(spv_client);
-        res
+        Ok(res)
     });
 
     match result {
-        Ok(progress) => Box::into_raw(Box::new(progress.into())),
+        Ok(progress) => Box::into_raw(Box::new(FFISyncProgress::from(progress))),
+        Err(e) => {
+            set_last_error(&e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Get the current manager-based sync progress.
+///
+/// Returns the new parallel sync system's progress with per-manager details.
+/// Use `dash_spv_ffi_manager_sync_progress_destroy` to free the returned struct.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_manager_sync_progress(
+    client: *mut FFIDashSpvClient,
+) -> *mut FFISyncProgress {
+    null_check!(client, std::ptr::null_mut());
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    // Access client under lock and clone the progress
+    let result: Result<FFISyncProgress, dash_spv::SpvError> = {
+        let guard = inner.lock().unwrap();
+        match guard.as_ref() {
+            Some(spv_client) => {
+                // Clone the progress since we need it after releasing the lock
+                let new_progress = spv_client.progress().clone();
+                Ok(FFISyncProgress::from(new_progress))
+            }
+            None => Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            ))),
+        }
+    };
+
+    match result {
+        Ok(progress) => Box::into_raw(Box::new(progress)),
         Err(e) => {
             set_last_error(&e.to_string());
             std::ptr::null_mut()

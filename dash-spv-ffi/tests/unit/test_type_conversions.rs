@@ -151,7 +151,7 @@ mod tests {
             last_update: std::time::SystemTime::now(),
         };
 
-        let ffi_progress = FFISyncProgress::from(progress);
+        let ffi_progress = FFILegacySyncProgress::from(progress);
         assert_eq!(ffi_progress.header_height, u32::MAX);
         assert_eq!(ffi_progress.filter_header_height, u32::MAX);
         assert_eq!(ffi_progress.masternode_height, u32::MAX);

@@ -138,17 +138,27 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
 
     // Get the masternode list engine directly for efficient access
     let engine = match spv_client.masternode_list_engine() {
-        Some(engine) => engine,
-        None => {
+        Ok(engine) => engine,
+        Err(e) => {
             return FFIResult::error(
                 FFIErrorCode::RuntimeError,
-                "Masternode list engine not initialized. Core SDK may still be syncing.",
+                &format!(
+                    "Masternode list engine not initialized: {}. Core SDK may still be syncing.",
+                    e
+                ),
             );
         }
     };
 
+    // Lock the engine for reading
+    let engine_guard = engine.blocking_read();
+
     // Use the global quorum status index for efficient lookup
-    match engine.quorum_statuses.get(&llmq_type).and_then(|type_map| type_map.get(&quorum_hash)) {
+    match engine_guard
+        .quorum_statuses
+        .get(&llmq_type)
+        .and_then(|type_map| type_map.get(&quorum_hash))
+    {
         Some((heights, public_key, _status)) => {
             // Check if the requested height is one of the heights where this quorum exists
             if !heights.contains(&core_chain_locked_height) {
@@ -175,10 +185,10 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
         }
         None => {
             // Quorum not found in global index - provide diagnostic info
-            let total_lists = engine.masternode_lists.len();
+            let total_lists = engine_guard.masternode_lists.len();
             let (min_height, max_height) = if total_lists > 0 {
-                let min = engine.masternode_lists.keys().min().copied().unwrap_or(0);
-                let max = engine.masternode_lists.keys().max().copied().unwrap_or(0);
+                let min = engine_guard.masternode_lists.keys().min().copied().unwrap_or(0);
+                let max = engine_guard.masternode_lists.keys().max().copied().unwrap_or(0);
                 (min, max)
             } else {
                 (0, 0)

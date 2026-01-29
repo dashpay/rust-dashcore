@@ -41,12 +41,23 @@ impl BlockHeaderTip {
 }
 
 #[async_trait]
-pub trait BlockHeaderStorage {
+pub trait BlockHeaderStorage: Send + Sync + 'static {
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()>;
 
     async fn store_headers_at_height(
         &mut self,
         headers: &[BlockHeader],
+        height: u32,
+    ) -> StorageResult<()>;
+
+    //TODO - change API of the BlockHeaderStorage trait to accept (store) and return (load)
+    //      HashedBlockHeaders instead of BlockHeaders to avoid unnecessary hashing and remove
+    //      the two store_hashed_headers methods below.
+    async fn store_hashed_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()>;
+
+    async fn store_hashed_headers_at_height(
+        &mut self,
+        headers: &[HashedBlockHeader],
         height: u32,
     ) -> StorageResult<()>;
 
@@ -144,11 +155,24 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         headers: &[BlockHeader],
         height: u32,
     ) -> StorageResult<()> {
-        let mut height = height;
         let headers =
             headers.iter().map(HashedBlockHeader::from).collect::<Vec<HashedBlockHeader>>();
+        self.store_hashed_headers_at_height(&headers, height).await
+    }
 
-        self.block_headers.write().await.store_items_at_height(&headers, height).await?;
+    async fn store_hashed_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()> {
+        let height = self.block_headers.read().await.next_height();
+        self.store_hashed_headers_at_height(headers, height).await
+    }
+
+    async fn store_hashed_headers_at_height(
+        &mut self,
+        headers: &[HashedBlockHeader],
+        height: u32,
+    ) -> StorageResult<()> {
+        let mut height = height;
+
+        self.block_headers.write().await.store_items_at_height(headers, height).await?;
 
         for header in headers {
             self.header_hash_index.insert(*header.hash(), height);

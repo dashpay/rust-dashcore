@@ -43,11 +43,9 @@ async fn test_header_sync_with_client_integration() {
     let client = client.unwrap();
 
     // Verify client starts with empty state
-    let stats = client.sync_progress().await;
-    assert!(stats.is_ok());
+    let progress = client.sync_progress();
 
-    let stats = stats.unwrap();
-    assert_eq!(stats.header_height, 0);
+    assert_eq!(progress.headers().unwrap().current_height(), 0);
 
     info!("Header sync client integration test completed");
 }

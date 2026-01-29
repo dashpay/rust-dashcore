@@ -35,7 +35,6 @@
 //!
 //!     // Create and start the client
 //!     let mut client = DashSpvClient::new(config.clone(), network, storage, wallet).await?;
-//!     client.start().await?;
 //!
 //!     let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
 //!     let shutdown_token = CancellationToken::new();
@@ -62,6 +61,7 @@ pub mod test_utils;
 pub mod chain;
 pub mod client;
 pub mod error;
+pub mod event_bus;
 pub mod logging;
 pub mod mempool_filter;
 pub mod network;

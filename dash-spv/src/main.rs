@@ -299,8 +299,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
 
-    tracing::info!("Sync strategy: Sequential");
-
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
     let wallet_id = wallet_manager.create_wallet_from_mnemonic(

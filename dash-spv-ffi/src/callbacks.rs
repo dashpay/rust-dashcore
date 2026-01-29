@@ -2,6 +2,61 @@ use dashcore::hashes::Hash;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 
+// ============================================================================
+// Sync Event Types (for push-based event notifications)
+// ============================================================================
+
+/// Event types for the parallel sync system.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFISyncEventType {
+    SyncStart = 0,
+    BlockHeadersStored = 1,
+    BlockHeaderSyncComplete = 2,
+    FilterHeadersStored = 3,
+    FilterHeadersSyncComplete = 4,
+    FiltersStored = 5,
+    FiltersSyncComplete = 6,
+    BlocksNeeded = 7,
+    BlockProcessed = 8,
+    MasternodeStateUpdated = 9,
+    ChainLockReceived = 10,
+    InstantLockReceived = 11,
+    ManagerError = 12,
+    SyncComplete = 13,
+}
+
+/// Identifies which sync manager generated an event.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIManagerId {
+    Headers = 0,
+    FilterHeaders = 1,
+    Filters = 2,
+    Blocks = 3,
+    Masternodes = 4,
+    ChainLocks = 5,
+    InstantSend = 6,
+}
+
+/// A sync event from the parallel sync system.
+#[repr(C)]
+pub struct FFISyncEvent {
+    pub event_type: FFISyncEventType,
+    pub height: u32,
+    pub start_height: u32,
+    pub end_height: u32,
+    pub manager_id: FFIManagerId,
+    pub validated: bool,
+    pub hash: [u8; 32],
+    pub txid: [u8; 32],
+    pub error_message: *const c_char,
+}
+
+/// Callback type for receiving sync events.
+pub type SyncEventCallback =
+    Option<extern "C" fn(event: *const FFISyncEvent, user_data: *mut c_void)>;
+
 pub type ProgressCallback =
     extern "C" fn(progress: f64, message: *const c_char, user_data: *mut c_void);
 pub type CompletionCallback =

@@ -4,11 +4,12 @@
 //! - Event receiver management
 //! - Event emission
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::types::{DetailedSyncProgress, SpvEvent};
+use crate::sync::SyncProgress;
+use crate::types::SpvEvent;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 use super::DashSpvClient;
@@ -25,17 +26,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let _ = self.event_tx.send(event);
     }
 
-    /// Take the progress receiver for external consumption.
-    pub fn take_progress_receiver(
-        &mut self,
-    ) -> Option<mpsc::UnboundedReceiver<DetailedSyncProgress>> {
-        self.progress_receiver.take()
+    /// Subscribe to sync progress updates via watch channel.
+    pub fn subscribe_progress(&self) -> watch::Receiver<SyncProgress> {
+        self.sync_coordinator.subscribe_progress()
     }
 
-    /// Emit a progress update.
-    pub(super) fn emit_progress(&self, progress: DetailedSyncProgress) {
-        if let Some(ref sender) = self.progress_sender {
-            let _ = sender.send(progress);
-        }
+    /// Get current sync progress.
+    pub fn progress(&self) -> SyncProgress {
+        self.sync_coordinator.progress()
     }
 }

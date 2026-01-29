@@ -26,19 +26,28 @@ fn ffi_string_to_rust(s: *const c_char) -> String {
     unsafe { CStr::from_ptr(s) }.to_str().unwrap_or_default().to_owned()
 }
 
-extern "C" fn on_detailed_progress(progress: *const FFIDetailedSyncProgress, _ud: *mut c_void) {
+extern "C" fn on_manager_progress(progress: *const FFISyncProgress, _ud: *mut c_void) {
     if progress.is_null() {
         return;
     }
     unsafe {
         let p = &*progress;
+        let headers_height = if !p.headers.is_null() {
+            (*p.headers).current_height
+        } else {
+            0
+        };
+        let target_height = if !p.headers.is_null() {
+            (*p.headers).target_height
+        } else {
+            0
+        };
         println!(
-            "height {}/{} {:.2}% peers {} hps {:.1}",
-            p.overview.header_height,
-            p.total_height,
-            p.percentage,
-            p.overview.peer_count,
-            p.headers_per_second
+            "state {:?} height {}/{} {:.2}%",
+            p.state,
+            headers_height,
+            target_height,
+            p.percentage * 100.0,
         );
     }
 }
@@ -195,10 +204,10 @@ fn main() {
         // Ensure completion flag is reset before starting sync
         SYNC_COMPLETED.store(false, Ordering::SeqCst);
 
-        // Run sync on this thread; detailed progress will print via callback
+        // Run sync on this thread; manager-based progress will print via callback
         let rc = dash_spv_ffi_client_sync_to_tip_with_progress(
             client,
-            Some(on_detailed_progress),
+            Some(on_manager_progress),
             Some(on_completion),
             ptr::null_mut(),
         );
@@ -207,24 +216,9 @@ fn main() {
             std::process::exit(1);
         }
 
-        // Wait for sync completion by polling basic progress flags; drain events meanwhile
         loop {
-            let _ = dash_spv_ffi_client_drain_events(client);
-            let prog_ptr = dash_spv_ffi_client_get_sync_progress(client);
-            if !prog_ptr.is_null() {
-                let prog = &*prog_ptr;
-                let headers_done = SYNC_COMPLETED.load(Ordering::SeqCst);
-                let filters_complete = if disable_filter_sync || !prog.filter_sync_available {
-                    false
-                } else {
-                    prog.filter_header_height >= prog.header_height
-                        && prog.last_synced_filter_height >= prog.filter_header_height
-                };
-                if headers_done && (filters_complete || disable_filter_sync) {
-                    dash_spv_ffi_sync_progress_destroy(prog_ptr);
-                    break;
-                }
-                dash_spv_ffi_sync_progress_destroy(prog_ptr);
+            if SYNC_COMPLETED.load(Ordering::SeqCst) {
+                break;
             }
             thread::sleep(Duration::from_millis(300));
         }
