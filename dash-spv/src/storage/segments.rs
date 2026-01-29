@@ -13,12 +13,15 @@ use dashcore::{
     block::{Header as BlockHeader, Version},
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
-    BlockHash, CompactTarget,
+    Block, BlockHash, CompactTarget,
 };
 use dashcore_hashes::Hash;
 
 use crate::{
-    error::StorageResult, storage::io::atomic_write, types::HashedBlockHeader, StorageError,
+    error::StorageResult,
+    storage::io::atomic_write,
+    types::{HashedBlock, HashedBlockHeader},
+    StorageError,
 };
 
 pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
@@ -56,6 +59,16 @@ impl Persistable for HashedBlockHeader {
 impl Persistable for FilterHeader {
     fn sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
+    }
+}
+
+impl Persistable for HashedBlock {
+    fn sentinel() -> Self {
+        let block = Block {
+            header: *HashedBlockHeader::sentinel().header(),
+            txdata: Vec::new(),
+        };
+        Self::from(block)
     }
 }
 

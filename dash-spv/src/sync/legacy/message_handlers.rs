@@ -12,6 +12,7 @@ use super::phases::SyncPhase;
 use crate::error::{SyncError, SyncResult};
 use crate::network::{Message, NetworkManager};
 use crate::storage::StorageManager;
+use crate::types::HashedBlock;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::{check_compact_filters_for_addresses, FilterMatchKey};
 
@@ -660,6 +661,11 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             .unwrap_or(0);
 
         let result = wallet.process_block(block, block_height).await;
+
+        storage
+            .store_block(block_height, HashedBlock::from(block))
+            .await
+            .map_err(|e| SyncError::Storage(e.to_string()))?;
 
         drop(wallet);
 

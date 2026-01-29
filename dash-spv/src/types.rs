@@ -23,7 +23,7 @@ use dashcore::{
     hash_types::FilterHeader,
     network::constants::NetworkExt,
     sml::masternode_list_engine::MasternodeListEngine,
-    Amount, BlockHash, Network, Transaction, Txid,
+    Amount, Block, BlockHash, Network, Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
 
@@ -107,6 +107,76 @@ impl Decodable for HashedBlockHeader {
         Ok(Self {
             header: BlockHeader::consensus_decode(reader)?,
             hash: BlockHash::consensus_decode(reader)?,
+        })
+    }
+}
+
+/// A block with its cached hash to avoid expensive X11 recomputation.
+#[derive(Debug, Clone)]
+pub struct HashedBlock {
+    hash: BlockHash,
+    block: Block,
+}
+
+impl HashedBlock {
+    pub fn new(hash: BlockHash, block: Block) -> Self {
+        Self {
+            hash,
+            block,
+        }
+    }
+
+    pub fn hash(&self) -> &BlockHash {
+        &self.hash
+    }
+
+    pub fn block(&self) -> &Block {
+        &self.block
+    }
+}
+
+impl From<Block> for HashedBlock {
+    fn from(block: Block) -> Self {
+        Self {
+            hash: block.block_hash(),
+            block,
+        }
+    }
+}
+
+impl From<&Block> for HashedBlock {
+    fn from(block: &Block) -> Self {
+        Self {
+            hash: block.block_hash(),
+            block: block.clone(),
+        }
+    }
+}
+
+impl PartialEq for HashedBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.block == other.block
+    }
+}
+
+impl Encodable for HashedBlock {
+    #[inline]
+    fn consensus_encode<W: std::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, std::io::Error> {
+        Ok(self.hash().consensus_encode(writer)? + self.block().consensus_encode(writer)?)
+    }
+}
+
+impl Decodable for HashedBlock {
+    #[inline]
+    fn consensus_decode<R: std::io::Read + ?Sized>(
+        reader: &mut R,
+    ) -> Result<Self, dashcore::consensus::encode::Error> {
+        Ok(Self {
+            hash: BlockHash::consensus_decode(reader)?,
+            block: Block::consensus_decode(reader)?,
         })
     }
 }
