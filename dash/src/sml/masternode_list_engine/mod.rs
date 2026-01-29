@@ -415,23 +415,47 @@ impl MasternodeListEngine {
     fn store_rotating_quorums_for_cycle(&mut self, work_block_hash: BlockHash) {
         // Calculate the cycle boundary from the work block
         let Some(work_block_height) = self.block_container.get_height(&work_block_hash) else {
+            log::debug!(
+                "store_rotating_quorums_for_cycle: work_block_hash {} not found in block_container",
+                work_block_hash
+            );
             return;
         };
 
         let cycle_boundary_height = work_block_height + WORK_DIFF_DEPTH;
         let Some(cycle_boundary_hash) = self.block_container.get_hash(&cycle_boundary_height)
         else {
+            log::debug!(
+                "store_rotating_quorums_for_cycle: cycle_boundary_height {} not found in block_container",
+                cycle_boundary_height
+            );
             return;
         };
 
+        log::debug!(
+            "store_rotating_quorums_for_cycle: work_block_hash={} (height={}), cycle_boundary_hash={} (height={})",
+            work_block_hash,
+            work_block_height,
+            cycle_boundary_hash,
+            cycle_boundary_height
+        );
+
         // Skip if we already have quorums for this cycle
         if self.rotated_quorums_per_cycle.contains_key(cycle_boundary_hash) {
+            log::debug!(
+                "store_rotating_quorums_for_cycle: already have quorums for cycle_boundary_hash {}",
+                cycle_boundary_hash
+            );
             return;
         }
 
         // Look up the masternode list at the work block height
         // The masternode list at this height should have all active rotating quorums
         let Some(mn_list) = self.masternode_lists.get(&work_block_height) else {
+            log::debug!(
+                "store_rotating_quorums_for_cycle: no masternode list at work_block_height {}",
+                work_block_height
+            );
             return;
         };
 
@@ -440,11 +464,29 @@ impl MasternodeListEngine {
 
         // Extract rotating quorums from the masternode list
         let Some(quorums_of_type) = mn_list.quorums.get(&isd_type) else {
+            log::debug!(
+                "store_rotating_quorums_for_cycle: no quorums of type {:?} in masternode list at height {}",
+                isd_type,
+                work_block_height
+            );
             return;
         };
 
         let rotating_quorums: Vec<QualifiedQuorumEntry> =
             quorums_of_type.values().cloned().collect();
+
+        log::debug!(
+            "store_rotating_quorums_for_cycle: storing {} quorums under cycle_boundary_hash {}",
+            rotating_quorums.len(),
+            cycle_boundary_hash
+        );
+        for q in &rotating_quorums {
+            log::debug!(
+                "  Quorum: hash={}, index={:?}",
+                q.quorum_entry.quorum_hash,
+                q.quorum_entry.quorum_index
+            );
+        }
 
         if !rotating_quorums.is_empty() {
             self.rotated_quorums_per_cycle.insert(*cycle_boundary_hash, rotating_quorums);
@@ -681,12 +723,20 @@ impl MasternodeListEngine {
                 ),
             )?;
             let cycle_boundary_height = work_block_height + WORK_DIFF_DEPTH;
-            *self.block_container.get_hash(&cycle_boundary_height).ok_or(
+            let hash = *self.block_container.get_hash(&cycle_boundary_height).ok_or(
                 QuorumValidationError::RequiredBlockNotPresent(
                     BlockHash::all_zeros(),
                     format!("getting cycle boundary hash at height {}", cycle_boundary_height),
                 ),
-            )?
+            )?;
+            log::debug!(
+                "feed_qr_info: current cycle - work_block_hash={} (height={}), cycle_boundary_hash={} (height={})",
+                work_block_hash,
+                work_block_height,
+                hash,
+                cycle_boundary_height
+            );
+            hash
         };
         let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
 
@@ -754,10 +804,22 @@ impl MasternodeListEngine {
             let qualified_rotated_quorums_per_cycle =
                 self.rotated_quorums_per_cycle.entry(cycle_boundary_hash).or_default();
 
+            log::debug!(
+                "feed_qr_info: storing {} quorums from last_commitment_per_index under cycle_boundary_hash {}",
+                qualified_last_commitment_per_index.len(),
+                cycle_boundary_hash
+            );
+
             // Clear existing quorums to prevent accumulation when feed_qr_info is called multiple times
             qualified_rotated_quorums_per_cycle.clear();
 
             for mut rotated_quorum in qualified_last_commitment_per_index {
+                log::debug!(
+                    "  Current cycle quorum: hash={}, index={:?}",
+                    rotated_quorum.quorum_entry.quorum_hash,
+                    rotated_quorum.quorum_entry.quorum_index
+                );
+
                 rotated_quorum.verified = validation_statuses
                     .get(&rotated_quorum.quorum_entry.quorum_hash)
                     .cloned()
@@ -876,6 +938,11 @@ impl MasternodeListEngine {
                 }
             }
         } else {
+            log::debug!(
+                "feed_qr_info (no validation): storing {} quorums from last_commitment_per_index under cycle_boundary_hash {}",
+                qualified_last_commitment_per_index.len(),
+                cycle_boundary_hash
+            );
             let qualified_rotated_quorums_per_cycle =
                 self.rotated_quorums_per_cycle.entry(cycle_boundary_hash).or_default();
             *qualified_rotated_quorums_per_cycle = qualified_last_commitment_per_index;

@@ -16,11 +16,29 @@ impl MasternodeListEngine {
         // Retrieve the cycle hash from the Instant Lock
         let cycle_hash = instant_lock.cyclehash;
 
+        // Debug: Log the cyclehash and what we have stored
+        log::debug!("IS lock verification - cyclehash from InstantLock: {}", cycle_hash);
+        log::debug!(
+            "Available cycle hashes in rotated_quorums_per_cycle: {:?}",
+            self.rotated_quorums_per_cycle.keys().collect::<Vec<_>>()
+        );
+
         // Get the list of quorums associated with this cycle hash
         let quorums = self
             .rotated_quorums_per_cycle
             .get(&cycle_hash)
             .ok_or(MessageVerificationError::CycleHashNotPresent(cycle_hash))?;
+
+        // Debug: Log quorum info
+        log::debug!("Found {} quorums for cyclehash {}", quorums.len(), cycle_hash);
+        for q in quorums.iter() {
+            log::debug!(
+                "  Quorum: hash={}, index={:?}, height at block_container={:?}",
+                q.quorum_entry.quorum_hash,
+                q.quorum_entry.quorum_index,
+                self.block_container.get_height(&q.quorum_entry.quorum_hash)
+            );
+        }
 
         // Ensure that at least one quorum exists for this cycle
         if quorums.is_empty() {
