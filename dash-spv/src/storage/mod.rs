@@ -2,7 +2,7 @@
 
 pub mod types;
 
-mod blocks;
+mod block_headers;
 mod chainstate;
 mod filters;
 mod io;
@@ -24,7 +24,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
-use crate::storage::blocks::{BlockHeaderTip, PersistentBlockHeaderStorage};
+use crate::storage::block_headers::{BlockHeaderTip, PersistentBlockHeaderStorage};
 use crate::storage::chainstate::PersistentChainStateStorage;
 use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
 use crate::storage::lockfile::LockFile;
@@ -34,7 +34,7 @@ use crate::storage::transactions::PersistentTransactionStorage;
 use crate::types::{MempoolState, UnconfirmedTransaction};
 use crate::{ChainState, ClientConfig};
 
-pub use crate::storage::blocks::BlockHeaderStorage;
+pub use crate::storage::block_headers::BlockHeaderStorage;
 pub use crate::storage::chainstate::ChainStateStorage;
 pub use crate::storage::filters::FilterHeaderStorage;
 pub use crate::storage::filters::FilterStorage;
@@ -253,7 +253,7 @@ impl StorageManager for DiskStorageManager {
 }
 
 #[async_trait]
-impl blocks::BlockHeaderStorage for DiskStorageManager {
+impl BlockHeaderStorage for DiskStorageManager {
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
         self.block_headers.write().await.store_headers(headers).await
     }
