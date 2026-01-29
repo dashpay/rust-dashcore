@@ -690,6 +690,12 @@ impl MasternodeListEngine {
                 });
 
             for mut rotated_quorum in qualified_last_commitment_per_index {
+                log::debug!(
+                    "  Current cycle quorum: hash={}, index={:?}",
+                    rotated_quorum.quorum_entry.quorum_hash,
+                    rotated_quorum.quorum_entry.quorum_index
+                );
+
                 rotated_quorum.verified = validation_statuses
                     .get(&rotated_quorum.quorum_entry.quorum_hash)
                     .cloned()
