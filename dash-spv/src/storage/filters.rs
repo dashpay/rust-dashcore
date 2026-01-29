@@ -13,6 +13,12 @@ use crate::{
 pub trait FilterHeaderStorage {
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()>;
 
+    async fn store_filter_headers_at_height(
+        &mut self,
+        headers: &[FilterHeader],
+        height: u32,
+    ) -> StorageResult<()>;
+
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>>;
 
     async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
@@ -82,6 +88,14 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
 impl FilterHeaderStorage for PersistentFilterHeaderStorage {
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
         self.filter_headers.write().await.store_items(headers).await
+    }
+
+    async fn store_filter_headers_at_height(
+        &mut self,
+        headers: &[FilterHeader],
+        height: u32,
+    ) -> StorageResult<()> {
+        self.filter_headers.write().await.store_items_at_height(headers, height).await
     }
 
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {

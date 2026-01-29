@@ -312,6 +312,14 @@ impl filters::FilterHeaderStorage for DiskStorageManager {
         self.filter_headers.write().await.store_filter_headers(headers).await
     }
 
+    async fn store_filter_headers_at_height(
+        &mut self,
+        headers: &[FilterHeader],
+        height: u32,
+    ) -> StorageResult<()> {
+        self.filter_headers.write().await.store_filter_headers_at_height(headers, height).await
+    }
+
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
         self.filter_headers.read().await.load_filter_headers(range).await
     }
