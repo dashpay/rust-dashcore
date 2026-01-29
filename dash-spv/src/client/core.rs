@@ -211,7 +211,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Reset in-memory chain state to a clean baseline for the current network
         {
             let mut state = self.state.write().await;
-            *state = ChainState::new_for_network(self.config.network);
+            *state = ChainState::new();
         }
 
         // Reset sync manager filter state (headers/filters progress trackers)

@@ -20,10 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 use dashcore::{
     block::Header as BlockHeader,
     consensus::{Decodable, Encodable},
-    hash_types::FilterHeader,
-    network::constants::NetworkExt,
-    sml::masternode_list_engine::MasternodeListEngine,
-    Amount, BlockHash, Network, Transaction, Txid,
+    Amount, BlockHash, Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
 
@@ -262,18 +259,6 @@ pub struct ChainState {
     /// Last ChainLock height.
     pub last_chainlock_height: Option<u32>,
 
-    /// Last ChainLock hash.
-    pub last_chainlock_hash: Option<BlockHash>,
-
-    /// Current filter tip.
-    pub current_filter_tip: Option<FilterHeader>,
-
-    /// Masternode list engine.
-    pub masternode_engine: Option<MasternodeListEngine>,
-
-    /// Last masternode diff height processed.
-    pub last_masternode_diff_height: Option<u32>,
-
     /// Base height when syncing from a checkpoint (0 if syncing from genesis).
     pub sync_base_height: u32,
 }
@@ -284,95 +269,12 @@ impl ChainState {
         Self::default()
     }
 
-    /// Create a new chain state for the given network.
-    pub fn new_for_network(network: Network) -> Self {
-        let mut state = Self::default();
-
-        // Initialize masternode engine for the network
-        let mut engine = MasternodeListEngine::default_for_network(network);
-        if let Some(genesis_hash) = network.known_genesis_block_hash() {
-            engine.feed_block_height(0, genesis_hash);
-        }
-        state.masternode_engine = Some(engine);
-
-        // Initialize checkpoint fields
-        state.sync_base_height = 0;
-
-        state
-    }
-
-    /// Whether the chain was synced from a checkpoint rather than genesis.
-    pub fn synced_from_checkpoint(&self) -> bool {
-        self.sync_base_height > 0
-    }
-
-    /// Update chain lock status
-    pub fn update_chain_lock(&mut self, height: u32, hash: BlockHash) {
-        // Only update if this is a newer chain lock
-        if self.last_chainlock_height.is_none_or(|h| height > h) {
-            self.last_chainlock_height = Some(height);
-            self.last_chainlock_hash = Some(hash);
-        }
-    }
-
-    /// Check if a block at given height is chain-locked
-    pub fn is_height_chain_locked(&self, height: u32) -> bool {
-        self.last_chainlock_height.is_some_and(|locked_height| height <= locked_height)
-    }
-
-    /// Check if we have a chain lock
-    pub fn has_chain_lock(&self) -> bool {
-        self.last_chainlock_height.is_some()
-    }
-
-    /// Get the last chain-locked height
-    pub fn get_last_chainlock_height(&self) -> Option<u32> {
-        self.last_chainlock_height
-    }
-
-    /// Get filter matched heights (placeholder for now)
-    /// In a real implementation, this would track heights where filters matched wallet transactions
-    pub fn get_filter_matched_heights(&self) -> Option<Vec<u32>> {
-        // For now, return an empty vector as we don't track this yet
-        // This would typically be populated during filter sync when matches are found
-        Some(Vec::new())
-    }
-
     /// Initialize chain state from a checkpoint.
-    pub fn init_from_checkpoint(
-        &mut self,
-        checkpoint_height: u32,
-        checkpoint_header: BlockHeader,
-        network: Network,
-    ) {
+    pub fn init_from_checkpoint(&mut self, checkpoint_height: u32) {
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
 
-        tracing::info!(
-            "Initialized ChainState from checkpoint - height: {}, hash: {}, network: {:?}",
-            checkpoint_height,
-            checkpoint_header.block_hash(),
-            network
-        );
-
-        // Initialize masternode engine for the network, starting from checkpoint
-        let mut engine = MasternodeListEngine::default_for_network(network);
-        engine.feed_block_height(checkpoint_height, checkpoint_header.block_hash());
-        self.masternode_engine = Some(engine);
-    }
-
-    /// Get the absolute height for a given index in our headers vector.
-    pub fn index_to_height(&self, index: usize) -> u32 {
-        self.sync_base_height + index as u32
-    }
-
-    /// Get the index in our headers vector for a given absolute height.
-    pub fn height_to_index(&self, height: u32) -> Option<usize> {
-        if height < self.sync_base_height {
-            None
-        } else {
-            Some((height - self.sync_base_height) as usize)
-        }
+        tracing::info!("Initialized ChainState from checkpoint - height: {}", checkpoint_height);
     }
 }
 
@@ -380,9 +282,6 @@ impl std::fmt::Debug for ChainState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainState")
             .field("last_chainlock_height", &self.last_chainlock_height)
-            .field("last_chainlock_hash", &self.last_chainlock_hash)
-            .field("current_filter_tip", &self.current_filter_tip)
-            .field("last_masternode_diff_height", &self.last_masternode_diff_height)
             .field("sync_base_height", &self.sync_base_height)
             .finish()
     }

@@ -181,20 +181,14 @@ impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
 
 #[repr(C)]
 pub struct FFIChainState {
-    pub masternode_height: u32,
     pub last_chainlock_height: u32,
-    pub last_chainlock_hash: FFIString,
     pub current_filter_tip: u32,
 }
 
 impl From<ChainState> for FFIChainState {
     fn from(state: ChainState) -> Self {
         FFIChainState {
-            masternode_height: state.last_masternode_diff_height.unwrap_or(0),
             last_chainlock_height: state.last_chainlock_height.unwrap_or(0),
-            last_chainlock_hash: FFIString::new(
-                &state.last_chainlock_hash.map(|h| h.to_string()).unwrap_or_default(),
-            ),
             current_filter_tip: 0, // FilterHeader not directly convertible to u32
         }
     }
