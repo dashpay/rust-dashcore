@@ -3,6 +3,7 @@
 pub mod types;
 
 mod block_headers;
+mod blocks;
 mod chainstate;
 mod filter_headers;
 mod filters;
@@ -33,10 +34,11 @@ use crate::storage::lockfile::LockFile;
 use crate::storage::masternode::PersistentMasternodeStateStorage;
 use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
-use crate::types::{MempoolState, UnconfirmedTransaction};
+use crate::types::{HashedBlock, MempoolState, UnconfirmedTransaction};
 use crate::{ChainState, ClientConfig};
 
 pub use crate::storage::block_headers::BlockHeaderStorage;
+pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::chainstate::ChainStateStorage;
 pub use crate::storage::filter_headers::FilterHeaderStorage;
 pub use crate::storage::filters::FilterStorage;
@@ -61,6 +63,7 @@ pub trait StorageManager:
     BlockHeaderStorage
     + FilterHeaderStorage
     + FilterStorage
+    + BlockStorage
     + TransactionStorage
     + MetadataStorage
     + ChainStateStorage
@@ -85,6 +88,7 @@ pub struct DiskStorageManager {
     block_headers: Arc<RwLock<PersistentBlockHeaderStorage>>,
     filter_headers: Arc<RwLock<PersistentFilterHeaderStorage>>,
     filters: Arc<RwLock<PersistentFilterStorage>>,
+    blocks: Arc<RwLock<PersistentBlockStorage>>,
     transactions: Arc<RwLock<PersistentTransactionStorage>>,
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
     chainstate: Arc<RwLock<PersistentChainStateStorage>>,
@@ -121,6 +125,7 @@ impl DiskStorageManager {
                 PersistentFilterHeaderStorage::open(&storage_path).await?,
             )),
             filters: Arc::new(RwLock::new(PersistentFilterStorage::open(&storage_path).await?)),
+            blocks: Arc::new(RwLock::new(PersistentBlockStorage::open(&storage_path).await?)),
             transactions: Arc::new(RwLock::new(
                 PersistentTransactionStorage::open(&storage_path).await?,
             )),
@@ -155,6 +160,7 @@ impl DiskStorageManager {
         let block_headers = Arc::clone(&self.block_headers);
         let filter_headers = Arc::clone(&self.filter_headers);
         let filters = Arc::clone(&self.filters);
+        let blocks = Arc::clone(&self.blocks);
         let transactions = Arc::clone(&self.transactions);
         let metadata = Arc::clone(&self.metadata);
         let chainstate = Arc::clone(&self.chainstate);
@@ -171,6 +177,7 @@ impl DiskStorageManager {
                 let _ = block_headers.write().await.persist(&storage_path).await;
                 let _ = filter_headers.write().await.persist(&storage_path).await;
                 let _ = filters.write().await.persist(&storage_path).await;
+                let _ = blocks.write().await.persist(&storage_path).await;
                 let _ = transactions.write().await.persist(&storage_path).await;
                 let _ = metadata.write().await.persist(&storage_path).await;
                 let _ = chainstate.write().await.persist(&storage_path).await;
@@ -194,6 +201,7 @@ impl DiskStorageManager {
         let _ = self.block_headers.write().await.persist(storage_path).await;
         let _ = self.filter_headers.write().await.persist(storage_path).await;
         let _ = self.filters.write().await.persist(storage_path).await;
+        let _ = self.blocks.write().await.persist(storage_path).await;
         let _ = self.transactions.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
         let _ = self.chainstate.write().await.persist(storage_path).await;
@@ -232,6 +240,7 @@ impl StorageManager for DiskStorageManager {
         self.filter_headers =
             Arc::new(RwLock::new(PersistentFilterHeaderStorage::open(storage_path).await?));
         self.filters = Arc::new(RwLock::new(PersistentFilterStorage::open(storage_path).await?));
+        self.blocks = Arc::new(RwLock::new(PersistentBlockStorage::open(storage_path).await?));
         self.transactions =
             Arc::new(RwLock::new(PersistentTransactionStorage::open(storage_path).await?));
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
@@ -323,6 +332,17 @@ impl filters::FilterStorage for DiskStorageManager {
 
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
         self.filters.read().await.load_filters(range).await
+    }
+}
+
+#[async_trait]
+impl BlockStorage for DiskStorageManager {
+    async fn store_block(&mut self, height: u32, block: HashedBlock) -> StorageResult<()> {
+        self.blocks.write().await.store_block(height, block).await
+    }
+
+    async fn load_block(&self, height: u32) -> StorageResult<Option<HashedBlock>> {
+        self.blocks.read().await.load_block(height).await
     }
 }
 
