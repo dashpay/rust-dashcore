@@ -5,15 +5,13 @@
 //! - types/chain.rs - ChainState, CachedHeader
 //! - types/sync.rs - SyncProgress, SyncStage
 //! - types/events.rs - SpvEvent, MempoolRemovalReason
-//! - types/stats.rs - SpvStats, PeerInfo
 //! - types/balances.rs - AddressBalance, UnconfirmedTransaction
 //!
 //! # Thread Safety
 //! Many types here are wrapped in `Arc<RwLock>` or `Arc<Mutex>` when used.
 //! Always acquire locks in consistent order to prevent deadlocks:
 //! 1. state (ChainState)
-//! 2. stats (SpvStats)
-//! 3. mempool_state (MempoolState)
+//! 2. mempool_state (MempoolState)
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -416,118 +414,6 @@ pub struct FilterMatch {
 }
 
 // WatchItem has been removed in favor of using key-wallet-manager's address tracking
-
-/// Statistics about the SPV client.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpvStats {
-    /// Number of connected peers.
-    pub connected_peers: u32,
-
-    /// Total number of known peers.
-    pub total_peers: u32,
-
-    /// Current blockchain height.
-    pub header_height: u32,
-
-    /// Current filter height.
-    pub filter_height: u32,
-
-    /// Number of headers downloaded.
-    pub headers_downloaded: u64,
-
-    /// Number of filter headers downloaded.
-    pub filter_headers_downloaded: u64,
-
-    /// Number of filters downloaded.
-    pub filters_downloaded: u64,
-
-    /// Number of compact filters that matched watch items.
-    pub filters_matched: u64,
-
-    /// Number of blocks with relevant transactions (after full block processing).
-    pub blocks_with_relevant_transactions: u64,
-
-    /// Number of full blocks requested.
-    pub blocks_requested: u64,
-
-    /// Number of full blocks processed.
-    pub blocks_processed: u64,
-
-    /// Number of masternode diffs processed.
-    pub masternode_diffs_processed: u64,
-
-    /// Total bytes received.
-    pub bytes_received: u64,
-
-    /// Total bytes sent.
-    pub bytes_sent: u64,
-
-    /// Connection uptime.
-    pub uptime: std::time::Duration,
-
-    /// Number of filters requested during sync.
-    pub filters_requested: u64,
-
-    /// Number of filters received during sync.
-    pub filters_received: u64,
-
-    /// Filter sync start time.
-    #[serde(skip)]
-    pub filter_sync_start_time: Option<std::time::Instant>,
-
-    /// Last time a filter was received.
-    #[serde(skip)]
-    pub last_filter_received_time: Option<std::time::Instant>,
-
-    /// Received filter heights for gap tracking (shared with FilterSyncManager).
-    #[serde(skip)]
-    pub received_filter_heights: SharedFilterHeights,
-
-    /// Number of filter requests currently active.
-    pub active_filter_requests: u32,
-
-    /// Number of filter requests currently queued.
-    pub pending_filter_requests: u32,
-
-    /// Number of filter request timeouts.
-    pub filter_request_timeouts: u64,
-
-    /// Number of filter requests retried.
-    pub filter_requests_retried: u64,
-}
-
-impl Default for SpvStats {
-    fn default() -> Self {
-        Self {
-            connected_peers: 0,
-            total_peers: 0,
-            header_height: 0,
-            filter_height: 0,
-            headers_downloaded: 0,
-            filter_headers_downloaded: 0,
-            filters_downloaded: 0,
-            filters_matched: 0,
-            blocks_with_relevant_transactions: 0,
-            blocks_requested: 0,
-            blocks_processed: 0,
-            masternode_diffs_processed: 0,
-            bytes_received: 0,
-            bytes_sent: 0,
-            uptime: std::time::Duration::default(),
-            filters_requested: 0,
-            filters_received: 0,
-            filter_sync_start_time: None,
-            last_filter_received_time: None,
-            received_filter_heights: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashSet::new(),
-            )),
-            active_filter_requests: 0,
-            pending_filter_requests: 0,
-            filter_request_timeouts: 0,
-            filter_requests_retried: 0,
-        }
-    }
-}
 
 /// Balance information for an address.
 #[derive(Debug, Clone, PartialEq, Eq)]

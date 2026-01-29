@@ -185,48 +185,6 @@ mod tests {
     }
 
     #[test]
-    fn test_spv_stats_extreme_values() {
-        let stats = dash_spv::SpvStats {
-            headers_downloaded: u64::MAX,
-            filter_headers_downloaded: u64::MAX,
-            filters_downloaded: u64::MAX,
-            filters_matched: u64::MAX,
-            blocks_with_relevant_transactions: u64::MAX,
-            blocks_requested: u64::MAX,
-            blocks_processed: u64::MAX,
-            masternode_diffs_processed: u64::MAX,
-            bytes_received: u64::MAX,
-            bytes_sent: u64::MAX,
-            uptime: std::time::Duration::from_secs(u64::MAX),
-            filters_requested: u64::MAX,
-            filters_received: u64::MAX,
-            filter_sync_start_time: None,
-            last_filter_received_time: None,
-            received_filter_heights: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashSet::new(),
-            )),
-            active_filter_requests: 0,
-            pending_filter_requests: 0,
-            filter_request_timeouts: u64::MAX,
-            filter_requests_retried: u64::MAX,
-            connected_peers: 0,
-            total_peers: 0,
-            header_height: 0,
-            filter_height: 0,
-        };
-
-        let ffi_stats = FFISpvStats::from(stats);
-        assert_eq!(ffi_stats.headers_downloaded, u64::MAX);
-        assert_eq!(ffi_stats.filter_headers_downloaded, u64::MAX);
-        assert_eq!(ffi_stats.filters_downloaded, u64::MAX);
-        assert_eq!(ffi_stats.filters_matched, u64::MAX);
-        assert_eq!(ffi_stats.blocks_processed, u64::MAX);
-        assert_eq!(ffi_stats.bytes_received, u64::MAX);
-        assert_eq!(ffi_stats.bytes_sent, u64::MAX);
-        assert_eq!(ffi_stats.uptime, u64::MAX);
-    }
-
-    #[test]
     fn test_concurrent_ffi_string_creation() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;

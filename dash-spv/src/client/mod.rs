@@ -24,9 +24,8 @@
 //! When acquiring multiple locks, ALWAYS use this order:
 //! 1. running (`Arc<RwLock<bool>>`)
 //! 2. state (`Arc<RwLock<ChainState>>`)
-//! 3. stats (`Arc<RwLock<SpvStats>>`)
-//! 4. mempool_state (`Arc<RwLock<MempoolState>>`)
-//! 5. storage (`Arc<Mutex<S>>`)
+//! 3. mempool_state (`Arc<RwLock<MempoolState>>`)
+//! 4. storage (`Arc<Mutex<S>>`)
 //!
 //! Never acquire locks in reverse order or deadlock will occur!
 

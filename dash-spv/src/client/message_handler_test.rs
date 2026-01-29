@@ -7,7 +7,7 @@ mod tests {
     use crate::storage::DiskStorageManager;
     use crate::sync::legacy::SyncManager;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
-    use crate::types::{MempoolState, SpvEvent, SpvStats};
+    use crate::types::{MempoolState, SpvEvent};
     use crate::ChainState;
     use dashcore::block::Header as BlockHeader;
     use dashcore::network::message::NetworkMessage;
@@ -31,7 +31,6 @@ mod tests {
         let storage =
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let config = ClientConfig::default();
-        let stats = Arc::new(RwLock::new(SpvStats::default()));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
@@ -44,7 +43,6 @@ mod tests {
             received_filter_heights,
             Arc::new(RwLock::new(wallet)),
             Arc::new(RwLock::new(ChainState::new())),
-            stats,
         )
         .unwrap();
 

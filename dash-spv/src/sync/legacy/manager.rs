@@ -10,7 +10,7 @@ use crate::sync::legacy::{
     FilterSyncManager, HeaderSyncManager, MasternodeSyncManager, ReorgConfig,
 };
 use crate::types::{SharedFilterHeights, SyncProgress};
-use crate::{SpvStats, SyncError};
+use crate::SyncError;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -97,9 +97,6 @@ pub struct SyncManager<S: StorageManager, N: NetworkManager, W: WalletInterface>
 
     /// Optional wallet reference for filter checking
     pub(super) wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
-
-    /// Statistics for tracking sync progress
-    pub(super) stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
 }
 
 impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N, W> {
@@ -109,7 +106,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         received_filter_heights: SharedFilterHeights,
         wallet: Arc<RwLock<W>>,
         chain_state: Arc<RwLock<crate::types::ChainState>>,
-        stats: Arc<RwLock<SpvStats>>,
     ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
@@ -129,7 +125,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             max_phase_retries: 3,
             current_phase_retries: 0,
             wallet,
-            stats,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         })

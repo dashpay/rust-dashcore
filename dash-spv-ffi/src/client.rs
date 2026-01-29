@@ -1,6 +1,6 @@
 use crate::{
     null_check, set_last_error, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
-    FFIEventCallbacks, FFISpvStats, FFISyncProgress, FFIWalletManager,
+    FFIEventCallbacks, FFISyncProgress, FFIWalletManager,
 };
 // Import wallet types from key-wallet-ffi
 use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
@@ -891,46 +891,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
     }
 }
 
-/// Get current runtime statistics for the SPV client.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_stats(
-    client: *mut FFIDashSpvClient,
-) -> *mut FFISpvStats {
-    null_check!(client, std::ptr::null_mut());
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.stats().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
-        Ok(stats) => Box::into_raw(Box::new(stats.into())),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            std::ptr::null_mut()
-        }
-    }
-}
-
 /// Get the current chain tip hash (32 bytes) if available.
 ///
 /// # Safety
@@ -1179,17 +1139,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
 pub unsafe extern "C" fn dash_spv_ffi_sync_progress_destroy(progress: *mut FFISyncProgress) {
     if !progress.is_null() {
         let _ = Box::from_raw(progress);
-    }
-}
-
-/// Destroy an `FFISpvStats` object returned by this crate.
-///
-/// # Safety
-/// - `stats` must be a pointer returned from this crate, or null.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_spv_stats_destroy(stats: *mut FFISpvStats) {
-    if !stats.is_null() {
-        let _ = Box::from_raw(stats);
     }
 }
 
