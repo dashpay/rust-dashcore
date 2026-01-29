@@ -1,13 +1,13 @@
 //! Peer pool for managing multiple peer connections
 
+use crate::error::{NetworkError, SpvError as Error};
+use crate::network::constants::{MAX_PEERS, MIN_PEERS};
+use crate::network::peer::Peer;
+use dashcore::prelude::CoreBlockHeight;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
-use crate::error::{NetworkError, SpvError as Error};
-use crate::network::constants::{MAX_PEERS, MIN_PEERS};
-use crate::network::peer::Peer;
 
 /// Pool for managing multiple peer instances
 pub struct PeerPool {
@@ -98,6 +98,54 @@ impl PeerPool {
     /// Get all connected peer addresses
     pub async fn get_connected_addresses(&self) -> Vec<SocketAddr> {
         self.peers.read().await.keys().copied().collect()
+    }
+
+    pub async fn get_best_height(&self) -> Option<CoreBlockHeight> {
+        let peers = self.get_all_peers().await;
+
+        if peers.is_empty() {
+            log::debug!("get_peer_best_height: No peers available");
+            return None;
+        }
+
+        let mut best_height = 0u32;
+        let mut peer_count = 0;
+
+        for (addr, peer) in peers.iter() {
+            let peer_guard = peer.read().await;
+            peer_count += 1;
+
+            log::debug!(
+                "get_peer_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}",
+                addr,
+                peer_guard.best_height(),
+                peer_guard.version(),
+                peer_guard.is_connected(),
+            );
+
+            if let Some(peer_height) = peer_guard.best_height() {
+                if peer_height > 0 {
+                    best_height = best_height.max(peer_height);
+                    log::debug!(
+                        "get_peer_best_height: Updated best_height to {} from peer {}",
+                        best_height,
+                        addr
+                    );
+                }
+            }
+        }
+
+        log::debug!(
+            "get_peer_best_height: Checked {} peers, best_height: {}",
+            peer_count,
+            best_height
+        );
+
+        if best_height > 0 {
+            Some(best_height)
+        } else {
+            None
+        }
     }
 
     /// Check if we need more peers

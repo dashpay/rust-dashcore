@@ -28,6 +28,7 @@ use async_trait::async_trait;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::CompressionState;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::Network;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
@@ -1205,45 +1206,8 @@ impl NetworkManager for PeerNetworkManager {
         self.connected_peer_count.load(Ordering::Relaxed)
     }
 
-    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
-        let peers = self.pool.get_all_peers().await;
-
-        if peers.is_empty() {
-            log::debug!("get_peer_best_height: No peers available");
-            return Ok(None);
-        }
-
-        let mut best_height = 0u32;
-        let mut peer_count = 0;
-
-        for (addr, peer) in peers.iter() {
-            let peer_guard = peer.read().await;
-
-            peer_count += 1;
-
-            if let Some(peer_height) = peer_guard.best_height() {
-                if peer_height > 0 {
-                    best_height = best_height.max(peer_height);
-                    log::debug!(
-                        "get_peer_best_height: Updated best_height to {} from peer {}",
-                        best_height,
-                        addr
-                    );
-                }
-            }
-        }
-
-        log::debug!(
-            "get_peer_best_height: Checked {} peers, best_height: {}",
-            peer_count,
-            best_height
-        );
-
-        if best_height > 0 {
-            Ok(Some(best_height))
-        } else {
-            Ok(None)
-        }
+    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight> {
+        self.pool.get_best_height().await
     }
 
     async fn has_peer_with_service(&self, service_flags: ServiceFlags) -> bool {

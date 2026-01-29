@@ -17,6 +17,7 @@ mod tests;
 use crate::error::NetworkResult;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 pub use handshake::{HandshakeManager, HandshakeState};
 pub use manager::PeerNetworkManager;
@@ -51,7 +52,7 @@ pub trait NetworkManager: Send + Sync + 'static {
     fn peer_count(&self) -> usize;
 
     /// Get the best block height reported by connected peers.
-    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>>;
+    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight>;
 
     /// Check if any connected peer supports a specific service.
     async fn has_peer_with_service(
