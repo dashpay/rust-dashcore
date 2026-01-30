@@ -359,7 +359,6 @@ mod tests {
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
             }],
             output: vec![TxOut {
                 value: amount,
@@ -547,7 +546,6 @@ mod tests {
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
             }],
             output: vec![TxOut {
                 value: 5_000_000_000, // 50 DASH block reward
@@ -650,7 +648,6 @@ mod tests {
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
             }],
             output: vec![TxOut {
                 value: funding_value - 1_000, // leave a small fee
@@ -722,7 +719,6 @@ mod tests {
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
             }],
             output: vec![TxOut {
                 value: 5_000_000_000, // 50 DASH block reward

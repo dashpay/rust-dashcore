@@ -28,7 +28,6 @@ fn create_coinbase_transaction() -> Transaction {
             previous_output: OutPoint::null(), // Coinbase has null outpoint
             script_sig: ScriptBuf::from(script_sig),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 5000000000, // 50 DASH block reward
@@ -50,7 +49,6 @@ fn create_basic_transaction() -> Transaction {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 100000,

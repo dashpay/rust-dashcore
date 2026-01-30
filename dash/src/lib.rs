@@ -120,7 +120,6 @@ pub mod sign_message;
 pub mod signer;
 pub mod sml;
 pub mod string;
-pub mod taproot;
 pub mod util;
 // pub mod serialize;
 
@@ -145,7 +144,6 @@ pub use crate::blockdata::locktime::{self, absolute, relative};
 pub use crate::blockdata::script::{self, Script, ScriptBuf};
 pub use crate::blockdata::transaction::{self, Transaction};
 pub use crate::blockdata::weight::Weight;
-pub use crate::blockdata::witness::{self, Witness};
 pub use crate::blockdata::{constants, opcodes};
 pub use crate::consensus::encode::VarInt;
 pub use crate::crypto::key::{self, PrivateKey, PublicKey};
@@ -155,7 +153,7 @@ pub use crate::ephemerealdata::instant_lock::InstantLock;
 pub use crate::error::Error;
 pub use crate::hash_types::{
     BlockHash, FilterHash, ProTxHash, PubkeyHash, QuorumHash, QuorumSigningRequestId, ScriptHash,
-    TxMerkleNode, Txid, WPubkeyHash, WScriptHash, Wtxid,
+    TxMerkleNode, Txid,
 };
 pub use crate::merkle_tree::MerkleBlock;
 pub use crate::pow::{CompactTarget, Target, Work};

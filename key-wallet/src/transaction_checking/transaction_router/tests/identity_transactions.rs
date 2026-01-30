@@ -27,7 +27,6 @@ fn create_basic_transaction() -> Transaction {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 100000,
@@ -96,7 +95,6 @@ async fn test_identity_registration_account_routing() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![
             // Asset lock transactions have regular outputs

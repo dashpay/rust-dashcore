@@ -7,16 +7,13 @@ use core::ops::Deref;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::hex;
-use secp256k1::{Secp256k1, Verification};
 
-use crate::address::{WitnessProgram, WitnessVersion};
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
 use crate::blockdata::script::{Builder, Instruction, PushBytes, Script, opcode_to_verify};
-use crate::hash_types::{PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash};
-use crate::key::{PublicKey, TapTweak, TweakedPublicKey, UntweakedPublicKey};
+use crate::hash_types::{PubkeyHash, ScriptHash};
+use crate::key::PublicKey;
 use crate::prelude::*;
-use crate::taproot::TapNodeHash;
 
 /// An owned, growable script.
 ///
@@ -113,60 +110,6 @@ impl ScriptBuf {
             .into_script()
     }
 
-    /// Generates P2WPKH-type of scriptPubkey.
-    pub fn new_v0_p2wpkh(pubkey_hash: &WPubkeyHash) -> Self {
-        // pubkey hash is 20 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv0)
-        ScriptBuf::new_witness_program_unchecked(WitnessVersion::V0, pubkey_hash)
-    }
-
-    /// Generates P2WSH-type of scriptPubkey with a given hash of the redeem script.
-    pub fn new_v0_p2wsh(script_hash: &WScriptHash) -> Self {
-        // script hash is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv0)
-        ScriptBuf::new_witness_program_unchecked(WitnessVersion::V0, script_hash)
-    }
-
-    /// Generates P2TR for script spending path using an internal public key and some optional
-    /// script tree merkle root.
-    pub fn new_v1_p2tr<C: Verification>(
-        secp: &Secp256k1<C>,
-        internal_key: UntweakedPublicKey,
-        merkle_root: Option<TapNodeHash>,
-    ) -> Self {
-        let (output_key, _) = internal_key.tap_tweak(secp, merkle_root);
-        // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
-        ScriptBuf::new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
-    }
-
-    /// Generates P2TR for key spending path for a known [`TweakedPublicKey`].
-    pub fn new_v1_p2tr_tweaked(output_key: TweakedPublicKey) -> Self {
-        // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
-        ScriptBuf::new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
-    }
-
-    /// Generates P2WSH-type of scriptPubkey with a given [`WitnessProgram`].
-    pub fn new_witness_program(witness_program: &WitnessProgram) -> Self {
-        Builder::new()
-            .push_opcode(witness_program.version().into())
-            .push_slice(witness_program.program())
-            .into_script()
-    }
-
-    /// Generates P2WSH-type of scriptPubkey with a given [`WitnessVersion`] and the program bytes.
-    /// Does not do any checks on version or program length.
-    ///
-    /// Convenience method used by `new_v0_p2wpkh`, `new_v0_p2wsh`, `new_v1_p2tr`, and
-    /// `new_v1_p2tr_tweaked`.
-    fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
-        version: WitnessVersion,
-        program: T,
-    ) -> Self {
-        let program = program.as_ref();
-        debug_assert!(program.len() >= 2 && program.len() <= 40);
-        // In segwit v0, the program must be 20 or 32 bytes long.
-        debug_assert!(version != WitnessVersion::V0 || program.len() == 20 || program.len() == 32);
-        Builder::new().push_opcode(version.into()).push_slice(program).into_script()
-    }
-
     /// Generates OP_RETURN-type of scriptPubkey for the given data.
     pub fn new_op_return<T: AsRef<PushBytes>>(data: &T) -> Self {
         Builder::new().push_opcode(OP_RETURN).push_slice(data).into_script()
@@ -197,23 +140,6 @@ impl ScriptBuf {
     /// Computes the P2SH output corresponding to this redeem script.
     pub fn to_p2sh(&self) -> ScriptBuf {
         ScriptBuf::new_p2sh(&self.script_hash())
-    }
-
-    /// Returns the script code used for spending a P2WPKH output if this script is a script pubkey
-    /// for a P2WPKH output. The `scriptCode` is described in [BIP143].
-    ///
-    /// [BIP143]: <https://github.com/bitcoin/bips/blob/99701f68a88ce33b2d0838eb84e115cef505b4c2/bip-0143.mediawiki>
-    pub fn p2wpkh_script_code(&self) -> Option<ScriptBuf> {
-        self.v0_p2wpkh().map(|wpkh| {
-            Builder::new()
-                .push_opcode(OP_DUP)
-                .push_opcode(OP_HASH160)
-                // The `self` script is 0x00, 0x14, <pubkey_hash>
-                .push_slice(wpkh)
-                .push_opcode(OP_EQUALVERIFY)
-                .push_opcode(OP_CHECKSIG)
-                .into_script()
-        })
     }
 
     /// Adds a single opcode to the script.

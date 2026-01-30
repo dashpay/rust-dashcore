@@ -8,7 +8,7 @@ use crate::prelude::*;
 /// Represents block weight - the weight of a transaction or block.
 ///
 /// This is an integer newtype representing weight in `wu`. It provides protection against mixing
-/// up the types as well as basic formatting features.
+/// up the types as well as basic formatting features. Weight equals size * 4.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -52,14 +52,9 @@ impl Weight {
         Weight::from_wu(vb * 4)
     }
 
-    /// Constructs `Weight` from witness size.
-    pub const fn from_witness_data_size(witness_size: u64) -> Self {
-        Weight(witness_size)
-    }
-
-    /// Constructs `Weight` from non-witness size.
-    pub const fn from_non_witness_data_size(non_witness_size: u64) -> Self {
-        Weight(non_witness_size * 4)
+    /// Constructs `Weight` from data size. Returns size * 4.
+    pub const fn from_data_size(size: u64) -> Self {
+        Weight(size * 4)
     }
 
     /// Returns raw weight units.
@@ -166,14 +161,8 @@ mod tests {
     }
 
     #[test]
-    fn from_witness_data_size_test() {
-        let witness_data_size = 1;
-        assert_eq!(Weight(witness_data_size), Weight::from_witness_data_size(witness_data_size));
-    }
-
-    #[test]
-    fn from_non_witness_data_size_test() {
-        assert_eq!(Weight(4), Weight::from_non_witness_data_size(1));
+    fn from_data_size_test() {
+        assert_eq!(Weight(4), Weight::from_data_size(1));
     }
 
     #[test]

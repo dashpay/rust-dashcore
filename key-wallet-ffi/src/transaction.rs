@@ -649,7 +649,6 @@ pub unsafe extern "C" fn transaction_add_input(
         },
         script_sig,
         sequence: input.sequence,
-        witness: Default::default(),
     };
 
     tx.inner.input.push(tx_in);

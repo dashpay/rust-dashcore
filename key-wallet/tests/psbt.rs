@@ -13,7 +13,6 @@ use dashcore::script::PushBytes;
 use dashcore::secp256k1::{self, Secp256k1};
 use dashcore::{
     Amount, Denomination, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn, TxOut,
-    Witness,
 };
 use key_wallet::bip32::{ExtendedPrivKey, ExtendedPubKey, Fingerprint, KeySource};
 use key_wallet::psbt::{PartiallySignedTransaction as Psbt, PsbtSighashType};
@@ -176,7 +175,6 @@ fn create_transaction() -> Transaction {
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: u32::MAX, // Disable nSequence.
-                witness: Witness::default(),
             },
             TxIn {
                 previous_output: OutPoint {
@@ -185,7 +183,6 @@ fn create_transaction() -> Transaction {
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: u32::MAX,
-                witness: Witness::default(),
             },
         ],
         output: vec![
@@ -228,7 +225,6 @@ fn update_psbt(mut psbt: Psbt, fingerprint: Fingerprint) -> Psbt {
 
     let redeem_script_0 = "5221029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f2102dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d752ae";
     let redeem_script_1 = "00208c2353173743b595dfb4a07b72ba8e42e3797da74e87fe7d9d7497e3b2028903";
-    let witness_script = "522103089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc21023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7352ae";
 
     // Public key and its derivation path (these are the child pubkeys for our `ExtendedPrivKey`,
     // can be verified by deriving the key using this derivation path).
@@ -248,7 +244,7 @@ fn update_psbt(mut psbt: Psbt, fingerprint: Fingerprint) -> Psbt {
 
     let v = Vec::from_hex(previous_tx_1).unwrap();
     let tx: Transaction = deserialize(&v).unwrap();
-    input_0.non_witness_utxo = Some(tx);
+    input_0.utxo = Some(tx);
     input_0.redeem_script = Some(hex_script!(redeem_script_0));
     input_0.bip32_derivation = bip32_derivation(fingerprint, &pk_path, vec![0, 1]);
 
@@ -256,10 +252,9 @@ fn update_psbt(mut psbt: Psbt, fingerprint: Fingerprint) -> Psbt {
 
     let v = Vec::from_hex(previous_tx_0).unwrap();
     let tx: Transaction = deserialize(&v).unwrap();
-    input_1.witness_utxo = Some(tx.output[1].clone());
+    input_1.utxo = Some(tx);
 
     input_1.redeem_script = Some(hex_script!(redeem_script_1));
-    input_1.witness_script = Some(hex_script!(witness_script));
     input_1.bip32_derivation = bip32_derivation(fingerprint, &pk_path, vec![2, 3]);
 
     psbt.inputs = vec![input_0, input_1];
@@ -448,7 +443,7 @@ fn finalize_psbt(mut psbt: Psbt) -> Psbt {
     psbt.inputs[0].redeem_script = None;
     psbt.inputs[0].bip32_derivation = BTreeMap::new();
 
-    // Input 1: SegWit UTXO
+    // Input 1
 
     let script_sig = script::Builder::new()
         .push_slice(
@@ -459,23 +454,9 @@ fn finalize_psbt(mut psbt: Psbt) -> Psbt {
 
     psbt.inputs[1].final_script_sig = Some(script_sig);
 
-    let script_witness = {
-        let sigs: Vec<_> = psbt.inputs[1].partial_sigs.values().collect();
-        let mut script_witness = Witness::new();
-        script_witness.push([]); // Push 0x00 to the stack.
-        script_witness.push(sigs[1].to_vec());
-        script_witness.push(sigs[0].to_vec());
-        script_witness.push(psbt.inputs[1].witness_script.clone().unwrap().as_bytes());
-
-        script_witness
-    };
-
-    psbt.inputs[1].final_script_witness = Some(script_witness);
-
     psbt.inputs[1].partial_sigs = BTreeMap::new();
     psbt.inputs[1].sighash_type = None;
     psbt.inputs[1].redeem_script = None;
-    psbt.inputs[1].witness_script = None;
     psbt.inputs[1].bip32_derivation = BTreeMap::new();
 
     psbt

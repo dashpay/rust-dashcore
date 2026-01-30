@@ -53,7 +53,6 @@ pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COM
 /// Increasing it implies that your software also supports every feature prior to this version.
 /// Doing so without support may lead to you incorrectly banning other peers or other peers banning you.
 /// These are the features required for each version:
-/// 70016 - Support receiving `wtxidrelay` message between `version` and `verack` message
 /// 70015 - Support receiving invalid compact blocks from a peer without banning them
 /// 70014 - Support compact block messages `sendcmpct`, `cmpctblock`, `getblocktxn` and `blocktxn`
 /// 70013 - Support `feefilter` message
@@ -123,10 +122,6 @@ impl ServiceFlags {
     /// Core nodes used to support this by default, without advertising this bit, but no longer do
     /// as of protocol version 70011 (= NO_BLOOM_VERSION)
     pub const BLOOM: ServiceFlags = ServiceFlags(1 << 2);
-
-    /// WITNESS indicates that a node can be asked for blocks and transactions including witness
-    /// data.
-    pub const WITNESS: ServiceFlags = ServiceFlags(1 << 3);
 
     /// COMPACT_FILTERS means the node will service basic block filter requests.
     /// See BIP157 and BIP158 for details on how this is implemented.
@@ -206,7 +201,6 @@ impl fmt::Display for ServiceFlags {
         write_flag!(NETWORK);
         write_flag!(GETUTXO);
         write_flag!(BLOOM);
-        write_flag!(WITNESS);
         write_flag!(COMPACT_FILTERS);
         write_flag!(NETWORK_LIMITED);
         write_flag!(NODE_HEADERS_COMPRESSED);
@@ -314,7 +308,6 @@ mod tests {
             ServiceFlags::NETWORK,
             ServiceFlags::GETUTXO,
             ServiceFlags::BLOOM,
-            ServiceFlags::WITNESS,
             ServiceFlags::COMPACT_FILTERS,
             ServiceFlags::NETWORK_LIMITED,
             ServiceFlags::NODE_HEADERS_COMPRESSED,
@@ -325,15 +318,15 @@ mod tests {
             assert!(!flags.has(*f));
         }
 
-        flags |= ServiceFlags::WITNESS;
-        assert_eq!(flags, ServiceFlags::WITNESS);
+        flags |= ServiceFlags::BLOOM;
+        assert_eq!(flags, ServiceFlags::BLOOM);
 
         let mut flags2 = flags | ServiceFlags::GETUTXO;
         for f in all.iter() {
-            assert_eq!(flags2.has(*f), *f == ServiceFlags::WITNESS || *f == ServiceFlags::GETUTXO);
+            assert_eq!(flags2.has(*f), *f == ServiceFlags::BLOOM || *f == ServiceFlags::GETUTXO);
         }
 
-        flags2 ^= ServiceFlags::WITNESS;
+        flags2 ^= ServiceFlags::BLOOM;
         assert_eq!(flags2, ServiceFlags::GETUTXO);
 
         flags2 |= ServiceFlags::COMPACT_FILTERS;
@@ -342,10 +335,10 @@ mod tests {
 
         // Test formatting.
         assert_eq!("ServiceFlags(NONE)", ServiceFlags::NONE.to_string());
-        assert_eq!("ServiceFlags(WITNESS)", ServiceFlags::WITNESS.to_string());
-        let flag = ServiceFlags::WITNESS | ServiceFlags::BLOOM | ServiceFlags::NETWORK;
-        assert_eq!("ServiceFlags(NETWORK|BLOOM|WITNESS)", flag.to_string());
-        let flag = ServiceFlags::WITNESS | 0xf0.into();
-        assert_eq!("ServiceFlags(WITNESS|COMPACT_FILTERS|0xb0)", flag.to_string());
+        assert_eq!("ServiceFlags(BLOOM)", ServiceFlags::BLOOM.to_string());
+        let flag = ServiceFlags::BLOOM | ServiceFlags::NETWORK;
+        assert_eq!("ServiceFlags(NETWORK|BLOOM)", flag.to_string());
+        let flag = ServiceFlags::BLOOM | 0xf0.into();
+        assert_eq!("ServiceFlags(BLOOM|COMPACT_FILTERS|0xb0)", flag.to_string());
     }
 }

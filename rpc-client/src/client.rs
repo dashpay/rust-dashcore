@@ -887,7 +887,7 @@ pub trait RpcApi: Sized {
     }
 
     /// Attempts to add a node to the addnode list.
-    /// Nodes added using addnode (or -connect) are protected from DoS disconnection and are not required to be full nodes/support SegWit as other outbound peers are (though such peers will not be synced from).
+    /// Nodes added using addnode (or -connect) are protected from DoS disconnection and are not required to be full nodes as other outbound peers are (though such peers will not be synced from).
     fn add_node(&self, addr: &str) -> Result<()> {
         self.call("addnode", &[into_json(addr)?, into_json("add")?])
     }

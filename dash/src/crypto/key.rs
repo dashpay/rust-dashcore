@@ -25,13 +25,12 @@ use core::ops;
 use core::str::FromStr;
 
 use hashes::hex::FromHex;
-use hashes::{Hash, hash160, hex};
+use hashes::{Hash, hex};
 use internals::write_err;
-pub use secp256k1::{self, Keypair, Parity, Secp256k1, Verification, XOnlyPublicKey, constants};
+pub use secp256k1::{self, Secp256k1};
 
-use crate::hash_types::{PubkeyHash, WPubkeyHash};
+use crate::hash_types::PubkeyHash;
 use crate::prelude::*;
-use crate::taproot::{TapNodeHash, TapTweakHash};
 use crate::{base58, io};
 use dash_network::Network;
 
@@ -158,19 +157,6 @@ impl PublicKey {
     /// Returns dash 160-bit hash of the public key
     pub fn pubkey_hash(&self) -> PubkeyHash {
         self.with_serialized(PubkeyHash::hash)
-    }
-
-    /// Returns dash 160-bit hash of the public key for witness program
-    pub fn wpubkey_hash(&self) -> Option<WPubkeyHash> {
-        if self.compressed {
-            Some(WPubkeyHash::from_byte_array(
-                hash160::Hash::hash(&self.inner.serialize()).to_byte_array(),
-            ))
-        } else {
-            // We can't create witness pubkey hashes for an uncompressed
-            // public keys
-            None
-        }
     }
 
     /// Write the public key into a writer
@@ -593,225 +579,6 @@ impl<'de> serde::Deserialize<'de> for PublicKey {
     }
 }
 
-/// Untweaked BIP-340 X-coord-only public key
-pub type UntweakedPublicKey = XOnlyPublicKey;
-
-/// Tweaked BIP-340 X-coord-only public key
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-pub struct TweakedPublicKey(XOnlyPublicKey);
-
-impl fmt::LowerHex for TweakedPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Display for TweakedPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-/// Untweaked BIP-340 key pair
-pub type UntweakedKeyPair = Keypair;
-
-/// Tweaked BIP-340 key pair
-///
-/// # Examples
-/// ```
-/// # #[cfg(feature = "rand-std")] {
-/// # use dashcore::key::{Keypair, TweakedKeyPair, TweakedPublicKey};
-/// # use dashcore::secp256k1::{rand, Secp256k1};
-/// # let secp = Secp256k1::new();
-/// # let keypair = TweakedKeyPair::dangerous_assume_tweaked(Keypair::new(&secp, &mut rand::thread_rng()));
-/// // There are various conversion methods available to get a tweaked pubkey from a tweaked keypair.
-/// let (_pk, _parity) = keypair.public_parts();
-/// let _pk  = TweakedPublicKey::from_keypair(keypair);
-/// let _pk = TweakedPublicKey::from(keypair);
-/// # }
-/// ```
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-pub struct TweakedKeyPair(Keypair);
-
-/// A trait for tweaking BIP340 key types (x-only public keys and key pairs).
-pub trait TapTweak {
-    /// Tweaked key type with optional auxiliary information
-    type TweakedAux;
-    /// Tweaked key type
-    type TweakedKey;
-
-    /// Tweaks an untweaked key with corresponding public key value and optional script tree merkle
-    /// root. For the `KeyPair` type this also tweaks the private key in the pair.
-    ///
-    /// This is done by using the equation Q = P + H(P|c)G, where
-    ///  * Q is the tweaked public key
-    ///  * P is the internal public key
-    ///  * H is the hash function
-    ///  * c is the commitment data
-    ///  * G is the generator point
-    ///
-    /// # Returns
-    /// The tweaked key and its parity.
-    fn tap_tweak<C: Verification>(
-        self,
-        secp: &Secp256k1<C>,
-        merkle_root: Option<TapNodeHash>,
-    ) -> Self::TweakedAux;
-
-    /// Directly converts an [`UntweakedPublicKey`] to a [`TweakedPublicKey`]
-    ///
-    /// This method is dangerous and can lead to loss of funds if used incorrectly.
-    /// Specifically, in multi-party protocols a peer can provide a value that allows them to steal.
-    fn dangerous_assume_tweaked(self) -> Self::TweakedKey;
-}
-
-impl TapTweak for UntweakedPublicKey {
-    type TweakedAux = (TweakedPublicKey, Parity);
-    type TweakedKey = TweakedPublicKey;
-
-    /// Tweaks an untweaked public key with corresponding public key value and optional script tree
-    /// merkle root.
-    ///
-    /// This is done by using the equation Q = P + H(P|c)G, where
-    ///  * Q is the tweaked public key
-    ///  * P is the internal public key
-    ///  * H is the hash function
-    ///  * c is the commitment data
-    ///  * G is the generator point
-    ///
-    /// # Returns
-    /// The tweaked key and its parity.
-    fn tap_tweak<C: Verification>(
-        self,
-        secp: &Secp256k1<C>,
-        merkle_root: Option<TapNodeHash>,
-    ) -> (TweakedPublicKey, Parity) {
-        let tweak = TapTweakHash::from_key_and_tweak(self, merkle_root).to_scalar();
-        let (output_key, parity) = self.add_tweak(secp, &tweak).expect("Tap tweak failed");
-
-        debug_assert!(self.tweak_add_check(secp, &output_key, parity, tweak));
-        (TweakedPublicKey(output_key), parity)
-    }
-
-    fn dangerous_assume_tweaked(self) -> TweakedPublicKey {
-        TweakedPublicKey(self)
-    }
-}
-
-impl TapTweak for UntweakedKeyPair {
-    type TweakedAux = TweakedKeyPair;
-    type TweakedKey = TweakedKeyPair;
-
-    /// Tweaks private and public keys within an untweaked `KeyPair` with corresponding public key
-    /// value and optional script tree merkle root.
-    ///
-    /// This is done by tweaking private key within the pair using the equation q = p + H(P|c), where
-    ///  * q is the tweaked private key
-    ///  * p is the internal private key
-    ///  * H is the hash function
-    ///  * c is the commitment data
-    ///    The public key is generated from a private key by multiplying with generator point, Q = qG.
-    ///
-    /// # Returns
-    /// The tweaked key and its parity.
-    fn tap_tweak<C: Verification>(
-        self,
-        secp: &Secp256k1<C>,
-        merkle_root: Option<TapNodeHash>,
-    ) -> TweakedKeyPair {
-        let (pubkey, _parity) = XOnlyPublicKey::from_keypair(&self);
-        let tweak = TapTweakHash::from_key_and_tweak(pubkey, merkle_root).to_scalar();
-        let tweaked = self.add_xonly_tweak(secp, &tweak).expect("Tap tweak failed");
-        TweakedKeyPair(tweaked)
-    }
-
-    fn dangerous_assume_tweaked(self) -> TweakedKeyPair {
-        TweakedKeyPair(self)
-    }
-}
-
-impl TweakedPublicKey {
-    /// Returns the [`TweakedPublicKey`] for `keypair`.
-    #[inline]
-    pub fn from_keypair(keypair: TweakedKeyPair) -> Self {
-        let (xonly, _parity) = keypair.0.x_only_public_key();
-        TweakedPublicKey(xonly)
-    }
-
-    /// Creates a new [`TweakedPublicKey`] from a [`XOnlyPublicKey`]. No tweak is applied, consider
-    /// calling `tap_tweak` on an [`UntweakedPublicKey`] instead of using this constructor.
-    ///
-    /// This method is dangerous and can lead to loss of funds if used incorrectly.
-    /// Specifically, in multi-party protocols a peer can provide a value that allows them to steal.
-    #[inline]
-    pub fn dangerous_assume_tweaked(key: XOnlyPublicKey) -> TweakedPublicKey {
-        TweakedPublicKey(key)
-    }
-
-    /// Returns the underlying public key.
-    pub fn to_inner(self) -> XOnlyPublicKey {
-        self.0
-    }
-
-    /// Serialize the key as a byte-encoded pair of values. In compressed form
-    /// the y-coordinate is represented by only a single bit, as x determines
-    /// it up to one bit.
-    #[inline]
-    pub fn serialize(&self) -> [u8; constants::SCHNORR_PUBLIC_KEY_SIZE] {
-        self.0.serialize()
-    }
-}
-
-impl TweakedKeyPair {
-    /// Creates a new [`TweakedKeyPair`] from a `KeyPair`. No tweak is applied, consider
-    /// calling `tap_tweak` on an [`UntweakedKeyPair`] instead of using this constructor.
-    ///
-    /// This method is dangerous and can lead to loss of funds if used incorrectly.
-    /// Specifically, in multi-party protocols a peer can provide a value that allows them to steal.
-    #[inline]
-    pub fn dangerous_assume_tweaked(pair: Keypair) -> TweakedKeyPair {
-        TweakedKeyPair(pair)
-    }
-
-    /// Returns the underlying key pair.
-    #[inline]
-    pub fn to_inner(self) -> Keypair {
-        self.0
-    }
-
-    /// Returns the [`TweakedPublicKey`] and its [`Parity`] for this [`TweakedKeyPair`].
-    #[inline]
-    pub fn public_parts(&self) -> (TweakedPublicKey, Parity) {
-        let (xonly, parity) = self.0.x_only_public_key();
-        (TweakedPublicKey(xonly), parity)
-    }
-}
-
-impl From<TweakedPublicKey> for XOnlyPublicKey {
-    #[inline]
-    fn from(pair: TweakedPublicKey) -> Self {
-        pair.0
-    }
-}
-
-impl From<TweakedKeyPair> for Keypair {
-    #[inline]
-    fn from(pair: TweakedKeyPair) -> Self {
-        pair.0
-    }
-}
-
-impl From<TweakedKeyPair> for TweakedPublicKey {
-    #[inline]
-    fn from(pair: TweakedKeyPair) -> Self {
-        TweakedPublicKey::from_keypair(pair)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -883,20 +650,6 @@ mod tests {
         let upk = PublicKey::from_str("042e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af191923a2964c177f5b5923ae500fca49e99492d534aa3759d6b25a8bc971b133").unwrap();
         assert_eq!(pk.pubkey_hash().to_string(), "9511aa27ef39bbfa4e4f3dd15f4d66ea57f475b4");
         assert_eq!(upk.pubkey_hash().to_string(), "ac2e7daf42d2c97418fd9f78af2de552bb9c6a7a");
-    }
-
-    #[test]
-    fn test_wpubkey_hash() {
-        let pk = PublicKey::from_str(
-            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
-        )
-        .unwrap();
-        let upk = PublicKey::from_str("042e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af191923a2964c177f5b5923ae500fca49e99492d534aa3759d6b25a8bc971b133").unwrap();
-        assert_eq!(
-            pk.wpubkey_hash().unwrap().to_string(),
-            "9511aa27ef39bbfa4e4f3dd15f4d66ea57f475b4"
-        );
-        assert_eq!(upk.wpubkey_hash(), None);
     }
 
     #[cfg(feature = "serde")]
@@ -1136,18 +889,6 @@ mod tests {
             vector.input.sort_by_cached_key(|k| PublicKey::to_sort_key(*k));
             assert_eq!(vector.input, vector.expect);
         }
-    }
-
-    #[test]
-    #[cfg(feature = "rand-std")]
-    fn public_key_constructors() {
-        use secp256k1::rand;
-
-        let secp = Secp256k1::new();
-        let kp = Keypair::new(&secp, &mut rand::thread_rng());
-
-        let _ = PublicKey::new(kp);
-        let _ = PublicKey::new_uncompressed(kp);
     }
 
     #[test]

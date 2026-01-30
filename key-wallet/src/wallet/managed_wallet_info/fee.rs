@@ -222,14 +222,9 @@ pub fn estimate_tx_size(num_inputs: usize, num_outputs: usize, has_change: bool)
     size
 }
 
-/// Calculate the virtual size of a transaction (for fee calculation)
-pub fn estimate_tx_vsize(
-    num_inputs: usize,
-    num_outputs: usize,
-    has_change: bool,
-    _has_witness: bool, // For future SegWit support
-) -> usize {
-    // For non-SegWit transactions, vsize equals size
+/// Calculate the virtual size of a transaction (for fee calculation).
+/// For Dash, vsize equals size.
+pub fn estimate_tx_vsize(num_inputs: usize, num_outputs: usize, has_change: bool) -> usize {
     estimate_tx_size(num_inputs, num_outputs, has_change)
 }
 

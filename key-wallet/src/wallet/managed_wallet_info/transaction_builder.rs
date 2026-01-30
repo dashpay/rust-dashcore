@@ -406,7 +406,6 @@ impl TransactionBuilder {
                 previous_output: utxo.outpoint,
                 script_sig: ScriptBuf::new(),
                 sequence,
-                witness: dashcore::blockdata::witness::Witness::new(),
             })
             .collect();
 

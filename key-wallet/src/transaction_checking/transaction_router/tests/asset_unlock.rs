@@ -103,7 +103,6 @@ async fn test_asset_unlock_transaction_routing() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 100_000_000, // 1 DASH unlocked

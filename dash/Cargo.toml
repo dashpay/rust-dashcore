@@ -87,14 +87,6 @@ key-wallet = { path = "../key-wallet" }
 name = "handshake"
 required-features = ["std"]
 
-[[example]]
-name = "ecdsa-psbt"
-required-features = ["std", "bitcoinconsensus"]
-
-[[example]]
-name = "taproot-psbt"
-required-features = ["std", "rand-std", "bitcoinconsensus"]
-
 [[bench]]
 name = "transaction"
 harness = false

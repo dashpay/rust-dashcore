@@ -5,7 +5,7 @@ use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLock
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::hashes::Hash;
-use dashcore::{TxIn, TxOut, Txid, Witness};
+use dashcore::{TxIn, TxOut, Txid};
 
 /// Helper function to create a test transaction with specified inputs and outputs
 pub fn create_test_transaction(num_inputs: usize, outputs: Vec<u64>) -> Transaction {
@@ -17,7 +17,6 @@ pub fn create_test_transaction(num_inputs: usize, outputs: Vec<u64>) -> Transact
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: Witness::default(),
         })
         .collect();
 

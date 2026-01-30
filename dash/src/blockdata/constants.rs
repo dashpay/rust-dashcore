@@ -8,8 +8,6 @@
 //! single transaction.
 //!
 
-use core::default::Default;
-
 use hashes::{Hash, sha256d};
 use hex_lit::hex;
 
@@ -21,7 +19,6 @@ use crate::blockdata::transaction::Transaction;
 use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
-use crate::blockdata::witness::Witness;
 use crate::pow::CompactTarget;
 use dash_network::Network;
 
@@ -33,12 +30,10 @@ pub const TARGET_BLOCK_SPACING: u32 = 600;
 pub const DIFFCHANGE_INTERVAL: u32 = 2016;
 /// How much time on average should occur between diffchanges.
 pub const DIFFCHANGE_TIMESPAN: u32 = 14 * 24 * 3600;
-/// The maximum allowed weight for a block, see BIP 141 (network rule).
+/// The maximum allowed weight for a block (network rule).
 pub const MAX_BLOCK_WEIGHT: u32 = 4_000_000;
 /// The minimum transaction weight for a valid serialized transaction.
 pub const MIN_TRANSACTION_WEIGHT: u32 = 4 * 60;
-/// The factor that non-witness serialization data is multiplied by during weight calculation.
-pub const WITNESS_SCALE_FACTOR: usize = 4;
 /// The maximum allowed number of signature check operations in a block.
 pub const MAX_BLOCK_SIGOPS_COST: i64 = 80_000;
 /// Mainnet (dash) pubkey address prefix.
@@ -89,7 +84,6 @@ fn dash_genesis_tx() -> Transaction {
         previous_output: OutPoint::null(),
         script_sig: in_script,
         sequence: 0xFFFFFFFF,
-        witness: Witness::default(),
     });
 
     // Outputs

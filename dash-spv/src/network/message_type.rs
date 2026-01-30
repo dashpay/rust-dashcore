@@ -110,8 +110,6 @@ define_message_types! {
     Reject (..),
     /// `feefilter`
     FeeFilter (..),
-    /// `wtxidrelay`
-    WtxidRelay,
     /// `addrv2`
     AddrV2 (..),
     /// `sendaddrv2`

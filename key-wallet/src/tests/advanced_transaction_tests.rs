@@ -44,7 +44,6 @@ fn test_multi_account_transaction() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         });
         total_input += 100000 * (account_idx + 1) as u64; // Different amounts per account
     }
@@ -143,7 +142,6 @@ fn test_corrupted_transaction_recovery() {
                 previous_output: OutPoint::null(),
                 script_sig: ScriptBuf::new(),
                 sequence: 0,
-                witness: dashcore::Witness::default(),
             }],
             vec![],
             TransactionError::InvalidOutput,
@@ -219,7 +217,6 @@ fn test_memory_constrained_transaction_handling() {
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: 0xffffffff,
-                witness: dashcore::Witness::default(),
             }],
             output: vec![TxOut {
                 value: 1000,
@@ -285,7 +282,6 @@ fn test_batch_transaction_processing() {
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: 0xffffffff,
-                witness: dashcore::Witness::default(),
             }],
             output: vec![TxOut {
                 value: 1000 * (i + 1) as u64,
@@ -324,7 +320,6 @@ fn test_transaction_conflict_detection() {
             previous_output: shared_input,
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 99000,
@@ -340,7 +335,6 @@ fn test_transaction_conflict_detection() {
             previous_output: shared_input, // Same input - conflict!
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 98000,

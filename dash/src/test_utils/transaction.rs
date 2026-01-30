@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
+use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 
 impl Transaction {
     pub fn dummy(
@@ -18,7 +18,6 @@ impl Transaction {
                     previous_output: OutPoint::new(Txid::from(txid_bytes), i as u32),
                     script_sig: address.script_pubkey(),
                     sequence: 0xffffffff,
-                    witness: Witness::new(),
                 }
             })
             .collect();
@@ -45,7 +44,6 @@ impl Transaction {
             previous_output: OutPoint::null(),
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: Witness::new(),
         }];
 
         let outputs = vec![TxOut {
