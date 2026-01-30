@@ -70,8 +70,8 @@ pub struct CheckTransactionsResult {
 pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     /// Network the managed wallets are used for
     network: Network,
-    /// Current block height for this network
-    current_height: CoreBlockHeight,
+    /// Last fully processed block height.
+    synced_height: CoreBlockHeight,
     /// Immutable wallets indexed by wallet ID
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
@@ -83,7 +83,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn new(network: Network) -> Self {
         Self {
             network,
-            current_height: 0,
+            synced_height: 0,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
         }
@@ -272,7 +272,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.current_height);
+        managed_info.set_birth_height(self.synced_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -364,7 +364,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.current_height);
+        managed_info.set_birth_height(self.synced_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -411,7 +411,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.current_height);
+        managed_info.set_birth_height(self.synced_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -455,7 +455,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         let mut managed_info = T::from_wallet(&wallet);
 
         // Use the current height as the birth height since we don't know when it was originally created
-        managed_info.set_birth_height(self.current_height);
+        managed_info.set_birth_height(self.synced_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -948,19 +948,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// Get the network this manager is configured for
     pub fn network(&self) -> Network {
         self.network
-    }
-
-    /// Get current block height for a specific network
-    pub fn current_height(&self) -> u32 {
-        self.current_height
-    }
-
-    /// Update current block height and propagate to all wallet infos
-    pub fn update_height(&mut self, height: u32) {
-        self.current_height = height;
-        for info in self.wallet_infos.values_mut() {
-            info.update_synced_height(height);
-        }
     }
 
     /// Get monitored addresses for all wallets for a specific network

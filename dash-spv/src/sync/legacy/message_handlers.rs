@@ -513,6 +513,8 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store filter: {}", e)))?;
 
+        self.wallet.write().await.update_synced_height(height);
+
         let key = FilterMatchKey::new(height, cfilter.block_hash);
         let input = HashMap::from([(key, BlockFilter::new(&cfilter.filter))]);
         let addresses = self.wallet.read().await.monitored_addresses();

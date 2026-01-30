@@ -10,6 +10,7 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Network};
+use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::WalletManager;
 
 fn main() {
@@ -141,11 +142,11 @@ fn main() {
     // Example 7: Block height tracking
     println!("\n7. Block height tracking...");
 
-    println!("   Current height (Testnet): {}", manager.current_height());
+    println!("   Current height (Testnet): {:?}", manager.synced_height());
 
     // Update height
-    manager.update_height(850_000);
-    println!("   Updated height to: {}", manager.current_height());
+    manager.update_synced_height(850_000);
+    println!("   Updated height to: {:?}", manager.synced_height());
 
     println!("\n=== Summary ===");
     println!("Total wallets created: {}", manager.wallet_count());

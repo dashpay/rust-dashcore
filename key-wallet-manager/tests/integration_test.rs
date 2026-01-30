@@ -8,6 +8,7 @@ use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePr
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{mnemonic::Language, Mnemonic, Network};
+use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::{WalletError, WalletManager};
 
 #[test]
@@ -16,7 +17,7 @@ fn test_wallet_manager_creation() {
     let manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // WalletManager::new returns Self, not Result
-    assert_eq!(manager.current_height(), 0);
+    assert_eq!(manager.synced_height(), 0);
     assert_eq!(manager.wallet_count(), 0); // No wallets created yet
 }
 
@@ -157,11 +158,11 @@ fn test_block_height_tracking() {
     let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
     // Initial state
-    assert_eq!(manager.current_height(), 0);
+    assert_eq!(manager.synced_height(), 0);
 
     // Set height before adding wallets
-    manager.update_height(1000);
-    assert_eq!(manager.current_height(), 1000);
+    manager.update_synced_height(1000);
+    assert_eq!(manager.synced_height(), 1000);
 
     let mnemonic1 = Mnemonic::generate(12, Language::English).unwrap();
     let wallet_id1 = manager
@@ -191,8 +192,8 @@ fn test_block_height_tracking() {
     }
 
     // Update height - should propagate to all wallets
-    manager.update_height(12345);
-    assert_eq!(manager.current_height(), 12345);
+    manager.update_synced_height(12345);
+    assert_eq!(manager.synced_height(), 12345);
 
     // Verify all wallets got updated
     let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
@@ -201,8 +202,8 @@ fn test_block_height_tracking() {
     assert_eq!(wallet_info2.synced_height(), 12345);
 
     // Update again - verify subsequent updates work
-    manager.update_height(20000);
-    assert_eq!(manager.current_height(), 20000);
+    manager.update_synced_height(20000);
+    assert_eq!(manager.synced_height(), 20000);
 
     for wallet_info in manager.get_all_wallet_infos().values() {
         assert_eq!(wallet_info.synced_height(), 20000);
@@ -222,7 +223,7 @@ fn test_block_height_tracking() {
     assert_eq!(wallet_info2.synced_height(), 25000);
 
     // Manager update_height still syncs all wallets
-    manager.update_height(40000);
+    manager.update_synced_height(40000);
     let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
     let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
     assert_eq!(wallet_info1.synced_height(), 40000);
