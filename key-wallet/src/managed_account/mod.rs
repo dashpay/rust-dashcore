@@ -14,6 +14,7 @@ use crate::account::TransactionRecord;
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::address_pool::PublicKeyType;
+use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
 #[cfg(feature = "eddsa")]
@@ -21,11 +22,12 @@ use crate::AddressInfo;
 use crate::{ExtendedPubKey, Network};
 use alloc::collections::BTreeMap;
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::Txid;
 use dashcore::{Address, ScriptBuf};
+use dashcore::{Transaction, Txid};
 use managed_account_type::ManagedAccountType;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 pub mod address_pool;
 pub mod managed_account_collection;
@@ -262,6 +264,95 @@ impl ManagedAccount {
         // Use the account type's mark_address_used method
         // The address pools already track gap limits internally
         self.account_type.mark_address_used(address)
+    }
+
+    /// Add new ones for received outputs, remove spent ones
+    fn update_utxos(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+    ) {
+        // Update UTXOs only for spendable account types
+        match &mut self.account_type {
+            ManagedAccountType::Standard {
+                ..
+            }
+            | ManagedAccountType::CoinJoin {
+                ..
+            }
+            | ManagedAccountType::DashpayReceivingFunds {
+                ..
+            }
+            | ManagedAccountType::DashpayExternalAccount {
+                ..
+            } => {
+                let involved_addrs: BTreeSet<_> = account_match
+                    .account_type_match
+                    .all_involved_addresses()
+                    .iter()
+                    .map(|info| info.address.clone())
+                    .collect();
+
+                let txid = tx.txid();
+
+                // Insert UTXOs for outputs paying to our addresses
+                for (vout, output) in tx.output.iter().enumerate() {
+                    if let Ok(addr) = Address::from_script(&output.script_pubkey, self.network) {
+                        if involved_addrs.contains(&addr) {
+                            let outpoint = OutPoint {
+                                txid,
+                                vout: vout as u32,
+                            };
+                            let txout = dashcore::TxOut {
+                                value: output.value,
+                                script_pubkey: output.script_pubkey.clone(),
+                            };
+                            let mut utxo = Utxo::new(
+                                outpoint,
+                                txout,
+                                addr,
+                                context.block_height().unwrap_or(0),
+                                tx.is_coin_base(),
+                            );
+                            utxo.is_confirmed = context.confirmed();
+                            self.utxos.insert(outpoint, utxo);
+                        }
+                    }
+                }
+
+                // Remove UTXOs spent by this transaction
+                for input in &tx.input {
+                    self.utxos.remove(&input.previous_output);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Record a new transaction and update UTXOs for spendable account types
+    pub(crate) fn record_transaction(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+    ) {
+        let net_amount = account_match.received as i64 - account_match.sent as i64;
+        let tx_record = TransactionRecord {
+            transaction: tx.clone(),
+            txid: tx.txid(),
+            height: context.block_height(),
+            block_hash: context.block_hash(),
+            timestamp: context.timestamp().unwrap_or(0) as u64,
+            net_amount,
+            fee: None,
+            label: None,
+            is_ours: net_amount < 0,
+        };
+
+        self.transactions.insert(tx.txid(), tx_record);
+
+        self.update_utxos(tx, account_match, context);
     }
 
     /// Update the account balance

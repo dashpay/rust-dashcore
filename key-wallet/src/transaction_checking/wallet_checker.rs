@@ -6,11 +6,11 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
-use crate::{Utxo, Wallet};
+use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
-use dashcore::{Address as DashAddress, OutPoint};
 
 /// Context for transaction processing
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +29,76 @@ pub enum TransactionContext {
         block_hash: Option<BlockHash>,
         timestamp: Option<u32>,
     },
+}
+
+impl std::fmt::Display for TransactionContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransactionContext::Mempool => write!(f, "mempool"),
+            TransactionContext::InBlock {
+                height,
+                ..
+            } => write!(f, "block {}", height),
+            TransactionContext::InChainLockedBlock {
+                height,
+                ..
+            } => {
+                write!(f, "chainlocked block {}", height)
+            }
+        }
+    }
+}
+
+impl TransactionContext {
+    /// Get confirmation state.
+    pub(crate) fn confirmed(&self) -> bool {
+        matches!(
+            self,
+            TransactionContext::InChainLockedBlock { .. } | TransactionContext::InBlock { .. }
+        )
+    }
+    /// Get block height if confirmed.
+    pub(crate) fn block_height(&self) -> Option<CoreBlockHeight> {
+        match self {
+            TransactionContext::Mempool => None,
+            TransactionContext::InBlock {
+                height,
+                ..
+            }
+            | TransactionContext::InChainLockedBlock {
+                height,
+                ..
+            } => Some(*height),
+        }
+    }
+    /// Get the block height if confirmed.
+    pub(crate) fn block_hash(&self) -> Option<BlockHash> {
+        match self {
+            TransactionContext::Mempool => None,
+            TransactionContext::InBlock {
+                block_hash,
+                ..
+            }
+            | TransactionContext::InChainLockedBlock {
+                block_hash,
+                ..
+            } => *block_hash,
+        }
+    }
+    /// Get the block time if confirmed.
+    pub(crate) fn timestamp(&self) -> Option<u32> {
+        match self {
+            TransactionContext::Mempool => None,
+            TransactionContext::InBlock {
+                timestamp,
+                ..
+            }
+            | TransactionContext::InChainLockedBlock {
+                timestamp,
+                ..
+            } => *timestamp,
+        }
+    }
 }
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
@@ -63,8 +133,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         wallet: &mut Wallet,
         update_state: bool,
     ) -> TransactionCheckResult {
-        let network = self.network;
-
         // Classify the transaction
         let tx_type = TransactionRouter::classify_transaction(tx);
 
@@ -74,254 +142,68 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // Check only relevant account types
         let mut result = self.accounts.check_transaction(tx, &relevant_types);
 
-        // Update state if requested and transaction is relevant
-        if update_state && result.is_relevant {
-            // Check if this transaction already exists in any affected account.
-            // If so, mark it as not new.
-            let txid = tx.txid();
-            for account_match in &result.affected_accounts {
-                if let Some(account) =
-                    self.accounts.get_by_account_type_match(&account_match.account_type_match)
-                {
-                    if account.transactions.contains_key(&txid) {
-                        result.is_new_transaction = false;
-                        break;
-                    }
+        if !update_state || !result.is_relevant {
+            return result;
+        }
+
+        // Check if this transaction already exists in any affected account
+        let txid = tx.txid();
+        for account_match in &result.affected_accounts {
+            if let Some(account) =
+                self.accounts.get_by_account_type_match(&account_match.account_type_match)
+            {
+                if account.transactions.contains_key(&txid) {
+                    result.is_new_transaction = false;
+                    return result;
                 }
             }
+        }
 
-            for account_match in &result.affected_accounts {
-                // Find and update the specific account
-                use super::account_checker::AccountTypeMatch;
-                let account = match &account_match.account_type_match {
-                    AccountTypeMatch::StandardBIP44 {
-                        account_index,
-                        ..
-                    } => self.accounts.standard_bip44_accounts.get_mut(account_index),
-                    AccountTypeMatch::StandardBIP32 {
-                        account_index,
-                        ..
-                    } => self.accounts.standard_bip32_accounts.get_mut(account_index),
-                    AccountTypeMatch::CoinJoin {
-                        account_index,
-                        ..
-                    } => self.accounts.coinjoin_accounts.get_mut(account_index),
-                    AccountTypeMatch::IdentityRegistration {
-                        ..
-                    } => self.accounts.identity_registration.as_mut(),
-                    AccountTypeMatch::IdentityTopUp {
-                        account_index,
-                        ..
-                    } => self.accounts.identity_topup.get_mut(account_index),
-                    AccountTypeMatch::IdentityTopUpNotBound {
-                        ..
-                    } => self.accounts.identity_topup_not_bound.as_mut(),
-                    AccountTypeMatch::IdentityInvitation {
-                        ..
-                    } => self.accounts.identity_invitation.as_mut(),
-                    AccountTypeMatch::ProviderVotingKeys {
-                        ..
-                    } => self.accounts.provider_voting_keys.as_mut(),
-                    AccountTypeMatch::ProviderOwnerKeys {
-                        ..
-                    } => self.accounts.provider_owner_keys.as_mut(),
-                    AccountTypeMatch::ProviderOperatorKeys {
-                        ..
-                    } => self.accounts.provider_operator_keys.as_mut(),
-                    AccountTypeMatch::ProviderPlatformKeys {
-                        ..
-                    } => self.accounts.provider_platform_keys.as_mut(),
-                    AccountTypeMatch::DashpayReceivingFunds {
-                        ..
-                    }
-                    | AccountTypeMatch::DashpayExternalAccount {
-                        ..
-                    } => {
-                        // DashPay managed accounts are not persisted here yet
-                        None
-                    }
-                    AccountTypeMatch::PlatformPayment {
-                        ..
-                    } => {
-                        // Platform Payment addresses are NOT used in Core chain transactions.
-                        // This branch should never be reached by design (per DIP-17).
-                        None
-                    }
-                };
-
-                if let Some(account) = account {
-                    // Add transaction record with height/confirmation info from context
-                    let net_amount = account_match.received as i64 - account_match.sent as i64;
-
-                    // Extract height, block hash, and timestamp from context
-                    let (height, block_hash, timestamp) = match context {
-                        TransactionContext::Mempool => (None, None, 0u64),
-                        TransactionContext::InBlock {
-                            height,
-                            block_hash,
-                            timestamp,
-                        }
-                        | TransactionContext::InChainLockedBlock {
-                            height,
-                            block_hash,
-                            timestamp,
-                        } => (Some(height), block_hash, timestamp.unwrap_or(0) as u64),
-                    };
-
-                    let tx_record = crate::account::TransactionRecord {
-                        transaction: tx.clone(),
-                        txid: tx.txid(),
-                        height,
-                        block_hash,
-                        timestamp,
-                        net_amount,
-                        fee: None,
-                        label: None,
-                        is_ours: net_amount < 0,
-                    };
-
-                    account.transactions.insert(tx.txid(), tx_record);
-
-                    // Ingest UTXOs for outputs that pay to our addresses and
-                    // remove UTXOs that are spent by this transaction's inputs.
-                    // Only apply for spendable account types (Standard, CoinJoin).
-                    match &mut account.account_type {
-                        crate::managed_account::managed_account_type::ManagedAccountType::Standard { .. }
-                        | crate::managed_account::managed_account_type::ManagedAccountType::CoinJoin { .. }
-                        | crate::managed_account::managed_account_type::ManagedAccountType::DashpayReceivingFunds { .. }
-                        | crate::managed_account::managed_account_type::ManagedAccountType::DashpayExternalAccount { .. } => {
-                            // Build a set of addresses involved for fast membership tests
-                            let mut involved_addrs = alloc::collections::BTreeSet::new();
-                            for info in account_match.account_type_match.all_involved_addresses() {
-                                involved_addrs.insert(info.address.clone());
-                            }
-
-                            // Determine confirmation state and block height for UTXOs
-                            let (is_confirmed, utxo_height) = match context {
-                                TransactionContext::Mempool => (false, 0u32),
-                                TransactionContext::InBlock { height, .. }
-                                | TransactionContext::InChainLockedBlock { height, .. } => (true, height),
-                            };
-
-                            // Insert UTXOs for matching outputs
-                            let txid = tx.txid();
-                            for (vout, output) in tx.output.iter().enumerate() {
-                                if let Ok(addr) = DashAddress::from_script(&output.script_pubkey, network) {
-                                    if involved_addrs.contains(&addr) {
-                                        let outpoint = OutPoint { txid, vout: vout as u32 };
-                                        let txout = dashcore::TxOut {
-                                            value: output.value,
-                                            script_pubkey: output.script_pubkey.clone(),
-                                        };
-                                        let mut utxo = Utxo::new(
-                                            outpoint,
-                                            txout,
-                                            addr,
-                                            utxo_height,
-                                            tx.is_coin_base(),
-                                        );
-                                        utxo.is_confirmed = is_confirmed;
-                                        account.utxos.insert(outpoint, utxo);
-                                    }
-                                }
-                            }
-
-                            // Remove any UTXOs that are being spent by this transaction
-                            for input in &tx.input {
-                                account.utxos.remove(&input.previous_output);
-                            }
-                        }
-                        _ => {
-                            // Skip UTXO ingestion for identity/provider accounts
-                        }
-                    }
-
-                    // Mark involved addresses as used
-                    for address_info in account_match.account_type_match.all_involved_addresses() {
-                        account.mark_address_used(&address_info.address);
-                    }
-
-                    // Generate new addresses up to the gap limit
-                    let account_type_to_check =
-                        account_match.account_type_match.to_account_type_to_check();
-                    let xpub_opt = wallet.extended_public_key_for_account_type(
-                        &account_type_to_check,
-                        account_match.account_type_match.account_index(),
-                    );
-
-                    if let Some(xpub) = xpub_opt {
-                        let key_source =
-                            crate::managed_account::address_pool::KeySource::Public(xpub);
-
-                        if let crate::managed_account::managed_account_type::ManagedAccountType::Standard {
-                            external_addresses,
-                            internal_addresses,
-                            ..
-                        } = &mut account.account_type {
-                            match external_addresses.maintain_gap_limit(&key_source) {
-                                Ok(new_addrs) => result.new_addresses.extend(new_addrs),
-                                Err(e) => {
-                                    tracing::error!(
-                                        account_index = ?account_match.account_type_match.account_index(),
-                                        pool_type = "external",
-                                        error = %e,
-                                        "Failed to maintain gap limit for address pool"
-                                    );
-                                }
-                            }
-                            match internal_addresses.maintain_gap_limit(&key_source) {
-                                Ok(new_addrs) => result.new_addresses.extend(new_addrs),
-                                Err(e) => {
-                                    tracing::error!(
-                                        account_index = ?account_match.account_type_match.account_index(),
-                                        pool_type = "internal",
-                                        error = %e,
-                                        "Failed to maintain gap limit for address pool"
-                                    );
-                                }
-                            }
-                        } else {
-                            for pool in account.account_type.address_pools_mut() {
-                                match pool.maintain_gap_limit(&key_source) {
-                                    Ok(new_addrs) => result.new_addresses.extend(new_addrs),
-                                    Err(e) => {
-                                        tracing::error!(
-                                            account_index = ?account_match.account_type_match.account_index(),
-                                            pool_type = ?pool.pool_type,
-                                            error = %e,
-                                            "Failed to maintain gap limit for address pool"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Update wallet metadata only for new transactions
-            if result.is_new_transaction {
-                self.metadata.total_transactions += 1;
-            }
-
-            // Log the detected transaction
-            let wallet_net: i64 = (result.total_received as i64) - (result.total_sent as i64);
-            let ctx = match context {
-                TransactionContext::Mempool => "mempool".to_string(),
-                TransactionContext::InBlock {
-                    height,
-                    ..
-                } => alloc::format!("block {}", height),
-                TransactionContext::InChainLockedBlock {
-                    height,
-                    ..
-                } => {
-                    alloc::format!("chainlocked block {}", height)
-                }
+        // Process each affected account
+        for account_match in result.affected_accounts.clone() {
+            let Some(account) =
+                self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
+            else {
+                continue;
             };
+
+            account.record_transaction(tx, &account_match, context);
+
+            for address_info in account_match.account_type_match.all_involved_addresses() {
+                account.mark_address_used(&address_info.address);
+            }
+
+            let Some(xpub) = wallet.extended_public_key_for_account_type(
+                &account_match.account_type_match.to_account_type_to_check(),
+                account_match.account_type_match.account_index(),
+            ) else {
+                continue;
+            };
+
+            let key_source = KeySource::Public(xpub);
+            for pool in account.account_type.address_pools_mut() {
+                match pool.maintain_gap_limit(&key_source) {
+                    Ok(addrs) => result.new_addresses.extend(addrs),
+                    Err(e) => {
+                        tracing::error!(
+                            account_index = ?account_match.account_type_match.account_index(),
+                            pool_type = ?pool.pool_type,
+                            error = %e,
+                            "Failed to maintain gap limit for address pool"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Update wallet metadata and log for new transactions
+        if result.is_new_transaction {
+            self.metadata.total_transactions += 1;
+
+            let wallet_net = result.total_received as i64 - result.total_sent as i64;
             tracing::info!(
                 txid = %tx.txid(),
-                context = %ctx,
+                context = %context,
                 net_change = wallet_net,
                 received = result.total_received,
                 sent = result.total_sent,
