@@ -21,6 +21,87 @@ use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+/// Macro to look up an account by CoreAccountTypeMatch, parameterized by accessor methods
+macro_rules! get_by_account_type_match_impl {
+    ($self:expr, $match:expr, $get:ident, $as_opt:ident, $values:ident) => {
+        match $match {
+            CoreAccountTypeMatch::StandardBIP44 {
+                account_index,
+                ..
+            } => $self.standard_bip44_accounts.$get(account_index),
+            CoreAccountTypeMatch::StandardBIP32 {
+                account_index,
+                ..
+            } => $self.standard_bip32_accounts.$get(account_index),
+            CoreAccountTypeMatch::CoinJoin {
+                account_index,
+                ..
+            } => $self.coinjoin_accounts.$get(account_index),
+            CoreAccountTypeMatch::IdentityRegistration {
+                ..
+            } => $self.identity_registration.$as_opt(),
+            CoreAccountTypeMatch::IdentityTopUp {
+                account_index,
+                ..
+            } => $self.identity_topup.$get(account_index),
+            CoreAccountTypeMatch::IdentityTopUpNotBound {
+                ..
+            } => $self.identity_topup_not_bound.$as_opt(),
+            CoreAccountTypeMatch::IdentityInvitation {
+                ..
+            } => $self.identity_invitation.$as_opt(),
+            CoreAccountTypeMatch::ProviderVotingKeys {
+                ..
+            } => $self.provider_voting_keys.$as_opt(),
+            CoreAccountTypeMatch::ProviderOwnerKeys {
+                ..
+            } => $self.provider_owner_keys.$as_opt(),
+            CoreAccountTypeMatch::ProviderOperatorKeys {
+                ..
+            } => $self.provider_operator_keys.$as_opt(),
+            CoreAccountTypeMatch::ProviderPlatformKeys {
+                ..
+            } => $self.provider_platform_keys.$as_opt(),
+            CoreAccountTypeMatch::DashpayReceivingFunds {
+                account_index,
+                involved_addresses,
+            } => $self.dashpay_receival_accounts.$values().find(|account| {
+                match &account.account_type {
+                    ManagedAccountType::DashpayReceivingFunds {
+                        index,
+                        addresses,
+                        ..
+                    } => {
+                        *index == *account_index
+                            && involved_addresses
+                                .iter()
+                                .any(|addr| addresses.contains_address(&addr.address))
+                    }
+                    _ => false,
+                }
+            }),
+            CoreAccountTypeMatch::DashpayExternalAccount {
+                account_index,
+                involved_addresses,
+            } => $self.dashpay_external_accounts.$values().find(|account| {
+                match &account.account_type {
+                    ManagedAccountType::DashpayExternalAccount {
+                        index,
+                        addresses,
+                        ..
+                    } => {
+                        *index == *account_index
+                            && involved_addresses
+                                .iter()
+                                .any(|addr| addresses.contains_address(&addr.address))
+                    }
+                    _ => false,
+                }
+            }),
+        }
+    };
+}
+
 /// Collection of managed accounts organized by type
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -728,87 +809,15 @@ impl ManagedAccountCollection {
         &self,
         account_type_match: &CoreAccountTypeMatch,
     ) -> Option<&ManagedCoreAccount> {
-        match account_type_match {
-            CoreAccountTypeMatch::StandardBIP44 {
-                account_index,
-                ..
-            } => self.standard_bip44_accounts.get(account_index),
-            CoreAccountTypeMatch::StandardBIP32 {
-                account_index,
-                ..
-            } => self.standard_bip32_accounts.get(account_index),
-            CoreAccountTypeMatch::CoinJoin {
-                account_index,
-                ..
-            } => self.coinjoin_accounts.get(account_index),
-            CoreAccountTypeMatch::IdentityRegistration {
-                ..
-            } => self.identity_registration.as_ref(),
-            CoreAccountTypeMatch::IdentityTopUp {
-                account_index,
-                ..
-            } => self.identity_topup.get(account_index),
-            CoreAccountTypeMatch::IdentityTopUpNotBound {
-                ..
-            } => self.identity_topup_not_bound.as_ref(),
-            CoreAccountTypeMatch::IdentityInvitation {
-                ..
-            } => self.identity_invitation.as_ref(),
-            CoreAccountTypeMatch::ProviderVotingKeys {
-                ..
-            } => self.provider_voting_keys.as_ref(),
-            CoreAccountTypeMatch::ProviderOwnerKeys {
-                ..
-            } => self.provider_owner_keys.as_ref(),
-            CoreAccountTypeMatch::ProviderOperatorKeys {
-                ..
-            } => self.provider_operator_keys.as_ref(),
-            CoreAccountTypeMatch::ProviderPlatformKeys {
-                ..
-            } => self.provider_platform_keys.as_ref(),
-            CoreAccountTypeMatch::DashpayReceivingFunds {
-                account_index,
-                involved_addresses,
-            } => {
-                // Match by index and addresses since multiple accounts can share the same index
-                self.dashpay_receival_accounts.values().find(|account| {
-                    match &account.account_type {
-                        ManagedAccountType::DashpayReceivingFunds {
-                            index,
-                            addresses,
-                            ..
-                        } => {
-                            *index == *account_index
-                                && involved_addresses
-                                    .iter()
-                                    .any(|addr| addresses.contains_address(&addr.address))
-                        }
-                        _ => false,
-                    }
-                })
-            }
-            CoreAccountTypeMatch::DashpayExternalAccount {
-                account_index,
-                involved_addresses,
-            } => {
-                // Match by index and addresses since multiple accounts can share the same index
-                self.dashpay_external_accounts.values().find(|account| {
-                    match &account.account_type {
-                        ManagedAccountType::DashpayExternalAccount {
-                            index,
-                            addresses,
-                            ..
-                        } => {
-                            *index == *account_index
-                                && involved_addresses
-                                    .iter()
-                                    .any(|addr| addresses.contains_address(&addr.address))
-                        }
-                        _ => false,
-                    }
-                })
-            }
-        }
+        get_by_account_type_match_impl!(self, account_type_match, get, as_ref, values)
+    }
+
+    /// Get a mutable account reference by AccountTypeMatch
+    pub fn get_by_account_type_match_mut(
+        &mut self,
+        account_type_match: &CoreAccountTypeMatch,
+    ) -> Option<&mut ManagedCoreAccount> {
+        get_by_account_type_match_impl!(self, account_type_match, get_mut, as_mut, values_mut)
     }
 
     /// Remove an account from the collection
