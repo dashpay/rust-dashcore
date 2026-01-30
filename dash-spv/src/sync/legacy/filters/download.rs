@@ -341,14 +341,18 @@ impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, 
                         {
                             // Store the previous_filter_header as the filter header for the checkpoint block
                             let checkpoint_header = vec![cfheaders.previous_filter_header];
-                            storage.store_filter_headers(&checkpoint_header).await.map_err(
-                                |e| {
+                            storage
+                                .store_filter_headers_at_height(
+                                    &checkpoint_header,
+                                    self.sync_base_height,
+                                )
+                                .await
+                                .map_err(|e| {
                                     SyncError::Storage(format!(
                                         "Failed to store checkpoint filter header: {}",
                                         e
                                     ))
-                                },
-                            )?;
+                                })?;
                             tracing::info!(
                                 "Stored checkpoint filter header at height {}: {:?}",
                                 self.sync_base_height,
