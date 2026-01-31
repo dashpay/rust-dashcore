@@ -1,0 +1,44 @@
+name: SPV Integration Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, 'v**-dev']
+  pull_request:
+
+env:
+  DASHVERSION: "23.0.2"
+  TEST_DATA_REPO: "xdustinface/regtest-blockchain"
+  TEST_DATA_VERSION: "v0.0.1"
+  CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
+
+jobs:
+  spv-integration-test:
+    name: "SPV sync with dashd"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "spv-integration"
+
+      - name: Cache test dependencies
+        uses: actions/cache@v4
+        with:
+          path: .rust-dashcore-test
+          key: rust-dashcore-test-${{ env.DASHVERSION }}-${{ env.TEST_DATA_VERSION }}
+
+      - name: Run tests
+        env:
+          CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
+          TEST_DATA_REPO: ${{ env.TEST_DATA_REPO }}
+          TEST_DATA_VERSION: ${{ env.TEST_DATA_VERSION }}
+          DASHVERSION: ${{ env.DASHVERSION }}
+        run: |
+          chmod +x ./contrib/setup-dashd.sh
+          source ./contrib/setup-dashd.sh
+          cargo test -p dash-spv --test dashd_sync -- --nocapture
