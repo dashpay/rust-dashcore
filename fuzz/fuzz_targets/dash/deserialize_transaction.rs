@@ -5,23 +5,12 @@ fn do_test(data: &[u8]) {
         dashcore::consensus::encode::deserialize(data);
     match tx_result {
         Err(_) => {}
-        Ok(mut tx) => {
+        Ok(tx) => {
             let ser = dashcore::consensus::encode::serialize(&tx);
             assert_eq!(&ser[..], data);
             let len = ser.len();
             let calculated_weight = tx.weight().to_wu() as usize;
-            for input in &mut tx.input {
-                input.witness = dashcore::blockdata::witness::Witness::default();
-            }
-            let no_witness_len = dashcore::consensus::encode::serialize(&tx).len();
-            // For 0-input transactions, `no_witness_len` will be incorrect because
-            // we serialize as segwit even after "stripping the witnesses". We need
-            // to drop two bytes (i.e. eight weight)
-            if tx.input.is_empty() {
-                assert_eq!(no_witness_len * 3 + len - 8, calculated_weight);
-            } else {
-                assert_eq!(no_witness_len * 3 + len, calculated_weight);
-            }
+            assert_eq!(len * 4, calculated_weight);
         }
     }
 }

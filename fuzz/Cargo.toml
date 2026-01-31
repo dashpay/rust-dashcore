@@ -48,10 +48,6 @@ name = "dash_script_bytes_to_asm_fmt"
 path = "fuzz_targets/dash/script_bytes_to_asm_fmt.rs"
 
 [[bin]]
-name = "dash_deserialize_witness"
-path = "fuzz_targets/dash/deserialize_witness.rs"
-
-[[bin]]
 name = "dash_outpoint_string"
 path = "fuzz_targets/dash/outpoint_string.rs"
 

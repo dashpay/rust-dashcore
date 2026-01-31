@@ -401,8 +401,7 @@ impl BorrowMut<PushBytes> for PushBytesBuf {
 
 /// Reports information about failed conversion into `PushBytes`.
 ///
-/// This should not be needed by general public, except as an additional bound on `TryFrom` when
-/// converting to `WitnessProgram`.
+/// This should not be needed by general public.
 pub trait PushBytesErrorReport {
     /// How many bytes the input had.
     fn input_len(&self) -> usize;

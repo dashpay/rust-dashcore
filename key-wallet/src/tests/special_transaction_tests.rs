@@ -174,7 +174,6 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: Vec::new(),
         special_transaction_payload: None,

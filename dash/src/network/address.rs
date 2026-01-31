@@ -354,12 +354,12 @@ mod test {
             format!(
                 "The address is: {:?}",
                 Address {
-                    services: flags.add(ServiceFlags::WITNESS),
+                    services: flags.add(ServiceFlags::BLOOM),
                     address: [0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001],
                     port: 8333
                 }
             ),
-            "The address is: Address {services: ServiceFlags(NETWORK|WITNESS), address: 10.0.0.1, port: 8333}"
+            "The address is: Address {services: ServiceFlags(NETWORK|BLOOM), address: 10.0.0.1, port: 8333}"
         );
 
         assert_eq!(
@@ -397,7 +397,7 @@ mod test {
     #[test]
     fn test_socket_addr() {
         let s4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(111, 222, 123, 4)), 5555);
-        let a4 = Address::new(&s4, ServiceFlags::NETWORK | ServiceFlags::WITNESS);
+        let a4 = Address::new(&s4, ServiceFlags::NETWORK | ServiceFlags::BLOOM);
         assert_eq!(a4.socket_addr().unwrap(), s4);
         let s6 = SocketAddr::new(
             IpAddr::V6(Ipv6Addr::new(
@@ -405,7 +405,7 @@ mod test {
             )),
             9999,
         );
-        let a6 = Address::new(&s6, ServiceFlags::NETWORK | ServiceFlags::WITNESS);
+        let a6 = Address::new(&s6, ServiceFlags::NETWORK | ServiceFlags::BLOOM);
         assert_eq!(a6.socket_addr().unwrap(), s6);
     }
 
@@ -558,7 +558,7 @@ mod test {
 
     #[test]
     fn addrv2message_test() {
-        let raw = hex!("0261bc6649019902abab208d79627683fd4804010409090909208d");
+        let raw = hex!("0261bc6649019902abab208d79627683fd4004010409090909208d");
         let addresses: Vec<AddrV2Message> = deserialize(&raw).unwrap();
 
         assert_eq!(
@@ -571,9 +571,7 @@ mod test {
                     addr: AddrV2::Unknown(153, hex!("abab"))
                 },
                 AddrV2Message {
-                    services: ServiceFlags::NETWORK_LIMITED
-                        | ServiceFlags::WITNESS
-                        | ServiceFlags::COMPACT_FILTERS,
+                    services: ServiceFlags::NETWORK_LIMITED | ServiceFlags::COMPACT_FILTERS,
                     time: 0x83766279,
                     port: 8333,
                     addr: AddrV2::Ipv4(Ipv4Addr::new(9, 9, 9, 9))

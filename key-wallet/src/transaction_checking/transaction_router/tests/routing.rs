@@ -25,7 +25,6 @@ fn create_basic_transaction() -> Transaction {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 100000,

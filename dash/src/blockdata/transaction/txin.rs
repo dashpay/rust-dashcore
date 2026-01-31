@@ -25,8 +25,8 @@ use bincode::{Decode, Encode};
 
 use crate::blockdata::script::ScriptBuf;
 use crate::consensus::{Decodable, Encodable, encode};
+use crate::io;
 use crate::transaction::outpoint::OutPoint;
-use crate::{Witness, io};
 
 /// A transaction input, which defines old coins to be consumed
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -43,12 +43,6 @@ pub struct TxIn {
     /// to ignore this feature. This is generally never used since
     /// the miner behaviour cannot be enforced.
     pub sequence: u32,
-    /// Witness data: an array of byte-arrays.
-    /// Note that this field is *not* (de)serialized with the rest of the TxIn in
-    /// Encodable/Decodable, as it is (de)serialized at the end of the full
-    /// Transaction. It *is* (de)serialized with the rest of the TxIn in other
-    /// (de)serialization routines.
-    pub witness: Witness,
 }
 
 impl Default for TxIn {
@@ -57,7 +51,6 @@ impl Default for TxIn {
             previous_output: OutPoint::default(),
             script_sig: ScriptBuf::new(),
             sequence: u32::MAX,
-            witness: Witness::default(),
         }
     }
 }
@@ -80,7 +73,6 @@ impl Decodable for TxIn {
             previous_output: Decodable::consensus_decode_from_finite_reader(r)?,
             script_sig: Decodable::consensus_decode_from_finite_reader(r)?,
             sequence: Decodable::consensus_decode_from_finite_reader(r)?,
-            witness: Witness::default(),
         })
     }
 }
@@ -105,6 +97,5 @@ mod tests {
         assert_eq!(txin.script_sig, ScriptBuf::new());
         assert_eq!(txin.sequence, 0xFFFFFFFF);
         assert_eq!(txin.previous_output, OutPoint::default());
-        assert_eq!(txin.witness.len(), 0_usize);
     }
 }

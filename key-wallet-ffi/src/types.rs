@@ -441,10 +441,6 @@ impl From<key_wallet::AddressType> for FFIAddressType {
         match t {
             key_wallet::AddressType::P2pkh => FFIAddressType::P2PKH,
             key_wallet::AddressType::P2sh => FFIAddressType::P2SH,
-            // SegWit and Taproot address types are not supported yet in Dash
-            key_wallet::AddressType::P2wpkh => FFIAddressType::Unknown,
-            key_wallet::AddressType::P2wsh => FFIAddressType::Unknown,
-            key_wallet::AddressType::P2tr => FFIAddressType::Unknown,
             // Handle any future address types
             _ => FFIAddressType::Unknown,
         }

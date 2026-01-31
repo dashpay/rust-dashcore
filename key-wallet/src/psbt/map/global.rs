@@ -33,8 +33,7 @@ impl Map for PartiallySignedTransaction {
                 key: vec![],
             },
             value: {
-                // Manually serialized to ensure 0-input txs are serialized
-                // without witnesses.
+                // Manually serialized to ensure 0-input txs are serialized.
                 let mut ret = Vec::new();
                 ret.extend(encode::serialize(&self.unsigned_tx.version));
                 (self.unsigned_tx.tx_type() as u16)
@@ -123,9 +122,6 @@ impl PartiallySignedTransaction {
                                     let output = Decodable::consensus_decode(&mut decoder)?;
                                     let lock_time = Decodable::consensus_decode(&mut decoder)?;
 
-                                    // Manually deserialized to ensure 0-input
-                                    // txs without witnesses are deserialized
-                                    // properly.
                                     tx = Some(Transaction {
                                         version,
                                         lock_time,

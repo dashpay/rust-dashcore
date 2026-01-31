@@ -55,7 +55,6 @@ use crate::network::{
 };
 use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
-use crate::taproot::TapLeafHash;
 use crate::transaction::special_transaction::TransactionType;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::transaction::txin::TxIn;
@@ -86,8 +85,6 @@ pub enum Error {
     NonMinimalVarInt,
     /// Parsing error.
     ParseFailed(&'static str),
-    /// Unsupported Segwit flag.
-    UnsupportedSegwitFlag(u8),
 
     /// A Vector was trying to be converted to a fixed size vector, but was the wrong size
     InvalidVectorSize {
@@ -137,9 +134,6 @@ impl fmt::Display for Error {
             }
             Error::NonMinimalVarInt => write!(f, "non-minimal varint"),
             Error::ParseFailed(s) => write!(f, "parse failed: {}", s),
-            Error::UnsupportedSegwitFlag(swflag) => {
-                write!(f, "unsupported segwit version: {}", swflag)
-            }
             Error::UnknownSpecialTransactionType(stt) => {
                 write!(f, "unknown special transaction type: {}", stt)
             }
@@ -186,7 +180,6 @@ impl std::error::Error for Error {
             }
             | NonMinimalVarInt
             | ParseFailed(_)
-            | UnsupportedSegwitFlag(_)
             | Error::UnknownSpecialTransactionType(..)
             | Error::WrongSpecialTransactionPayloadConversion {
                 ..
@@ -740,7 +733,6 @@ impl_vec!(u16);
 impl_vec!(u32);
 impl_vec!(i32);
 impl_vec!(u64);
-impl_vec!(TapLeafHash);
 impl_vec!(VarInt);
 impl_vec!(ShortId);
 impl_vec!(OutPoint);
@@ -995,18 +987,6 @@ impl Encodable for sha256::Hash {
 }
 
 impl Decodable for sha256::Hash {
-    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
-        Ok(Self::from_byte_array(<<Self as Hash>::Bytes>::consensus_decode(r)?))
-    }
-}
-
-impl Encodable for TapLeafHash {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        self.as_byte_array().consensus_encode(w)
-    }
-}
-
-impl Decodable for TapLeafHash {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
         Ok(Self::from_byte_array(<<Self as Hash>::Bytes>::consensus_decode(r)?))
     }
@@ -1493,8 +1473,8 @@ mod tests {
 
     #[test]
     fn limit_read_test() {
-        let witness = vec![vec![0u8; 3_999_999]; 2];
-        let ser = serialize(&witness);
+        let large_data = vec![vec![0u8; 3_999_999]; 2];
+        let ser = serialize(&large_data);
         let mut reader = io::Cursor::new(ser);
         let err = Vec::<Vec<u8>>::consensus_decode(&mut reader);
         assert!(err.is_err());

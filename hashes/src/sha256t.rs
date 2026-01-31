@@ -199,7 +199,7 @@ mod tests {
 
     impl sha256t::Tag for TestHashTag {
         fn engine() -> sha256::HashEngine {
-            // The TapRoot TapLeaf midstate.
+            // Test midstate for tagged hash testing.
             let midstate = sha256::Midstate::from_byte_array(TEST_MIDSTATE);
             sha256::HashEngine::from_midstate(midstate, 64)
         }

@@ -22,7 +22,6 @@ fn create_p2pkh_transaction(address: &Address) -> Transaction {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 100000,
@@ -48,7 +47,6 @@ fn create_coinbase_transaction(address: &Address, height: u32) -> Transaction {
             previous_output: OutPoint::null(), // Coinbase has null outpoint
             script_sig: ScriptBuf::from(script_sig),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 5000000000, // 50 DASH block reward
@@ -105,7 +103,6 @@ fn test_transaction_with_multiple_outputs() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![
             TxOut {

@@ -120,7 +120,6 @@ fn test_zero_value_transaction_handling() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![TxOut {
             value: 0, // Zero value output
@@ -224,7 +223,6 @@ fn test_max_transaction_size() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: outputs,
         special_transaction_payload: None,

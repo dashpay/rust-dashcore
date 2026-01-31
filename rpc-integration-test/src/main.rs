@@ -22,7 +22,7 @@ use dashcore_rpc::{
     Auth, Client, Error, RpcApi,
     dashcore::{
         Address, AddressType, Amount, EcdsaSighashType, Network, OutPoint, PrivateKey,
-        SignedAmount, Transaction, TxIn, TxOut, Txid, Witness,
+        SignedAmount, Transaction, TxIn, TxOut, Txid,
         consensus::encode::{deserialize, serialize},
         hashes::Hash,
         hashes::hex::FromHex,
@@ -33,7 +33,7 @@ use dashcore_rpc::{
 use dashcore_rpc::dashcore::address::NetworkUnchecked;
 use dashcore_rpc::dashcore::{BlockHash, ProTxHash, QuorumHash, ScriptBuf};
 use dashcore_rpc::dashcore_rpc_json::{
-    GetBlockTemplateModes, GetBlockTemplateRules, ProTxInfo, ProTxRevokeReason, ScanTxOutRequest,
+    GetBlockTemplateModes, ProTxInfo, ProTxRevokeReason, ScanTxOutRequest,
 };
 use dashcore_rpc::json::ProTxListType;
 use dashcore_rpc::json::QuorumType::LlmqTest;
@@ -753,7 +753,6 @@ fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
             },
             sequence: 0xFFFFFFFF,
             script_sig: ScriptBuf::new(),
-            witness: Witness::new(),
         }],
         output: vec![TxOut {
             value: (unspent.amount - *FEE).to_sat(),
@@ -783,7 +782,6 @@ fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xFFFFFFFF,
-            witness: Witness::new(),
         }],
         output: vec![TxOut {
             value: (unspent.amount - *FEE - *FEE).to_sat(),
@@ -1336,8 +1334,7 @@ fn test_getblocktemplate(cl: &Client) {
     cl.send_to_address(&RANDOM_ADDRESS, btc(1), None, None, None, None, None, None, None, None)
         .unwrap();
 
-    cl.get_block_template(GetBlockTemplateModes::Template, &[GetBlockTemplateRules::SegWit], &[])
-        .unwrap();
+    cl.get_block_template(GetBlockTemplateModes::Template, &[], &[]).unwrap();
 
     // let pop: &Address = &RANDOM_ADDRESS;
 

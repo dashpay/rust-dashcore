@@ -1488,8 +1488,8 @@ impl ExtendedPrivKey {
         })
     }
 
-    /// Constructs BIP340 keypair for Schnorr signatures and Taproot use matching the internal
-    /// secret key representation.
+    /// Constructs BIP340 keypair for Schnorr signatures matching the internal secret key
+    /// representation.
     pub fn to_keypair<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Keypair {
         Keypair::from_secret_key(secp, &self.private_key)
     }
@@ -1771,8 +1771,8 @@ impl ExtendedPubKey {
         }
     }
 
-    /// Constructs BIP340 x-only public key for BIP-340 signatures and Taproot use matching
-    /// the internal public key representation.
+    /// Constructs BIP340 x-only public key for BIP-340 signatures matching the internal public
+    /// key representation.
     pub fn to_x_only_pub(&self) -> XOnlyPublicKey {
         XOnlyPublicKey::from(self.public_key)
     }

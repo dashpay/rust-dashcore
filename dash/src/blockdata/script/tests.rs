@@ -6,8 +6,8 @@ use hex_lit::hex;
 use super::*;
 use crate::blockdata::opcodes;
 use crate::consensus::encode::{deserialize, serialize};
-use crate::crypto::key::{PublicKey, XOnlyPublicKey};
-use crate::hash_types::{PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash};
+use crate::crypto::key::PublicKey;
+use crate::hash_types::{PubkeyHash, ScriptHash};
 
 #[test]
 #[rustfmt::skip]
@@ -173,17 +173,6 @@ fn p2pk_public_key_compressed_key_returns_some() {
 }
 
 #[test]
-fn script_x_only_key() {
-    // Notice the "20" which prepends the keystr. That 20 is hexadecimal for "32". The Builder automatically adds the 32 opcode
-    // to our script in order to give a heads up to the script compiler that it should add the next 32 bytes to the stack.
-    // From: https://github.com/bitcoin-core/btcdeb/blob/e8c2750c4a4702768c52d15640ed03bf744d2601/doc/tapscript-example.md?plain=1#L43
-    const KEYSTR: &str = "209997a497d964fc1a62885b05a51166a65a90df00492c8d7cf61d6accf54803be";
-    let x_only_key = XOnlyPublicKey::from_str(&KEYSTR[2..]).unwrap();
-    let script = Builder::new().push_x_only_key(&x_only_key);
-    assert_eq!(script.into_bytes(), &hex!(KEYSTR) as &[u8]);
-}
-
-#[test]
 fn script_builder() {
     // from txid 3bb5e6434c11fb93f64574af5d116736510717f2c595eb45b52c28e31622dfff which was in my mempool when I wrote the test
     let script = Builder::new()
@@ -206,19 +195,11 @@ fn script_generators() {
     let pubkey_hash = PubkeyHash::hash(&pubkey.inner.serialize());
     assert!(ScriptBuf::new_p2pkh(&pubkey_hash).is_p2pkh());
 
-    let wpubkey_hash = WPubkeyHash::hash(&pubkey.inner.serialize());
-    assert!(ScriptBuf::new_v0_p2wpkh(&wpubkey_hash).is_v0_p2wpkh());
-
     let script = Builder::new().push_opcode(OP_NUMEQUAL).push_verify().into_script();
     let script_hash = ScriptHash::hash(&script.to_bytes());
     let p2sh = ScriptBuf::new_p2sh(&script_hash);
     assert!(p2sh.is_p2sh());
     assert_eq!(script.to_p2sh(), p2sh);
-
-    let wscript_hash = WScriptHash::hash(&script.to_bytes());
-    let p2wsh = ScriptBuf::new_v0_p2wsh(&wscript_hash);
-    assert!(p2wsh.is_v0_p2wsh());
-    assert_eq!(script.to_v0_p2wsh(), p2wsh);
 
     // Test data are taken from the second output of
     // 2ccb3a1f745eb4eefcf29391460250adda5fab78aaddb902d25d3cd97d9d8e61 transaction
@@ -330,17 +311,6 @@ fn non_minimal_scriptints() {
 fn script_hashes() {
     let script = ScriptBuf::from_hex("410446ef0102d1ec5240f0d061a4246c1bdef63fc3dbab7733052fbbf0ecd8f41fc26bf049ebb4f9527f374280259e7cfa99c48b0e3f39c51347a19a5819651503a5ac").unwrap();
     assert_eq!(script.script_hash().to_string(), "8292bcfbef1884f73c813dfe9c82fd7e814291ea");
-    assert_eq!(
-        script.wscript_hash().to_string(),
-        "3e1525eb183ad4f9b3c5fa3175bdca2a52e947b135bbb90383bf9f6408e2c324"
-    );
-    assert_eq!(
-        ScriptBuf::from_hex("20d85a959b0290bf19bb89ed43c916be835475d013da4b362117393e25a48229b8ac")
-            .unwrap()
-            .tapscript_leaf_hash()
-            .to_string(),
-        "5b75adecf53548f3ec6ad7d78383bf84cc57b55a3127c72b9a2481752dd88b21"
-    );
 }
 
 #[test]
@@ -485,34 +455,14 @@ fn script_p2pk() {
 }
 
 #[test]
-fn p2sh_p2wsh_conversion() {
+fn p2sh_conversion() {
     // Test vectors taken from Core tests/data/script_tests.json
-    // bare p2wsh
-    let redeem_script = ScriptBuf::from_hex("410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8ac").unwrap();
-    let expected_without =
-        ScriptBuf::from_hex("0020b95237b48faaa69eb078e1170be3b5cbb3fddf16d0a991e14ad274f7b33a4f64")
-            .unwrap();
-    assert!(redeem_script.to_v0_p2wsh().is_v0_p2wsh());
-    assert_eq!(redeem_script.to_v0_p2wsh(), expected_without);
-
     // p2sh
     let redeem_script = ScriptBuf::from_hex("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8").unwrap();
     let expected_p2shout =
         ScriptBuf::from_hex("a91491b24bf9f5288532960ac687abb035127b1d28a587").unwrap();
     assert!(redeem_script.to_p2sh().is_p2sh());
     assert_eq!(redeem_script.to_p2sh(), expected_p2shout);
-
-    // p2sh-p2wsh
-    let redeem_script = ScriptBuf::from_hex("410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8ac").unwrap();
-    let expected_without =
-        ScriptBuf::from_hex("0020b95237b48faaa69eb078e1170be3b5cbb3fddf16d0a991e14ad274f7b33a4f64")
-            .unwrap();
-    let expected_out =
-        ScriptBuf::from_hex("a914f386c2ba255cc56d20cfa6ea8b062f8b5994551887").unwrap();
-    assert!(redeem_script.to_p2sh().is_p2sh());
-    assert!(redeem_script.to_p2sh().to_v0_p2wsh().is_v0_p2wsh());
-    assert_eq!(redeem_script.to_v0_p2wsh(), expected_without);
-    assert_eq!(redeem_script.to_v0_p2wsh().to_p2sh(), expected_out);
 }
 
 macro_rules! unwrap_all {
@@ -603,23 +553,19 @@ fn script_ord() {
 #[test]
 #[cfg(feature = "bitcoinconsensus")]
 fn test_bitcoinconsensus() {
-    // a random segwit transaction from the blockchain using native segwit
-    let spent_bytes = hex!("0020701a8d401c84fb13e6baf169d59684e17abd9fa216c8cc5b9fc63d622ff8c58d");
+    // a simple P2PKH transaction
+    let spent_bytes = hex!("76a914bbb8bb3fb9b0c66dd08aca63f0e30c0af0a1c78688ac");
     let spent = Script::from_bytes(&spent_bytes);
     let spending = hex!(
-        "010000000001011f97548fbbe7a0db7588a66e18d803d0089315aa7d4cc28360b6ec50ef36718a0100000000ffffffff02df1776000000000017a9146c002a686959067f4866b8fb493ad7970290ab728757d29f0000000000220020701a8d401c84fb13e6baf169d59684e17abd9fa216c8cc5b9fc63d622ff8c58d04004730440220565d170eed95ff95027a69b313758450ba84a01224e1f7f130dda46e94d13f8602207bdd20e307f062594022f12ed5017bbf4a055a06aea91c10110a0e3bb23117fc014730440220647d2dc5b15f60bc37dc42618a370b2a1490293f9e5c8464f53ec4fe1dfe067302203598773895b4b16d37485cbe21b337f4e4b650739880098c592553add7dd4355016952210375e00eb72e29da82b89367947f29ef34afb75e8654f6ea368e0acdfd92976b7c2103a1b26313f430c4b15bb1fdce663207659d8cac749a0e53d70eff01874496feff2103c96d495bfdd5ba4145e3e046fee45e84a8a48ad05bd8dbb395c011a32cf9f88053ae00000000"
+        "0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000"
     );
-    spent.verify(0, crate::Amount::from_sat(18393430), &spending).unwrap();
+    spent.verify(0, crate::Amount::from_sat(100000000), &spending).unwrap();
 }
 
 #[test]
 fn default_dust_value_tests() {
     // Check that our dust_value() calculator correctly calculates the dust limit on common
     // well-known scriptPubKey types.
-    let script_p2wpkh = Builder::new().push_int(0).push_slice([42; 20]).into_script();
-    assert!(script_p2wpkh.is_v0_p2wpkh());
-    assert_eq!(script_p2wpkh.dust_value(), crate::Amount::from_sat(294));
-
     let script_p2pkh = Builder::new()
         .push_opcode(OP_DUP)
         .push_opcode(OP_HASH160)

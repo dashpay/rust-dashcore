@@ -278,7 +278,6 @@ mod tests {
     use crate::Transaction;
     use crate::TxIn;
     use crate::TxOut;
-    use crate::Witness;
     use crate::sign_message::signed_msg_hash;
     use crate::signer::sign_hash;
     use crate::transaction::TransactionPayload::ProviderRegistrationPayloadType;
@@ -435,7 +434,6 @@ mod tests {
                 previous_output: OutPoint::new(collateral_hash, 1),
                 script_sig: collateral_address.assume_checked().script_pubkey(),
                 sequence: 4294967295,
-                witness: Default::default(),
             }],
             output: vec![TxOut::new_from_address(40777037710, &output_address0.assume_checked())],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(
@@ -615,7 +613,6 @@ mod tests {
                 previous_output: OutPoint::new(collateral_hash, 1),
                 script_sig: collateral_address.assume_checked().script_pubkey(),
                 sequence: 4294967295,
-                witness: Witness::new(),
             }],
             output: vec![TxOut::new_from_address(40777037710, &output_address0.assume_checked())],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(

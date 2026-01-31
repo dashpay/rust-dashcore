@@ -179,7 +179,6 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![
             // Change output
@@ -315,7 +314,6 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![
             // Change output
@@ -452,7 +450,6 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![
             // Change output
@@ -651,7 +648,6 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
             },
             script_sig: ScriptBuf::new(),
             sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
         }],
         output: vec![
             // Change output

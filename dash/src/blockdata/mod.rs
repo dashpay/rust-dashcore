@@ -15,7 +15,6 @@ pub mod opcodes;
 pub mod script;
 pub mod transaction;
 pub mod weight;
-pub mod witness;
 
 pub use fee_rate::FeeRate;
 pub use weight::Weight;

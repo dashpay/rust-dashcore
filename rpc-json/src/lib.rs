@@ -433,9 +433,6 @@ pub enum BlockStatsFields {
     MinTxSize,
     Outs,
     Subsidy,
-    SegWitTotalSize,
-    SegWitTotalWeight,
-    SegWitTxs,
     Time,
     TotalOut,
     TotalSize,
@@ -467,9 +464,6 @@ impl BlockStatsFields {
             BlockStatsFields::MinTxSize => "minfeerate",
             BlockStatsFields::Outs => "outs",
             BlockStatsFields::Subsidy => "subsidy",
-            BlockStatsFields::SegWitTotalSize => "swtotal_size",
-            BlockStatsFields::SegWitTotalWeight => "swtotal_weight",
-            BlockStatsFields::SegWitTxs => "swtxs",
             BlockStatsFields::Time => "time",
             BlockStatsFields::TotalOut => "total_out",
             BlockStatsFields::TotalSize => "total_size",
@@ -883,10 +877,6 @@ pub enum ScriptPubkeyType {
     ScriptHash,
     MultiSig,
     NullData,
-    Witness_v0_KeyHash,
-    Witness_v0_ScriptHash,
-    Witness_v1_Taproot,
-    Witness_Unknown,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -995,11 +985,10 @@ pub enum ImportMultiRequestScriptPubkey<'a> {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct GetMempoolEntryResult {
-    /// Virtual transaction size as defined in BIP 141. This is different from actual serialized
-    /// size for witness transactions as witness data is discounted.
+    /// Virtual transaction size.
     #[serde(alias = "vsize")]
     pub size: u64,
-    /// Transaction weight as defined in BIP 141. Added in Core v0.19.0.
+    /// Transaction weight.
     pub weight: Option<u64>,
     /// Local time transaction entered pool in seconds since 1 Jan 1970 GMT
     pub time: u64,
@@ -1083,8 +1072,6 @@ pub struct ImportMultiRequest<'a> {
     pub script_pubkey: Option<ImportMultiRequestScriptPubkey<'a>>,
     #[serde(rename = "redeemscript", skip_serializing_if = "Option::is_none")]
     pub redeem_script: Option<&'a Script>,
-    #[serde(rename = "witnessscript", skip_serializing_if = "Option::is_none")]
-    pub witness_script: Option<&'a Script>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     pub pubkeys: &'a [PublicKey],
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
@@ -1424,10 +1411,8 @@ pub enum GetBlockTemplateCapabilities {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GetBlockTemplateRules {
-    SegWit,
     Signet,
     Csv,
-    Taproot,
 }
 
 /// Enum to represent client-side supported features.
@@ -1854,8 +1839,6 @@ pub struct GetNetTotalsResultUploadTarget {
 #[serde(rename_all = "kebab-case")]
 pub enum AddressType {
     Legacy,
-    P2shSegwit,
-    Bech32,
 }
 
 /// Used to represent arguments that can either be an address or a public key.

@@ -30,7 +30,6 @@ jobs:
           dash_deserialize_address,
           dash_script_bytes_to_asm_fmt,
 #          dash_deserialize_prefilled_transaction,
-          dash_deserialize_witness,
 #          dash_deserialize_psbt,
           dash_outpoint_string,
           dash_deserialize_script,
