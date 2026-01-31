@@ -2,8 +2,6 @@
 
 FFI bindings for the key-wallet library, providing a C-compatible interface for use in other languages like Swift, Kotlin, Python, etc.
 
-> **Note**: This library can be used standalone or as part of the [Unified SDK](../../platform-ios/packages/rs-sdk-ffi/UNIFIED_SDK_ARCHITECTURE.md) which combines both Core (including this wallet functionality) and Platform features into a single optimized binary. The Unified SDK is recommended for iOS applications as it eliminates duplicate symbols and reduces binary size by 79.4%.
-
 ## Features
 
 - **C-compatible FFI**: Direct C-style FFI bindings without code generation
@@ -41,17 +39,6 @@ cargo lipo --release
 # Build for Android (requires cargo-ndk)
 cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -o ./jniLibs build --release
 ```
-
-#### Unified SDK Build (Recommended for iOS)
-
-For iOS applications, use the Unified SDK which includes this library:
-
-```bash
-cd ../../platform-ios/packages/rs-sdk-ffi
-./build_ios.sh
-```
-
-This creates `DashUnifiedSDK.xcframework` containing both Core (including wallet functionality) and Platform symbols in a single optimized binary.
 
 ## Usage Examples
 
