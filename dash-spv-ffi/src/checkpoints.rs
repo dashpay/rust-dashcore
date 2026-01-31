@@ -1,4 +1,4 @@
-use crate::{set_last_error, FFIArray, FFIErrorCode};
+use crate::{set_last_error, FFIErrorCode};
 use dash_spv::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use dashcore::hashes::Hash;
 use dashcore::Network;
@@ -118,45 +118,5 @@ pub unsafe extern "C" fn dash_spv_ffi_checkpoint_before_timestamp(
     } else {
         set_last_error("No checkpoint at or before given timestamp");
         FFIErrorCode::ValidationError as i32
-    }
-}
-
-/// Get all checkpoints between two heights (inclusive).
-///
-/// Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and
-/// must free the array buffer using `dash_spv_ffi_array_destroy` when done.
-#[no_mangle]
-pub extern "C" fn dash_spv_ffi_checkpoints_between_heights(
-    network: FFINetwork,
-    start_height: u32,
-    end_height: u32,
-) -> FFIArray {
-    match manager_for_network(network) {
-        Ok(mgr) => {
-            // Collect checkpoints within inclusive range
-            let mut out: Vec<FFICheckpoint> = Vec::new();
-            for &h in mgr.checkpoint_heights() {
-                if h >= start_height && h <= end_height {
-                    if let Some(cp) = mgr.get_checkpoint(h) {
-                        out.push(FFICheckpoint {
-                            height: cp.height,
-                            block_hash: cp.block_hash.to_byte_array(),
-                        });
-                    }
-                }
-            }
-            FFIArray::new(out)
-        }
-        Err(e) => {
-            set_last_error(&e);
-            // Return empty array on error
-            FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: std::mem::size_of::<FFICheckpoint>(),
-                elem_align: std::mem::align_of::<FFICheckpoint>(),
-            }
-        }
     }
 }

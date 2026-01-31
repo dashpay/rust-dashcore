@@ -9,14 +9,12 @@ use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
 use dash_spv::Hash;
-use dashcore::Txid;
 
 use futures::future::{AbortHandle, Abortable};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
-use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -513,23 +511,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
     }
 }
 
-/// Performs a test synchronization of the SPV client
-///
-/// # Parameters
-/// - `client`: Pointer to an FFIDashSpvClient instance
-///
-/// # Returns
-/// - `0` on success
-/// - Negative error code on failure
-///
-/// # Safety
-/// This function is unsafe because it dereferences a raw pointer.
-/// The caller must ensure that the client pointer is valid.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvClient) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
+pub fn client_test_sync(client: &FFIDashSpvClient) -> i32 {
     let result = client.runtime.block_on(async {
         let spv_client = {
             let mut guard = client.inner.lock().unwrap();
@@ -1033,34 +1015,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
     }
 }
 
-/// Check if compact filter sync is currently available.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_is_filter_sync_available(
-    client: *mut FFIDashSpvClient,
-) -> bool {
-    null_check!(client, false);
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => return false,
-            }
-        };
-        let res = spv_client.is_filter_sync_available().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    })
-}
-
 /// Set event callbacks for the client.
 ///
 /// # Safety
@@ -1143,99 +1097,6 @@ pub unsafe extern "C" fn dash_spv_ffi_sync_progress_destroy(progress: *mut FFISy
 }
 
 // Wallet operations
-
-/// Request a rescan of the blockchain from a given height (not yet implemented).
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_rescan_blockchain(
-    client: *mut FFIDashSpvClient,
-    _from_height: u32,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result: Result<(), dash_spv::SpvError> = client.runtime.block_on(async {
-        let mut guard = inner.lock().unwrap();
-        if let Some(ref mut _spv_client) = *guard {
-            // TODO: rescan_from_height not yet implemented in dash-spv
-            Err(dash_spv::SpvError::Config("Not implemented".to_string()))
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&format!("Failed to rescan blockchain: {}", e));
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-/// Record that we attempted to send a transaction by its txid.
-///
-/// # Safety
-/// - `client` and `txid` must be valid, non-null pointers.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
-    client: *mut FFIDashSpvClient,
-    txid: *const c_char,
-) -> i32 {
-    null_check!(client);
-    null_check!(txid);
-
-    let txid_str = match CStr::from_ptr(txid).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in txid: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    let txid = match Txid::from_str(txid_str) {
-        Ok(t) => t,
-        Err(e) => {
-            set_last_error(&format!("Invalid txid: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    let result = client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.record_send(txid).await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    match result {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
 
 /// Get the wallet manager from the SPV client
 ///

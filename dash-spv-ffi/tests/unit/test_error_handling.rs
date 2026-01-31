@@ -9,28 +9,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_error_propagation() {
-        // Clear any existing error
-        dash_spv_ffi_clear_error();
-
-        // Test setting and getting error
-        set_last_error("Test error message");
-        let error_ptr = dash_spv_ffi_get_last_error();
-        assert!(!error_ptr.is_null());
-
-        unsafe {
-            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
-            assert_eq!(error_str, "Test error message");
-        }
-
-        // Clear and verify
-        dash_spv_ffi_clear_error();
-        let error_ptr = dash_spv_ffi_get_last_error();
-        assert!(error_ptr.is_null());
-    }
-
-    #[test]
-    #[serial]
     fn test_concurrent_error_handling() {
         // Test thread safety of error handling
         // Note: The implementation uses a global mutex, not thread-local storage
@@ -89,8 +67,6 @@ mod tests {
             assert_eq!(error_str.len(), 10000);
             assert!(error_str.chars().all(|c| c == 'X'));
         }
-
-        dash_spv_ffi_clear_error();
     }
 
     #[test]
@@ -152,7 +128,7 @@ mod tests {
         }
 
         // Clear using public API
-        dash_spv_ffi_clear_error();
+        clear_last_error();
         assert!(dash_spv_ffi_get_last_error().is_null());
     }
 
@@ -204,35 +180,5 @@ mod tests {
             let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
             assert_eq!(error_str, "Test error");
         }
-    }
-
-    #[test]
-    #[serial]
-    fn test_error_with_special_characters() {
-        // Test error with newlines
-        set_last_error("Error\nwith\nnewlines");
-        let error_ptr = dash_spv_ffi_get_last_error();
-        unsafe {
-            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
-            assert_eq!(error_str, "Error\nwith\nnewlines");
-        }
-
-        // Test error with tabs
-        set_last_error("Error\twith\ttabs");
-        let error_ptr = dash_spv_ffi_get_last_error();
-        unsafe {
-            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
-            assert_eq!(error_str, "Error\twith\ttabs");
-        }
-
-        // Test error with quotes
-        set_last_error("Error with \"quotes\" and 'apostrophes'");
-        let error_ptr = dash_spv_ffi_get_last_error();
-        unsafe {
-            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
-            assert_eq!(error_str, "Error with \"quotes\" and 'apostrophes'");
-        }
-
-        dash_spv_ffi_clear_error();
     }
 }

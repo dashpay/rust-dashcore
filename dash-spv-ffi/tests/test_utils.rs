@@ -63,10 +63,4 @@ mod tests {
             assert_eq!(name_str, "devnet");
         }
     }
-
-    #[test]
-    fn test_enable_test_mode() {
-        dash_spv_ffi_enable_test_mode();
-        assert_eq!(std::env::var("DASH_SPV_TEST_MODE").unwrap_or_default(), "1");
-    }
 }

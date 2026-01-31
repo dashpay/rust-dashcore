@@ -40,7 +40,6 @@ mod tests {
         unsafe {
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-            dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
         }
 
         (config, temp_dir)
@@ -150,9 +149,6 @@ mod tests {
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
 
-            // Enable test mode to use deterministic peers
-            dash_spv_ffi_enable_test_mode();
-
             // Create client
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null(), "Failed to create client");
@@ -170,7 +166,7 @@ mod tests {
 
             // Run the diagnostic sync test
             println!("Running sync diagnostic test...");
-            let test_result = dash_spv_ffi_client_test_sync(client);
+            let test_result = client_test_sync(&*client);
 
             if test_result == FFIErrorCode::Success as i32 {
                 println!("✅ Sync test passed!");

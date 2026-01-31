@@ -29,37 +29,12 @@ typedef enum FFISyncStage {
   Failed = 9,
 } FFISyncStage;
 
-typedef enum DashSpvValidationMode {
-  None = 0,
-  Basic = 1,
-  Full = 2,
-} DashSpvValidationMode;
-
 typedef enum FFIMempoolStrategy {
   FetchAll = 0,
   BloomFilter = 1,
 } FFIMempoolStrategy;
 
 typedef struct FFIDashSpvClient FFIDashSpvClient;
-
-/**
- * FFI-safe array that transfers ownership of memory to the C caller.
- *
- * # Safety
- *
- * This struct represents memory that has been allocated by Rust but ownership
- * has been transferred to the C caller. The caller is responsible for:
- * - Not accessing the memory after it has been freed
- * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
- * - Ensuring the data, len, and capacity fields remain consistent
- */
-typedef struct FFIArray {
-  void *data;
-  uintptr_t len;
-  uintptr_t capacity;
-  uintptr_t elem_size;
-  uintptr_t elem_align;
-} FFIArray;
 
 typedef struct FFIClientConfig {
   void *inner;
@@ -157,52 +132,12 @@ typedef struct FFIWalletManager {
 } FFIWalletManager;
 
 /**
- * Handle for Core SDK that can be passed to Platform SDK
- */
-typedef struct CoreSDKHandle {
-  struct FFIDashSpvClient *client;
-} CoreSDKHandle;
-
-/**
  * FFIResult type for error handling
  */
 typedef struct FFIResult {
   int32_t error_code;
   const char *error_message;
 } FFIResult;
-
-/**
- * FFI-safe representation of an unconfirmed transaction
- *
- * # Safety
- *
- * This struct contains raw pointers that must be properly managed:
- *
- * - `raw_tx`: A pointer to the raw transaction bytes. The caller is responsible for:
- *   - Allocating this memory before passing it to Rust
- *   - Ensuring the pointer remains valid for the lifetime of this struct
- *   - Freeing the memory after use with `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx`
- *
- * - `addresses`: A pointer to an array of FFIString objects. The caller is responsible for:
- *   - Allocating this array before passing it to Rust
- *   - Ensuring the pointer remains valid for the lifetime of this struct
- *   - Freeing each FFIString in the array with `dash_spv_ffi_string_destroy`
- *   - Freeing the array itself after use with `dash_spv_ffi_unconfirmed_transaction_destroy_addresses`
- *
- * Use `dash_spv_ffi_unconfirmed_transaction_destroy` to safely clean up all resources
- * associated with this struct.
- */
-typedef struct FFIUnconfirmedTransaction {
-  struct FFIString txid;
-  uint8_t *raw_tx;
-  uintptr_t raw_tx_len;
-  int64_t amount;
-  uint64_t fee;
-  bool is_instant_send;
-  bool is_outgoing;
-  struct FFIString *addresses;
-  uintptr_t addresses_len;
-} FFIUnconfirmedTransaction;
 
 #ifdef __cplusplus
 extern "C" {
@@ -250,18 +185,6 @@ int32_t dash_spv_ffi_checkpoint_before_timestamp(FFINetwork network,
 ;
 
 /**
- * Get all checkpoints between two heights (inclusive).
- *
- * Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and
- * must free the array buffer using `dash_spv_ffi_array_destroy` when done.
- */
-
-struct FFIArray dash_spv_ffi_checkpoints_between_heights(FFINetwork network,
-                                                         uint32_t start_height,
-                                                         uint32_t end_height)
-;
-
-/**
  * Create a new SPV client and return an opaque pointer.
  *
  * # Safety
@@ -306,22 +229,6 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
  * - `client` must be a valid, non-null pointer to a created client.
  */
  int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client) ;
-
-/**
- * Performs a test synchronization of the SPV client
- *
- * # Parameters
- * - `client`: Pointer to an FFIDashSpvClient instance
- *
- * # Returns
- * - `0` on success
- * - Negative error code on failure
- *
- * # Safety
- * This function is unsafe because it dereferences a raw pointer.
- * The caller must ensure that the client pointer is valid.
- */
- int32_t dash_spv_ffi_client_test_sync(struct FFIDashSpvClient *client) ;
 
 /**
  * Sync the SPV client to the chain tip with detailed progress updates.
@@ -406,14 +313,6 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
  int32_t dash_spv_ffi_client_clear_storage(struct FFIDashSpvClient *client) ;
 
 /**
- * Check if compact filter sync is currently available.
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- */
- bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *client) ;
-
-/**
  * Set event callbacks for the client.
  *
  * # Safety
@@ -439,25 +338,6 @@ int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
  * - `progress` must be a pointer returned from this crate, or null.
  */
  void dash_spv_ffi_sync_progress_destroy(struct FFISyncProgress *progress) ;
-
-/**
- * Request a rescan of the blockchain from a given height (not yet implemented).
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- */
-
-int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
-                                              uint32_t _from_height)
-;
-
-/**
- * Record that we attempted to send a transaction by its txid.
- *
- * # Safety
- * - `client` and `txid` must be valid, non-null pointers.
- */
- int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const char *txid) ;
 
 /**
  * Get the wallet manager from the SPV client
@@ -512,30 +392,6 @@ int32_t dash_spv_ffi_config_set_data_dir(struct FFIClientConfig *config,
 ;
 
 /**
- * Sets the validation mode for the SPV client
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_validation_mode(struct FFIClientConfig *config,
-                                                enum DashSpvValidationMode mode)
-;
-
-/**
- * Sets the maximum number of peers to connect to
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_max_peers(struct FFIClientConfig *config,
-                                          uint32_t max_peers)
-;
-
-/**
  * Adds a peer address to the configuration
  *
  * Accepts socket addresses with or without port. When no port is specified,
@@ -571,30 +427,6 @@ int32_t dash_spv_ffi_config_set_user_agent(struct FFIClientConfig *config,
 ;
 
 /**
- * Sets whether to relay transactions (currently a no-op)
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_relay_transactions(struct FFIClientConfig *config,
-                                                   bool _relay)
-;
-
-/**
- * Sets whether to load bloom filters
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_filter_load(struct FFIClientConfig *config,
-                                            bool load_filters)
-;
-
-/**
  * Restrict connections strictly to configured peers (disable DNS discovery and peer store)
  *
  * # Safety
@@ -627,16 +459,6 @@ int32_t dash_spv_ffi_config_set_masternode_sync_enabled(struct FFIClientConfig *
  FFINetwork dash_spv_ffi_config_get_network(const struct FFIClientConfig *config) ;
 
 /**
- * Gets the data directory path from the configuration
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig or null
- * - If null or no data directory is set, returns an FFIString with null pointer
- * - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
- */
- struct FFIString dash_spv_ffi_config_get_data_dir(const struct FFIClientConfig *config) ;
-
-/**
  * Destroys an FFIClientConfig and frees its memory
  *
  * # Safety
@@ -647,14 +469,6 @@ int32_t dash_spv_ffi_config_set_masternode_sync_enabled(struct FFIClientConfig *
 
 void dash_spv_ffi_config_destroy(struct FFIClientConfig *config)
 ;
-
-/**
- * Sets the number of Tokio worker threads for the FFI runtime (0 = auto)
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig
- */
- int32_t dash_spv_ffi_config_set_worker_threads(struct FFIClientConfig *config, uint32_t threads) ;
 
 /**
  * Enables or disables mempool tracking
@@ -678,18 +492,6 @@ int32_t dash_spv_ffi_config_set_mempool_tracking(struct FFIClientConfig *config,
 
 int32_t dash_spv_ffi_config_set_mempool_strategy(struct FFIClientConfig *config,
                                                  enum FFIMempoolStrategy strategy)
-;
-
-/**
- * Sets the maximum number of mempool transactions to track
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
- * - The caller must ensure the config pointer remains valid for the duration of this call
- */
-
-int32_t dash_spv_ffi_config_set_max_mempool_transactions(struct FFIClientConfig *config,
-                                                         uint32_t max_transactions)
 ;
 
 /**
@@ -717,26 +519,6 @@ int32_t dash_spv_ffi_config_set_persist_mempool(struct FFIClientConfig *config,
 ;
 
 /**
- * Gets whether mempool tracking is enabled
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig or null
- * - If null, returns false as default
- */
- bool dash_spv_ffi_config_get_mempool_tracking(const struct FFIClientConfig *config) ;
-
-/**
- * Gets the mempool synchronization strategy
- *
- * # Safety
- * - `config` must be a valid pointer to an FFIClientConfig or null
- * - If null, returns FFIMempoolStrategy::FetchAll as default
- */
-
-enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FFIClientConfig *config)
-;
-
-/**
  * Sets the starting block height for synchronization
  *
  * # Safety
@@ -749,30 +531,6 @@ int32_t dash_spv_ffi_config_set_start_from_height(struct FFIClientConfig *config
 ;
 
  const char *dash_spv_ffi_get_last_error(void) ;
-
- void dash_spv_ffi_clear_error(void) ;
-
-/**
- * Creates a CoreSDKHandle from an FFIDashSpvClient
- *
- * # Safety
- *
- * This function is unsafe because:
- * - The caller must ensure the client pointer is valid
- * - The returned handle must be properly released with ffi_dash_spv_release_core_handle
- */
- struct CoreSDKHandle *ffi_dash_spv_get_core_handle(struct FFIDashSpvClient *client) ;
-
-/**
- * Releases a CoreSDKHandle
- *
- * # Safety
- *
- * This function is unsafe because:
- * - The caller must ensure the handle pointer is valid
- * - The handle must not be used after this call
- */
- void ffi_dash_spv_release_core_handle(struct CoreSDKHandle *handle) ;
 
 /**
  * Gets a quorum public key from the Core chain
@@ -809,76 +567,6 @@ struct FFIResult ffi_dash_spv_get_platform_activation_height(struct FFIDashSpvCl
 ;
 
 /**
- * # Safety
- * - `s.ptr` must be a pointer previously returned by `FFIString::new` or compatible.
- * - It must not be used after this call.
- */
- void dash_spv_ffi_string_destroy(struct FFIString s) ;
-
-/**
- * # Safety
- * - `arr` must be either null or a valid pointer to an `FFIArray` previously constructed in Rust.
- * - The memory referenced by `arr.data` must not be used after this call.
- */
- void dash_spv_ffi_array_destroy(struct FFIArray *arr) ;
-
-/**
- * Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents.
- *
- * This function:
- * - Iterates the array elements as pointers to FFIString and destroys each via dash_spv_ffi_string_destroy
- * - Frees the underlying vector buffer stored in FFIArray
- * - Does not free the FFIArray struct itself (safe for both stack- and heap-allocated structs)
- * # Safety
- * - `arr` must be either null or a valid pointer to an `FFIArray` whose elements are `*mut FFIString`.
- * - Each element pointer must be valid or null; non-null entries are freed.
- * - The memory referenced by `arr.data` must not be used after this call.
- */
-
-void dash_spv_ffi_string_array_destroy(struct FFIArray *arr)
-;
-
-/**
- * Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction
- *
- * # Safety
- *
- * - `raw_tx` must be a valid pointer to memory allocated by the caller
- * - `raw_tx_len` must be the correct length of the allocated memory
- * - The pointer must not be used after this function is called
- * - This function should only be called once per allocation
- */
- void dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx(uint8_t *raw_tx, uintptr_t raw_tx_len) ;
-
-/**
- * Destroys the addresses array allocated for an FFIUnconfirmedTransaction
- *
- * # Safety
- *
- * - `addresses` must be a valid pointer to an array of FFIString objects
- * - `addresses_len` must be the correct length of the array
- * - Each FFIString in the array must be destroyed separately using `dash_spv_ffi_string_destroy`
- * - The pointer must not be used after this function is called
- * - This function should only be called once per allocation
- */
-
-void dash_spv_ffi_unconfirmed_transaction_destroy_addresses(struct FFIString *addresses,
-                                                            uintptr_t addresses_len)
-;
-
-/**
- * Destroys an FFIUnconfirmedTransaction and all its associated resources
- *
- * # Safety
- *
- * - `tx` must be a valid pointer to an FFIUnconfirmedTransaction
- * - All resources (raw_tx, addresses array, and individual FFIStrings) will be freed
- * - The pointer must not be used after this function is called
- * - This function should only be called once per FFIUnconfirmedTransaction
- */
- void dash_spv_ffi_unconfirmed_transaction_destroy(struct FFIUnconfirmedTransaction *tx) ;
-
-/**
  * Initialize logging for the SPV library.
  *
  * # Arguments
@@ -899,22 +587,6 @@ int32_t dash_spv_ffi_init_logging(const char *level,
 ;
 
  const char *dash_spv_ffi_version(void) ;
-
- void dash_spv_ffi_enable_test_mode(void) ;
-
-/**
- * Broadcasts a transaction to the Dash network via connected peers.
- *
- * # Safety
- *
- * - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient
- * - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string
- *   containing a hex-encoded serialized transaction
- */
-
-int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
-                                                  const char *tx_hex)
-;
 
 #ifdef __cplusplus
 }  // extern "C"

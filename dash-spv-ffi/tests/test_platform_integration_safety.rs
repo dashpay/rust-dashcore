@@ -34,10 +34,6 @@ fn assert_ffi_error(result: FFIResult, expected_code: FFIErrorCode) {
 #[serial]
 fn test_get_core_handle_null_safety() {
     unsafe {
-        // Test 1: Null client pointer
-        let handle = ffi_dash_spv_get_core_handle(ptr::null_mut());
-        assert!(handle.is_null(), "Should return null for null client");
-
         // Test 2: Getting last error after null pointer operation
         let error = dash_spv_ffi_get_last_error();
         if !error.is_null() {
@@ -49,21 +45,6 @@ fn test_get_core_handle_null_safety() {
             );
             // Note: Error strings are managed internally by the FFI layer
         }
-    }
-}
-
-#[test]
-#[serial]
-fn test_release_core_handle_safety() {
-    unsafe {
-        // Test 1: Release null handle (should be safe no-op)
-        ffi_dash_spv_release_core_handle(ptr::null_mut());
-
-        // Test 2: Double-free prevention
-        // In a real implementation with a valid handle:
-        // let handle = create_valid_handle();
-        // ffi_dash_spv_release_core_handle(handle);
-        // ffi_dash_spv_release_core_handle(handle); // Should be safe
     }
 }
 
@@ -227,16 +208,7 @@ fn test_thread_safety_concurrent_access() {
 #[serial]
 fn test_memory_safety_patterns() {
     unsafe {
-        // Test 1: Use after free prevention
-        // Get a handle and immediately release it
-        let handle = ffi_dash_spv_get_core_handle(ptr::null_mut());
-        if !handle.is_null() {
-            ffi_dash_spv_release_core_handle(handle);
-            // Attempting to use the handle again should be safe (no crash)
-            // In practice, the implementation should handle this gracefully
-        }
-
-        // Test 2: Buffer overflow prevention
+        // Test 1: Buffer overflow prevention
         let quorum_hash = [0u8; 32];
         let mut tiny_buffer = [0u8; 1]; // Way too small
 
@@ -258,11 +230,6 @@ fn test_memory_safety_patterns() {
 #[serial]
 fn test_error_propagation_thread_local() {
     unsafe {
-        // Test that errors are properly stored in thread-local storage
-
-        // Clear any previous error
-        dash_spv_ffi_clear_error();
-
         // Trigger an error
         let result = ffi_dash_spv_get_platform_activation_height(ptr::null_mut(), ptr::null_mut());
         assert_ne!(result.error_code, 0);
@@ -280,12 +247,6 @@ fn test_error_propagation_thread_local() {
 
             // Note: Error strings are managed internally
         }
-
-        // Verify error handling after retrieval
-        dash_spv_ffi_clear_error();
-        let second_error = dash_spv_ffi_get_last_error();
-        // Should be null after clearing
-        assert!(second_error.is_null(), "Error should be cleared");
     }
 }
 
@@ -325,9 +286,6 @@ fn test_boundary_conditions() {
 #[serial]
 fn test_error_string_lifecycle() {
     unsafe {
-        // Clear errors first
-        dash_spv_ffi_clear_error();
-
         // Trigger an error to generate an error string
         let _ = ffi_dash_spv_get_platform_activation_height(ptr::null_mut(), ptr::null_mut());
 
@@ -342,33 +300,6 @@ fn test_error_string_lifecycle() {
             // Multiple calls should return the same pointer until cleared
             let error2 = dash_spv_ffi_get_last_error();
             assert_eq!(error, error2, "Should return same error pointer");
-
-            // Clear and verify it's gone
-            dash_spv_ffi_clear_error();
-            let error3 = dash_spv_ffi_get_last_error();
-            assert!(error3.is_null(), "Error should be null after clear");
         }
-    }
-}
-
-/// Test handle reference counting and lifecycle
-#[test]
-#[serial]
-fn test_handle_lifecycle() {
-    unsafe {
-        // Test null handle operations
-        let null_client: *mut FFIDashSpvClient = ptr::null_mut();
-        let null_handle: *mut CoreSDKHandle = ptr::null_mut();
-
-        // Getting core handle from null client
-        let handle = ffi_dash_spv_get_core_handle(null_client);
-        assert!(handle.is_null());
-
-        // Releasing null handle should be safe
-        ffi_dash_spv_release_core_handle(null_handle);
-
-        // Multiple releases of null should be safe
-        ffi_dash_spv_release_core_handle(null_handle);
-        ffi_dash_spv_release_core_handle(null_handle);
     }
 }
