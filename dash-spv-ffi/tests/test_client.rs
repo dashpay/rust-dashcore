@@ -40,7 +40,6 @@ mod tests {
         unsafe {
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-            dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
         }
 
         (config, temp_dir)
@@ -97,9 +96,6 @@ mod tests {
 
             let progress = dash_spv_ffi_client_get_sync_progress(std::ptr::null_mut());
             assert!(progress.is_null());
-
-            let stats = dash_spv_ffi_client_get_stats(std::ptr::null_mut());
-            assert!(stats.is_null());
         }
     }
 
@@ -129,13 +125,6 @@ mod tests {
             let (config, _temp_dir) = create_test_config();
             let client = dash_spv_ffi_client_new(config);
 
-            let stats = dash_spv_ffi_client_get_stats(client);
-            if !stats.is_null() {
-                let _stats_ref = &*stats;
-                // headers_downloaded and bytes_received are u64, always >= 0
-                dash_spv_ffi_spv_stats_destroy(stats);
-            }
-
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);
         }
@@ -160,9 +149,6 @@ mod tests {
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
 
-            // Enable test mode to use deterministic peers
-            dash_spv_ffi_enable_test_mode();
-
             // Create client
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null(), "Failed to create client");
@@ -180,7 +166,7 @@ mod tests {
 
             // Run the diagnostic sync test
             println!("Running sync diagnostic test...");
-            let test_result = dash_spv_ffi_client_test_sync(client);
+            let test_result = client_test_sync(&*client);
 
             if test_result == FFIErrorCode::Success as i32 {
                 println!("✅ Sync test passed!");

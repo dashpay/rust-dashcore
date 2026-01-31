@@ -5,6 +5,7 @@
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::{wallet, wallet_manager, FFINetwork};
+    use key_wallet_manager::wallet_interface::WalletInterface;
     use std::ffi::{CStr, CString};
     use std::ptr;
     use std::slice;
@@ -441,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wallet_manager_current_height() {
+    fn test_wallet_manager_synced_height() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
@@ -458,7 +459,7 @@ mod tests {
             let manager_ref = &*manager;
             manager_ref.runtime.block_on(async {
                 let mut manager_guard = manager_ref.manager.write().await;
-                manager_guard.update_height(new_height);
+                manager_guard.update_synced_height(new_height);
             });
         }
 

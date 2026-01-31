@@ -5,17 +5,30 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
-use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction, Txid};
 
 /// Result of processing a block through the wallet
 #[derive(Debug, Default, Clone)]
 pub struct BlockProcessingResult {
-    /// Transaction IDs that were relevant to the wallet
-    pub relevant_txids: Vec<Txid>,
+    /// Transaction IDs that were newly discovered
+    pub new_txids: Vec<Txid>,
+    /// Transaction IDs that were already in wallet history
+    pub existing_txids: Vec<Txid>,
     /// New addresses generated during gap limit maintenance
     pub new_addresses: Vec<Address>,
+}
+
+impl BlockProcessingResult {
+    /// Returns all relevant transaction IDs (new and existing)
+    pub fn relevant_txids(&self) -> impl Iterator<Item = &Txid> {
+        self.new_txids.iter().chain(self.existing_txids.iter())
+    }
+
+    /// Returns the count of all relevant transactions (new and existing)
+    pub fn relevant_tx_count(&self) -> usize {
+        self.new_txids.len() + self.existing_txids.len()
+    }
 }
 
 /// Trait for wallet implementations to receive SPV events
@@ -33,13 +46,8 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Called when a transaction is seen in the mempool
     async fn process_mempool_transaction(&mut self, tx: &Transaction);
 
-    /// Check if a compact filter matches any watched items
-    /// Returns true if the block should be downloaded
-    async fn check_compact_filter(
-        &mut self,
-        filter: &BlockFilter,
-        block_hash: &dashcore::BlockHash,
-    ) -> bool;
+    /// Get all addresses the wallet is monitoring for incoming transactions
+    fn monitored_addresses(&self) -> Vec<Address>;
 
     /// Return the wallet's per-transaction net change and involved addresses if known.
     /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.
@@ -60,6 +68,12 @@ pub trait WalletInterface: Send + Sync + 'static {
     async fn earliest_required_height(&self) -> CoreBlockHeight {
         0
     }
+
+    /// Return the last fully processed height of the wallet.
+    fn synced_height(&self) -> CoreBlockHeight;
+
+    /// Update the wallet's synced height. This also triggers balance updates.
+    fn update_synced_height(&mut self, height: CoreBlockHeight);
 
     /// Provide a human-readable description of the wallet implementation.
     ///

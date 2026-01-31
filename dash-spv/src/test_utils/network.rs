@@ -1,22 +1,28 @@
-use std::any::Any;
-use std::collections::VecDeque;
-
+use crate::error::{NetworkError, NetworkResult};
+use crate::network::{Message, MessageDispatcher, MessageType, NetworkManager};
 use async_trait::async_trait;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{
     block::Header as BlockHeader, network::constants::ServiceFlags,
     network::message::NetworkMessage, network::message_blockdata::GetHeadersMessage, BlockHash,
 };
 use dashcore_hashes::Hash;
+use std::any::Any;
+use std::net::SocketAddr;
+use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::error::{NetworkError, NetworkResult};
-use crate::network::NetworkManager;
-use crate::types::PeerInfo;
+pub fn test_socket_address(id: u8) -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, id], id as u16))
+}
 
 /// Mock network manager for testing
 pub struct MockNetworkManager {
     connected: bool,
-    messages: VecDeque<NetworkMessage>,
+    connected_peer: SocketAddr,
     headers_chain: Vec<BlockHeader>,
+    peer_best_height: Option<u32>,
+    message_dispatcher: MessageDispatcher,
+    sent_messages: Vec<NetworkMessage>,
 }
 
 impl MockNetworkManager {
@@ -24,8 +30,11 @@ impl MockNetworkManager {
     pub fn new() -> Self {
         Self {
             connected: true,
-            messages: VecDeque::new(),
+            connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
             headers_chain: Vec::new(),
+            peer_best_height: None,
+            message_dispatcher: MessageDispatcher::default(),
+            sent_messages: Vec::new(),
         }
     }
 
@@ -83,6 +92,10 @@ impl MockNetworkManager {
             Vec::new()
         }
     }
+
+    pub fn sent_messages(&self) -> &Vec<NetworkMessage> {
+        &self.sent_messages
+    }
 }
 
 impl Default for MockNetworkManager {
@@ -97,6 +110,10 @@ impl NetworkManager for MockNetworkManager {
         self
     }
 
+    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.message_receiver(types)
+    }
+
     async fn connect(&mut self) -> NetworkResult<()> {
         self.connected = true;
         Ok(())
@@ -104,7 +121,6 @@ impl NetworkManager for MockNetworkManager {
 
     async fn disconnect(&mut self) -> NetworkResult<()> {
         self.connected = false;
-        self.messages.clear();
         Ok(())
     }
 
@@ -117,20 +133,14 @@ impl NetworkManager for MockNetworkManager {
         if let NetworkMessage::GetHeaders(ref getheaders) = message {
             let headers = self.process_getheaders(getheaders);
             if !headers.is_empty() {
-                self.messages.push_back(NetworkMessage::Headers(headers));
+                let message = Message::new(self.connected_peer, NetworkMessage::Headers(headers));
+                self.message_dispatcher.dispatch(&message);
             }
         }
 
+        self.sent_messages.push(message);
+
         Ok(())
-    }
-
-    async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
-        if !self.connected {
-            return Err(NetworkError::NotConnected);
-        }
-
-        // Then check our internal queue
-        Ok(self.messages.pop_front())
     }
 
     fn is_connected(&self) -> bool {
@@ -145,43 +155,11 @@ impl NetworkManager for MockNetworkManager {
         }
     }
 
-    fn peer_info(&self) -> Vec<PeerInfo> {
-        if self.connected {
-            vec![PeerInfo {
-                address: "127.0.0.1:9999".parse().unwrap(),
-                connected: true,
-                last_seen: std::time::SystemTime::now(),
-                version: Some(70015),
-                services: Some(1),
-                user_agent: Some("/MockPeer:1.0.0/".to_string()),
-                best_height: Some(self.headers_chain.len() as u32),
-                wants_dsq_messages: None,
-                has_sent_headers2: false,
-            }]
-        } else {
-            vec![]
-        }
-    }
-
-    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
-        Ok(Some(self.headers_chain.len() as u32))
+    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight> {
+        self.peer_best_height
     }
 
     async fn has_peer_with_service(&self, _service_flags: ServiceFlags) -> bool {
         self.connected
-    }
-
-    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        // For mock, always return PeerId(1) when connected
-        if self.connected {
-            crate::types::PeerId(1)
-        } else {
-            crate::types::PeerId(0)
-        }
-    }
-
-    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
-        // Mock implementation - do nothing
-        Ok(())
     }
 }

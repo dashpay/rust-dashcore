@@ -4,9 +4,11 @@
 //! each of which can have multiple accounts. This follows the architecture
 //! pattern where a manager oversees multiple distinct wallets.
 
+mod matching;
 mod process_block;
 mod transaction_building;
 
+pub use crate::wallet_manager::matching::{check_compact_filters_for_addresses, FilterMatchKey};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -54,6 +56,8 @@ pub struct AddressGenerationResult {
 pub struct CheckTransactionsResult {
     /// Wallets that found the transaction relevant
     pub affected_wallets: Vec<WalletId>,
+    /// Set to false if the transaction was already stored and is being re-processed (e.g., during rescan)
+    pub is_new_transaction: bool,
     /// New addresses generated during gap limit maintenance
     pub new_addresses: Vec<Address>,
 }
@@ -66,8 +70,8 @@ pub struct CheckTransactionsResult {
 pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     /// Network the managed wallets are used for
     network: Network,
-    /// Current block height for this network
-    current_height: CoreBlockHeight,
+    /// Last fully processed block height.
+    synced_height: CoreBlockHeight,
     /// Immutable wallets indexed by wallet ID
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
@@ -79,7 +83,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn new(network: Network) -> Self {
         Self {
             network,
-            current_height: 0,
+            synced_height: 0,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
         }
@@ -268,7 +272,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.current_height);
+        managed_info.set_birth_height(self.synced_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -360,7 +364,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.current_height);
+        managed_info.set_birth_height(self.synced_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -407,7 +411,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.current_height);
+        managed_info.set_birth_height(self.synced_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -451,7 +455,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         let mut managed_info = T::from_wallet(&wallet);
 
         // Use the current height as the birth height since we don't know when it was originally created
-        managed_info.set_birth_height(self.current_height);
+        managed_info.set_birth_height(self.synced_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -486,6 +490,10 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 // If the transaction is relevant
                 if check_result.is_relevant {
                     result.affected_wallets.push(wallet_id);
+                    // If any wallet reports this as new, mark result as new
+                    if check_result.is_new_transaction {
+                        result.is_new_transaction = true;
+                    }
                     // Note: balance update is already handled in check_transaction
                 }
 
@@ -944,19 +952,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// Get the network this manager is configured for
     pub fn network(&self) -> Network {
         self.network
-    }
-
-    /// Get current block height for a specific network
-    pub fn current_height(&self) -> u32 {
-        self.current_height
-    }
-
-    /// Update current block height and propagate to all wallet infos
-    pub fn update_height(&mut self, height: u32) {
-        self.current_height = height;
-        for info in self.wallet_infos.values_mut() {
-            info.update_synced_height(height);
-        }
     }
 
     /// Get monitored addresses for all wallets for a specific network

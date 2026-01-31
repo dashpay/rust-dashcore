@@ -57,13 +57,6 @@ mod tests {
             let result = dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
             assert_eq!(result, FFIErrorCode::Success as i32);
 
-            let data_dir = dash_spv_ffi_config_get_data_dir(config);
-            if !data_dir.ptr.is_null() {
-                let dir_str = FFIString::from_ptr(data_dir.ptr).unwrap();
-                assert_eq!(dir_str, "/tmp/dash-spv-test");
-                dash_spv_ffi_string_destroy(data_dir);
-            }
-
             dash_spv_ffi_config_destroy(config);
         }
     }
@@ -85,27 +78,9 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_config_validation_mode() {
-        unsafe {
-            let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
-
-            let result = dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::Full);
-            assert_eq!(result, FFIErrorCode::Success as i32);
-
-            dash_spv_ffi_config_destroy(config);
-        }
-    }
-
-    #[test]
-    #[serial]
     fn test_config_peers() {
         unsafe {
             let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
-
-            let result = dash_spv_ffi_config_set_max_peers(config, 10);
-            assert_eq!(result, FFIErrorCode::Success as i32);
-
-            // min_peers not available in dash-spv, only max_peers
 
             let peer_addr = CString::new("127.0.0.1:9999").unwrap();
             let result = dash_spv_ffi_config_add_peer(config, peer_addr.as_ptr());
@@ -127,22 +102,6 @@ mod tests {
 
             let agent = CString::new("TestAgent/1.0").unwrap();
             let result = dash_spv_ffi_config_set_user_agent(config, agent.as_ptr());
-            assert_eq!(result, FFIErrorCode::Success as i32);
-
-            dash_spv_ffi_config_destroy(config);
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn test_config_booleans() {
-        unsafe {
-            let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
-
-            let result = dash_spv_ffi_config_set_relay_transactions(config, true);
-            assert_eq!(result, FFIErrorCode::Success as i32);
-
-            let result = dash_spv_ffi_config_set_filter_load(config, false);
             assert_eq!(result, FFIErrorCode::Success as i32);
 
             dash_spv_ffi_config_destroy(config);

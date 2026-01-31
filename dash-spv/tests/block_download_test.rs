@@ -9,13 +9,15 @@ use tokio::sync::Mutex;
 use dashcore::block::Block;
 
 use dash_spv::{
-    client::ClientConfig, storage::DiskStorageManager, sync::FilterSyncManager, types::FilterMatch,
+    client::ClientConfig, storage::DiskStorageManager, sync::legacy::FilterSyncManager,
+    types::FilterMatch,
 };
 
 fn create_test_config() -> ClientConfig {
     ClientConfig::testnet()
         .without_masternodes()
         .with_validation_mode(dash_spv::types::ValidationMode::None)
+        .with_storage_path(TempDir::new().unwrap().path())
 }
 
 #[tokio::test]
@@ -138,9 +140,7 @@ async fn test_sync_manager_integration() {}
 #[tokio::test]
 async fn test_filter_match_and_download_workflow() {
     let config = create_test_config();
-    let _storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
-        .await
-        .expect("Failed to create tmp storage");
+    let _storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
     let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);

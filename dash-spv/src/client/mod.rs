@@ -24,9 +24,8 @@
 //! When acquiring multiple locks, ALWAYS use this order:
 //! 1. running (`Arc<RwLock<bool>>`)
 //! 2. state (`Arc<RwLock<ChainState>>`)
-//! 3. stats (`Arc<RwLock<SpvStats>>`)
-//! 4. mempool_state (`Arc<RwLock<MempoolState>>`)
-//! 5. storage (`Arc<Mutex<S>>`)
+//! 3. mempool_state (`Arc<RwLock<MempoolState>>`)
+//! 4. storage (`Arc<Mutex<S>>`)
 //!
 //! Never acquire locks in reverse order or deadlock will occur!
 
@@ -64,12 +63,14 @@ mod message_handler_test;
 #[cfg(test)]
 mod tests {
     use super::{ClientConfig, DashSpvClient};
+    use crate::client::config::MempoolStrategy;
     use crate::storage::DiskStorageManager;
     use crate::{test_utils::MockNetworkManager, types::UnconfirmedTransaction};
-    use dashcore::{Address, Amount, Network, Transaction, TxOut};
+    use dashcore::{Address, Amount, Transaction, TxOut};
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::wallet_manager::WalletManager;
     use std::sync::Arc;
+    use tempfile::TempDir;
     use tokio::sync::RwLock;
 
     // Tests for get_mempool_balance function
@@ -80,13 +81,11 @@ mod tests {
 
     #[tokio::test]
     async fn client_exposes_shared_wallet_manager() {
-        let config = ClientConfig {
-            network: Network::Dash,
-            enable_filters: false,
-            enable_masternodes: false,
-            enable_mempool_tracking: false,
-            ..Default::default()
-        };
+        let config = ClientConfig::mainnet()
+            .without_filters()
+            .without_masternodes()
+            .with_mempool_tracking(MempoolStrategy::FetchAll)
+            .with_storage_path(TempDir::new().unwrap().path());
 
         let network_manager = MockNetworkManager::new();
         let storage =
@@ -108,30 +107,21 @@ mod tests {
         // This test validates the get_mempool_balance logic by directly testing
         // the balance calculation code using a mocked mempool state.
 
-        let config = ClientConfig {
-            network: Network::Testnet,
-            enable_filters: false,
-            enable_masternodes: false,
-            enable_mempool_tracking: true,
-            ..Default::default()
-        };
+        let config = ClientConfig::testnet()
+            .without_filters()
+            .without_masternodes()
+            .with_mempool_tracking(MempoolStrategy::FetchAll)
+            .with_storage_path(TempDir::new().unwrap().path());
 
         let network_manager = MockNetworkManager::new();
-        let storage =
-            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
+        let storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
         let test_address = Address::dummy(config.network, 0);
 
-        let mut client = DashSpvClient::new(config, network_manager, storage, wallet)
+        let client = DashSpvClient::new(config, network_manager, storage, wallet)
             .await
             .expect("client construction must succeed");
-
-        // Enable mempool tracking to initialize mempool_filter
-        client
-            .enable_mempool_tracking(crate::client::config::MempoolStrategy::BloomFilter)
-            .await
-            .expect("enable mempool tracking must succeed");
 
         // Create a transaction that sends 10 Dash to the test address
         let tx = Transaction {

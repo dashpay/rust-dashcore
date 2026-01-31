@@ -1,30 +1,31 @@
 //! Message handlers for synchronization phases.
 
-use std::ops::DerefMut;
-use std::time::Instant;
-
+use dashcore::bip158::BlockFilter;
 use dashcore::block::Block;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
-
-use crate::error::{SyncError, SyncResult};
-use crate::network::NetworkManager;
-use crate::storage::StorageManager;
-use key_wallet_manager::wallet_interface::WalletInterface;
+use std::collections::HashMap;
+use std::time::Instant;
 
 use super::manager::SyncManager;
 use super::phases::SyncPhase;
+use crate::error::{SyncError, SyncResult};
+use crate::network::{Message, NetworkManager};
+use crate::storage::StorageManager;
+use crate::types::HashedBlock;
+use key_wallet_manager::wallet_interface::WalletInterface;
+use key_wallet_manager::wallet_manager::{check_compact_filters_for_addresses, FilterMatchKey};
 
 impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N, W> {
     /// Handle incoming network messages with phase filtering
     pub async fn handle_message(
         &mut self,
-        message: &NetworkMessage,
+        message: &Message,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
         // Special handling for blocks - they can arrive at any time due to filter matches
-        if let NetworkMessage::Block(block) = message {
+        if let NetworkMessage::Block(block) = message.inner() {
             // Always handle blocks when they arrive, regardless of phase
             // This is important because we request blocks when filters match
             tracing::info!(
@@ -49,17 +50,17 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         }
 
         // Check if this message is expected in the current phase
-        if !self.is_message_expected_in_phase(message) {
+        if !self.is_message_expected_in_phase(message.inner()) {
             tracing::debug!(
                 "Ignoring unexpected {:?} message in phase {}",
-                std::mem::discriminant(message),
+                std::mem::discriminant(message.inner()),
                 self.current_phase.name()
             );
             return Ok(());
         }
 
         // Route to appropriate handler based on current phase
-        match (&mut self.current_phase, message) {
+        match (&mut self.current_phase, message.inner()) {
             (
                 SyncPhase::DownloadingHeaders {
                     ..
@@ -83,6 +84,12 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
                 },
                 NetworkMessage::CFHeaders(cfheaders),
             ) => {
+                tracing::debug!(
+                    "📨 Received CFHeaders ({} headers) from {} (stop_hash={})",
+                    cfheaders.filter_hashes.len(),
+                    message.peer_address(),
+                    cfheaders.stop_hash
+                );
                 self.handle_cfheaders_message(cfheaders, network, storage).await?;
             }
 
@@ -427,15 +434,6 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        // Log source peer for CFHeaders batches when possible
-        if let Some(addr) = network.get_last_message_peer_addr().await {
-            tracing::debug!(
-                "📨 Received CFHeaders ({} headers) from {} (stop_hash={})",
-                cfheaders.filter_hashes.len(),
-                addr,
-                cfheaders.stop_hash
-            );
-        }
         let continue_sync =
             self.filter_sync.handle_cfheaders_message(cfheaders.clone(), storage, network).await?;
 
@@ -481,22 +479,7 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
-        // Include peer address when available for diagnostics
-        let peer_addr = network.get_last_message_peer_addr().await;
-        match peer_addr {
-            Some(addr) => {
-                tracing::debug!(
-                    "📨 Received CFilter for block {} from {}",
-                    cfilter.block_hash,
-                    addr
-                );
-            }
-            None => {
-                tracing::debug!("📨 Received CFilter for block {}", cfilter.block_hash);
-            }
-        }
-
-        let mut wallet = self.wallet.write().await;
+        tracing::debug!("📨 Received CFilter for block {}", cfilter.block_hash);
 
         // Check filter against wallet if available
         // First, verify filter data matches expected filter header chain
@@ -531,26 +514,14 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store filter: {}", e)))?;
 
-        let matches = self
-            .filter_sync
-            .check_filter_for_matches(&cfilter.filter, &cfilter.block_hash, wallet.deref_mut())
-            .await?;
+        self.wallet.write().await.update_synced_height(height);
 
-        drop(wallet);
+        let key = FilterMatchKey::new(height, cfilter.block_hash);
+        let input = HashMap::from([(key, BlockFilter::new(&cfilter.filter))]);
+        let addresses = self.wallet.read().await.monitored_addresses();
+        let matches = check_compact_filters_for_addresses(&input, addresses);
 
-        {
-            let mut stats_lock = self.stats.write().await;
-            stats_lock.filters_received += 1;
-            stats_lock.last_filter_received_time = Some(std::time::Instant::now());
-        }
-
-        if matches {
-            // Update filter match statistics
-            {
-                let mut stats = self.stats.write().await;
-                stats.filters_matched += 1;
-            }
-
+        if !matches.is_empty() {
             tracing::info!("🎯 Filter match found! Requesting block {}", cfilter.block_hash);
             // Request the full block
             let inv = Inventory::Block(cfilter.block_hash);
@@ -679,16 +650,24 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
 
         let result = wallet.process_block(block, block_height).await;
 
+        storage
+            .store_block(block_height, HashedBlock::from(block))
+            .await
+            .map_err(|e| SyncError::Storage(e.to_string()))?;
+
         drop(wallet);
 
-        if !result.relevant_txids.is_empty() {
+        let total_relevant = result.relevant_tx_count();
+        if total_relevant > 0 {
             tracing::info!(
-                "💰 Found {} relevant transactions in block {} at height {}",
-                result.relevant_txids.len(),
+                "Found {} relevant transactions ({} new, {} existing) in block {} at height {}",
+                total_relevant,
+                result.new_txids.len(),
+                result.existing_txids.len(),
                 block_hash,
                 block_height
             );
-            for txid in &result.relevant_txids {
+            for txid in result.relevant_txids() {
                 tracing::debug!("  - Transaction: {}", txid);
             }
         }

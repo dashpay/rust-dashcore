@@ -1,6 +1,6 @@
 # Dash SPV Client - Comprehensive Code Guide
 
-**Version:** 0.41.0
+**Version:** 0.42.0
 
 ## Table of Contents
 

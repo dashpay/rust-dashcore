@@ -4,9 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::fmt::Write as _;
-use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Block, BlockHash, Transaction};
+use dashcore::{Address, Block, Transaction};
 use key_wallet::transaction_checking::transaction_router::TransactionRouter;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -33,13 +32,17 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             let check_result = self.check_transaction_in_all_wallets(tx, context, true).await;
 
             if !check_result.affected_wallets.is_empty() {
-                result.relevant_txids.push(tx.txid());
+                if check_result.is_new_transaction {
+                    result.new_txids.push(tx.txid());
+                } else {
+                    result.existing_txids.push(tx.txid());
+                }
             }
 
             result.new_addresses.extend(check_result.new_addresses);
         }
 
-        self.update_height(height);
+        self.update_synced_height(height);
 
         result
     }
@@ -54,30 +57,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         .await;
     }
 
-    async fn check_compact_filter(&mut self, filter: &BlockFilter, block_hash: &BlockHash) -> bool {
-        // Collect all scripts we're watching
-        let mut script_bytes = Vec::new();
-
-        // Get all wallet addresses for this network
-        for info in self.wallet_infos.values() {
-            let monitored = info.monitored_addresses();
-            for address in monitored {
-                script_bytes.push(address.script_pubkey().as_bytes().to_vec());
-            }
-        }
-
-        // If we don't watch any scripts for this network, there can be no match.
-        // Note: BlockFilterReader::match_any returns true for an empty query set,
-        // so we must guard this case explicitly to avoid false positives.
-        let hit = if script_bytes.is_empty() {
-            false
-        } else {
-            filter
-                .match_any(block_hash, &mut script_bytes.iter().map(|s| s.as_slice()))
-                .unwrap_or(false)
-        };
-
-        hit
+    fn monitored_addresses(&self) -> Vec<Address> {
+        self.monitored_addresses()
     }
 
     async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
@@ -124,6 +105,17 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.wallet_infos.values().map(|info| info.birth_height()).min().unwrap_or(0)
     }
 
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
+    }
+
+    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+        self.synced_height = height;
+        for info in self.wallet_infos.values_mut() {
+            info.update_synced_height(height);
+        }
+    }
+
     async fn describe(&self) -> String {
         let wallet_count = self.wallet_infos.len();
         if wallet_count == 0 {
@@ -151,5 +143,28 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             self.network,
             details.join("\n")
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashcore::Network;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+
+    #[tokio::test]
+    async fn test_synced_height() {
+        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+        // Initial state
+        assert_eq!(manager.synced_height(), 0);
+        // Inrease synced height
+        manager.update_synced_height(1000);
+        assert_eq!(manager.synced_height(), 1000);
+        //Increase synced height again
+        manager.update_synced_height(5000);
+        assert_eq!(manager.synced_height(), 5000);
+        // Decrease synced height
+        manager.update_synced_height(10);
+        assert_eq!(manager.synced_height(), 10);
     }
 }

@@ -1,15 +1,17 @@
 //! Storage abstraction for the Dash SPV client.
 
-pub(crate) mod io;
-
 pub mod types;
 
+mod block_headers;
 mod blocks;
 mod chainstate;
+mod filter_headers;
 mod filters;
+mod io;
 mod lockfile;
 mod masternode;
 mod metadata;
+mod peers;
 mod segments;
 mod transactions;
 
@@ -24,22 +26,25 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
-use crate::storage::blocks::{BlockHeaderTip, PersistentBlockHeaderStorage};
+use crate::storage::block_headers::{BlockHeaderTip, PersistentBlockHeaderStorage};
 use crate::storage::chainstate::PersistentChainStateStorage;
-use crate::storage::filters::{PersistentFilterHeaderStorage, PersistentFilterStorage};
+use crate::storage::filter_headers::PersistentFilterHeaderStorage;
+use crate::storage::filters::PersistentFilterStorage;
 use crate::storage::lockfile::LockFile;
 use crate::storage::masternode::PersistentMasternodeStateStorage;
 use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
-use crate::types::{MempoolState, UnconfirmedTransaction};
-use crate::ChainState;
+use crate::types::{HashedBlock, MempoolState, UnconfirmedTransaction};
+use crate::{ChainState, ClientConfig};
 
-pub use crate::storage::blocks::BlockHeaderStorage;
+pub use crate::storage::block_headers::BlockHeaderStorage;
+pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::chainstate::ChainStateStorage;
-pub use crate::storage::filters::FilterHeaderStorage;
+pub use crate::storage::filter_headers::FilterHeaderStorage;
 pub use crate::storage::filters::FilterStorage;
 pub use crate::storage::masternode::MasternodeStateStorage;
 pub use crate::storage::metadata::MetadataStorage;
+pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
 pub use crate::storage::transactions::TransactionStorage;
 
 pub use types::*;
@@ -58,6 +63,7 @@ pub trait StorageManager:
     BlockHeaderStorage
     + FilterHeaderStorage
     + FilterStorage
+    + BlockStorage
     + TransactionStorage
     + MetadataStorage
     + ChainStateStorage
@@ -82,6 +88,7 @@ pub struct DiskStorageManager {
     block_headers: Arc<RwLock<PersistentBlockHeaderStorage>>,
     filter_headers: Arc<RwLock<PersistentFilterHeaderStorage>>,
     filters: Arc<RwLock<PersistentFilterStorage>>,
+    blocks: Arc<RwLock<PersistentBlockStorage>>,
     transactions: Arc<RwLock<PersistentTransactionStorage>>,
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
     chainstate: Arc<RwLock<PersistentChainStateStorage>>,
@@ -94,10 +101,10 @@ pub struct DiskStorageManager {
 }
 
 impl DiskStorageManager {
-    pub async fn new(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
+    pub async fn new(config: &ClientConfig) -> StorageResult<Self> {
         use std::fs;
 
-        let storage_path = storage_path.into();
+        let storage_path = config.storage_path.clone();
         let lock_file = {
             let mut lock_file = storage_path.clone();
             lock_file.set_extension("lock");
@@ -118,6 +125,7 @@ impl DiskStorageManager {
                 PersistentFilterHeaderStorage::open(&storage_path).await?,
             )),
             filters: Arc::new(RwLock::new(PersistentFilterStorage::open(&storage_path).await?)),
+            blocks: Arc::new(RwLock::new(PersistentBlockStorage::open(&storage_path).await?)),
             transactions: Arc::new(RwLock::new(
                 PersistentTransactionStorage::open(&storage_path).await?,
             )),
@@ -144,7 +152,7 @@ impl DiskStorageManager {
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new()?;
-        Self::new(temp_dir.path()).await
+        Self::new(&ClientConfig::testnet().with_storage_path(temp_dir.path())).await
     }
 
     /// Start the background worker saving data every 5 seconds
@@ -152,6 +160,7 @@ impl DiskStorageManager {
         let block_headers = Arc::clone(&self.block_headers);
         let filter_headers = Arc::clone(&self.filter_headers);
         let filters = Arc::clone(&self.filters);
+        let blocks = Arc::clone(&self.blocks);
         let transactions = Arc::clone(&self.transactions);
         let metadata = Arc::clone(&self.metadata);
         let chainstate = Arc::clone(&self.chainstate);
@@ -168,6 +177,7 @@ impl DiskStorageManager {
                 let _ = block_headers.write().await.persist(&storage_path).await;
                 let _ = filter_headers.write().await.persist(&storage_path).await;
                 let _ = filters.write().await.persist(&storage_path).await;
+                let _ = blocks.write().await.persist(&storage_path).await;
                 let _ = transactions.write().await.persist(&storage_path).await;
                 let _ = metadata.write().await.persist(&storage_path).await;
                 let _ = chainstate.write().await.persist(&storage_path).await;
@@ -191,6 +201,7 @@ impl DiskStorageManager {
         let _ = self.block_headers.write().await.persist(storage_path).await;
         let _ = self.filter_headers.write().await.persist(storage_path).await;
         let _ = self.filters.write().await.persist(storage_path).await;
+        let _ = self.blocks.write().await.persist(storage_path).await;
         let _ = self.transactions.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
         let _ = self.chainstate.write().await.persist(storage_path).await;
@@ -229,6 +240,7 @@ impl StorageManager for DiskStorageManager {
         self.filter_headers =
             Arc::new(RwLock::new(PersistentFilterHeaderStorage::open(storage_path).await?));
         self.filters = Arc::new(RwLock::new(PersistentFilterStorage::open(storage_path).await?));
+        self.blocks = Arc::new(RwLock::new(PersistentBlockStorage::open(storage_path).await?));
         self.transactions =
             Arc::new(RwLock::new(PersistentTransactionStorage::open(storage_path).await?));
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
@@ -252,7 +264,7 @@ impl StorageManager for DiskStorageManager {
 }
 
 #[async_trait]
-impl blocks::BlockHeaderStorage for DiskStorageManager {
+impl BlockHeaderStorage for DiskStorageManager {
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
         self.block_headers.write().await.store_headers(headers).await
     }
@@ -294,9 +306,17 @@ impl blocks::BlockHeaderStorage for DiskStorageManager {
 }
 
 #[async_trait]
-impl filters::FilterHeaderStorage for DiskStorageManager {
+impl FilterHeaderStorage for DiskStorageManager {
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
         self.filter_headers.write().await.store_filter_headers(headers).await
+    }
+
+    async fn store_filter_headers_at_height(
+        &mut self,
+        headers: &[FilterHeader],
+        height: u32,
+    ) -> StorageResult<()> {
+        self.filter_headers.write().await.store_filter_headers_at_height(headers, height).await
     }
 
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
@@ -320,6 +340,17 @@ impl filters::FilterStorage for DiskStorageManager {
 
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>> {
         self.filters.read().await.load_filters(range).await
+    }
+}
+
+#[async_trait]
+impl BlockStorage for DiskStorageManager {
+    async fn store_block(&mut self, height: u32, block: HashedBlock) -> StorageResult<()> {
+        self.blocks.write().await.store_block(height, block).await
+    }
+
+    async fn load_block(&self, height: u32) -> StorageResult<Option<HashedBlock>> {
+        self.blocks.read().await.load_block(height).await
     }
 }
 
@@ -394,134 +425,193 @@ impl masternode::MasternodeStateStorage for DiskStorageManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::ChainState;
-
     use super::*;
     use dashcore::Header as BlockHeader;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_load_headers() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_store_load_headers() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
         let temp_dir = TempDir::new()?;
-        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
-            .await
-            .expect("Unable to create storage");
+        let config = ClientConfig::testnet().with_storage_path(temp_dir.path());
+        let mut storage = DiskStorageManager::new(&config).await.expect("Unable to create storage");
 
-        // Create a test header
-        let test_header = BlockHeader::dummy(1);
+        let headers = BlockHeader::dummy_batch(0..60_000);
 
-        // Store just one header
-        storage.store_headers(&[test_header]).await?;
+        storage.store_headers(&headers[0..0]).await.expect("Should handle empty header batch");
+        assert_eq!(storage.get_tip_height().await, None);
 
+        storage.store_headers(&headers[0..1]).await.expect("Failed to store headers");
         let loaded_headers = storage.load_headers(0..1).await?;
-
-        // Should only get back the one header we stored
         assert_eq!(loaded_headers.len(), 1);
-        assert_eq!(loaded_headers[0], test_header);
+        assert_eq!(loaded_headers[0], headers[0]);
+
+        storage.store_headers(&headers[1..100]).await.expect("Failed to store headers");
+        let loaded_headers = storage.load_headers(50..60).await.unwrap();
+        assert_eq!(loaded_headers.len(), 10);
+        assert_eq!(&loaded_headers, &headers[50..60]);
+
+        storage.store_headers(&headers[100..headers.len()]).await.expect("Failed to store headers");
+
+        let tip_height = storage.get_tip_height().await.unwrap();
+        let tip_header = storage.get_header(tip_height).await.unwrap().unwrap();
+        let expected_header = &headers[headers.len() - 1];
+        assert_eq!(tip_header, *expected_header);
+
+        let non_existing_height = tip_height + 1;
+        let non_existing_header = storage.get_header(non_existing_height).await.unwrap();
+        assert!(non_existing_header.is_none());
+
+        storage.shutdown().await;
+        drop(storage);
+        let storage = DiskStorageManager::new(&config).await.expect("Unable to open storage");
+
+        let loaded_headers = storage.load_headers(49_999..50_002).await.unwrap();
+        assert_eq!(loaded_headers.len(), 3);
+        assert_eq!(&loaded_headers, &headers[49_999..50_002]);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_checkpoint_storage_indexing() -> StorageResult<()> {
-        let temp_dir = tempdir().expect("Failed to create temp dir");
-        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = ClientConfig::testnet().with_storage_path(temp_dir.path());
+        let mut storage = DiskStorageManager::new(&config).await?;
 
         // Create test headers starting from checkpoint height
-        let checkpoint_height = 1_100_000;
-        let headers = BlockHeader::dummy_batch(checkpoint_height..checkpoint_height + 100);
+        const CHECKPOINT_HEIGHT: u32 = 1_100_000;
+        let headers: Vec<BlockHeader> =
+            BlockHeader::dummy_batch(CHECKPOINT_HEIGHT..CHECKPOINT_HEIGHT + 100);
 
-        let mut base_state = ChainState::new();
-        base_state.sync_base_height = checkpoint_height;
-        storage.store_chain_state(&base_state).await?;
+        storage.store_headers_at_height(&headers, CHECKPOINT_HEIGHT).await?;
 
-        storage.store_headers_at_height(&headers, checkpoint_height).await?;
-        assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
+        check_storage(&storage, &headers).await?;
 
-        // Verify headers are stored at correct blockchain heights
-        let header_at_base = storage.get_header(checkpoint_height).await?;
-        assert_eq!(
-            header_at_base.expect("Header at base blockchain height should exist"),
-            headers[0]
-        );
-
-        let header_at_ending = storage.get_header(checkpoint_height + 99).await?;
-        assert_eq!(
-            header_at_ending.expect("Header at ending blockchain height should exist"),
-            headers[99]
-        );
-
-        // Test the reverse index (hash -> blockchain height)
-        let hash_0 = headers[0].block_hash();
-        let height_0 = storage.get_header_height_by_hash(&hash_0).await?;
-        assert_eq!(
-            height_0,
-            Some(checkpoint_height),
-            "Hash should map to blockchain height 1,100,000"
-        );
-
-        let hash_99 = headers[99].block_hash();
-        let height_99 = storage.get_header_height_by_hash(&hash_99).await?;
-        assert_eq!(
-            height_99,
-            Some(checkpoint_height + 99),
-            "Hash should map to blockchain height 1,100,099"
-        );
-
-        // Store chain state to persist sync_base_height
-        let mut chain_state = ChainState::new();
-        chain_state.sync_base_height = checkpoint_height;
-        storage.store_chain_state(&chain_state).await?;
-
-        // Force save to disk
-        storage.persist().await;
-
+        storage.shutdown().await;
         drop(storage);
 
-        // Create a new storage instance to test index rebuilding
-        let storage2 = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
+        let storage = DiskStorageManager::new(&config).await?;
 
-        // Verify the index was rebuilt correctly
-        let height_after_rebuild = storage2.get_header_height_by_hash(&hash_0).await?;
-        assert_eq!(
-            height_after_rebuild,
-            Some(checkpoint_height),
-            "After index rebuild, hash should still map to blockchain height 1,100,000"
-        );
+        check_storage(&storage, &headers).await?;
 
-        // Verify header can still be retrieved by blockchain height after reload
-        let header_after_reload = storage2.get_header(checkpoint_height).await?;
-        assert!(
-            header_after_reload.is_some(),
-            "Header at base blockchain height should exist after reload"
-        );
-        assert_eq!(header_after_reload.unwrap(), headers[0]);
+        return Ok(());
 
-        Ok(())
+        async fn check_storage(
+            storage: &DiskStorageManager,
+            headers: &[BlockHeader],
+        ) -> StorageResult<()> {
+            assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
+
+            let header_at_base = storage.get_header(CHECKPOINT_HEIGHT).await?;
+            assert_eq!(header_at_base, Some(headers[0]));
+
+            let header_at_ending = storage.get_header(CHECKPOINT_HEIGHT + 99).await?;
+            assert_eq!(header_at_ending, Some(headers[99]));
+
+            // Test the reverse index (hash -> blockchain height)
+            let hash_0 = headers[0].block_hash();
+            let height_0 = storage.get_header_height_by_hash(&hash_0).await?;
+            assert_eq!(
+                height_0,
+                Some(CHECKPOINT_HEIGHT),
+                "Hash should map to blockchain height 1,100,000"
+            );
+
+            let hash_99 = headers[99].block_hash();
+            let height_99 = storage.get_header_height_by_hash(&hash_99).await?;
+            assert_eq!(
+                height_99,
+                Some(CHECKPOINT_HEIGHT + 99),
+                "Hash should map to blockchain height 1,100,099"
+            );
+
+            Ok(())
+        }
     }
 
     #[tokio::test]
-    async fn test_shutdown_flushes_index() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = TempDir::new()?;
-        let base_path = temp_dir.path().to_path_buf();
-        let headers = BlockHeader::dummy_batch(0..11_000);
-        let last_hash = headers.last().unwrap().block_hash();
+    async fn test_reverse_index_disk_storage() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = ClientConfig::regtest().with_storage_path(temp_dir.path());
 
         {
-            let mut storage = DiskStorageManager::new(base_path.clone()).await?;
+            let mut storage = DiskStorageManager::new(&config).await.unwrap();
 
-            storage.store_headers(&headers[..10_000]).await?;
-            storage.persist().await;
+            // Create and store headers
+            let headers = BlockHeader::dummy_batch(0..10);
 
-            storage.store_headers(&headers[10_000..]).await?;
+            storage.store_headers(&headers).await.unwrap();
+
+            // Test reverse lookups
+            for (i, header) in headers.iter().enumerate() {
+                let hash = header.block_hash();
+                let height = storage.get_header_height_by_hash(&hash).await.unwrap();
+                assert_eq!(height, Some(i as u32), "Height mismatch for header {}", i);
+            }
+
             storage.shutdown().await;
         }
 
-        let storage = DiskStorageManager::new(base_path).await?;
-        let height = storage.get_header_height_by_hash(&last_hash).await?;
-        assert_eq!(height, Some(10_999));
+        // Test persistence - reload storage and verify index still works
+        {
+            let storage = DiskStorageManager::new(&config).await.unwrap();
 
-        Ok(())
+            // The index should have been rebuilt from the loaded headers
+            // We need to get the actual headers that were stored to test properly
+            for i in 0..10 {
+                let stored_header = storage.get_header(i).await.unwrap().unwrap();
+                let hash = stored_header.block_hash();
+                let height = storage.get_header_height_by_hash(&hash).await.unwrap();
+                assert_eq!(height, Some(i), "Height mismatch after reload for header {}", i);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_clear_clears_index() {
+        let mut storage =
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
+
+        // Store some headers
+        let header = BlockHeader::dummy_batch(0..1);
+        storage.store_headers(&header).await.unwrap();
+
+        let hash = header[0].block_hash();
+        assert!(storage.get_header_height_by_hash(&hash).await.unwrap().is_some());
+
+        // Clear storage
+        storage.clear().await.unwrap();
+
+        // Verify index is cleared
+        assert!(storage.get_header_height_by_hash(&hash).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_lock_lifecycle() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let path = temp_dir.path().to_path_buf();
+        let lock_path = {
+            let mut lock_file = path.clone();
+            lock_file.set_extension("lock");
+            lock_file
+        };
+        let config = ClientConfig::regtest().with_storage_path(path);
+
+        let mut storage1 = DiskStorageManager::new(&config).await.unwrap();
+        assert!(lock_path.exists(), "Lock file should exist while storage is open");
+        storage1.clear().await.expect("Failed to clear the storage");
+        assert!(lock_path.exists(), "Lock file should exist after storage is cleared");
+
+        let storage2 = DiskStorageManager::new(&config).await;
+        assert!(storage2.is_err(), "Second storage manager should fail");
+
+        // Lock file removed when storage drops
+        drop(storage1);
+        assert!(!lock_path.exists(), "Lock file should be removed after storage drops");
+
+        // Can reopen storage after previous one dropped
+        let storage3 = DiskStorageManager::new(&config).await;
+        assert!(storage3.is_ok(), "Should reopen after previous storage dropped");
     }
 }

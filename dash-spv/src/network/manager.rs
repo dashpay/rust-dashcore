@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time;
 
@@ -16,18 +16,21 @@ use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
-use crate::network::persist::PeerStore;
 use crate::network::pool::PeerPool;
 use crate::network::reputation::{
     misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
 };
-use crate::network::{HandshakeManager, NetworkManager, Peer};
-use crate::types::PeerInfo;
+use crate::network::{
+    HandshakeManager, Message, MessageDispatcher, MessageType, NetworkManager, Peer,
+};
+use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::CompressionState;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::Network;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
 /// Peer network manager
@@ -39,16 +42,13 @@ pub struct PeerNetworkManager {
     /// AddrV2 handler
     addrv2_handler: Arc<AddrV2Handler>,
     /// Peer persistence
-    peer_store: Arc<PeerStore>,
+    peer_store: Arc<PersistentPeerStorage>,
     /// Peer reputation manager
     reputation_manager: Arc<PeerReputationManager>,
     /// Network type
     network: Network,
     /// Shutdown token
     shutdown_token: CancellationToken,
-    /// Channel for incoming messages
-    message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
-    message_rx: Arc<Mutex<mpsc::Receiver<(SocketAddr, NetworkMessage)>>>,
     /// Background tasks
     tasks: Arc<Mutex<JoinSet<()>>>,
     /// Initial peer addresses
@@ -61,10 +61,6 @@ pub struct PeerNetworkManager {
     data_dir: PathBuf,
     /// Mempool strategy from config
     mempool_strategy: MempoolStrategy,
-    /// Last peer that sent us a message
-    last_message_peer: Arc<Mutex<Option<SocketAddr>>>,
-    /// Track which peers have sent us Headers2 messages
-    peers_sent_headers2: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Optional user agent to advertise
     user_agent: Option<String>,
     /// Exclusive mode: restrict to configured peers only (no DNS or peer store)
@@ -73,32 +69,21 @@ pub struct PeerNetworkManager {
     connected_peer_count: Arc<AtomicUsize>,
     /// Disable headers2 after decompression failure
     headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
+    /// Dispatcher for unbounded and message-type filtered message distribution.
+    message_dispatcher: Arc<Mutex<MessageDispatcher>>,
 }
 
 impl PeerNetworkManager {
     /// Create a new peer network manager
     pub async fn new(config: &ClientConfig) -> Result<Self, Error> {
-        let (message_tx, message_rx) = mpsc::channel(1000);
-
         let discovery = DnsDiscovery::new().await?;
-        let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
-        let peer_store = PeerStore::new(config.network, data_dir.clone());
+        let data_dir = config.storage_path.clone();
+
+        let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
 
         let reputation_manager = Arc::new(PeerReputationManager::new());
 
-        // Load reputation data if available
-        let reputation_path = data_dir.join("peer_reputation.json");
-
-        // Ensure the directory exists before attempting to load
-        if let Some(parent_dir) = reputation_path.parent() {
-            if !parent_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(parent_dir) {
-                    log::warn!("Failed to create directory for reputation data: {}", e);
-                }
-            }
-        }
-
-        if let Err(e) = reputation_manager.load_from_storage(&reputation_path).await {
+        if let Err(e) = reputation_manager.load_from_storage(&peer_store).await {
             log::warn!("Failed to load peer reputation data: {}", e);
         }
 
@@ -113,21 +98,26 @@ impl PeerNetworkManager {
             reputation_manager,
             network: config.network,
             shutdown_token: CancellationToken::new(),
-            message_tx,
-            message_rx: Arc::new(Mutex::new(message_rx)),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
             initial_peers: config.peers.clone(),
             peer_search_started: Arc::new(Mutex::new(None)),
             current_sync_peer: Arc::new(Mutex::new(None)),
             data_dir,
             mempool_strategy: config.mempool_strategy,
-            last_message_peer: Arc::new(Mutex::new(None)),
-            peers_sent_headers2: Arc::new(Mutex::new(HashSet::new())),
             user_agent: config.user_agent.clone(),
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
+            message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
         })
+    }
+
+    /// Creates and returns a receiver that yields only messages of the matching the provided message types.
+    pub async fn message_receiver(
+        &mut self,
+        message_types: &[MessageType],
+    ) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.lock().await.message_receiver(message_types)
     }
 
     /// Start the network manager
@@ -206,7 +196,6 @@ impl PeerNetworkManager {
 
         let pool = self.pool.clone();
         let network = self.network;
-        let message_tx = self.message_tx.clone();
         let addrv2_handler = self.addrv2_handler.clone();
         let shutdown_token = self.shutdown_token.clone();
         let reputation_manager = self.reputation_manager.clone();
@@ -214,6 +203,7 @@ impl PeerNetworkManager {
         let user_agent = self.user_agent.clone();
         let connected_peer_count = self.connected_peer_count.clone();
         let headers2_disabled = self.headers2_disabled.clone();
+        let message_dispatcher = self.message_dispatcher.clone();
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -248,12 +238,12 @@ impl PeerNetworkManager {
                             Self::start_peer_reader(
                                 addr,
                                 pool.clone(),
-                                message_tx,
                                 addrv2_handler,
                                 shutdown_token,
                                 reputation_manager.clone(),
                                 connected_peer_count.clone(),
                                 headers2_disabled.clone(),
+                                message_dispatcher,
                             )
                             .await;
                         }
@@ -292,12 +282,12 @@ impl PeerNetworkManager {
     async fn start_peer_reader(
         addr: SocketAddr,
         pool: Arc<PeerPool>,
-        message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
         addrv2_handler: Arc<AddrV2Handler>,
         shutdown_token: CancellationToken,
         reputation_manager: Arc<PeerReputationManager>,
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
+        message_dispatcher: Arc<Mutex<MessageDispatcher>>,
     ) {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
@@ -355,7 +345,7 @@ impl PeerNetworkManager {
                         log::debug!("Received {:?} from {}", msg.cmd(), addr);
 
                         // Handle some messages directly
-                        match &msg {
+                        match &msg.inner() {
                             NetworkMessage::SendAddrV2 => {
                                 addrv2_handler.handle_sendaddrv2(addr).await;
                                 continue; // Don't forward to client
@@ -432,16 +422,7 @@ impl PeerNetworkManager {
                                 );
                                 // Check if peer supports headers2
                                 let peer_guard = peer.read().await;
-                                if peer_guard
-                                    .peer_info()
-                                    .services
-                                    .map(|s| {
-                                        dashcore::network::constants::ServiceFlags::from(s).has(
-                                            dashcore::network::constants::NODE_HEADERS_COMPRESSED,
-                                        )
-                                    })
-                                    .unwrap_or(false)
-                                {
+                                if peer_guard.supports_headers2() {
                                     log::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
                                 }
                                 drop(peer_guard);
@@ -464,13 +445,8 @@ impl PeerNetworkManager {
                                         );
                                         // Forward as regular Headers message
                                         let headers_msg = NetworkMessage::Headers(headers);
-                                        if message_tx.send((addr, headers_msg)).await.is_err() {
-                                            log::warn!(
-                                                "Breaking peer reader loop for {} - failed to send decompressed headers",
-                                                addr
-                                            );
-                                            break;
-                                        }
+                                        let message = Message::new(msg.peer_address(), headers_msg);
+                                        message_dispatcher.lock().await.dispatch(&message);
                                         continue; // Already sent, don't forward the original Headers2
                                     }
                                     Err(e) => {
@@ -523,11 +499,7 @@ impl PeerNetworkManager {
                             }
                         }
 
-                        // Forward message to client
-                        if message_tx.send((addr, msg)).await.is_err() {
-                            log::warn!("Breaking peer reader loop for {} - failed to send message to client channel (iteration {})", addr, loop_iteration);
-                            break;
-                        }
+                        message_dispatcher.lock().await.dispatch(&msg);
                     }
                     Ok(None) => {
                         // No message available, continue immediately
@@ -645,7 +617,6 @@ impl PeerNetworkManager {
         let reputation_manager = self.reputation_manager.clone();
         let peer_search_started = self.peer_search_started.clone();
         let initial_peers = self.initial_peers.clone();
-        let data_dir = self.data_dir.clone();
         let connected_peer_count = self.connected_peer_count.clone();
 
         // Check if we're in exclusive mode (explicit flag or peers configured)
@@ -800,8 +771,7 @@ impl PeerNetworkManager {
                     }
 
                     // Save reputation data periodically
-                    let storage_path = data_dir.join("peer_reputation.json");
-                    if let Err(e) = reputation_manager.save_to_storage(&storage_path).await {
+                    if let Err(e) = reputation_manager.save_to_storage(&*peer_store).await {
                         log::warn!("Failed to save reputation data: {}", e);
                     }
                 }
@@ -838,10 +808,8 @@ impl PeerNetworkManager {
             let mut filter_peer = None;
             for (addr, peer) in &peers {
                 let peer_guard = peer.read().await;
-                let peer_info = peer_guard.peer_info();
-                drop(peer_guard);
 
-                if peer_info.supports_compact_filters() {
+                if peer_guard.supports_compact_filters() {
                     filter_peer = Some(*addr);
                     break;
                 }
@@ -867,7 +835,7 @@ impl PeerNetworkManager {
             if let Some(current_addr) = *current_sync_peer {
                 if let Some((_, peer)) = peers.iter().find(|(addr, _)| *addr == current_addr) {
                     let peer_guard = peer.read().await;
-                    if peer_guard.peer_info().supports_headers2() {
+                    if peer_guard.supports_headers2() {
                         selected = Some(current_addr);
                     }
                 }
@@ -876,7 +844,7 @@ impl PeerNetworkManager {
             if selected.is_none() {
                 for (addr, peer) in &peers {
                     let peer_guard = peer.read().await;
-                    if peer_guard.peer_info().supports_headers2() {
+                    if peer_guard.supports_headers2() {
                         selected = Some(*addr);
                         break;
                     }
@@ -1031,32 +999,6 @@ impl PeerNetworkManager {
         reputations.into_iter().map(|(addr, rep)| (addr, (rep.score, rep.is_banned()))).collect()
     }
 
-    /// Get the last peer that sent us a message
-    pub async fn get_last_message_peer(&self) -> Option<SocketAddr> {
-        let last_peer = self.last_message_peer.lock().await;
-        *last_peer
-    }
-
-    /// Get the last message peer as a PeerId
-    pub async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        if let Some(addr) = self.get_last_message_peer().await {
-            // Simple hash-based mapping from SocketAddr to PeerId
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            addr.hash(&mut hasher);
-            crate::types::PeerId(hasher.finish())
-        } else {
-            // Default to PeerId(0) if no peer available
-            crate::types::PeerId(0)
-        }
-    }
-
-    /// Get the socket address of the last peer that sent a message
-    pub async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
-        let last_peer = self.last_message_peer.lock().await;
-        *last_peer
-    }
-
     /// Ban a specific peer manually
     pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Manually banning peer {} - reason: {}", addr, reason);
@@ -1095,8 +1037,7 @@ impl PeerNetworkManager {
         }
 
         // Save reputation data before shutdown
-        let reputation_path = self.data_dir.join("peer_reputation.json");
-        if let Err(e) = self.reputation_manager.save_to_storage(&reputation_path).await {
+        if let Err(e) = self.reputation_manager.save_to_storage(&*self.peer_store).await {
             log::warn!("Failed to save reputation data on shutdown: {}", e);
         }
 
@@ -1126,20 +1067,17 @@ impl Clone for PeerNetworkManager {
             reputation_manager: self.reputation_manager.clone(),
             network: self.network,
             shutdown_token: self.shutdown_token.clone(),
-            message_tx: self.message_tx.clone(),
-            message_rx: self.message_rx.clone(),
             tasks: self.tasks.clone(),
             initial_peers: self.initial_peers.clone(),
             peer_search_started: self.peer_search_started.clone(),
             current_sync_peer: self.current_sync_peer.clone(),
             data_dir: self.data_dir.clone(),
             mempool_strategy: self.mempool_strategy,
-            last_message_peer: self.last_message_peer.clone(),
-            peers_sent_headers2: self.peers_sent_headers2.clone(),
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
             connected_peer_count: self.connected_peer_count.clone(),
             headers2_disabled: self.headers2_disabled.clone(),
+            message_dispatcher: self.message_dispatcher.clone(),
         }
     }
 }
@@ -1149,6 +1087,10 @@ impl Clone for PeerNetworkManager {
 impl NetworkManager for PeerNetworkManager {
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+        self.message_dispatcher.lock().await.message_receiver(types)
     }
 
     async fn connect(&mut self) -> NetworkResult<()> {
@@ -1190,117 +1132,66 @@ impl NetworkManager for PeerNetworkManager {
         } // end match
     } // end send_message
 
-    async fn penalize_last_message_peer(
-        &self,
-        score_change: i32,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        // Get the last peer that sent us a message
-        if let Some(addr) = self.get_last_message_peer().await {
-            self.reputation_manager.update_reputation(addr, score_change, reason).await;
-        }
-        Ok(())
+    async fn penalize_peer(&self, address: SocketAddr, score_change: i32, reason: &str) {
+        self.reputation_manager.update_reputation(address, score_change, reason).await;
     }
 
-    async fn penalize_last_message_peer_invalid_chainlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        if let Some(addr) = self.get_last_message_peer().await {
-            match self.disconnect_peer(&addr, reason).await {
-                Ok(()) => {
-                    log::warn!(
-                        "Peer {} disconnected for invalid ChainLock enforcement: {}",
-                        addr,
-                        reason
-                    );
-                }
-                Err(err) => {
-                    log::error!(
-                        "Failed to disconnect peer {} after invalid ChainLock enforcement ({}): {}",
-                        addr,
-                        reason,
-                        err
-                    );
-                }
+    async fn penalize_peer_invalid_chainlock(&self, address: SocketAddr, reason: &str) {
+        match self.disconnect_peer(&address, reason).await {
+            Ok(()) => {
+                log::warn!(
+                    "Peer {} disconnected for invalid ChainLock enforcement: {}",
+                    address,
+                    reason
+                );
             }
-
-            // Apply misbehavior score and a short temporary ban
-            self.reputation_manager
-                .update_reputation(addr, misbehavior_scores::INVALID_CHAINLOCK, reason)
-                .await;
-
-            // Short ban: 10 minutes for relaying invalid ChainLock
-            self.reputation_manager
-                .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
-                .await;
-        }
-        Ok(())
-    }
-
-    async fn penalize_last_message_peer_invalid_instantlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        if let Some(addr) = self.get_last_message_peer().await {
-            // Apply misbehavior score and a short temporary ban
-            self.reputation_manager
-                .update_reputation(addr, misbehavior_scores::INVALID_INSTANTLOCK, reason)
-                .await;
-
-            // Short ban: 10 minutes for relaying invalid InstantLock
-            self.reputation_manager
-                .temporary_ban_peer(addr, Duration::from_secs(10 * 60), reason)
-                .await;
-
-            match self.disconnect_peer(&addr, reason).await {
-                Ok(()) => {
-                    log::warn!(
-                        "Peer {} disconnected for invalid InstantLock enforcement: {}",
-                        addr,
-                        reason
-                    );
-                }
-                Err(err) => {
-                    log::error!(
-                        "Failed to disconnect peer {} after invalid InstantLock enforcement ({}): {}",
-                        addr,
-                        reason,
-                        err
-                    );
-                }
+            Err(err) => {
+                log::error!(
+                    "Failed to disconnect peer {} after invalid ChainLock enforcement ({}): {}",
+                    address,
+                    reason,
+                    err
+                );
             }
         }
-        Ok(())
+
+        // Apply misbehavior score and a short temporary ban
+        self.reputation_manager
+            .update_reputation(address, misbehavior_scores::INVALID_CHAINLOCK, reason)
+            .await;
+
+        // Short ban: 10 minutes for relaying invalid ChainLock
+        self.reputation_manager
+            .temporary_ban_peer(address, Duration::from_secs(10 * 60), reason)
+            .await;
     }
 
-    async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
-        let mut rx = self.message_rx.lock().await;
+    async fn penalize_peer_invalid_instantlock(&self, address: SocketAddr, reason: &str) {
+        // Apply misbehavior score and a short temporary ban
+        self.reputation_manager
+            .update_reputation(address, misbehavior_scores::INVALID_INSTANTLOCK, reason)
+            .await;
 
-        // Use a timeout to prevent indefinite blocking when peers disconnect
-        match tokio::time::timeout(MESSAGE_RECEIVE_TIMEOUT, rx.recv()).await {
-            Ok(Some((addr, msg))) => {
-                // Store the last message peer
-                let mut last_peer = self.last_message_peer.lock().await;
-                *last_peer = Some(addr);
-                drop(last_peer);
+        // Short ban: 10 minutes for relaying invalid InstantLock
+        self.reputation_manager
+            .temporary_ban_peer(address, Duration::from_secs(10 * 60), reason)
+            .await;
 
-                // Reduce verbosity for common sync messages
-                match &msg {
-                    NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
-                        // Headers and filters are logged by the sync managers - reduced verbosity
-                        log::debug!("Delivering {} from {} to client", msg.cmd(), addr);
-                    }
-                    _ => {
-                        log::trace!("Delivering {:?} from {} to client", msg.cmd(), addr);
-                    }
-                }
-                Ok(Some(msg))
+        match self.disconnect_peer(&address, reason).await {
+            Ok(()) => {
+                log::warn!(
+                    "Peer {} disconnected for invalid InstantLock enforcement: {}",
+                    address,
+                    reason
+                );
             }
-            Ok(None) => Ok(None),
-            Err(_) => {
-                // Timeout - no message available
-                Ok(None)
+            Err(err) => {
+                log::error!(
+                    "Failed to disconnect peer {} after invalid InstantLock enforcement ({}): {}",
+                    address,
+                    reason,
+                    err
+                );
             }
         }
     }
@@ -1315,137 +1206,20 @@ impl NetworkManager for PeerNetworkManager {
         self.connected_peer_count.load(Ordering::Relaxed)
     }
 
-    fn peer_info(&self) -> Vec<PeerInfo> {
-        let pool = self.pool.clone();
-        tokio::task::block_in_place(move || {
-            tokio::runtime::Handle::current().block_on(async {
-                let peers = pool.get_all_peers().await;
-                let mut infos = Vec::new();
-                for (_, peer) in peers.iter() {
-                    let peer_guard = peer.read().await;
-                    infos.push(peer_guard.peer_info());
-                }
-                infos
-            })
-        })
+    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight> {
+        self.pool.get_best_height().await
     }
 
-    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
-        let peers = self.pool.get_all_peers().await;
-
-        if peers.is_empty() {
-            log::debug!("get_peer_best_height: No peers available");
-            return Ok(None);
-        }
-
-        let mut best_height = 0u32;
-        let mut peer_count = 0;
-
-        for (addr, peer) in peers.iter() {
-            let peer_guard = peer.read().await;
-            let peer_info = peer_guard.peer_info();
-            peer_count += 1;
-
-            log::debug!(
-                "get_peer_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}",
-                addr,
-                peer_info.best_height,
-                peer_info.version,
-                peer_info.connected
-            );
-
-            if let Some(peer_height) = peer_info.best_height {
-                if peer_height > 0 {
-                    best_height = best_height.max(peer_height);
-                    log::debug!(
-                        "get_peer_best_height: Updated best_height to {} from peer {}",
-                        best_height,
-                        addr
-                    );
-                }
-            }
-        }
-
-        log::debug!(
-            "get_peer_best_height: Checked {} peers, best_height: {}",
-            peer_count,
-            best_height
-        );
-
-        if best_height > 0 {
-            Ok(Some(best_height))
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn has_peer_with_service(
-        &self,
-        service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> bool {
+    async fn has_peer_with_service(&self, service_flags: ServiceFlags) -> bool {
         let peers = self.pool.get_all_peers().await;
 
         for (_, peer) in peers.iter() {
             let peer_guard = peer.read().await;
-            let peer_info = peer_guard.peer_info();
-            if peer_info
-                .services
-                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
-                .unwrap_or(false)
-            {
+            if peer_guard.has_service(service_flags) {
                 return true;
             }
         }
 
-        false
-    }
-
-    async fn has_headers2_peer(&self) -> bool {
-        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
-    }
-
-    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        // Call the instance method to avoid code duplication
-        self.get_last_message_peer_id().await
-    }
-
-    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
-        // Get the last peer that sent us a message
-        let peer_id = self.get_last_message_peer_id().await;
-
-        if peer_id.0 == 0 {
-            return Err(NetworkError::ConnectionFailed("No peer to update".to_string()));
-        }
-
-        // Find the peer's address from the last message data
-        let last_msg_peer = self.last_message_peer.lock().await;
-        if let Some(addr) = &*last_msg_peer {
-            // For now, just log it as we don't have a mutable peer manager
-            // In a real implementation, we'd store this preference
-            tracing::info!("Updated peer {} DSQ preference to: {}", addr, wants_dsq);
-        }
-
-        Ok(())
-    }
-
-    async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
-        // Get the last peer that sent us a message
-        let last_msg_peer = self.last_message_peer.lock().await;
-        if let Some(addr) = &*last_msg_peer {
-            let mut peers_sent_headers2 = self.peers_sent_headers2.lock().await;
-            peers_sent_headers2.insert(*addr);
-            tracing::info!("Marked peer {} as having sent Headers2", addr);
-        }
-        Ok(())
-    }
-
-    async fn peer_has_sent_headers2(&self) -> bool {
-        // Check if the current sync peer has sent us Headers2
-        let current_peer = self.current_sync_peer.lock().await;
-        if let Some(peer_addr) = &*current_peer {
-            let peers_sent_headers2 = self.peers_sent_headers2.lock().await;
-            return peers_sent_headers2.contains(peer_addr);
-        }
         false
     }
 }

@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a simple configuration
     let config = ClientConfig::mainnet()
+        .with_storage_path("./.tmp/simple-sync-example-storage")
         .without_filters() // Skip filter sync for this example
         .without_masternodes(); // Skip masternode sync for this example
 
@@ -24,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network_manager = PeerNetworkManager::new(&config).await?;
 
     // Create storage manager
-    let storage_manager = DiskStorageManager::new("./.tmp/simple-sync-example-storage").await?;
+    let storage_manager = DiskStorageManager::new(&config).await?;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
@@ -36,11 +37,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     client.start().await?;
 
     println!("Starting header synchronization...");
-
-    // Get some statistics
-    let stats = client.stats().await?;
-    println!("Headers downloaded: {}", stats.headers_downloaded);
-    println!("Bytes received: {}", stats.bytes_received);
 
     let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let shutdown_token = CancellationToken::new();

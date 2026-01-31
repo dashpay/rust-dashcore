@@ -29,10 +29,9 @@ async fn test_handshake_with_mainnet_peer() {
                 "Peer should be connected after successful handshake"
             );
 
-            // Get peer info
-            let peer_info = connection.peer_info();
-            assert_eq!(peer_info.address, peer_addr, "Peer address should match");
-            assert!(peer_info.connected, "Peer should be marked as connected");
+            // Check peer info
+            assert_eq!(connection.address(), peer_addr, "Peer address should match");
+            assert!(connection.is_connected(), "Peer should be marked as connected");
 
             // Clean disconnect
             connection.disconnect().await.expect("Failed to disconnect");
@@ -73,7 +72,8 @@ async fn test_handshake_timeout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_network_manager_creation() {
-    let config = ClientConfig::new(Network::Dash);
+    let temp_dir = tempfile::TempDir::new().expect("Failed to create temporary directory");
+    let config = ClientConfig::new(Network::Dash).with_storage_path(temp_dir.path().to_path_buf());
     let network = PeerNetworkManager::new(&config).await;
 
     assert!(network.is_ok(), "Network manager creation should succeed");
@@ -81,7 +81,6 @@ async fn test_network_manager_creation() {
 
     assert!(!network.is_connected(), "Should start disconnected");
     assert_eq!(network.peer_count(), 0, "Should start with no peers");
-    assert!(network.peer_info().is_empty(), "Should start with empty peer info");
 }
 
 #[tokio::test]

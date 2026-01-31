@@ -13,6 +13,7 @@ use dashcore::Network;
 use crate::client::config::MempoolStrategy;
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::peer::Peer;
+use crate::network::Message;
 
 /// Handshake state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +98,7 @@ impl HandshakeManager {
             match timeout(MESSAGE_POLL_INTERVAL, connection.receive_message()).await {
                 Ok(Ok(Some(message))) => {
                     tracing::debug!("Received message during handshake: {:?}", message.cmd());
-                    match self.handle_handshake_message(connection, message).await? {
+                    match self.handle_handshake_message(connection, &message).await? {
                         Some(HandshakeState::Complete) => {
                             self.state = HandshakeState::Complete;
                             break;
@@ -146,21 +147,28 @@ impl HandshakeManager {
     async fn handle_handshake_message(
         &mut self,
         connection: &mut Peer,
-        message: NetworkMessage,
+        message: &Message,
     ) -> NetworkResult<Option<HandshakeState>> {
-        match message {
+        match message.inner() {
             NetworkMessage::Version(version_msg) => {
-                tracing::debug!("Received version message: {:?}", version_msg);
+                tracing::debug!(
+                    "Peer {} sent version message: {:?}",
+                    message.peer_address(),
+                    version_msg
+                );
                 self.peer_version = Some(version_msg.version);
                 self.peer_services = Some(version_msg.services);
                 self.version_received = true;
 
                 // Update connection's peer information
-                connection.update_peer_info(&version_msg);
+                connection.update_peer_info(version_msg);
 
                 // If we haven't sent our version yet (peer initiated), send it now
                 if !self.version_sent {
-                    tracing::debug!("Peer initiated handshake, sending our version");
+                    tracing::debug!(
+                        "Peer {} initiated handshake, sending our version",
+                        message.peer_address()
+                    );
                     self.send_version(connection).await?;
                     self.version_sent = true;
                 }
@@ -221,7 +229,7 @@ impl HandshakeManager {
             NetworkMessage::Ping(nonce) => {
                 // Respond to ping during handshake
                 tracing::debug!("Responding to ping during handshake: {}", nonce);
-                connection.send_message(NetworkMessage::Pong(nonce)).await?;
+                connection.send_message(NetworkMessage::Pong(*nonce)).await?;
                 Ok(None)
             }
             NetworkMessage::SendAddrV2 => {
@@ -239,7 +247,7 @@ impl HandshakeManager {
 
     /// Send version message.
     async fn send_version(&mut self, connection: &mut Peer) -> NetworkResult<()> {
-        let version_message = self.build_version_message(connection.peer_info().address)?;
+        let version_message = self.build_version_message(connection.address())?;
         connection.send_message(NetworkMessage::Version(version_message)).await?;
         tracing::debug!("Sent version message");
         Ok(())

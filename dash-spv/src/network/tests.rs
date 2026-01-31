@@ -13,7 +13,7 @@ mod peer_tests {
         let peer = Peer::new(addr, timeout, Network::Dash);
 
         assert!(!peer.is_connected());
-        assert_eq!(peer.peer_info().address, addr);
+        assert_eq!(peer.address(), addr);
     }
 }
 

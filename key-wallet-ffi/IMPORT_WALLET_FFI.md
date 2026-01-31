@@ -84,7 +84,7 @@ cargo build --features bincode
 
 ## Serialization Format
 
-The wallet bytes must be in bincode format (version 2.0.0-rc.3). The serialization includes:
+The wallet bytes must be in bincode format (version 2.0). The serialization includes:
 - Wallet seed and key material
 - Account information
 - Address pools and indices

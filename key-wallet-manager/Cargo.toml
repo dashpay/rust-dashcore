@@ -13,7 +13,7 @@ default = ["std", "bincode"]
 std = ["key-wallet/std", "dashcore/std", "dashcore_hashes/std", "secp256k1/std"]
 serde = ["dep:serde", "key-wallet/serde", "dashcore/serde"]
 getrandom = ["key-wallet/getrandom"]
-bincode = ["dep:bincode","key-wallet/bincode"]
+bincode = ["dep:bincode", "key-wallet/bincode"]
 test-utils = []
 
 [dependencies]
@@ -23,8 +23,9 @@ dashcore_hashes = { path = "../hashes", default-features = false }
 secp256k1 = { version = "0.30.0", default-features = false, features = ["recovery"] }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 async-trait = "0.1"
-bincode = { version = "=2.0.0-rc.3", optional = true }
+bincode = { version = "2.0.1", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
+rayon = "1.11"
 tokio = { version = "1.32", features = ["full"] }
 
 [dev-dependencies]

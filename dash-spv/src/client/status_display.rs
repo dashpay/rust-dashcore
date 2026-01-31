@@ -8,13 +8,12 @@ use crate::error::Result;
 use crate::storage::StorageManager;
 #[cfg(feature = "terminal-ui")]
 use crate::terminal::TerminalUI;
-use crate::types::{ChainState, SpvStats, SyncProgress};
+use crate::types::{ChainState, SyncProgress};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 /// Status display manager for updating UI and reporting sync progress.
 pub struct StatusDisplay<'a, S: StorageManager, W: WalletInterface> {
     state: &'a Arc<RwLock<ChainState>>,
-    stats: &'a Arc<RwLock<SpvStats>>,
     storage: Arc<Mutex<S>>,
     wallet: Option<&'a Arc<RwLock<W>>>,
     #[cfg(feature = "terminal-ui")]
@@ -28,7 +27,6 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
     #[cfg(feature = "terminal-ui")]
     pub fn new(
         state: &'a Arc<RwLock<ChainState>>,
-        stats: &'a Arc<RwLock<SpvStats>>,
         storage: Arc<Mutex<S>>,
         wallet: Option<&'a Arc<RwLock<W>>>,
         terminal_ui: &'a Option<Arc<TerminalUI>>,
@@ -36,7 +34,6 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
     ) -> Self {
         Self {
             state,
-            stats,
             storage,
             wallet,
             terminal_ui,
@@ -48,7 +45,6 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
     #[cfg(not(feature = "terminal-ui"))]
     pub fn new(
         state: &'a Arc<RwLock<ChainState>>,
-        stats: &'a Arc<RwLock<SpvStats>>,
         storage: Arc<Mutex<S>>,
         wallet: Option<&'a Arc<RwLock<W>>>,
         _terminal_ui: &'a Option<()>,
@@ -56,7 +52,6 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
     ) -> Self {
         Self {
             state,
-            stats,
             storage,
             wallet,
             config,
@@ -100,17 +95,6 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> Result<SyncProgress> {
         let state = self.state.read().await;
-        // Clone the inner heights handle and copy needed counters without awaiting while holding the RwLock
-        let (filters_received, received_heights) = {
-            let stats = self.stats.read().await;
-            (stats.filters_received, std::sync::Arc::clone(&stats.received_filter_heights))
-        };
-
-        // Calculate last synced filter height from received filter heights without holding the RwLock guard
-        let last_synced_filter_height = {
-            let heights = received_heights.lock().await;
-            heights.iter().max().copied()
-        };
 
         // Calculate the actual header height considering checkpoint sync
         let header_height = self.calculate_header_height(&state).await;
@@ -127,17 +111,11 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
             masternode_height: state.last_masternode_diff_height.unwrap_or(0),
             peer_count: 1,                // TODO: Get from network manager
             filter_sync_available: false, // TODO: Get from network manager
-            filters_downloaded: filters_received,
-            last_synced_filter_height,
+            filters_downloaded: 0,
+            last_synced_filter_height: None,
             sync_start: std::time::SystemTime::now(), // TODO: Track properly
             last_update: std::time::SystemTime::now(),
         })
-    }
-
-    /// Get current statistics.
-    pub async fn stats(&self) -> Result<SpvStats> {
-        let stats = self.stats.read().await;
-        Ok(stats.clone())
     }
 
     /// Get current chain state (read-only).
@@ -259,14 +237,6 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
                 state.last_chainlock_height.unwrap_or(0)
             };
 
-            // Get filter and block processing statistics
-            let stats = self.stats.read().await;
-            let filters_received = stats.filters_received;
-            let filters_matched = stats.filters_matched;
-            let blocks_with_relevant_transactions = stats.blocks_with_relevant_transactions;
-            let blocks_processed = stats.blocks_processed;
-            drop(stats);
-
             // Get wallet balance if available
             let balance_str = if let Some(wallet_ref) = self.wallet {
                 let wallet_guard = wallet_ref.read().await;
@@ -281,18 +251,14 @@ impl<'a, S: StorageManager, W: WalletInterface> StatusDisplay<'a, S, W> {
             };
 
             tracing::info!(
-                "📊 [SYNC STATUS] Headers: {} | Filter Headers: {} | Filters: {} | Latest ChainLock: {} | Filters Matched: {} | Blocks w/ Relevant Txs: {} | Blocks Processed: {}{}",
+                "📊 [SYNC STATUS] Headers: {} | Filter Headers: {} | Latest ChainLock: {} | {}",
                 header_height,
                 filter_height,
-                filters_received,
                 if chainlock_height > 0 {
                     format!("#{}", chainlock_height)
                 } else {
                     "None".to_string()
                 },
-                filters_matched,
-                blocks_with_relevant_transactions,
-                blocks_processed,
                 balance_str
             );
         }

@@ -44,11 +44,6 @@ pub extern "C" fn dash_spv_ffi_get_last_error() -> *const c_char {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn dash_spv_ffi_clear_error() {
-    clear_last_error();
-}
-
 impl From<SpvError> for FFIErrorCode {
     fn from(err: SpvError) -> Self {
         match err {

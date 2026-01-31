@@ -34,8 +34,8 @@ pub struct ClientConfig {
     /// If no peers are configured, no outbound connections will be made.
     pub restrict_to_configured_peers: bool,
 
-    /// Optional path for persistent storage.
-    pub storage_path: Option<PathBuf>,
+    /// Path for persistent storage. Defaults to ./dash-spv-storage
+    pub storage_path: PathBuf,
 
     /// Validation mode.
     pub validation_mode: ValidationMode,
@@ -80,7 +80,7 @@ impl Default for ClientConfig {
             network: Network::Dash,
             peers: vec![],
             restrict_to_configured_peers: false,
-            storage_path: None,
+            storage_path: PathBuf::from("./dash-spv-storage"),
             validation_mode: ValidationMode::Full,
             enable_filters: true,
             enable_masternodes: true,
@@ -136,8 +136,8 @@ impl ClientConfig {
     }
 
     /// Set storage path.
-    pub fn with_storage_path(mut self, path: PathBuf) -> Self {
-        self.storage_path = Some(path);
+    pub fn with_storage_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.storage_path = path.into();
         self
     }
 
@@ -205,6 +205,13 @@ impl ClientConfig {
                 "max_mempool_transactions must be > 0 when mempool tracking is enabled".to_string()
             );
         }
+
+        std::fs::create_dir_all(&self.storage_path).map_err(|e| {
+            format!(
+                "A valid storage path must be provided to the ClientConfig {:?}: {e}",
+                self.storage_path
+            )
+        })?;
 
         Ok(())
     }

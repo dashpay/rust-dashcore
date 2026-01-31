@@ -76,6 +76,20 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // Update state if requested and transaction is relevant
         if update_state && result.is_relevant {
+            // Check if this transaction already exists in any affected account.
+            // If so, mark it as not new.
+            let txid = tx.txid();
+            for account_match in &result.affected_accounts {
+                if let Some(account) =
+                    self.accounts.get_by_account_type_match(&account_match.account_type_match)
+                {
+                    if account.transactions.contains_key(&txid) {
+                        result.is_new_transaction = false;
+                        break;
+                    }
+                }
+            }
+
             for account_match in &result.affected_accounts {
                 // Find and update the specific account
                 use super::account_checker::CoreAccountTypeMatch;
@@ -278,8 +292,10 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 }
             }
 
-            // Update wallet metadata
-            self.metadata.total_transactions += 1;
+            // Update wallet metadata only for new transactions
+            if result.is_new_transaction {
+                self.metadata.total_transactions += 1;
+            }
 
             // Log the detected transaction
             let wallet_net: i64 = (result.total_received as i64) - (result.total_sent as i64);
@@ -827,5 +843,84 @@ mod tests {
         assert_eq!(stored_tx.height, None, "Mempool transaction should have no height");
         assert_eq!(stored_tx.block_hash, None, "Mempool transaction should have no block hash");
         assert_eq!(stored_tx.timestamp, 0, "Mempool transaction should have timestamp 0");
+    }
+
+    /// Test that rescanning a block marks transactions as existing
+    #[tokio::test]
+    async fn test_transaction_rescan_marks_as_existing() {
+        let network = Network::Testnet;
+        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+            .expect("Should create wallet");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        // Get a wallet address
+        let account =
+            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
+        let xpub = account.account_xpub;
+
+        let address = managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have managed account")
+            .next_receive_address(Some(&xpub), true)
+            .expect("Should get address");
+
+        let tx = create_transaction_to_address(&address, 100_000);
+
+        let context = TransactionContext::InBlock {
+            height: 100,
+            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
+            timestamp: Some(1234567890),
+        };
+
+        // First processing - should be marked as new
+        let result1 = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+
+        assert!(result1.is_relevant, "Transaction should be relevant");
+        assert!(
+            result1.is_new_transaction,
+            "First time seeing transaction should be marked as new"
+        );
+        assert_eq!(result1.total_received, 100_000);
+
+        // Verify transaction is stored
+        let managed_account =
+            managed_wallet.first_bip44_managed_account().expect("Should have managed account");
+        assert!(
+            managed_account.transactions.contains_key(&tx.txid()),
+            "Transaction should be stored"
+        );
+        let tx_count_before = managed_account.transactions.len();
+        let total_tx_count_before = managed_wallet.metadata.total_transactions;
+        assert_eq!(
+            total_tx_count_before, 1,
+            "total_transactions should be 1 after first processing"
+        );
+
+        // Second processing (simulating rescan) - should be marked as existing
+        let result2 = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+
+        assert!(result2.is_relevant, "Transaction should still be relevant on rescan");
+        assert!(
+            !result2.is_new_transaction,
+            "Re-processing transaction should be marked as existing, not new"
+        );
+        assert_eq!(result2.total_received, 100_000);
+
+        // Verify transaction count hasn't changed (no duplicates)
+        let managed_account =
+            managed_wallet.first_bip44_managed_account().expect("Should have managed account");
+        assert_eq!(
+            managed_account.transactions.len(),
+            tx_count_before,
+            "Transaction count should not increase on rescan"
+        );
+
+        // Verify total_transactions metadata hasn't changed on rescan
+        assert_eq!(
+            managed_wallet.metadata.total_transactions, total_tx_count_before,
+            "total_transactions should not increase on rescan"
+        );
     }
 }

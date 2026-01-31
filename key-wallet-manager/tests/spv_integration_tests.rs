@@ -1,6 +1,5 @@
 //! Integration tests for SPV wallet functionality
 
-use dashcore::bip158::BlockFilter;
 use dashcore::blockdata::block::Block;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::constants::COINBASE_MATURITY;
@@ -11,36 +10,6 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::WalletManager;
-
-#[tokio::test]
-async fn test_filter_checking() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
-
-    // Add a test address to monitor - simplified for testing
-    // In reality, addresses would be generated from wallet accounts
-
-    let _wallet_id = manager
-        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet");
-
-    // Create a test block with a transaction
-    let tx = Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[100000]);
-    let block = Block::dummy(100, vec![tx]);
-    let filter = BlockFilter::dummy(&block);
-    let block_hash = block.block_hash();
-
-    // Check the filter
-    let should_download = manager.check_compact_filter(&filter, &block_hash).await;
-
-    // The filter matching depends on whether the wallet has any addresses
-    // being watched. Since we just created an empty wallet, it may or may not match.
-    // We'll just check that the method doesn't panic
-    let _ = should_download;
-
-    // Test filter caching - calling again should use cached result
-    let should_download_cached = manager.check_compact_filter(&filter, &block_hash).await;
-    assert_eq!(should_download, should_download_cached, "Cached result should match original");
-}
 
 #[tokio::test]
 async fn test_block_processing() {
@@ -62,10 +31,13 @@ async fn test_block_processing() {
     let block = Block::dummy(100, vec![tx1.clone(), tx2.clone(), tx3.clone()]);
     let result = manager.process_block(&block, 100).await;
 
-    assert_eq!(result.relevant_txids.len(), 2);
-    assert!(result.relevant_txids.contains(&tx1.txid()));
-    assert!(result.relevant_txids.contains(&tx2.txid()));
-    assert!(!result.relevant_txids.contains(&tx3.txid()));
+    // Both transactions should be new (first time seen)
+    assert_eq!(result.new_txids.len(), 2);
+    assert!(result.new_txids.contains(&tx1.txid()));
+    assert!(result.new_txids.contains(&tx2.txid()));
+    assert!(!result.new_txids.contains(&tx3.txid()));
+    // No existing transactions during initial processing
+    assert!(result.existing_txids.is_empty());
     assert_eq!(result.new_addresses.len(), 2);
 
     let addresses_after = manager.monitored_addresses();
@@ -91,46 +63,13 @@ async fn test_block_processing_result_empty() {
     let block = Block::dummy(100, vec![tx1, tx2]);
     let result = manager.process_block(&block, 100).await;
 
-    assert!(result.relevant_txids.is_empty());
+    assert!(result.new_txids.is_empty());
+    assert!(result.existing_txids.is_empty());
     assert!(result.new_addresses.is_empty());
 }
 
-#[tokio::test]
-async fn test_filter_caching() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
-
-    // Create a wallet with some addresses
-    let _wallet_id = manager
-        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet");
-
-    // Create multiple blocks with different hashes
-    let tx1 = Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[1000]);
-    let tx2 = Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[2000]);
-    let block1 = Block::dummy(100, vec![tx1]);
-    let block2 = Block::dummy(101, vec![tx2]);
-
-    let filter1 = BlockFilter::dummy(&block1);
-    let filter2 = BlockFilter::dummy(&block2);
-
-    let hash1 = block1.block_hash();
-    let hash2 = block2.block_hash();
-
-    // Check filters for both blocks
-    let result1 = manager.check_compact_filter(&filter1, &hash1).await;
-    let result2 = manager.check_compact_filter(&filter2, &hash2).await;
-
-    // Check again - should use cached results
-    let cached1 = manager.check_compact_filter(&filter1, &hash1).await;
-    let cached2 = manager.check_compact_filter(&filter2, &hash2).await;
-
-    // Cached results should match originals
-    assert_eq!(result1, cached1, "Cached result for block1 should match");
-    assert_eq!(result2, cached2, "Cached result for block2 should match");
-}
-
 fn assert_wallet_heights(manager: &WalletManager<ManagedWalletInfo>, expected_height: u32) {
-    assert_eq!(manager.current_height(), expected_height, "height should be {}", expected_height);
+    assert_eq!(manager.synced_height(), expected_height, "height should be {}", expected_height);
     for wallet_info in manager.get_all_wallet_infos().values() {
         assert_eq!(
             wallet_info.synced_height(),
@@ -238,5 +177,50 @@ async fn test_immature_balance_matures_during_block_processing() {
         wallet_info.balance().immature(),
         0,
         "Immature balance should be zero after maturity"
+    );
+}
+
+/// Test that rescanning a block correctly distinguishes new vs existing transactions
+#[tokio::test]
+async fn test_block_rescan_marks_transactions_as_existing() {
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+    let _wallet_id = manager
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
+        .expect("Failed to create wallet");
+
+    let addresses = manager.monitored_addresses();
+    assert!(!addresses.is_empty());
+
+    // Create a block with a transaction to our wallet
+    let tx1 = Transaction::dummy(&addresses[0], 0..0, &[100_000]);
+    let block = Block::dummy(100, vec![tx1.clone()]);
+
+    // First processing - transaction should be new
+    let result1 = manager.process_block(&block, 100).await;
+
+    assert_eq!(result1.new_txids.len(), 1, "First processing should have 1 new transaction");
+    assert!(
+        result1.existing_txids.is_empty(),
+        "First processing should have no existing transactions"
+    );
+    assert!(result1.new_txids.contains(&tx1.txid()));
+
+    // Get transaction history count before rescan
+    let wallet_info = manager.get_all_wallet_infos().values().next().unwrap();
+    let tx_history_count = wallet_info.transaction_history().len();
+
+    // Second processing (simulating rescan) - transaction should be existing
+    let result2 = manager.process_block(&block, 100).await;
+
+    assert!(result2.new_txids.is_empty(), "Rescan should have no new transactions");
+    assert_eq!(result2.existing_txids.len(), 1, "Rescan should have 1 existing transaction");
+    assert!(result2.existing_txids.contains(&tx1.txid()));
+
+    // Verify transaction history count hasn't changed
+    let wallet_info = manager.get_all_wallet_infos().values().next().unwrap();
+    assert_eq!(
+        wallet_info.transaction_history().len(),
+        tx_history_count,
+        "Transaction history count should not increase on rescan"
     );
 }

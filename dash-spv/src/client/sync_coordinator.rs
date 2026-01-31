@@ -14,7 +14,7 @@ use super::{DashSpvClient, MessageHandler};
 use crate::client::interface::DashSpvClientCommand;
 use crate::error::{Result, SpvError};
 use crate::network::constants::MESSAGE_RECEIVE_TIMEOUT;
-use crate::network::NetworkManager;
+use crate::network::{Message, MessageType, NetworkManager};
 use crate::storage::StorageManager;
 use crate::types::{DetailedSyncProgress, SyncProgress};
 use key_wallet_manager::wallet_interface::WalletInterface;
@@ -77,6 +77,22 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let mut last_emitted_filter_header_height: u32 = 0;
         let mut last_emitted_filters_downloaded: u64 = 0;
         let mut last_emitted_phase_name: Option<String> = None;
+
+        let mut message_receiver = self
+            .network
+            .message_receiver(&[
+                MessageType::Headers,
+                MessageType::Headers2,
+                MessageType::CFHeaders,
+                MessageType::CFilter,
+                MessageType::Block,
+                MessageType::MnListDiff,
+                MessageType::QRInfo,
+                MessageType::CLSig,
+                MessageType::ISLock,
+                MessageType::Inv,
+            ])
+            .await;
 
         loop {
             // Check if we should stop
@@ -203,13 +219,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         storage.get_tip_height().await.unwrap_or(0)
                     };
                     let current_height = current_tip_height;
-                    let peer_best = self
-                        .network
-                        .get_peer_best_height()
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(current_height);
+                    let peer_best =
+                        self.network.get_peer_best_height().await.unwrap_or(current_height);
 
                     // Calculate headers downloaded this second
                     if current_tip_height > last_height {
@@ -282,13 +293,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
                 {
                     // Build and emit a fresh DetailedSyncProgress snapshot reflecting current filter progress
-                    let peer_best = self
-                        .network
-                        .get_peer_best_height()
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(abs_header_height);
+                    let peer_best =
+                        self.network.get_peer_best_height().await.unwrap_or(abs_header_height);
 
                     let phase_snapshot = self.sync_manager.current_phase().clone();
                     let status_display = self.create_status_display().await;
@@ -415,12 +421,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         }
                     }
                 }
-                received = self.network.receive_message() => {
+                received = message_receiver.recv() => {
                     match received {
-                        Ok(None) => {
-                            continue;
+                        None => {
+                            tracing::info!("Network message subscription channel closed.");
+                            break;
                         }
-                        Ok(Some(message)) => {
+                        Some(message) => {
                             // Wrap message handling in comprehensive error handling
                             match self.handle_network_message(message).await {
                                 Ok(_) => {
@@ -452,36 +459,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                                 }
                             }
                         },
-                        Err(err) => {
-                            // Handle specific network error types
-                            if let crate::error::NetworkError::ConnectionFailed(msg) = &err {
-                                if msg.contains("No connected peers") || self.network.peer_count() == 0 {
-                                    tracing::warn!("All peers disconnected during monitoring, checking connection health");
-
-                                    // Wait for potential reconnection
-                                    let mut wait_count = 0;
-                                    while wait_count < 10 && self.network.peer_count() == 0 {
-                                        tokio::time::sleep(Duration::from_millis(500)).await;
-                                        wait_count += 1;
-                                    }
-
-                                    if self.network.peer_count() > 0 {
-                                        tracing::info!(
-                                            "✅ Reconnected to {} peer(s), resuming monitoring",
-                                            self.network.peer_count()
-                                        );
-                                        continue
-                                    } else {
-                                        tracing::warn!(
-                                            "No peers available after waiting, will retry monitoring"
-                                        );
-                                    }
-                                }
-                            }
-
-                            tracing::error!("Network error during monitoring: {}", err);
-                            tokio::time::sleep(Duration::from_secs(5)).await;
-                        }
                     }
                 }
                 _ = tokio::time::sleep(MESSAGE_RECEIVE_TIMEOUT) => {}
@@ -546,13 +523,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Handle incoming network messages during monitoring.
-    pub(super) async fn handle_network_message(
-        &mut self,
-        message: dashcore::network::message::NetworkMessage,
-    ) -> Result<()> {
+    pub(super) async fn handle_network_message(&mut self, message: Message) -> Result<()> {
         // Check if this is a special message that needs client-level processing
         let needs_special_processing = matches!(
-            &message,
+            &message.inner(),
             dashcore::network::message::NetworkMessage::CLSig(_)
                 | dashcore::network::message::NetworkMessage::ISLock(_)
         );
@@ -582,17 +556,21 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 if needs_special_processing {
                     // Special handling for messages that need client-level processing
                     use dashcore::network::message::NetworkMessage;
-                    match &message {
+                    match message.inner() {
                         NetworkMessage::CLSig(clsig) => {
                             // Additional client-level ChainLock processing
-                            self.process_chainlock(clsig.clone()).await?;
+                            self.process_chainlock(message.peer_address(), clsig.clone()).await?;
                         }
                         NetworkMessage::ISLock(islock_msg) => {
                             // Only process InstantLocks when fully synced and masternode engine is available
                             if self.sync_manager.is_synced()
                                 && self.sync_manager.get_masternode_engine().is_some()
                             {
-                                self.process_instantsendlock(islock_msg.clone()).await?;
+                                self.process_instantsendlock(
+                                    message.peer_address(),
+                                    islock_msg.clone(),
+                                )
+                                .await?;
                             } else {
                                 tracing::debug!(
                                     "Skipping InstantLock processing - not fully synced or masternode engine unavailable"

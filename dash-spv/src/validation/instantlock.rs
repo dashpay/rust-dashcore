@@ -1,42 +1,29 @@
 //! InstantLock validation functionality.
 
-use dashcore::InstantLock;
+use dashcore::{sml::masternode_list_engine::MasternodeListEngine, InstantLock};
 use dashcore_hashes::Hash;
 
-use crate::error::{ValidationError, ValidationResult};
+use crate::{
+    error::{ValidationError, ValidationResult},
+    validation::Validator,
+};
 
-/// Validates InstantLock messages.
-#[derive(Default)]
-pub struct InstantLockValidator {
-    // Quorum manager is now passed as parameter to validate_signature
-    // to avoid circular dependencies and allow flexible usage
+/// Validates InstantLock messages. Requires a masternode engine to verify
+/// BLS signatures. Never accept InstantLocks from the network without full
+/// signature verification.
+pub struct InstantLockValidator<'a> {
+    masternode_engine: &'a MasternodeListEngine,
 }
 
-impl InstantLockValidator {
-    /// Create a new InstantLock validator.
-    pub fn new() -> Self {
-        Self {}
-    }
-
+impl Validator<&InstantLock> for InstantLockValidator<'_> {
     /// Validate an InstantLock with full BLS signature verification.
     ///
     /// This performs complete validation including:
     /// - Structural validation (non-zero txid, signature, inputs)
     /// - BLS signature verification using cyclehash-based quorum selection (DIP 24)
-    ///
-    /// **Security Critical**: This method requires a masternode engine to verify
-    /// BLS signatures. Never accept InstantLocks from the network without full
-    /// signature verification.
-    pub fn validate(
-        &self,
-        instant_lock: &InstantLock,
-        masternode_engine: &dashcore::sml::masternode_list_engine::MasternodeListEngine,
-    ) -> ValidationResult<()> {
-        // Perform structural validation
+    fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
         self.validate_structure(instant_lock)?;
-
-        // Perform BLS signature verification (REQUIRED for security)
-        self.validate_signature(instant_lock, masternode_engine)?;
+        self.validate_signature(instant_lock)?;
 
         tracing::debug!(
             "InstantLock fully validated (structure + signature) for txid {}",
@@ -45,11 +32,17 @@ impl InstantLockValidator {
 
         Ok(())
     }
+}
 
-    /// Validate InstantLock structure (without BLS signature verification).
-    ///
-    /// **WARNING**: This is insufficient for accepting network messages.
-    /// For production use, always call `validate()` with a masternode engine.
+impl<'a> InstantLockValidator<'a> {
+    pub fn new(masternode_engine: &'a MasternodeListEngine) -> Self {
+        Self {
+            masternode_engine,
+        }
+    }
+
+    /// This method is a helper for validating the structure of an InstanLock.
+    /// Don't call or expose this method directly, use `validate()` instead.
     fn validate_structure(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
         // Check transaction ID is not zero (null txid)
         if instant_lock.txid == dashcore::Txid::all_zeros() {
@@ -85,21 +78,14 @@ impl InstantLockValidator {
         Ok(())
     }
 
-    /// Validate InstantLock signature using the masternode list engine.
-    ///
-    /// This properly uses the cyclehash to select the correct quorum according to DIP 24.
-    /// The MasternodeListEngine tracks rotated quorums per cycle and selects the specific
-    /// quorum based on the request_id.
-    fn validate_signature(
-        &self,
-        instant_lock: &InstantLock,
-        masternode_engine: &dashcore::sml::masternode_list_engine::MasternodeListEngine,
-    ) -> ValidationResult<()> {
+    /// This method is a helper for validating the signature of an InstanLock.
+    /// Don't call or expose this method directly, use `validate()` instead.
+    fn validate_signature(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
         // Use the proper verification from the masternode engine which:
         // 1. Uses cyclehash to get the set of rotated quorums
         // 2. Uses request_id to select the specific quorum (DIP 24)
         // 3. Verifies the BLS signature with that quorum's public key
-        masternode_engine.verify_is_lock(instant_lock).map_err(|e| {
+        self.masternode_engine.verify_is_lock(instant_lock).map_err(|e| {
             ValidationError::InvalidSignature(format!(
                 "InstantLock BLS signature verification failed: {}",
                 e
@@ -119,11 +105,14 @@ impl InstantLockValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dashcore::Network;
     use dashcore_hashes::Hash;
 
     #[test]
     fn test_valid_instantlock() {
-        let validator = InstantLockValidator::new();
+        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
+        let validator = InstantLockValidator::new(&masternode_engine);
+
         let is_lock = InstantLock::dummy(0..3);
 
         // Structural validation only (for testing)
@@ -132,7 +121,8 @@ mod tests {
 
     #[test]
     fn test_empty_inputs() {
-        let validator = InstantLockValidator::new();
+        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
+        let validator = InstantLockValidator::new(&masternode_engine);
         let mut is_lock = InstantLock::dummy(0..3);
         is_lock.inputs.clear();
 
@@ -143,7 +133,8 @@ mod tests {
 
     #[test]
     fn test_empty_signature() {
-        let validator = InstantLockValidator::new();
+        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
+        let validator = InstantLockValidator::new(&masternode_engine);
         let mut is_lock = InstantLock::dummy(0..3);
         is_lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]);
 
@@ -155,7 +146,8 @@ mod tests {
 
     #[test]
     fn test_null_txid() {
-        let validator = InstantLockValidator::new();
+        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
+        let validator = InstantLockValidator::new(&masternode_engine);
         let mut is_lock = InstantLock::dummy(0..3);
         is_lock.txid = dashcore::Txid::all_zeros();
 
@@ -167,7 +159,8 @@ mod tests {
 
     #[test]
     fn test_null_input_txid() {
-        let validator = InstantLockValidator::new();
+        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
+        let validator = InstantLockValidator::new(&masternode_engine);
         let mut is_lock = InstantLock::dummy(0..3);
         // Set the second input to have a null txid
         is_lock.inputs[1].txid = dashcore::Txid::all_zeros();
@@ -203,7 +196,8 @@ mod tests {
 
     #[test]
     fn test_edge_case_many_inputs() {
-        let validator = InstantLockValidator::new();
+        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
+        let validator = InstantLockValidator::new(&masternode_engine);
 
         // Create lock with many inputs
         let lock = InstantLock::dummy(0..100);

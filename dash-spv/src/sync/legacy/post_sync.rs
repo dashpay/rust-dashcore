@@ -451,6 +451,8 @@ impl<S: StorageManager, N: NetworkManager, W: WalletInterface> SyncManager<S, N,
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store filter: {}", e)))?;
 
+        self.wallet.write().await.update_synced_height(height);
+
         // TODO: Check filter against wallet instead of watch items
         // This will be integrated with wallet's check_compact_filter method
         tracing::debug!("Filter checking disabled until wallet integration is complete");

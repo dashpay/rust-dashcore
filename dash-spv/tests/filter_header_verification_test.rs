@@ -8,18 +8,16 @@
 //! The failure indicates a race condition or inconsistency in how filter headers
 //! are calculated, stored, or verified across multiple batches.
 
+use dash_spv::test_utils::MockNetworkManager;
 use dash_spv::{
     client::ClientConfig,
-    error::{NetworkError, NetworkResult, SyncError},
-    network::NetworkManager,
+    error::SyncError,
     storage::{BlockHeaderStorage, DiskStorageManager, FilterHeaderStorage},
-    sync::filters::FilterSyncManager,
-    types::PeerInfo,
+    sync::legacy::filters::FilterSyncManager,
 };
 use dashcore::{
-    block::{Header as BlockHeader, Version},
+    block::Header as BlockHeader,
     hash_types::{FilterHash, FilterHeader},
-    network::message::NetworkMessage,
     network::message_filter::CFHeaders,
     BlockHash, Network,
 };
@@ -28,105 +26,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
-
-/// Mock network manager for testing filter sync
-#[derive(Debug)]
-struct MockNetworkManager {
-    sent_messages: Vec<NetworkMessage>,
-}
-
-impl MockNetworkManager {
-    fn new() -> Self {
-        Self {
-            sent_messages: Vec::new(),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn clear_sent_messages(&mut self) {
-        self.sent_messages.clear();
-    }
-}
-
-#[async_trait::async_trait]
-impl NetworkManager for MockNetworkManager {
-    async fn connect(&mut self) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    async fn send_message(&mut self, message: NetworkMessage) -> Result<(), NetworkError> {
-        self.sent_messages.push(message);
-        Ok(())
-    }
-
-    async fn receive_message(&mut self) -> Result<Option<NetworkMessage>, NetworkError> {
-        Ok(None)
-    }
-
-    fn is_connected(&self) -> bool {
-        true
-    }
-
-    fn peer_count(&self) -> usize {
-        1
-    }
-
-    fn peer_info(&self) -> Vec<PeerInfo> {
-        vec![]
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
-        Ok(Some(100))
-    }
-
-    async fn has_peer_with_service(
-        &self,
-        _service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> bool {
-        true
-    }
-
-    async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {
-        dash_spv::types::PeerId(1)
-    }
-
-    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
-        Ok(())
-    }
-}
-
-/// Create test headers for a given range
-fn create_test_headers_range(start_height: u32, count: u32) -> Vec<BlockHeader> {
-    let mut headers = Vec::new();
-
-    for i in 0..count {
-        let height = start_height + i;
-        let header = BlockHeader {
-            version: Version::from_consensus(1),
-            prev_blockhash: if height == 0 {
-                BlockHash::all_zeros()
-            } else {
-                // Create a deterministic previous hash
-                BlockHash::from_byte_array([((height - 1) % 256) as u8; 32])
-            },
-            merkle_root: dashcore::TxMerkleNode::from_byte_array([(height % 256) as u8; 32]),
-            time: 1234567890 + height,
-            bits: dashcore::CompactTarget::from_consensus(0x1d00ffff),
-            nonce: height,
-        };
-        headers.push(header);
-    }
-
-    headers
-}
 
 /// Create test filter headers with proper chain linkage
 fn create_test_cfheaders_message(
@@ -175,9 +74,9 @@ async fn test_filter_header_verification_failure_reproduction() {
     println!("=== Testing Filter Header Chain Verification Failure ===");
 
     // Create storage and sync manager
-    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
-        .await
-        .expect("Failed to create tmp storage");
+    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
+
+    let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     let config = ClientConfig::new(Network::Dash);
@@ -187,7 +86,7 @@ async fn test_filter_header_verification_failure_reproduction() {
 
     // Step 1: Store initial headers to simulate having a synced header chain
     println!("Step 1: Setting up initial header chain...");
-    let initial_headers = create_test_headers_range(1000, 5000); // Headers 1000-4999
+    let initial_headers = BlockHeader::dummy_batch(1000..5000); // Headers 1000-4999
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
     let tip_height = storage.get_tip_height().await.unwrap();
@@ -339,9 +238,9 @@ async fn test_overlapping_batches_from_different_peers() {
     // The system should handle this gracefully, but currently it crashes.
     // This test will FAIL until we implement the fix.
 
-    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
-        .await
-        .expect("Failed to create tmp storage");
+    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
+
+    let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
     let config = ClientConfig::new(Network::Dash);
@@ -351,7 +250,7 @@ async fn test_overlapping_batches_from_different_peers() {
 
     // Step 1: Set up headers for the full range we'll need
     println!("Step 1: Setting up header chain (heights 1-3000)...");
-    let initial_headers = create_test_headers_range(1, 3000); // Headers 1-2999
+    let initial_headers = BlockHeader::dummy_batch(1..3000); // Headers 1-2999
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
     let tip_height = storage.get_tip_height().await.unwrap();
@@ -515,18 +414,17 @@ async fn test_filter_header_verification_overlapping_batches() {
     // This test simulates what happens when we receive overlapping filter header batches
     // due to recovery/retry mechanisms or multiple peers
 
-    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
-        .await
-        .expect("Failed to create tmp storage");
+    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
+
+    let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
-    let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
     let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
     // Set up initial headers - start from 1 for proper sync
-    let initial_headers = create_test_headers_range(1, 2000);
+    let initial_headers = BlockHeader::dummy_batch(1..2000);
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
     // Start filter sync first (required for message processing)
@@ -613,18 +511,17 @@ async fn test_filter_header_verification_race_condition_simulation() {
     // This test simulates the race condition that might occur when multiple
     // filter header requests are in flight simultaneously
 
-    let mut storage = DiskStorageManager::new(TempDir::new().unwrap().path().to_path_buf())
-        .await
-        .expect("Failed to create tmp storage");
+    let config = ClientConfig::new(Network::Dash).with_storage_path(TempDir::new().unwrap().path());
+
+    let mut storage = DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
     let mut network = MockNetworkManager::new();
 
-    let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
     let mut filter_sync: FilterSyncManager<DiskStorageManager, MockNetworkManager> =
         FilterSyncManager::new(&config, received_heights);
 
     // Set up headers - need enough for batch B (up to height 3000)
-    let initial_headers = create_test_headers_range(1, 3001);
+    let initial_headers = BlockHeader::dummy_batch(1..3001);
     storage.store_headers(&initial_headers).await.expect("Failed to store initial headers");
 
     // Simulate: Start sync, send request for batch A

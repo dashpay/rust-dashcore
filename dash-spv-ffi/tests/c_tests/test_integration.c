@@ -111,16 +111,6 @@ void test_full_workflow() {
             dash_spv_ffi_sync_progress_destroy(progress);
         }
 
-        // Check stats
-        FFISpvStats* stats = dash_spv_ffi_client_get_stats(ctx.client);
-        if (stats != NULL) {
-            printf("Stats: headers=%llu, filters=%llu, bytes_received=%llu\n",
-                   (unsigned long long)stats->headers_downloaded,
-                   (unsigned long long)stats->filters_downloaded,
-                   (unsigned long long)stats->bytes_received);
-            dash_spv_ffi_spv_stats_destroy(stats);
-        }
-
         sleep(1);
     }
 

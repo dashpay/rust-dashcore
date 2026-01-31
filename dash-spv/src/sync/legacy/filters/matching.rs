@@ -20,27 +20,6 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 
 impl<S: StorageManager, N: NetworkManager> super::manager::FilterSyncManager<S, N> {
-    pub async fn check_filter_for_matches<
-        W: key_wallet_manager::wallet_interface::WalletInterface,
-    >(
-        &self,
-        filter_data: &[u8],
-        block_hash: &BlockHash,
-        wallet: &mut W,
-    ) -> SyncResult<bool> {
-        // Create the BlockFilter from the raw data
-        let filter = dashcore::bip158::BlockFilter::new(filter_data);
-
-        // Use wallet's check_compact_filter method
-        let matches = wallet.check_compact_filter(&filter, block_hash).await;
-        if matches {
-            tracing::info!("🎯 Filter match found for block {}", block_hash);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
     /// Check if filter matches any of the provided scripts using BIP158 GCS filter.
     #[allow(dead_code)]
     fn filter_matches_scripts(

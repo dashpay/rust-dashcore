@@ -70,8 +70,8 @@ impl bincode::Encode for Mnemonic {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for Mnemonic {
-    fn decode<D: bincode::de::Decoder>(
+impl<C> bincode::Decode<C> for Mnemonic {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         let phrase: String = bincode::Decode::decode(decoder)?;
@@ -86,8 +86,8 @@ impl bincode::Decode for Mnemonic {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for Mnemonic {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, C> bincode::BorrowDecode<'de, C> for Mnemonic {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         let phrase: String = bincode::BorrowDecode::borrow_decode(decoder)?;

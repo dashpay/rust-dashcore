@@ -2,6 +2,8 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::storage::{PersistentPeerStorage, PersistentStorage};
+
     use super::super::*;
     use std::net::SocketAddr;
 
@@ -61,11 +63,14 @@ mod tests {
         manager.update_reputation(peer2, 50, "Bad peer").await;
 
         // Save and load
-        let temp_file = tempfile::NamedTempFile::new().unwrap();
-        manager.save_to_storage(temp_file.path()).await.unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let peer_storage = PersistentPeerStorage::open(temp_dir.path())
+            .await
+            .expect("Failed to open PersistentPeerStorage");
+        manager.save_to_storage(&peer_storage).await.unwrap();
 
         let new_manager = PeerReputationManager::new();
-        new_manager.load_from_storage(temp_file.path()).await.unwrap();
+        new_manager.load_from_storage(&peer_storage).await.unwrap();
 
         // Verify scores were preserved
         assert_eq!(new_manager.get_score(&peer1).await, -10);
