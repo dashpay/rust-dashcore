@@ -72,12 +72,12 @@ impl Denomination {
     /// Returns stringly representation of this
     fn as_str(self) -> &'static str {
         match self {
-            Denomination::Dash => "BTC",
-            Denomination::CentiDash => "cBTC",
-            Denomination::MilliDash => "mBTC",
-            Denomination::MicroDash => "uBTC",
-            Denomination::NanoDash => "nBTC",
-            Denomination::PicoDash => "pBTC",
+            Denomination::Dash => "DASH",
+            Denomination::CentiDash => "cDASH",
+            Denomination::MilliDash => "mDASH",
+            Denomination::MicroDash => "uDASH",
+            Denomination::NanoDash => "nDASH",
+            Denomination::PicoDash => "pDASH",
             Denomination::Bit => "bits",
             Denomination::Satoshi => "satoshi",
             Denomination::MilliSatoshi => "msat",
@@ -87,12 +87,12 @@ impl Denomination {
     /// The different str forms of denominations that are recognized.
     fn forms(s: &str) -> Option<Self> {
         match s {
-            "BTC" | "btc" => Some(Denomination::Dash),
-            "cBTC" | "cbtc" => Some(Denomination::CentiDash),
-            "mBTC" | "mbtc" => Some(Denomination::MilliDash),
-            "uBTC" | "ubtc" => Some(Denomination::MicroDash),
-            "nBTC" | "nbtc" => Some(Denomination::NanoDash),
-            "pBTC" | "pbtc" => Some(Denomination::PicoDash),
+            "DASH" | "dash" => Some(Denomination::Dash),
+            "cDASH" | "cdash" => Some(Denomination::CentiDash),
+            "mDASH" | "mdash" => Some(Denomination::MilliDash),
+            "uDASH" | "udash" => Some(Denomination::MicroDash),
+            "nDASH" | "ndash" => Some(Denomination::NanoDash),
+            "pDASH" | "pdash" => Some(Denomination::PicoDash),
             "bit" | "bits" | "BIT" | "BITS" => Some(Denomination::Bit),
             "SATOSHI" | "satoshi" | "SATOSHIS" | "satoshis" | "SAT" | "sat" | "SATS" | "sats" => {
                 Some(Denomination::Satoshi)
@@ -106,7 +106,7 @@ impl Denomination {
 /// These form are ambiguous and could have many meanings.  For example, M could denote Mega or Milli.
 /// If any of these forms are used, an error type PossiblyConfusingDenomination is returned.
 const CONFUSING_FORMS: [&str; 9] =
-    ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MBTC", "Mbtc", "PBTC"];
+    ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MDASH", "Mdash", "PDASH"];
 
 impl fmt::Display for Denomination {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -692,7 +692,7 @@ impl default::Default for Amount {
 
 impl fmt::Debug for Amount {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Amount({:.8} BTC)", self.to_dash())
+        write!(f, "Amount({:.8} DASH)", self.to_dash())
     }
 }
 
@@ -1112,7 +1112,7 @@ impl default::Default for SignedAmount {
 
 impl fmt::Debug for SignedAmount {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SignedAmount({:.8} BTC)", self.to_btc())
+        write!(f, "SignedAmount({:.8} DASH)", self.to_btc())
     }
 }
 
@@ -1625,7 +1625,7 @@ mod tests {
 
     #[test]
     fn from_str_zero() {
-        let denoms = vec!["BTC", "mBTC", "uBTC", "nBTC", "pBTC", "bits", "sats", "msats"];
+        let denoms = vec!["DASH", "mDASH", "uDASH", "nDASH", "pDASH", "bits", "sats", "msats"];
         for denom in denoms {
             for v in &["0", "000"] {
                 let s = format!("{} {}", v, denom);
@@ -1794,16 +1794,16 @@ mod tests {
         assert_eq!(Amount::ONE_SAT.to_string_in(D::Dash), "0.00000001");
         assert_eq!(SignedAmount::from_sat(-42).to_string_in(D::Dash), "-0.00000042");
 
-        assert_eq!(Amount::ONE_BTC.to_string_with_denomination(D::Dash), "1 BTC");
+        assert_eq!(Amount::ONE_BTC.to_string_with_denomination(D::Dash), "1 DASH");
         assert_eq!(Amount::ONE_SAT.to_string_with_denomination(D::MilliSatoshi), "1000 msat");
         assert_eq!(
             SignedAmount::ONE_BTC.to_string_with_denomination(D::Satoshi),
             "100000000 satoshi"
         );
-        assert_eq!(Amount::ONE_SAT.to_string_with_denomination(D::Dash), "0.00000001 BTC");
+        assert_eq!(Amount::ONE_SAT.to_string_with_denomination(D::Dash), "0.00000001 DASH");
         assert_eq!(
             SignedAmount::from_sat(-42).to_string_with_denomination(D::Dash),
-            "-0.00000042 BTC"
+            "-0.00000042 DASH"
         );
     }
 
@@ -2009,11 +2009,14 @@ mod tests {
     fn from_str() {
         use super::ParseAmountError as E;
 
-        assert_eq!(Amount::from_str("x BTC"), Err(E::InvalidCharacter('x')));
-        assert_eq!(Amount::from_str("xBTC"), Err(E::UnknownDenomination("xBTC".into())));
-        assert_eq!(Amount::from_str("5 BTC BTC"), Err(E::UnknownDenomination("BTC BTC".into())));
-        assert_eq!(Amount::from_str("5BTC BTC"), Err(E::InvalidCharacter('B')));
-        assert_eq!(Amount::from_str("5 5 BTC"), Err(E::UnknownDenomination("5 BTC".into())));
+        assert_eq!(Amount::from_str("x DASH"), Err(E::InvalidCharacter('x')));
+        assert_eq!(Amount::from_str("xDASH"), Err(E::UnknownDenomination("xDASH".into())));
+        assert_eq!(
+            Amount::from_str("5 DASH DASH"),
+            Err(E::UnknownDenomination("DASH DASH".into()))
+        );
+        assert_eq!(Amount::from_str("5DASH DASH"), Err(E::InvalidCharacter('D')));
+        assert_eq!(Amount::from_str("5 5 DASH"), Err(E::UnknownDenomination("5 DASH".into())));
 
         #[track_caller]
         fn case(s: &str, expected: Result<Amount, ParseAmountError>) {
@@ -2029,20 +2032,20 @@ mod tests {
 
         case("5 BCH", Err(E::UnknownDenomination("BCH".to_owned())));
 
-        case("-1 BTC", Err(E::Negative));
-        case("-0.0 BTC", Err(E::Negative));
-        case("0.123456789 BTC", Err(E::TooPrecise));
+        case("-1 DASH", Err(E::Negative));
+        case("-0.0 DASH", Err(E::Negative));
+        case("0.123456789 DASH", Err(E::TooPrecise));
         scase("-0.1 satoshi", Err(E::TooPrecise));
-        case("0.123456 mBTC", Err(E::TooPrecise));
+        case("0.123456 mDASH", Err(E::TooPrecise));
         scase("-1.001 bits", Err(E::TooPrecise));
-        scase("-200000000000 BTC", Err(E::TooBig));
+        scase("-200000000000 DASH", Err(E::TooBig));
         case("18446744073709551616 sat", Err(E::TooBig));
 
         case(".5 bits", Ok(Amount::from_sat(50)));
         scase("-.5 bits", Ok(SignedAmount::from_sat(-50)));
-        case("0.00253583 BTC", Ok(Amount::from_sat(253583)));
+        case("0.00253583 DASH", Ok(Amount::from_sat(253583)));
         scase("-5 satoshi", Ok(SignedAmount::from_sat(-5)));
-        case("0.10000000 BTC", Ok(Amount::from_sat(100_000_00)));
+        case("0.10000000 DASH", Ok(Amount::from_sat(100_000_00)));
         scase("-100 bits", Ok(SignedAmount::from_sat(-10_000)));
     }
 
@@ -2138,12 +2141,12 @@ mod tests {
         assert_eq!(Amount::from_str(&denom(amt, D::PicoDash)), Ok(amt));
 
         assert_eq!(
-            Amount::from_str("42 satoshi BTC"),
-            Err(ParseAmountError::UnknownDenomination("satoshi BTC".into())),
+            Amount::from_str("42 satoshi DASH"),
+            Err(ParseAmountError::UnknownDenomination("satoshi DASH".into())),
         );
         assert_eq!(
             SignedAmount::from_str("-42 satoshi BTC"),
-            Err(ParseAmountError::UnknownDenomination("satoshi BTC".into())),
+            Err(ParseAmountError::UnknownDenomination("satoshi DASH".into())),
         );
     }
 
@@ -2364,8 +2367,8 @@ mod tests {
     fn denomination_string_acceptable_forms() {
         // Non-exhaustive list of valid forms.
         let valid = vec![
-            "BTC", "btc", "mBTC", "mbtc", "uBTC", "ubtc", "SATOSHI", "satoshi", "SATOSHIS",
-            "satoshis", "SAT", "sat", "SATS", "sats", "bit", "bits", "nBTC", "pBTC",
+            "DASH", "dash", "mDASH", "mdash", "uDASH", "udash", "SATOSHI", "satoshi", "SATOSHIS",
+            "satoshis", "SAT", "sat", "SATS", "sats", "bit", "bits", "nDASH", "pDASH",
         ];
         for denom in valid.iter() {
             assert!(Denomination::from_str(denom).is_ok());
@@ -2374,7 +2377,8 @@ mod tests {
 
     #[test]
     fn disallow_confusing_forms() {
-        let confusing = ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MBTC", "Mbtc", "PBTC"];
+        let confusing =
+            ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MDASH", "MDash", "PDASH"];
         for denom in confusing.iter() {
             match Denomination::from_str(denom) {
                 Ok(_) => panic!("from_str should error for {}", denom),
@@ -2387,7 +2391,7 @@ mod tests {
     #[test]
     fn disallow_unknown_denomination() {
         // Non-exhaustive list of unknown forms.
-        let unknown = ["NBTC", "UBTC", "ABC", "abc", "cBtC", "Sat", "Sats"];
+        let unknown = ["NDASH", "UDASH", "ABC", "abc", "cBtC", "Sat", "Sats"];
         for denom in unknown.iter() {
             match Denomination::from_str(denom) {
                 Ok(_) => panic!("from_str should error for {}", denom),
