@@ -135,8 +135,8 @@ impl bincode::Encode for PlatformP2PKHAddress {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for PlatformP2PKHAddress {
-    fn decode<D: bincode::de::Decoder>(
+impl<Context> bincode::Decode<Context> for PlatformP2PKHAddress {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         Ok(Self(<[u8; 20]>::decode(decoder)?))
@@ -144,8 +144,8 @@ impl bincode::Decode for PlatformP2PKHAddress {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for PlatformP2PKHAddress {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, Context> bincode::BorrowDecode<'de, Context> for PlatformP2PKHAddress {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = Context>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         Ok(Self(<[u8; 20]>::borrow_decode(decoder)?))

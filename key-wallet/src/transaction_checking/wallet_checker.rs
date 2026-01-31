@@ -875,7 +875,7 @@ mod tests {
         };
 
         // First processing - should be marked as new
-        let result1 = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+        let result1 = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
 
         assert!(result1.is_relevant, "Transaction should be relevant");
         assert!(
@@ -899,7 +899,7 @@ mod tests {
         );
 
         // Second processing (simulating rescan) - should be marked as existing
-        let result2 = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+        let result2 = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
 
         assert!(result2.is_relevant, "Transaction should still be relevant on rescan");
         assert!(

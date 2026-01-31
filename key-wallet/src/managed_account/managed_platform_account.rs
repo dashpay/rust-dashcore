@@ -361,8 +361,8 @@ impl bincode::Encode for ManagedPlatformAccount {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Decode for ManagedPlatformAccount {
-    fn decode<D: bincode::de::Decoder>(
+impl<Context> bincode::Decode<Context> for ManagedPlatformAccount {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         let account = bincode::Decode::decode(decoder)?;
@@ -394,12 +394,12 @@ impl bincode::Decode for ManagedPlatformAccount {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de> bincode::BorrowDecode<'de> for ManagedPlatformAccount {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+impl<'de, Context> bincode::BorrowDecode<'de, Context> for ManagedPlatformAccount {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = Context>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         // Use the regular decode implementation
-        <Self as bincode::Decode>::decode(decoder)
+        <Self as bincode::Decode<Context>>::decode(decoder)
     }
 }
 
