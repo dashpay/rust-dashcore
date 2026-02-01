@@ -12,7 +12,7 @@ use crate::wallet::managed_wallet_info::transaction_building::{
 };
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
-use crate::{Network, Utxo, Wallet, WalletBalance};
+use crate::{Network, Utxo, Wallet, WalletCoreBalance};
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use dashcore::prelude::CoreBlockHeight;
@@ -71,7 +71,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn get_spendable_utxos(&self) -> BTreeSet<&Utxo>;
 
     /// Get the wallet balance
-    fn balance(&self) -> WalletBalance;
+    fn balance(&self) -> WalletCoreBalance;
 
     /// Update the wallet balance
     fn update_balance(&mut self);
@@ -185,12 +185,12 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.utxos().into_iter().filter(|utxo| utxo.is_spendable(self.synced_height())).collect()
     }
 
-    fn balance(&self) -> WalletBalance {
+    fn balance(&self) -> WalletCoreBalance {
         self.balance
     }
 
     fn update_balance(&mut self) {
-        let mut balance = WalletBalance::default();
+        let mut balance = WalletCoreBalance::default();
         let synced_height = self.synced_height();
         for account in self.accounts.all_accounts_mut() {
             account.update_balance(synced_height);

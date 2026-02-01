@@ -15,7 +15,7 @@ pub mod metadata;
 pub mod root_extended_keys;
 pub mod stats;
 
-pub use self::balance::WalletBalance;
+pub use self::balance::WalletCoreBalance;
 pub use self::managed_wallet_info::ManagedWalletInfo;
 use self::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
 use crate::account::account_collection::AccountCollection;

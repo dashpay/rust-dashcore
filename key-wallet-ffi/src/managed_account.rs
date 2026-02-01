@@ -14,28 +14,118 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIAccountType;
 use crate::wallet_manager::FFIWalletManager;
 use crate::FFINetwork;
-use key_wallet::account::account_collection::DashpayAccountKey;
+use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use key_wallet::managed_account::address_pool::AddressPool;
-use key_wallet::managed_account::ManagedAccount;
+use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
+use key_wallet::managed_account::ManagedCoreAccount;
 use key_wallet::AccountType;
 
 /// Opaque managed account handle that wraps ManagedAccount
 pub struct FFIManagedAccount {
     /// The underlying managed account
-    pub(crate) account: Arc<ManagedAccount>,
+    pub(crate) account: Arc<ManagedCoreAccount>,
 }
 
 impl FFIManagedAccount {
     /// Create a new FFI managed account handle
-    pub fn new(account: &ManagedAccount) -> Self {
+    pub fn new(account: &ManagedCoreAccount) -> Self {
         FFIManagedAccount {
             account: Arc::new(account.clone()),
         }
     }
 
     /// Get a reference to the inner managed account
-    pub fn inner(&self) -> &ManagedAccount {
+    pub fn inner(&self) -> &ManagedCoreAccount {
         self.account.as_ref()
+    }
+}
+
+/// Opaque managed platform account handle that wraps ManagedPlatformAccount
+///
+/// This is different from FFIManagedAccount because ManagedPlatformAccount
+/// has a different structure optimized for Platform Payment accounts (DIP-17):
+/// - Simple u64 credit balance instead of WalletCoreBalance
+/// - Per-address balances tracked directly
+/// - No transactions or UTXOs (Platform handles these)
+pub struct FFIManagedPlatformAccount {
+    /// The underlying managed platform account
+    pub(crate) account: Arc<ManagedPlatformAccount>,
+}
+
+impl FFIManagedPlatformAccount {
+    /// Create a new FFI managed platform account handle
+    pub fn new(account: &ManagedPlatformAccount) -> Self {
+        FFIManagedPlatformAccount {
+            account: Arc::new(account.clone()),
+        }
+    }
+
+    /// Get a reference to the inner managed platform account
+    pub fn inner(&self) -> &ManagedPlatformAccount {
+        self.account.as_ref()
+    }
+}
+
+/// FFI Result type for ManagedPlatformAccount operations
+#[repr(C)]
+pub struct FFIManagedPlatformAccountResult {
+    /// The managed platform account handle if successful, NULL if error
+    pub account: *mut FFIManagedPlatformAccount,
+    /// Error code (0 = success)
+    pub error_code: i32,
+    /// Error message (NULL if success, must be freed by caller if not NULL)
+    pub error_message: *mut std::os::raw::c_char,
+}
+
+impl FFIManagedPlatformAccountResult {
+    /// Create a success result
+    pub fn success(account: *mut FFIManagedPlatformAccount) -> Self {
+        FFIManagedPlatformAccountResult {
+            account,
+            error_code: 0,
+            error_message: std::ptr::null_mut(),
+        }
+    }
+
+    /// Create an error result
+    pub fn error(code: FFIErrorCode, message: String) -> Self {
+        use std::ffi::CString;
+        let c_message = CString::new(message).unwrap_or_else(|_| {
+            CString::new("Unknown error").expect("Hardcoded string should never fail")
+        });
+        FFIManagedPlatformAccountResult {
+            account: std::ptr::null_mut(),
+            error_code: code as i32,
+            error_message: c_message.into_raw(),
+        }
+    }
+}
+
+/// C-compatible platform payment account key
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FFIPlatformPaymentAccountKey {
+    /// Account index (hardened)
+    pub account: c_uint,
+    /// Key class (hardened)
+    pub key_class: c_uint,
+}
+
+impl From<&PlatformPaymentAccountKey> for FFIPlatformPaymentAccountKey {
+    fn from(key: &PlatformPaymentAccountKey) -> Self {
+        FFIPlatformPaymentAccountKey {
+            account: key.account,
+            key_class: key.key_class,
+        }
+    }
+}
+
+impl From<FFIPlatformPaymentAccountKey> for PlatformPaymentAccountKey {
+    fn from(key: FFIPlatformPaymentAccountKey) -> Self {
+        PlatformPaymentAccountKey {
+            account: key.account,
+            key_class: key.key_class,
+        }
     }
 }
 
@@ -958,6 +1048,286 @@ pub unsafe extern "C" fn managed_account_get_address_pool(
                 pool_type: FFIAddressPoolType::Single,
             };
             Box::into_raw(Box::new(ffi_pool))
+        }
+    }
+}
+
+// ==================== Platform Payment Account Functions ====================
+
+/// Get a managed platform payment account from a managed wallet
+///
+/// Platform Payment accounts (DIP-17) are identified by account index and key_class.
+/// Returns a platform account handle that wraps the ManagedPlatformAccount.
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The returned account must be freed with `managed_platform_account_free` when no longer needed
+#[no_mangle]
+pub unsafe extern "C" fn managed_wallet_get_platform_payment_account(
+    manager: *const FFIWalletManager,
+    wallet_id: *const u8,
+    account_index: c_uint,
+    key_class: c_uint,
+) -> FFIManagedPlatformAccountResult {
+    if manager.is_null() {
+        return FFIManagedPlatformAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Manager is null".to_string(),
+        );
+    }
+
+    if wallet_id.is_null() {
+        return FFIManagedPlatformAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Wallet ID is null".to_string(),
+        );
+    }
+
+    // Get the managed wallet info from the manager
+    let mut error = FFIError::success();
+    let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
+        manager, wallet_id, &mut error,
+    );
+
+    if managed_wallet_ptr.is_null() {
+        return FFIManagedPlatformAccountResult::error(
+            error.code,
+            if error.message.is_null() {
+                "Failed to get managed wallet info".to_string()
+            } else {
+                let c_str = std::ffi::CStr::from_ptr(error.message);
+                c_str.to_string_lossy().to_string()
+            },
+        );
+    }
+
+    let managed_wallet = &*managed_wallet_ptr;
+    let key = PlatformPaymentAccountKey {
+        account: account_index,
+        key_class,
+    };
+
+    let result = match managed_wallet.inner().accounts.platform_payment_accounts.get(&key) {
+        Some(account) => {
+            let ffi_account = FFIManagedPlatformAccount::new(account);
+            FFIManagedPlatformAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+        }
+        None => FFIManagedPlatformAccountResult::error(
+            FFIErrorCode::NotFound,
+            format!(
+                "Platform Payment account (account: {}, key_class: {}) not found",
+                account_index, key_class
+            ),
+        ),
+    };
+
+    // Clean up the managed wallet pointer
+    crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
+
+    result
+}
+
+/// Get the network of a managed platform account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+/// - Returns `FFINetwork::Dash` if the account is null
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_network(
+    account: *const FFIManagedPlatformAccount,
+) -> FFINetwork {
+    if account.is_null() {
+        return FFINetwork::Dash;
+    }
+
+    let account = &*account;
+    account.inner().network.into()
+}
+
+/// Get the account index of a managed platform account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_account_index(
+    account: *const FFIManagedPlatformAccount,
+) -> c_uint {
+    if account.is_null() {
+        return 0;
+    }
+
+    let account = &*account;
+    account.inner().account
+}
+
+/// Get the key class of a managed platform account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_key_class(
+    account: *const FFIManagedPlatformAccount,
+) -> c_uint {
+    if account.is_null() {
+        return 0;
+    }
+
+    let account = &*account;
+    account.inner().key_class
+}
+
+/// Get the total credit balance of a managed platform account
+///
+/// Returns the balance in credits (1000 credits = 1 duff)
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_credit_balance(
+    account: *const FFIManagedPlatformAccount,
+) -> u64 {
+    if account.is_null() {
+        return 0;
+    }
+
+    let account = &*account;
+    account.inner().total_credit_balance()
+}
+
+/// Get the total balance in duffs of a managed platform account
+///
+/// Returns the balance in duffs (credit_balance / 1000)
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_duff_balance(
+    account: *const FFIManagedPlatformAccount,
+) -> u64 {
+    if account.is_null() {
+        return 0;
+    }
+
+    let account = &*account;
+    account.inner().duff_balance()
+}
+
+/// Get the number of funded addresses in a managed platform account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_funded_address_count(
+    account: *const FFIManagedPlatformAccount,
+) -> c_uint {
+    if account.is_null() {
+        return 0;
+    }
+
+    let account = &*account;
+    account.inner().funded_address_count() as c_uint
+}
+
+/// Get the total number of addresses in a managed platform account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_total_address_count(
+    account: *const FFIManagedPlatformAccount,
+) -> c_uint {
+    if account.is_null() {
+        return 0;
+    }
+
+    let account = &*account;
+    account.inner().total_address_count() as c_uint
+}
+
+/// Check if a managed platform account is watch-only
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_is_watch_only(
+    account: *const FFIManagedPlatformAccount,
+) -> bool {
+    if account.is_null() {
+        return false;
+    }
+
+    let account = &*account;
+    account.inner().is_watch_only
+}
+
+/// Get the address pool from a managed platform account
+///
+/// Platform accounts only have a single address pool.
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+/// - The returned pool must be freed with `address_pool_free` when no longer needed
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_get_address_pool(
+    account: *const FFIManagedPlatformAccount,
+) -> *mut FFIAddressPool {
+    if account.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let account = &*account;
+    let pool_ref = &account.inner().addresses;
+
+    let ffi_pool = FFIAddressPool {
+        pool: pool_ref as *const AddressPool as *mut AddressPool,
+        pool_type: FFIAddressPoolType::Single,
+    };
+    Box::into_raw(Box::new(ffi_pool))
+}
+
+/// Free a managed platform account handle
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIManagedPlatformAccount that was allocated by this library
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_free(account: *mut FFIManagedPlatformAccount) {
+    if !account.is_null() {
+        let _ = Box::from_raw(account);
+    }
+}
+
+/// Free a managed platform account result's error message (if any)
+/// Note: This does NOT free the account handle itself - use managed_platform_account_free for that
+///
+/// # Safety
+///
+/// - `result` must be a valid pointer to an FFIManagedPlatformAccountResult
+/// - The error_message field must be either null or a valid CString allocated by this library
+/// - The caller must ensure the result pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn managed_platform_account_result_free_error(
+    result: *mut FFIManagedPlatformAccountResult,
+) {
+    if !result.is_null() {
+        let result = &mut *result;
+        if !result.error_message.is_null() {
+            let _ = std::ffi::CString::from_raw(result.error_message);
+            result.error_message = std::ptr::null_mut();
         }
     }
 }

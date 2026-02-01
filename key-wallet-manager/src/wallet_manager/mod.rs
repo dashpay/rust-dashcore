@@ -22,7 +22,7 @@ use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionReco
 use key_wallet::wallet::WalletType;
 use key_wallet::Utxo;
 use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
-use key_wallet::{ExtendedPubKey, WalletBalance};
+use key_wallet::{ExtendedPubKey, WalletCoreBalance};
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use zeroize::Zeroize;
@@ -483,8 +483,9 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             let wallet_info_opt = self.wallet_infos.get_mut(&wallet_id);
 
             if let (Some(wallet), Some(wallet_info)) = (wallet_opt, wallet_info_opt) {
-                let check_result =
-                    wallet_info.check_transaction(tx, context, wallet, update_state_if_found).await;
+                let check_result = wallet_info
+                    .check_core_transaction(tx, context, wallet, update_state_if_found)
+                    .await;
 
                 // If the transaction is relevant
                 if check_result.is_relevant {
@@ -904,7 +905,10 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Get balance for a specific wallet
-    pub fn get_wallet_balance(&self, wallet_id: &WalletId) -> Result<WalletBalance, WalletError> {
+    pub fn get_wallet_balance(
+        &self,
+        wallet_id: &WalletId,
+    ) -> Result<WalletCoreBalance, WalletError> {
         // Get the wallet info
         let wallet_info =
             self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;

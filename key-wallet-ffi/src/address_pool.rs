@@ -14,14 +14,14 @@ use key_wallet::account::ManagedAccountCollection;
 use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
 };
-use key_wallet::managed_account::ManagedAccount;
+use key_wallet::managed_account::ManagedCoreAccount;
 use key_wallet::AccountType;
 
 // Helper functions to get managed accounts by type
 fn get_managed_account_by_type<'a>(
     collection: &'a ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a ManagedAccount> {
+) -> Option<&'a ManagedCoreAccount> {
     match account_type {
         AccountType::Standard {
             index,
@@ -70,7 +70,7 @@ fn get_managed_account_by_type<'a>(
 fn get_managed_account_by_type_mut<'a>(
     collection: &'a mut ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a mut ManagedAccount> {
+) -> Option<&'a mut ManagedCoreAccount> {
     match account_type {
         AccountType::Standard {
             index,
@@ -495,7 +495,17 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 
     let account_type_rust = account_type.to_account_type(account_index);
 
-    let account_type_to_check = account_type_rust.into();
+    let account_type_to_check = match account_type_rust.try_into() {
+        Ok(check_type) => check_type,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Platform Payment accounts cannot be used for address pool operations".to_string(),
+            );
+            return false;
+        }
+    };
 
     let xpub_opt = wallet
         .inner()

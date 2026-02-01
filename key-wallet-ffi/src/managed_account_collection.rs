@@ -75,6 +75,11 @@ pub struct FFIManagedAccountCollectionSummary {
     #[cfg(feature = "eddsa")]
     /// Whether provider platform keys account exists
     pub has_provider_platform_keys: bool,
+
+    /// Array of Platform Payment account keys (account, key_class pairs)
+    pub platform_payment_keys: *mut crate::managed_account::FFIPlatformPaymentAccountKey,
+    /// Number of Platform Payment accounts
+    pub platform_payment_count: usize,
 }
 
 /// Get managed account collection for a specific network from wallet manager
@@ -725,6 +730,138 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_platform_keys(
     }
 }
 
+// Platform Payment accounts functions
+
+/// Get a Platform Payment account by account index and key class from the managed collection
+///
+/// Platform Payment accounts (DIP-17) are identified by two indices:
+/// - account_index: The account' level in the derivation path
+/// - key_class: The key_class' level in the derivation path (typically 0)
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_get_platform_payment_account(
+    collection: *const FFIManagedAccountCollection,
+    account_index: c_uint,
+    key_class: c_uint,
+) -> *mut crate::managed_account::FFIManagedPlatformAccount {
+    if collection.is_null() {
+        return ptr::null_mut();
+    }
+
+    let collection = &*collection;
+    let key = key_wallet::account::account_collection::PlatformPaymentAccountKey {
+        account: account_index,
+        key_class,
+    };
+
+    match collection.collection.platform_payment_accounts.get(&key) {
+        Some(account) => {
+            let ffi_account = crate::managed_account::FFIManagedPlatformAccount::new(account);
+            Box::into_raw(Box::new(ffi_account))
+        }
+        None => ptr::null_mut(),
+    }
+}
+
+/// Get all Platform Payment account keys from managed collection
+///
+/// Returns an array of FFIPlatformPaymentAccountKey structures.
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `out_keys` must be a valid pointer to store the keys array
+/// - `out_count` must be a valid pointer to store the count
+/// - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_get_platform_payment_keys(
+    collection: *const FFIManagedAccountCollection,
+    out_keys: *mut *mut crate::managed_account::FFIPlatformPaymentAccountKey,
+    out_count: *mut usize,
+) -> bool {
+    if collection.is_null() || out_keys.is_null() || out_count.is_null() {
+        return false;
+    }
+
+    let collection = &*collection;
+    let keys: Vec<crate::managed_account::FFIPlatformPaymentAccountKey> = collection
+        .collection
+        .platform_payment_accounts
+        .keys()
+        .map(crate::managed_account::FFIPlatformPaymentAccountKey::from)
+        .collect();
+
+    if keys.is_empty() {
+        *out_keys = ptr::null_mut();
+        *out_count = 0;
+        return true;
+    }
+
+    let mut boxed_slice = keys.into_boxed_slice();
+    let ptr = boxed_slice.as_mut_ptr();
+    let len = boxed_slice.len();
+    std::mem::forget(boxed_slice);
+
+    *out_keys = ptr;
+    *out_count = len;
+    true
+}
+
+/// Free platform payment keys array returned by managed_account_collection_get_platform_payment_keys
+///
+/// # Safety
+///
+/// - `keys` must be a pointer returned by `managed_account_collection_get_platform_payment_keys`
+/// - `count` must be the count returned by `managed_account_collection_get_platform_payment_keys`
+/// - This function must only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_free_platform_payment_keys(
+    keys: *mut crate::managed_account::FFIPlatformPaymentAccountKey,
+    count: usize,
+) {
+    if !keys.is_null() && count > 0 {
+        let _ = Vec::from_raw_parts(keys, count, count);
+    }
+}
+
+/// Check if there are any Platform Payment accounts in the managed collection
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_has_platform_payment_accounts(
+    collection: *const FFIManagedAccountCollection,
+) -> bool {
+    if collection.is_null() {
+        return false;
+    }
+
+    let collection = &*collection;
+    !collection.collection.platform_payment_accounts.is_empty()
+}
+
+/// Get the number of Platform Payment accounts in the managed collection
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_platform_payment_count(
+    collection: *const FFIManagedAccountCollection,
+) -> c_uint {
+    if collection.is_null() {
+        return 0;
+    }
+
+    let collection = &*collection;
+    collection.collection.platform_payment_accounts.len() as c_uint
+}
+
 // Utility functions
 
 /// Get the total number of accounts in the managed collection
@@ -773,6 +910,9 @@ pub unsafe extern "C" fn managed_account_collection_count(
     if collection.collection.provider_platform_keys.is_some() {
         count += 1;
     }
+
+    // Platform payment accounts
+    count += collection.collection.platform_payment_accounts.len() as u32;
 
     count
 }
@@ -906,6 +1046,27 @@ pub unsafe extern "C" fn managed_account_collection_summary(
         summary_parts.push("• Provider Platform Keys Account (EdDSA)".to_string());
     }
 
+    // Platform Payment Accounts
+    if !collection.collection.platform_payment_accounts.is_empty() {
+        let count = collection.collection.platform_payment_accounts.len();
+        let keys: Vec<String> = collection
+            .collection
+            .platform_payment_accounts
+            .keys()
+            .map(|k| format!("({},{})", k.account, k.key_class))
+            .collect();
+        summary_parts.push(format!(
+            "• Platform Payment: {} {} at keys {}",
+            count,
+            if count == 1 {
+                "account"
+            } else {
+                "accounts"
+            },
+            keys.join(", ")
+        ));
+    }
+
     // If there are no accounts at all
     if summary_parts.len() == 1 {
         summary_parts.push("No accounts configured".to_string());
@@ -996,6 +1157,24 @@ pub unsafe extern "C" fn managed_account_collection_summary_data(
         (ptr, count)
     };
 
+    // Collect platform payment keys
+    let platform_payment_keys: Vec<crate::managed_account::FFIPlatformPaymentAccountKey> =
+        collection
+            .collection
+            .platform_payment_accounts
+            .keys()
+            .map(crate::managed_account::FFIPlatformPaymentAccountKey::from)
+            .collect();
+    let (platform_payment_ptr, platform_payment_count) = if platform_payment_keys.is_empty() {
+        (ptr::null_mut(), 0)
+    } else {
+        let count = platform_payment_keys.len();
+        let mut boxed_slice = platform_payment_keys.into_boxed_slice();
+        let ptr = boxed_slice.as_mut_ptr();
+        std::mem::forget(boxed_slice);
+        (ptr, count)
+    };
+
     // Create the summary struct
     let summary = FFIManagedAccountCollectionSummary {
         bip44_indices: bip44_ptr,
@@ -1015,6 +1194,8 @@ pub unsafe extern "C" fn managed_account_collection_summary_data(
         has_provider_operator_keys: collection.collection.provider_operator_keys.is_some(),
         #[cfg(feature = "eddsa")]
         has_provider_platform_keys: collection.collection.provider_platform_keys.is_some(),
+        platform_payment_keys: platform_payment_ptr,
+        platform_payment_count,
     };
 
     Box::into_raw(Box::new(summary))
@@ -1063,6 +1244,14 @@ pub unsafe extern "C" fn managed_account_collection_summary_free(
                 summary.identity_topup_indices,
                 summary.identity_topup_count,
                 summary.identity_topup_count,
+            );
+        }
+
+        if !summary.platform_payment_keys.is_null() && summary.platform_payment_count > 0 {
+            let _ = Vec::from_raw_parts(
+                summary.platform_payment_keys,
+                summary.platform_payment_count,
+                summary.platform_payment_count,
             );
         }
 

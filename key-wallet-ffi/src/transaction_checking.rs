@@ -14,7 +14,7 @@ use crate::types::{FFITransactionContext, FFIWallet};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
-    account_checker::AccountTypeMatch, TransactionContext, WalletTransactionChecker,
+    account_checker::CoreAccountTypeMatch, TransactionContext, WalletTransactionChecker,
 };
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
@@ -209,7 +209,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
 
     // Block on the async check_transaction call
     let check_result = tokio::runtime::Handle::current()
-        .block_on(managed_wallet.check_transaction(&tx, context, wallet_mut, update_state));
+        .block_on(managed_wallet.check_core_transaction(&tx, context, wallet_mut, update_state));
 
     // Convert the result to FFI format
     let affected_accounts = if check_result.affected_accounts.is_empty() {
@@ -219,7 +219,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
 
         for account_match in &check_result.affected_accounts {
             match &account_match.account_type_match {
-                AccountTypeMatch::StandardBIP44 {
+                CoreAccountTypeMatch::StandardBIP44 {
                     account_index,
                     involved_receive_addresses,
                     involved_change_addresses,
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::StandardBIP32 {
+                CoreAccountTypeMatch::StandardBIP32 {
                     account_index,
                     involved_receive_addresses,
                     involved_change_addresses,
@@ -261,7 +261,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::CoinJoin {
+                CoreAccountTypeMatch::CoinJoin {
                     account_index,
                     involved_addresses,
                 } => {
@@ -279,7 +279,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::IdentityRegistration {
+                CoreAccountTypeMatch::IdentityRegistration {
                     involved_addresses,
                 } => {
                     let ffi_match = FFIAccountMatch {
@@ -296,7 +296,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::IdentityTopUp {
+                CoreAccountTypeMatch::IdentityTopUp {
                     account_index,
                     involved_addresses,
                 } => {
@@ -314,7 +314,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::IdentityTopUpNotBound {
+                CoreAccountTypeMatch::IdentityTopUpNotBound {
                     involved_addresses,
                 } => {
                     let ffi_match = FFIAccountMatch {
@@ -331,7 +331,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::IdentityInvitation {
+                CoreAccountTypeMatch::IdentityInvitation {
                     involved_addresses,
                 } => {
                     let ffi_match = FFIAccountMatch {
@@ -348,7 +348,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::ProviderVotingKeys {
+                CoreAccountTypeMatch::ProviderVotingKeys {
                     involved_addresses,
                 } => {
                     let ffi_match = FFIAccountMatch {
@@ -365,7 +365,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::ProviderOwnerKeys {
+                CoreAccountTypeMatch::ProviderOwnerKeys {
                     involved_addresses,
                 } => {
                     let ffi_match = FFIAccountMatch {
@@ -382,7 +382,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::ProviderOperatorKeys {
+                CoreAccountTypeMatch::ProviderOperatorKeys {
                     involved_addresses,
                 } => {
                     let ffi_match = FFIAccountMatch {
@@ -399,7 +399,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::ProviderPlatformKeys {
+                CoreAccountTypeMatch::ProviderPlatformKeys {
                     involved_addresses,
                 } => {
                     let ffi_match = FFIAccountMatch {
@@ -416,7 +416,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::DashpayReceivingFunds {
+                CoreAccountTypeMatch::DashpayReceivingFunds {
                     account_index,
                     involved_addresses,
                 } => {
@@ -434,33 +434,12 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
-                AccountTypeMatch::DashpayExternalAccount {
+                CoreAccountTypeMatch::DashpayExternalAccount {
                     account_index,
                     involved_addresses,
                 } => {
                     let ffi_match = FFIAccountMatch {
                         account_type: 12, // DashpayExternalAccount
-                        account_index: *account_index,
-                        registration_index: 0,
-                        received: account_match.received,
-                        sent: account_match.sent,
-                        external_addresses_count: involved_addresses.len() as c_uint,
-                        internal_addresses_count: 0,
-                        has_external_addresses: !involved_addresses.is_empty(),
-                        has_internal_addresses: false,
-                    };
-                    ffi_accounts.push(ffi_match);
-                    continue;
-                }
-                AccountTypeMatch::PlatformPayment {
-                    account_index,
-                    involved_addresses,
-                    ..
-                } => {
-                    // Note: Platform Payment addresses are NOT used in Core chain transactions
-                    // per DIP-17. This branch should never be reached in practice.
-                    let ffi_match = FFIAccountMatch {
-                        account_type: 13, // PlatformPayment
                         account_index: *account_index,
                         registration_index: 0,
                         received: account_match.received,
