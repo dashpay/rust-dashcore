@@ -792,7 +792,7 @@ pub unsafe extern "C" fn managed_account_collection_get_platform_payment_keys(
         .collection
         .platform_payment_accounts
         .keys()
-        .map(|k| crate::managed_account::FFIPlatformPaymentAccountKey::from(k))
+        .map(crate::managed_account::FFIPlatformPaymentAccountKey::from)
         .collect();
 
     if keys.is_empty() {
@@ -1163,7 +1163,7 @@ pub unsafe extern "C" fn managed_account_collection_summary_data(
             .collection
             .platform_payment_accounts
             .keys()
-            .map(|k| crate::managed_account::FFIPlatformPaymentAccountKey::from(k))
+            .map(crate::managed_account::FFIPlatformPaymentAccountKey::from)
             .collect();
     let (platform_payment_ptr, platform_payment_count) = if platform_payment_keys.is_empty() {
         (ptr::null_mut(), 0)

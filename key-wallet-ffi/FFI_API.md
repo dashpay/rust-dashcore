@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 243
+**Total Functions**: 261
 
 ## Table of Contents
 
@@ -32,13 +32,14 @@ Functions: 2
 
 ### Error Handling
 
-Functions: 3
+Functions: 4
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `account_result_free_error` | Free an account result's error message (if any) Note: This does NOT free the... | account |
 | `error_message_free` | Free an error message  # Safety  - `message` must be a valid pointer to a C... | error |
 | `managed_account_result_free_error` | Free a managed account result's error message (if any) Note: This does NOT... | managed_account |
+| `managed_platform_account_result_free_error` | Free a managed platform account result's error message (if any) Note: This... | managed_account |
 
 ### Wallet Manager
 
@@ -68,7 +69,7 @@ Functions: 19
 
 ### Wallet Operations
 
-Functions: 63
+Functions: 65
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -94,6 +95,7 @@ Functions: 63
 | `managed_wallet_get_dashpay_receiving_account` | Get a managed DashPay receiving funds account by composite key  # Safety -... | managed_account |
 | `managed_wallet_get_next_bip44_change_address` | Get the next unused change address  Generates the next unused change address... | managed_wallet |
 | `managed_wallet_get_next_bip44_receive_address` | Get the next unused receive address  Generates the next unused receive... | managed_wallet |
+| `managed_wallet_get_platform_payment_account` | Get a managed platform payment account from a managed wallet  Platform... | managed_account |
 | `managed_wallet_get_top_up_account_with_registration_index` | Get a managed IdentityTopUp account with a specific registration index  This... | managed_account |
 | `managed_wallet_get_utxos` | Get all UTXOs from managed wallet info  # Safety  - `managed_info` must be a... | utxo |
 | `managed_wallet_info_free` | Free managed wallet info returned by wallet_manager_get_managed_wallet_info ... | managed_wallet |
@@ -105,6 +107,7 @@ Functions: 63
 | `wallet_add_account_with_xpub_bytes` | Add an account to the wallet with xpub as byte array  # Safety  This... | wallet |
 | `wallet_add_dashpay_external_account_with_xpub_bytes` | Add a DashPay external (watch-only) account with xpub bytes  # Safety -... | wallet |
 | `wallet_add_dashpay_receiving_account` | Add a DashPay receiving funds account  # Safety - `wallet` must be a valid... | wallet |
+| `wallet_add_platform_payment_account` | Add a Platform Payment account (DIP-17) to the wallet  Platform Payment... | wallet |
 | `wallet_build_and_sign_transaction` | Build and sign a transaction using the wallet's managed info  This is the... | transaction |
 | `wallet_build_transaction` | Build a transaction (unsigned)  This creates an unsigned transaction | transaction |
 | `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  #... | transaction |
@@ -138,7 +141,7 @@ Functions: 63
 
 ### Account Management
 
-Functions: 94
+Functions: 109
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -198,6 +201,7 @@ Functions: 94
 | `eddsa_account_get_network` | No description | account |
 | `managed_account_collection_count` | Get the total number of accounts in the managed collection  # Safety  -... | managed_account_collection |
 | `managed_account_collection_free` | Free a managed account collection handle  # Safety  - `collection` must be a... | managed_account_collection |
+| `managed_account_collection_free_platform_payment_keys` | Free platform payment keys array returned by managed_account_collection_get_p... | managed_account_collection |
 | `managed_account_collection_get_bip32_account` | Get a BIP32 account by index from the managed collection  # Safety  -... | managed_account_collection |
 | `managed_account_collection_get_bip32_indices` | Get all BIP32 account indices from managed collection  # Safety  -... | managed_account_collection |
 | `managed_account_collection_get_bip44_account` | Get a BIP44 account by index from the managed collection  # Safety  -... | managed_account_collection |
@@ -209,6 +213,8 @@ Functions: 94
 | `managed_account_collection_get_identity_topup` | Get an identity topup account by registration index from managed collection ... | managed_account_collection |
 | `managed_account_collection_get_identity_topup_indices` | Get all identity topup registration indices from managed collection  #... | managed_account_collection |
 | `managed_account_collection_get_identity_topup_not_bound` | Get the identity topup not bound account if it exists in managed collection ... | managed_account_collection |
+| `managed_account_collection_get_platform_payment_account` | Get a Platform Payment account by account index and key class from the... | managed_account_collection |
+| `managed_account_collection_get_platform_payment_keys` | Get all Platform Payment account keys from managed collection  Returns an... | managed_account_collection |
 | `managed_account_collection_get_provider_operator_keys` | Get the provider operator keys account if it exists in managed collection... | managed_account_collection |
 | `managed_account_collection_get_provider_owner_keys` | Get the provider owner keys account if it exists in managed collection  #... | managed_account_collection |
 | `managed_account_collection_get_provider_platform_keys` | Get the provider platform keys account if it exists in managed collection... | managed_account_collection |
@@ -216,10 +222,12 @@ Functions: 94
 | `managed_account_collection_has_identity_invitation` | Check if identity invitation account exists in managed collection  # Safety ... | managed_account_collection |
 | `managed_account_collection_has_identity_registration` | Check if identity registration account exists in managed collection  #... | managed_account_collection |
 | `managed_account_collection_has_identity_topup_not_bound` | Check if identity topup not bound account exists in managed collection  #... | managed_account_collection |
+| `managed_account_collection_has_platform_payment_accounts` | Check if there are any Platform Payment accounts in the managed collection ... | managed_account_collection |
 | `managed_account_collection_has_provider_operator_keys` | Check if provider operator keys account exists in managed collection  #... | managed_account_collection |
 | `managed_account_collection_has_provider_owner_keys` | Check if provider owner keys account exists in managed collection  # Safety ... | managed_account_collection |
 | `managed_account_collection_has_provider_platform_keys` | Check if provider platform keys account exists in managed collection  #... | managed_account_collection |
 | `managed_account_collection_has_provider_voting_keys` | Check if provider voting keys account exists in managed collection  # Safety... | managed_account_collection |
+| `managed_account_collection_platform_payment_count` | Get the number of Platform Payment accounts in the managed collection  #... | managed_account_collection |
 | `managed_account_collection_summary` | Get a human-readable summary of all accounts in the managed collection ... | managed_account_collection |
 | `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection ... | managed_account_collection |
 | `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  #... | managed_account_collection |
@@ -236,6 +244,16 @@ Functions: 94
 | `managed_account_get_transaction_count` | Get the number of transactions in a managed account  # Safety  - `account`... | managed_account |
 | `managed_account_get_transactions` | Get all transactions from a managed account  Returns an array of... | managed_account |
 | `managed_account_get_utxo_count` | Get the number of UTXOs in a managed account  # Safety  - `account` must be... | managed_account |
+| `managed_platform_account_free` | Free a managed platform account handle  # Safety  - `account` must be a... | managed_account |
+| `managed_platform_account_get_account_index` | Get the account index of a managed platform account  # Safety  - `account`... | managed_account |
+| `managed_platform_account_get_address_pool` | Get the address pool from a managed platform account  Platform accounts only... | managed_account |
+| `managed_platform_account_get_credit_balance` | Get the total credit balance of a managed platform account  Returns the... | managed_account |
+| `managed_platform_account_get_duff_balance` | Get the total balance in duffs of a managed platform account  Returns the... | managed_account |
+| `managed_platform_account_get_funded_address_count` | Get the number of funded addresses in a managed platform account  # Safety ... | managed_account |
+| `managed_platform_account_get_is_watch_only` | Check if a managed platform account is watch-only  # Safety  - `account`... | managed_account |
+| `managed_platform_account_get_key_class` | Get the key class of a managed platform account  # Safety  - `account` must... | managed_account |
+| `managed_platform_account_get_network` | Get the network of a managed platform account  # Safety  - `account` must be... | managed_account |
+| `managed_platform_account_get_total_address_count` | Get the total number of addresses in a managed platform account  # Safety  -... | managed_account |
 
 ### Address Management
 
@@ -409,6 +427,22 @@ Free a managed account result's error message (if any) Note: This does NOT free 
 
 **Safety:**
 - `result` must be a valid pointer to an FFIManagedAccountResult - The error_message field must be either null or a valid CString allocated by this library - The caller must ensure the result pointer remains valid for the duration of this call
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_result_free_error`
+
+```c
+managed_platform_account_result_free_error(result: *mut FFIManagedPlatformAccountResult,) -> ()
+```
+
+**Description:**
+Free a managed platform account result's error message (if any) Note: This does NOT free the account handle itself - use managed_platform_account_free for that  # Safety  - `result` must be a valid pointer to an FFIManagedPlatformAccountResult - The error_message field must be either null or a valid CString allocated by this library - The caller must ensure the result pointer remains valid for the duration of this call
+
+**Safety:**
+- `result` must be a valid pointer to an FFIManagedPlatformAccountResult - The error_message field must be either null or a valid CString allocated by this library - The caller must ensure the result pointer remains valid for the duration of this call
 
 **Module:** `managed_account`
 
@@ -1041,6 +1075,22 @@ Get the next unused receive address  Generates the next unused receive address f
 
 ---
 
+#### `managed_wallet_get_platform_payment_account`
+
+```c
+managed_wallet_get_platform_payment_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, key_class: c_uint,) -> FFIManagedPlatformAccountResult
+```
+
+**Description:**
+Get a managed platform payment account from a managed wallet  Platform Payment accounts (DIP-17) are identified by account index and key_class. Returns a platform account handle that wraps the ManagedPlatformAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_platform_account_free` when no longer needed
+
+**Safety:**
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_platform_account_free` when no longer needed
+
+**Module:** `managed_account`
+
+---
+
 #### `managed_wallet_get_top_up_account_with_registration_index`
 
 ```c
@@ -1144,7 +1194,7 @@ wallet_add_account(wallet: *mut FFIWallet, account_type: crate::types::FFIAccoun
 ```
 
 **Description:**
-Add an account to the wallet without xpub  # Safety  This function dereferences a raw pointer to FFIWallet. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The FFIWallet remains valid for the duration of this call
+Add an account to the wallet without xpub  # Safety  This function dereferences a raw pointer to FFIWallet. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The FFIWallet remains valid for the duration of this call  # Note  This function does NOT support the following account types: - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 
 **Safety:**
 This function dereferences a raw pointer to FFIWallet. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The FFIWallet remains valid for the duration of this call
@@ -1160,7 +1210,7 @@ wallet_add_account_with_string_xpub(wallet: *mut FFIWallet, account_type: crate:
 ```
 
 **Description:**
-Add an account to the wallet with xpub as string  # Safety  This function dereferences raw pointers. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The xpub_string pointer is either null or points to a valid null-terminated C string - The FFIWallet remains valid for the duration of this call
+Add an account to the wallet with xpub as string  # Safety  This function dereferences raw pointers. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The xpub_string pointer is either null or points to a valid null-terminated C string - The FFIWallet remains valid for the duration of this call  # Note  This function does NOT support the following account types: - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 
 **Safety:**
 This function dereferences raw pointers. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The xpub_string pointer is either null or points to a valid null-terminated C string - The FFIWallet remains valid for the duration of this call
@@ -1176,7 +1226,7 @@ wallet_add_account_with_xpub_bytes(wallet: *mut FFIWallet, account_type: crate::
 ```
 
 **Description:**
-Add an account to the wallet with xpub as byte array  # Safety  This function dereferences raw pointers. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The xpub_bytes pointer is either null or points to at least xpub_len bytes - The FFIWallet remains valid for the duration of this call
+Add an account to the wallet with xpub as byte array  # Safety  This function dereferences raw pointers. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The xpub_bytes pointer is either null or points to at least xpub_len bytes - The FFIWallet remains valid for the duration of this call  # Note  This function does NOT support the following account types: - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 
 **Safety:**
 This function dereferences raw pointers. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The xpub_bytes pointer is either null or points to at least xpub_len bytes - The FFIWallet remains valid for the duration of this call
@@ -1212,6 +1262,22 @@ Add a DashPay receiving funds account  # Safety - `wallet` must be a valid point
 
 **Safety:**
 - `wallet` must be a valid pointer - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
+
+**Module:** `wallet`
+
+---
+
+#### `wallet_add_platform_payment_account`
+
+```c
+wallet_add_platform_payment_account(wallet: *mut FFIWallet, account_index: c_uint, key_class: c_uint,) -> crate::types::FFIAccountResult
+```
+
+**Description:**
+Add a Platform Payment account (DIP-17) to the wallet  Platform Payment accounts use the derivation path: `m/9'/coin_type'/17'/account'/key_class'/index`  # Arguments * `wallet` - Pointer to the wallet * `account_index` - The account index (hardened) in the derivation path * `key_class` - The key class (hardened) - typically 0' for main addresses  # Safety  This function dereferences a raw pointer to FFIWallet. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The FFIWallet remains valid for the duration of this call
+
+**Safety:**
+This function dereferences a raw pointer to FFIWallet. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The FFIWallet remains valid for the duration of this call
 
 **Module:** `wallet`
 
@@ -2508,6 +2574,22 @@ Free a managed account collection handle  # Safety  - `collection` must be a val
 
 ---
 
+#### `managed_account_collection_free_platform_payment_keys`
+
+```c
+managed_account_collection_free_platform_payment_keys(keys: *mut crate::managed_account::FFIPlatformPaymentAccountKey, count: usize,) -> ()
+```
+
+**Description:**
+Free platform payment keys array returned by managed_account_collection_get_platform_payment_keys  # Safety  - `keys` must be a pointer returned by `managed_account_collection_get_platform_payment_keys` - `count` must be the count returned by `managed_account_collection_get_platform_payment_keys` - This function must only be called once per allocation
+
+**Safety:**
+- `keys` must be a pointer returned by `managed_account_collection_get_platform_payment_keys` - `count` must be the count returned by `managed_account_collection_get_platform_payment_keys` - This function must only be called once per allocation
+
+**Module:** `managed_account_collection`
+
+---
+
 #### `managed_account_collection_get_bip32_account`
 
 ```c
@@ -2684,6 +2766,38 @@ Get the identity topup not bound account if it exists in managed collection  # S
 
 ---
 
+#### `managed_account_collection_get_platform_payment_account`
+
+```c
+managed_account_collection_get_platform_payment_account(collection: *const FFIManagedAccountCollection, account_index: c_uint, key_class: c_uint,) -> *mut crate::managed_account::FFIManagedPlatformAccount
+```
+
+**Description:**
+Get a Platform Payment account by account index and key class from the managed collection  Platform Payment accounts (DIP-17) are identified by two indices: - account_index: The account' level in the derivation path - key_class: The key_class' level in the derivation path (typically 0)  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
+
+**Safety:**
+- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
+
+**Module:** `managed_account_collection`
+
+---
+
+#### `managed_account_collection_get_platform_payment_keys`
+
+```c
+managed_account_collection_get_platform_payment_keys(collection: *const FFIManagedAccountCollection, out_keys: *mut *mut crate::managed_account::FFIPlatformPaymentAccountKey, out_count: *mut usize,) -> bool
+```
+
+**Description:**
+Get all Platform Payment account keys from managed collection  Returns an array of FFIPlatformPaymentAccountKey structures.  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_keys` must be a valid pointer to store the keys array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
+
+**Safety:**
+- `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_keys` must be a valid pointer to store the keys array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
+
+**Module:** `managed_account_collection`
+
+---
+
 #### `managed_account_collection_get_provider_operator_keys`
 
 ```c
@@ -2796,6 +2910,22 @@ Check if identity topup not bound account exists in managed collection  # Safety
 
 ---
 
+#### `managed_account_collection_has_platform_payment_accounts`
+
+```c
+managed_account_collection_has_platform_payment_accounts(collection: *const FFIManagedAccountCollection,) -> bool
+```
+
+**Description:**
+Check if there are any Platform Payment accounts in the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+
+**Safety:**
+- `collection` must be a valid pointer to an FFIManagedAccountCollection
+
+**Module:** `managed_account_collection`
+
+---
+
 #### `managed_account_collection_has_provider_operator_keys`
 
 ```c
@@ -2852,6 +2982,22 @@ managed_account_collection_has_provider_voting_keys(collection: *const FFIManage
 
 **Description:**
 Check if provider voting keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+
+**Safety:**
+- `collection` must be a valid pointer to an FFIManagedAccountCollection
+
+**Module:** `managed_account_collection`
+
+---
+
+#### `managed_account_collection_platform_payment_count`
+
+```c
+managed_account_collection_platform_payment_count(collection: *const FFIManagedAccountCollection,) -> c_uint
+```
+
+**Description:**
+Get the number of Platform Payment accounts in the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
 
 **Safety:**
 - `collection` must be a valid pointer to an FFIManagedAccountCollection
@@ -3111,6 +3257,166 @@ Get the number of UTXOs in a managed account  # Safety  - `account` must be a va
 
 **Safety:**
 - `account` must be a valid pointer to an FFIManagedAccount instance
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_free`
+
+```c
+managed_platform_account_free(account: *mut FFIManagedPlatformAccount) -> ()
+```
+
+**Description:**
+Free a managed platform account handle  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount that was allocated by this library - The pointer must not be used after calling this function - This function must only be called once per allocation
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount that was allocated by this library - The pointer must not be used after calling this function - This function must only be called once per allocation
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_account_index`
+
+```c
+managed_platform_account_get_account_index(account: *const FFIManagedPlatformAccount,) -> c_uint
+```
+
+**Description:**
+Get the account index of a managed platform account  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_address_pool`
+
+```c
+managed_platform_account_get_address_pool(account: *const FFIManagedPlatformAccount,) -> *mut FFIAddressPool
+```
+
+**Description:**
+Get the address pool from a managed platform account  Platform accounts only have a single address pool.  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_credit_balance`
+
+```c
+managed_platform_account_get_credit_balance(account: *const FFIManagedPlatformAccount,) -> u64
+```
+
+**Description:**
+Get the total credit balance of a managed platform account  Returns the balance in credits (1000 credits = 1 duff)  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_duff_balance`
+
+```c
+managed_platform_account_get_duff_balance(account: *const FFIManagedPlatformAccount,) -> u64
+```
+
+**Description:**
+Get the total balance in duffs of a managed platform account  Returns the balance in duffs (credit_balance / 1000)  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_funded_address_count`
+
+```c
+managed_platform_account_get_funded_address_count(account: *const FFIManagedPlatformAccount,) -> c_uint
+```
+
+**Description:**
+Get the number of funded addresses in a managed platform account  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_is_watch_only`
+
+```c
+managed_platform_account_get_is_watch_only(account: *const FFIManagedPlatformAccount,) -> bool
+```
+
+**Description:**
+Check if a managed platform account is watch-only  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_key_class`
+
+```c
+managed_platform_account_get_key_class(account: *const FFIManagedPlatformAccount,) -> c_uint
+```
+
+**Description:**
+Get the key class of a managed platform account  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_network`
+
+```c
+managed_platform_account_get_network(account: *const FFIManagedPlatformAccount,) -> FFINetwork
+```
+
+**Description:**
+Get the network of a managed platform account  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance - Returns `FFINetwork::Dash` if the account is null
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance - Returns `FFINetwork::Dash` if the account is null
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_platform_account_get_total_address_count`
+
+```c
+managed_platform_account_get_total_address_count(account: *const FFIManagedPlatformAccount,) -> c_uint
+```
+
+**Description:**
+Get the total number of addresses in a managed platform account  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance
 
 **Module:** `managed_account`
 
