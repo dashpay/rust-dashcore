@@ -1054,7 +1054,7 @@ mod tests {
         // Test the simplified address_pool_get_address_at_index function
         unsafe {
             use crate::managed_account::{
-                managed_account_free, managed_account_get_external_address_pool,
+                managed_core_account_free, managed_core_account_get_external_address_pool,
             };
             use crate::wallet_manager::{
                 wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
@@ -1113,7 +1113,7 @@ mod tests {
             let account = result.account;
 
             // Get external address pool
-            let external_pool = managed_account_get_external_address_pool(account);
+            let external_pool = managed_core_account_get_external_address_pool(account);
             assert!(!external_pool.is_null());
 
             // Test getting address at index 0 (should exist by default)
@@ -1142,7 +1142,7 @@ mod tests {
 
             // Clean up
             address_pool_free(external_pool);
-            managed_account_free(account);
+            managed_core_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
             error.free_message();
@@ -1154,7 +1154,7 @@ mod tests {
         // Test the simplified address_pool_get_addresses_in_range function
         unsafe {
             use crate::managed_account::{
-                managed_account_free, managed_account_get_external_address_pool,
+                managed_core_account_free, managed_core_account_get_external_address_pool,
             };
             use crate::wallet_manager::{
                 wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
@@ -1213,7 +1213,7 @@ mod tests {
             let account = result.account;
 
             // Get external address pool
-            let external_pool = managed_account_get_external_address_pool(account);
+            let external_pool = managed_core_account_get_external_address_pool(account);
             assert!(!external_pool.is_null());
 
             // Test getting a range of addresses
@@ -1271,7 +1271,7 @@ mod tests {
 
             // Clean up
             address_pool_free(external_pool);
-            managed_account_free(account);
+            managed_core_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
             error.free_message();

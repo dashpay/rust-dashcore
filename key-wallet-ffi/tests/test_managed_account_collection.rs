@@ -73,7 +73,7 @@ fn test_managed_account_collection_basic() {
         assert!(!account.is_null());
 
         // Clean up
-        key_wallet_ffi::managed_account::managed_account_free(account);
+        key_wallet_ffi::managed_account::managed_core_account_free(account);
         if !indices.is_null() {
             key_wallet_ffi::account_collection::free_u32_array(indices, indices_count);
         }
@@ -196,11 +196,11 @@ fn test_managed_account_collection_with_special_accounts() {
         // Get specific accounts
         let identity_reg = managed_account_collection_get_identity_registration(collection);
         assert!(!identity_reg.is_null());
-        key_wallet_ffi::managed_account::managed_account_free(identity_reg);
+        key_wallet_ffi::managed_account::managed_core_account_free(identity_reg);
 
         let voting_keys = managed_account_collection_get_provider_voting_keys(collection);
         assert!(!voting_keys.is_null());
-        key_wallet_ffi::managed_account::managed_account_free(voting_keys);
+        key_wallet_ffi::managed_account::managed_core_account_free(voting_keys);
 
         // Clean up
         managed_account_collection_free(collection);

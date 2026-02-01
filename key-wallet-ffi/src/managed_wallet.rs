@@ -909,7 +909,10 @@ mod tests {
 
         managed_collection.standard_bip44_accounts.insert(0, managed_account.clone());
         // Insert the managed account directly into managed_info's accounts
-        managed_info.accounts.insert(managed_account);
+        managed_info
+            .accounts
+            .insert(managed_account)
+            .expect("insert should succeed for Standard account");
 
         // Create wrapper for managed info heap-allocated like C would do
         let ffi_managed = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));

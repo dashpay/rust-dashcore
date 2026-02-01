@@ -164,7 +164,10 @@ impl ManagedAccountCollection {
     }
 
     /// Insert a managed account into the collection
-    pub fn insert(&mut self, account: ManagedCoreAccount) {
+    ///
+    /// Returns an error if a PlatformPayment account type is passed, since those
+    /// should use `insert_platform_account()` with `ManagedPlatformAccount` instead.
+    pub fn insert(&mut self, account: ManagedCoreAccount) -> Result<(), crate::error::Error> {
         use crate::account::StandardAccountType;
 
         match &account.account_type {
@@ -258,9 +261,12 @@ impl ManagedAccountCollection {
             } => {
                 // Platform Payment accounts should use insert_platform_account() instead
                 // as they use ManagedPlatformAccount, not ManagedCoreAccount
-                panic!("Use insert_platform_account() for Platform Payment accounts")
+                return Err(crate::error::Error::InvalidParameter(
+                    "Use insert_platform_account() for Platform Payment accounts".into(),
+                ));
             }
         }
+        Ok(())
     }
 
     /// Insert a managed platform account into the collection

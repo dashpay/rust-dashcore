@@ -1,7 +1,7 @@
 //! Managed account FFI bindings
 //!
 //! This module provides FFI-compatible managed account functionality that wraps
-//! ManagedAccount instances from the key-wallet crate. FFIManagedAccount is a
+//! ManagedAccount instances from the key-wallet crate. FFIManagedCoreAccount is a
 //! simple wrapper around `Arc<ManagedAccount>` without additional fields.
 
 use std::os::raw::c_uint;
@@ -21,15 +21,15 @@ use key_wallet::managed_account::ManagedCoreAccount;
 use key_wallet::AccountType;
 
 /// Opaque managed account handle that wraps ManagedAccount
-pub struct FFIManagedAccount {
+pub struct FFIManagedCoreAccount {
     /// The underlying managed account
     pub(crate) account: Arc<ManagedCoreAccount>,
 }
 
-impl FFIManagedAccount {
+impl FFIManagedCoreAccount {
     /// Create a new FFI managed account handle
     pub fn new(account: &ManagedCoreAccount) -> Self {
-        FFIManagedAccount {
+        FFIManagedCoreAccount {
             account: Arc::new(account.clone()),
         }
     }
@@ -42,7 +42,7 @@ impl FFIManagedAccount {
 
 /// Opaque managed platform account handle that wraps ManagedPlatformAccount
 ///
-/// This is different from FFIManagedAccount because ManagedPlatformAccount
+/// This is different from FFIManagedCoreAccount because ManagedPlatformAccount
 /// has a different structure optimized for Platform Payment accounts (DIP-17):
 /// - Simple u64 credit balance instead of WalletCoreBalance
 /// - Per-address balances tracked directly
@@ -131,19 +131,19 @@ impl From<FFIPlatformPaymentAccountKey> for PlatformPaymentAccountKey {
 
 /// FFI Result type for ManagedAccount operations
 #[repr(C)]
-pub struct FFIManagedAccountResult {
+pub struct FFIManagedCoreAccountResult {
     /// The managed account handle if successful, NULL if error
-    pub account: *mut FFIManagedAccount,
+    pub account: *mut FFIManagedCoreAccount,
     /// Error code (0 = success)
     pub error_code: i32,
     /// Error message (NULL if success, must be freed by caller if not NULL)
     pub error_message: *mut std::os::raw::c_char,
 }
 
-impl FFIManagedAccountResult {
+impl FFIManagedCoreAccountResult {
     /// Create a success result
-    pub fn success(account: *mut FFIManagedAccount) -> Self {
-        FFIManagedAccountResult {
+    pub fn success(account: *mut FFIManagedCoreAccount) -> Self {
+        FFIManagedCoreAccountResult {
             account,
             error_code: 0,
             error_message: std::ptr::null_mut(),
@@ -156,7 +156,7 @@ impl FFIManagedAccountResult {
         let c_message = CString::new(message).unwrap_or_else(|_| {
             CString::new("Unknown error").expect("Hardcoded string should never fail")
         });
-        FFIManagedAccountResult {
+        FFIManagedCoreAccountResult {
             account: std::ptr::null_mut(),
             error_code: code as i32,
             error_message: c_message.into_raw(),
@@ -174,23 +174,23 @@ impl FFIManagedAccountResult {
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
 /// - The caller must ensure all pointers remain valid for the duration of this call
-/// - The returned account must be freed with `managed_account_free` when no longer needed
+/// - The returned account must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_account(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
     account_index: c_uint,
     account_type: FFIAccountType,
-) -> FFIManagedAccountResult {
+) -> FFIManagedCoreAccountResult {
     if manager.is_null() {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             FFIErrorCode::InvalidInput,
             "Manager is null".to_string(),
         );
     }
 
     if wallet_id.is_null() {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             FFIErrorCode::InvalidInput,
             "Wallet ID is null".to_string(),
         );
@@ -203,7 +203,7 @@ pub unsafe extern "C" fn managed_wallet_get_account(
     );
 
     if managed_wallet_ptr.is_null() {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             error.code,
             if error.message.is_null() {
                 "Failed to get managed wallet info".to_string()
@@ -261,10 +261,10 @@ pub unsafe extern "C" fn managed_wallet_get_account(
 
         match managed_account {
             Some(account) => {
-                let ffi_account = FFIManagedAccount::new(account);
-                FFIManagedAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+                let ffi_account = FFIManagedCoreAccount::new(account);
+                FFIManagedCoreAccountResult::success(Box::into_raw(Box::new(ffi_account)))
             }
-            None => FFIManagedAccountResult::error(
+            None => FFIManagedCoreAccountResult::error(
                 FFIErrorCode::NotFound,
                 "Account not found".to_string(),
             ),
@@ -287,22 +287,22 @@ pub unsafe extern "C" fn managed_wallet_get_account(
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
 /// - The caller must ensure all pointers remain valid for the duration of this call
-/// - The returned account must be freed with `managed_account_free` when no longer needed
+/// - The returned account must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_index(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
     registration_index: c_uint,
-) -> FFIManagedAccountResult {
+) -> FFIManagedCoreAccountResult {
     if manager.is_null() {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             FFIErrorCode::InvalidInput,
             "Manager is null".to_string(),
         );
     }
 
     if wallet_id.is_null() {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             FFIErrorCode::InvalidInput,
             "Wallet ID is null".to_string(),
         );
@@ -315,7 +315,7 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
     );
 
     if managed_wallet_ptr.is_null() {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             error.code,
             if error.message.is_null() {
                 "Failed to get managed wallet info".to_string()
@@ -330,10 +330,10 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
 
     let result = match managed_wallet.inner().accounts.identity_topup.get(&registration_index) {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
-            FFIManagedAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+            let ffi_account = FFIManagedCoreAccount::new(account);
+            FFIManagedCoreAccountResult::success(Box::into_raw(Box::new(ffi_account)))
         }
-        None => FFIManagedAccountResult::error(
+        None => FFIManagedCoreAccountResult::error(
             FFIErrorCode::NotFound,
             format!(
                 "IdentityTopUp account for registration index {} not found",
@@ -360,13 +360,13 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_receiving_account(
     account_index: c_uint,
     user_identity_id: *const u8,
     friend_identity_id: *const u8,
-) -> FFIManagedAccountResult {
+) -> FFIManagedCoreAccountResult {
     if manager.is_null()
         || wallet_id.is_null()
         || user_identity_id.is_null()
         || friend_identity_id.is_null()
     {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             FFIErrorCode::InvalidInput,
             "Null pointer provided".to_string(),
         );
@@ -386,7 +386,7 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_receiving_account(
         manager, wallet_id, &mut error,
     );
     if managed_wallet_ptr.is_null() {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             error.code,
             if error.message.is_null() {
                 "Failed to get managed wallet info".to_string()
@@ -398,12 +398,13 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_receiving_account(
     let managed_wallet = &*managed_wallet_ptr;
 
     let result = match managed_wallet.inner().accounts.dashpay_receival_accounts.get(&key) {
-        Some(account) => FFIManagedAccountResult::success(Box::into_raw(Box::new(
-            FFIManagedAccount::new(account),
+        Some(account) => FFIManagedCoreAccountResult::success(Box::into_raw(Box::new(
+            FFIManagedCoreAccount::new(account),
         ))),
-        None => {
-            FFIManagedAccountResult::error(FFIErrorCode::NotFound, "Account not found".to_string())
-        }
+        None => FFIManagedCoreAccountResult::error(
+            FFIErrorCode::NotFound,
+            "Account not found".to_string(),
+        ),
     };
     crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
     result
@@ -420,13 +421,13 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
     account_index: c_uint,
     user_identity_id: *const u8,
     friend_identity_id: *const u8,
-) -> FFIManagedAccountResult {
+) -> FFIManagedCoreAccountResult {
     if manager.is_null()
         || wallet_id.is_null()
         || user_identity_id.is_null()
         || friend_identity_id.is_null()
     {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             FFIErrorCode::InvalidInput,
             "Null pointer provided".to_string(),
         );
@@ -446,7 +447,7 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
         manager, wallet_id, &mut error,
     );
     if managed_wallet_ptr.is_null() {
-        return FFIManagedAccountResult::error(
+        return FFIManagedCoreAccountResult::error(
             error.code,
             if error.message.is_null() {
                 "Failed to get managed wallet info".to_string()
@@ -458,12 +459,13 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
     let managed_wallet = &*managed_wallet_ptr;
 
     let result = match managed_wallet.inner().accounts.dashpay_external_accounts.get(&key) {
-        Some(account) => FFIManagedAccountResult::success(Box::into_raw(Box::new(
-            FFIManagedAccount::new(account),
+        Some(account) => FFIManagedCoreAccountResult::success(Box::into_raw(Box::new(
+            FFIManagedCoreAccount::new(account),
         ))),
-        None => {
-            FFIManagedAccountResult::error(FFIErrorCode::NotFound, "Account not found".to_string())
-        }
+        None => FFIManagedCoreAccountResult::error(
+            FFIErrorCode::NotFound,
+            "Account not found".to_string(),
+        ),
     };
     crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
     result
@@ -473,11 +475,11 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 /// - Returns `FFINetwork::Dash` if the account is null
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_network(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_network(
+    account: *const FFIManagedCoreAccount,
 ) -> FFINetwork {
     if account.is_null() {
         return FFINetwork::Dash;
@@ -498,7 +500,9 @@ pub unsafe extern "C" fn managed_account_get_network(
 /// - The returned pointer is the same as the input pointer for convenience
 /// - The caller must not free the returned pointer as it's the same as the input
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_parent_wallet_id(wallet_id: *const u8) -> *const u8 {
+pub unsafe extern "C" fn managed_core_account_get_parent_wallet_id(
+    wallet_id: *const u8,
+) -> *const u8 {
     // Simply return the wallet_id that was passed in
     // This function exists for API consistency but ManagedAccount doesn't store parent wallet ID
     wallet_id
@@ -508,11 +512,11 @@ pub unsafe extern "C" fn managed_account_get_parent_wallet_id(wallet_id: *const 
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 /// - `index_out` must be a valid pointer to receive the account index (or null)
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_account_type(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_account_type(
+    account: *const FFIManagedCoreAccount,
     index_out: *mut c_uint,
 ) -> FFIAccountType {
     if account.is_null() {
@@ -571,10 +575,10 @@ pub unsafe extern "C" fn managed_account_get_account_type(
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_is_watch_only(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_is_watch_only(
+    account: *const FFIManagedCoreAccount,
 ) -> bool {
     if account.is_null() {
         return false;
@@ -588,11 +592,11 @@ pub unsafe extern "C" fn managed_account_get_is_watch_only(
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 /// - `balance_out` must be a valid pointer to an FFIBalance structure
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_balance(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_balance(
+    account: *const FFIManagedCoreAccount,
     balance_out: *mut crate::types::FFIBalance,
 ) -> bool {
     if account.is_null() || balance_out.is_null() {
@@ -617,10 +621,10 @@ pub unsafe extern "C" fn managed_account_get_balance(
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_transaction_count(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_transaction_count(
+    account: *const FFIManagedCoreAccount,
 ) -> c_uint {
     if account.is_null() {
         return 0;
@@ -634,10 +638,10 @@ pub unsafe extern "C" fn managed_account_get_transaction_count(
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_utxo_count(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_utxo_count(
+    account: *const FFIManagedCoreAccount,
 ) -> c_uint {
     if account.is_null() {
         return 0;
@@ -672,13 +676,13 @@ pub struct FFITransactionRecord {
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 /// - `transactions_out` must be a valid pointer to receive the transactions array pointer
 /// - `count_out` must be a valid pointer to receive the count
-/// - The caller must free the returned array using `managed_account_free_transactions`
+/// - The caller must free the returned array using `managed_core_account_free_transactions`
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_transactions(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_transactions(
+    account: *const FFIManagedCoreAccount,
     transactions_out: *mut *mut FFITransactionRecord,
     count_out: *mut usize,
 ) -> bool {
@@ -742,15 +746,15 @@ pub unsafe extern "C" fn managed_account_get_transactions(
     true
 }
 
-/// Free transactions array returned by managed_account_get_transactions
+/// Free transactions array returned by managed_core_account_get_transactions
 ///
 /// # Safety
 ///
-/// - `transactions` must be a pointer returned by `managed_account_get_transactions`
-/// - `count` must be the count returned by `managed_account_get_transactions`
+/// - `transactions` must be a pointer returned by `managed_core_account_get_transactions`
+/// - `count` must be the count returned by `managed_core_account_get_transactions`
 /// - This function must only be called once per allocation
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_free_transactions(
+pub unsafe extern "C" fn managed_core_account_free_transactions(
     transactions: *mut FFITransactionRecord,
     count: usize,
 ) {
@@ -767,26 +771,28 @@ pub unsafe extern "C" fn managed_account_free_transactions(
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount that was allocated by this library
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount that was allocated by this library
 /// - The pointer must not be used after calling this function
 /// - This function must only be called once per allocation
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_free(account: *mut FFIManagedAccount) {
+pub unsafe extern "C" fn managed_core_account_free(account: *mut FFIManagedCoreAccount) {
     if !account.is_null() {
         let _ = Box::from_raw(account);
     }
 }
 
 /// Free a managed account result's error message (if any)
-/// Note: This does NOT free the account handle itself - use managed_account_free for that
+/// Note: This does NOT free the account handle itself - use managed_core_account_free for that
 ///
 /// # Safety
 ///
-/// - `result` must be a valid pointer to an FFIManagedAccountResult
+/// - `result` must be a valid pointer to an FFIManagedCoreAccountResult
 /// - The error_message field must be either null or a valid CString allocated by this library
 /// - The caller must ensure the result pointer remains valid for the duration of this call
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_result_free_error(result: *mut FFIManagedAccountResult) {
+pub unsafe extern "C" fn managed_core_account_result_free_error(
+    result: *mut FFIManagedCoreAccountResult,
+) {
     if !result.is_null() {
         let result = &mut *result;
         if !result.error_message.is_null() {
@@ -839,7 +845,7 @@ pub unsafe extern "C" fn managed_wallet_get_account_count(
     count as c_uint
 }
 
-// Note: BLS and EdDSA accounts are handled through regular FFIManagedAccount
+// Note: BLS and EdDSA accounts are handled through regular FFIManagedCoreAccount
 // since ManagedAccountCollection stores all accounts as ManagedAccount type
 
 /// Get the account index from a managed account
@@ -849,9 +855,11 @@ pub unsafe extern "C" fn managed_wallet_get_account_count(
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_index(account: *const FFIManagedAccount) -> c_uint {
+pub unsafe extern "C" fn managed_core_account_get_index(
+    account: *const FFIManagedCoreAccount,
+) -> c_uint {
     if account.is_null() {
         return 0;
     }
@@ -867,11 +875,11 @@ pub unsafe extern "C" fn managed_account_get_index(account: *const FFIManagedAcc
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 /// - The returned pool must be freed with `address_pool_free` when no longer needed
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_external_address_pool(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_external_address_pool(
+    account: *const FFIManagedCoreAccount,
 ) -> *mut FFIAddressPool {
     if account.is_null() {
         return std::ptr::null_mut();
@@ -903,11 +911,11 @@ pub unsafe extern "C" fn managed_account_get_external_address_pool(
 ///
 /// # Safety
 ///
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 /// - The returned pool must be freed with `address_pool_free` when no longer needed
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_internal_address_pool(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_internal_address_pool(
+    account: *const FFIManagedCoreAccount,
 ) -> *mut FFIAddressPool {
     if account.is_null() {
         return std::ptr::null_mut();
@@ -941,12 +949,12 @@ pub unsafe extern "C" fn managed_account_get_internal_address_pool(
 /// # Safety
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
-/// - `account` must be a valid pointer to an FFIManagedAccount instance
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
 /// - The returned pool must be freed with `address_pool_free` when no longer needed
 #[no_mangle]
-pub unsafe extern "C" fn managed_account_get_address_pool(
-    account: *const FFIManagedAccount,
+pub unsafe extern "C" fn managed_core_account_get_address_pool(
+    account: *const FFIManagedCoreAccount,
     pool_type: FFIAddressPoolType,
 ) -> *mut FFIAddressPool {
     if account.is_null() {
@@ -1403,7 +1411,7 @@ mod tests {
             assert!(!account.inner().is_watch_only);
 
             // Clean up
-            managed_account_free(result.account);
+            managed_core_account_free(result.account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
         }
@@ -1459,7 +1467,7 @@ mod tests {
             assert!(!result.error_message.is_null());
 
             // Clean up error message
-            managed_account_result_free_error(&mut result as *mut _);
+            managed_core_account_result_free_error(&mut result as *mut _);
 
             // Clean up
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
@@ -1468,10 +1476,10 @@ mod tests {
     }
 
     #[test]
-    fn test_managed_account_free_null() {
+    fn test_managed_core_account_free_null() {
         unsafe {
             // Should not crash when freeing null
-            managed_account_free(ptr::null_mut());
+            managed_core_account_free(ptr::null_mut());
         }
     }
 
@@ -1589,17 +1597,17 @@ mod tests {
             let account = result.account;
 
             // Test get_network
-            let network = managed_account_get_network(account);
+            let network = managed_core_account_get_network(account);
             assert_eq!(network, FFINetwork::Testnet);
 
             // Test get_account_type
             let mut index_out: c_uint = 999; // Initialize with unexpected value
-            let account_type = managed_account_get_account_type(account, &mut index_out);
+            let account_type = managed_core_account_get_account_type(account, &mut index_out);
             assert_eq!(account_type, FFIAccountType::StandardBIP44);
             assert_eq!(index_out, 0);
 
             // Test get_is_watch_only
-            let is_watch_only = managed_account_get_is_watch_only(account);
+            let is_watch_only = managed_core_account_get_is_watch_only(account);
             assert!(!is_watch_only);
 
             // Test get_balance
@@ -1610,7 +1618,7 @@ mod tests {
                 locked: 999,
                 total: 999,
             };
-            let success = managed_account_get_balance(account, &mut balance_out);
+            let success = managed_core_account_get_balance(account, &mut balance_out);
             assert!(success);
             // Initially, balance should be 0
             assert_eq!(balance_out.confirmed, 0);
@@ -1620,19 +1628,19 @@ mod tests {
             assert_eq!(balance_out.total, 0);
 
             // Test get_transaction_count
-            let tx_count = managed_account_get_transaction_count(account);
+            let tx_count = managed_core_account_get_transaction_count(account);
             assert_eq!(tx_count, 0); // Initially no transactions
 
             // Test get_utxo_count
-            let utxo_count = managed_account_get_utxo_count(account);
+            let utxo_count = managed_core_account_get_utxo_count(account);
             assert_eq!(utxo_count, 0); // Initially no UTXOs
 
             // Test get_parent_wallet_id
-            let parent_id = managed_account_get_parent_wallet_id(wallet_ids_out);
+            let parent_id = managed_core_account_get_parent_wallet_id(wallet_ids_out);
             assert_eq!(parent_id, wallet_ids_out); // Should return the same pointer
 
             // Clean up
-            managed_account_free(account);
+            managed_core_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
         }
@@ -1642,24 +1650,24 @@ mod tests {
     fn test_managed_account_getter_edge_cases() {
         unsafe {
             // Test null account for get_network
-            let network = managed_account_get_network(ptr::null());
+            let network = managed_core_account_get_network(ptr::null());
             assert_eq!(network, FFINetwork::Dash);
 
             let mut index_out: c_uint = 0;
-            let account_type = managed_account_get_account_type(ptr::null(), &mut index_out);
+            let account_type = managed_core_account_get_account_type(ptr::null(), &mut index_out);
             assert_eq!(account_type, FFIAccountType::StandardBIP44); // Default type
 
-            let is_watch_only = managed_account_get_is_watch_only(ptr::null());
+            let is_watch_only = managed_core_account_get_is_watch_only(ptr::null());
             assert!(!is_watch_only);
 
-            let tx_count = managed_account_get_transaction_count(ptr::null());
+            let tx_count = managed_core_account_get_transaction_count(ptr::null());
             assert_eq!(tx_count, 0);
 
-            let utxo_count = managed_account_get_utxo_count(ptr::null());
+            let utxo_count = managed_core_account_get_utxo_count(ptr::null());
             assert_eq!(utxo_count, 0);
 
             // Test new getters with null account
-            let index = managed_account_get_index(ptr::null());
+            let index = managed_core_account_get_index(ptr::null());
             assert_eq!(index, 0);
 
             // Test null balance_out
@@ -1702,11 +1710,11 @@ mod tests {
             assert!(!result.account.is_null());
 
             // Test balance with null output
-            let success = managed_account_get_balance(result.account, ptr::null_mut());
+            let success = managed_core_account_get_balance(result.account, ptr::null_mut());
             assert!(!success);
 
             // Clean up
-            managed_account_free(result.account);
+            managed_core_account_free(result.account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
         }
@@ -1764,29 +1772,30 @@ mod tests {
             let account = result.account;
 
             // Test get_index
-            let index = managed_account_get_index(account);
+            let index = managed_core_account_get_index(account);
             assert_eq!(index, 0);
 
             // Test get_external_address_pool
-            let external_pool = managed_account_get_external_address_pool(account);
+            let external_pool = managed_core_account_get_external_address_pool(account);
             assert!(!external_pool.is_null());
 
             // Test get_internal_address_pool
-            let internal_pool = managed_account_get_internal_address_pool(account);
+            let internal_pool = managed_core_account_get_internal_address_pool(account);
             assert!(!internal_pool.is_null());
 
             // Test get_address_pool with External type
             let external_pool2 =
-                managed_account_get_address_pool(account, FFIAddressPoolType::External);
+                managed_core_account_get_address_pool(account, FFIAddressPoolType::External);
             assert!(!external_pool2.is_null());
 
             // Test get_address_pool with Internal type
             let internal_pool2 =
-                managed_account_get_address_pool(account, FFIAddressPoolType::Internal);
+                managed_core_account_get_address_pool(account, FFIAddressPoolType::Internal);
             assert!(!internal_pool2.is_null());
 
             // Test get_address_pool with Single type (should return null for Standard account)
-            let single_pool = managed_account_get_address_pool(account, FFIAddressPoolType::Single);
+            let single_pool =
+                managed_core_account_get_address_pool(account, FFIAddressPoolType::Single);
             assert!(single_pool.is_null());
 
             // Clean up address pools
@@ -1796,7 +1805,7 @@ mod tests {
             address_pool_free(internal_pool2);
 
             // Clean up account
-            managed_account_free(account);
+            managed_core_account_free(account);
 
             // Now test with different account types from the same wallet
             // The default wallet should have been created with StandardBIP44 index 0
@@ -1846,20 +1855,20 @@ mod tests {
             let cj_account = cj_result.account;
 
             // Test that external/internal return null for CoinJoin account
-            let cj_external = managed_account_get_external_address_pool(cj_account);
+            let cj_external = managed_core_account_get_external_address_pool(cj_account);
             assert!(cj_external.is_null());
 
-            let cj_internal = managed_account_get_internal_address_pool(cj_account);
+            let cj_internal = managed_core_account_get_internal_address_pool(cj_account);
             assert!(cj_internal.is_null());
 
             // Test that Single pool works for CoinJoin account
             let cj_single =
-                managed_account_get_address_pool(cj_account, FFIAddressPoolType::Single);
+                managed_core_account_get_address_pool(cj_account, FFIAddressPoolType::Single);
             assert!(!cj_single.is_null());
 
             // Clean up
             address_pool_free(cj_single);
-            managed_account_free(cj_account);
+            managed_core_account_free(cj_account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
         }

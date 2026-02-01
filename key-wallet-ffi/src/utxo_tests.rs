@@ -232,7 +232,7 @@ mod utxo_tests {
             bip44_account.utxos.insert(outpoint, utxo);
         }
 
-        managed_info.accounts.insert(bip44_account);
+        managed_info.accounts.insert(bip44_account).unwrap();
 
         let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
         unsafe { (*ffi_managed_info).inner_mut() }.update_synced_height(300);
@@ -317,7 +317,7 @@ mod utxo_tests {
         for utxo in utxos {
             bip44_account.utxos.insert(utxo.outpoint, utxo);
         }
-        managed_info.accounts.insert(bip44_account);
+        managed_info.accounts.insert(bip44_account).unwrap();
 
         // Create BIP32 account with 1 UTXO
         let mut bip32_account = ManagedCoreAccount::new(
@@ -343,7 +343,7 @@ mod utxo_tests {
         for utxo in utxos {
             bip32_account.utxos.insert(utxo.outpoint, utxo);
         }
-        managed_info.accounts.insert(bip32_account);
+        managed_info.accounts.insert(bip32_account).unwrap();
 
         // Create CoinJoin account with 2 UTXOs
         let mut coinjoin_account = ManagedCoreAccount::new(
@@ -362,7 +362,7 @@ mod utxo_tests {
         for utxo in utxos {
             coinjoin_account.utxos.insert(utxo.outpoint, utxo);
         }
-        managed_info.accounts.insert(coinjoin_account);
+        managed_info.accounts.insert(coinjoin_account).unwrap();
 
         let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
@@ -421,7 +421,7 @@ mod utxo_tests {
         for utxo in utxos {
             testnet_account.utxos.insert(utxo.outpoint, utxo);
         }
-        managed_info.accounts.insert(testnet_account);
+        managed_info.accounts.insert(testnet_account).unwrap();
 
         let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 

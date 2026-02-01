@@ -53,7 +53,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 
@@ -129,7 +129,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 
@@ -174,7 +174,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 
@@ -247,7 +247,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 
@@ -293,7 +293,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 
@@ -370,7 +370,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 }

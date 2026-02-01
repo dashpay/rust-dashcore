@@ -10,21 +10,21 @@ use std::os::raw::{c_char, c_uint};
 use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::managed_account::FFIManagedAccount;
+use crate::managed_account::FFIManagedCoreAccount;
 use crate::wallet_manager::FFIWalletManager;
 
 /// Opaque handle to a managed account collection
-pub struct FFIManagedAccountCollection {
+pub struct FFIManagedCoreAccountCollection {
     /// The underlying managed account collection
     collection: key_wallet::managed_account::managed_account_collection::ManagedAccountCollection,
 }
 
-impl FFIManagedAccountCollection {
+impl FFIManagedCoreAccountCollection {
     /// Create a new FFI managed account collection
     pub fn new(
         collection: &key_wallet::managed_account::managed_account_collection::ManagedAccountCollection,
     ) -> Self {
-        FFIManagedAccountCollection {
+        FFIManagedCoreAccountCollection {
             collection: collection.clone(),
         }
     }
@@ -36,7 +36,7 @@ impl FFIManagedAccountCollection {
 /// that exist in the managed collection, allowing programmatic access to account
 /// indices and presence information.
 #[repr(C)]
-pub struct FFIManagedAccountCollectionSummary {
+pub struct FFIManagedCoreAccountCollectionSummary {
     /// Array of BIP44 account indices
     pub bip44_indices: *mut c_uint,
     /// Number of BIP44 accounts
@@ -95,7 +95,7 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
     error: *mut FFIError,
-) -> *mut FFIManagedAccountCollection {
+) -> *mut FFIManagedCoreAccountCollection {
     if manager.is_null() || wallet_id.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return ptr::null_mut();
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
     // Get the managed account collection from the managed wallet info
     let managed_wallet = &*managed_wallet_ptr;
 
-    let ffi_collection = FFIManagedAccountCollection::new(&managed_wallet.inner().accounts);
+    let ffi_collection = FFIManagedCoreAccountCollection::new(&managed_wallet.inner().accounts);
 
     // Clean up the managed wallet pointer since we've extracted what we need
     crate::managed_wallet::managed_wallet_info_free(managed_wallet_ptr);
@@ -125,11 +125,11 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection created by this library
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection created by this library
 /// - `collection` must not be used after calling this function
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_free(
-    collection: *mut FFIManagedAccountCollection,
+    collection: *mut FFIManagedCoreAccountCollection,
 ) {
     if !collection.is_null() {
         let _ = Box::from_raw(collection);
@@ -142,13 +142,13 @@ pub unsafe extern "C" fn managed_account_collection_free(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_bip44_account(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     index: c_uint,
-) -> *mut FFIManagedAccount {
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn managed_account_collection_get_bip44_account(
     match collection.collection.standard_bip44_accounts.get(&index) {
         Some(account) => {
             // Get the network from the account
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -168,13 +168,13 @@ pub unsafe extern "C" fn managed_account_collection_get_bip44_account(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - `out_indices` must be a valid pointer to store the indices array
 /// - `out_count` must be a valid pointer to store the count
 /// - The returned array must be freed with `free_u32_array` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_bip44_indices(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     out_indices: *mut *mut c_uint,
     out_count: *mut usize,
 ) -> bool {
@@ -210,13 +210,13 @@ pub unsafe extern "C" fn managed_account_collection_get_bip44_indices(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_bip32_account(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     index: c_uint,
-) -> *mut FFIManagedAccount {
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -224,7 +224,7 @@ pub unsafe extern "C" fn managed_account_collection_get_bip32_account(
     let collection = &*collection;
     match collection.collection.standard_bip32_accounts.get(&index) {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -235,13 +235,13 @@ pub unsafe extern "C" fn managed_account_collection_get_bip32_account(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - `out_indices` must be a valid pointer to store the indices array
 /// - `out_count` must be a valid pointer to store the count
 /// - The returned array must be freed with `free_u32_array` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_bip32_indices(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     out_indices: *mut *mut c_uint,
     out_count: *mut usize,
 ) -> bool {
@@ -275,13 +275,13 @@ pub unsafe extern "C" fn managed_account_collection_get_bip32_indices(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_coinjoin_account(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     index: c_uint,
-) -> *mut FFIManagedAccount {
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -289,7 +289,7 @@ pub unsafe extern "C" fn managed_account_collection_get_coinjoin_account(
     let collection = &*collection;
     match collection.collection.coinjoin_accounts.get(&index) {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -300,13 +300,13 @@ pub unsafe extern "C" fn managed_account_collection_get_coinjoin_account(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - `out_indices` must be a valid pointer to store the indices array
 /// - `out_count` must be a valid pointer to store the count
 /// - The returned array must be freed with `free_u32_array` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_coinjoin_indices(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     out_indices: *mut *mut c_uint,
     out_count: *mut usize,
 ) -> bool {
@@ -342,12 +342,12 @@ pub unsafe extern "C" fn managed_account_collection_get_coinjoin_indices(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_registration(
-    collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
+    collection: *const FFIManagedCoreAccountCollection,
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -355,7 +355,7 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_registration(
     let collection = &*collection;
     match &collection.collection.identity_registration {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -366,10 +366,10 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_registration(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_has_identity_registration(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> bool {
     if collection.is_null() {
         return false;
@@ -383,13 +383,13 @@ pub unsafe extern "C" fn managed_account_collection_has_identity_registration(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_topup(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     registration_index: c_uint,
-) -> *mut FFIManagedAccount {
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -397,7 +397,7 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup(
     let collection = &*collection;
     match collection.collection.identity_topup.get(&registration_index) {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -408,13 +408,13 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - `out_indices` must be a valid pointer to store the indices array
 /// - `out_count` must be a valid pointer to store the count
 /// - The returned array must be freed with `free_u32_array` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_topup_indices(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     out_indices: *mut *mut c_uint,
     out_count: *mut usize,
 ) -> bool {
@@ -447,13 +447,13 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup_indices(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - `manager` must be a valid pointer to an FFIWalletManager
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_topup_not_bound(
-    collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
+    collection: *const FFIManagedCoreAccountCollection,
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -461,7 +461,7 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup_not_bound
     let collection = &*collection;
     match &collection.collection.identity_topup_not_bound {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -472,10 +472,10 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup_not_bound
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_has_identity_topup_not_bound(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> bool {
     if collection.is_null() {
         return false;
@@ -489,12 +489,12 @@ pub unsafe extern "C" fn managed_account_collection_has_identity_topup_not_bound
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_invitation(
-    collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
+    collection: *const FFIManagedCoreAccountCollection,
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -502,7 +502,7 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_invitation(
     let collection = &*collection;
     match &collection.collection.identity_invitation {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -513,10 +513,10 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_invitation(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_has_identity_invitation(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> bool {
     if collection.is_null() {
         return false;
@@ -532,12 +532,12 @@ pub unsafe extern "C" fn managed_account_collection_has_identity_invitation(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_voting_keys(
-    collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
+    collection: *const FFIManagedCoreAccountCollection,
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -545,7 +545,7 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_voting_keys(
     let collection = &*collection;
     match &collection.collection.provider_voting_keys {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -556,10 +556,10 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_voting_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_has_provider_voting_keys(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> bool {
     if collection.is_null() {
         return false;
@@ -573,12 +573,12 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_voting_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_owner_keys(
-    collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccount {
+    collection: *const FFIManagedCoreAccountCollection,
+) -> *mut FFIManagedCoreAccount {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -586,7 +586,7 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_owner_keys(
     let collection = &*collection;
     match &collection.collection.provider_owner_keys {
         Some(account) => {
-            let ffi_account = FFIManagedAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -597,10 +597,10 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_owner_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_has_provider_owner_keys(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> bool {
     if collection.is_null() {
         return false;
@@ -615,11 +615,11 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_owner_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed (when BLS is enabled)
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed (when BLS is enabled)
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> *mut std::os::raw::c_void {
     #[cfg(feature = "bls")]
     {
@@ -630,7 +630,7 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
         let collection = &*collection;
         match &collection.collection.provider_operator_keys {
             Some(account) => {
-                let ffi_account = FFIManagedAccount::new(account);
+                let ffi_account = FFIManagedCoreAccount::new(account);
                 Box::into_raw(Box::new(ffi_account)) as *mut std::os::raw::c_void
             }
             None => ptr::null_mut(),
@@ -649,10 +649,10 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_has_provider_operator_keys(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> bool {
     if collection.is_null() {
         return false;
@@ -675,11 +675,11 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_operator_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - The returned pointer must be freed with `managed_account_free` when no longer needed (when EdDSA is enabled)
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+/// - The returned pointer must be freed with `managed_core_account_free` when no longer needed (when EdDSA is enabled)
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> *mut std::os::raw::c_void {
     #[cfg(feature = "eddsa")]
     {
@@ -690,7 +690,7 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
         let collection = &*collection;
         match &collection.collection.provider_platform_keys {
             Some(account) => {
-                let ffi_account = FFIManagedAccount::new(account);
+                let ffi_account = FFIManagedCoreAccount::new(account);
                 Box::into_raw(Box::new(ffi_account)) as *mut std::os::raw::c_void
             }
             None => ptr::null_mut(),
@@ -709,10 +709,10 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_has_provider_platform_keys(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> bool {
     if collection.is_null() {
         return false;
@@ -740,11 +740,11 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_platform_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_platform_payment_account(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     account_index: c_uint,
     key_class: c_uint,
 ) -> *mut crate::managed_account::FFIManagedPlatformAccount {
@@ -773,13 +773,13 @@ pub unsafe extern "C" fn managed_account_collection_get_platform_payment_account
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - `out_keys` must be a valid pointer to store the keys array
 /// - `out_count` must be a valid pointer to store the count
 /// - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_platform_payment_keys(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
     out_keys: *mut *mut crate::managed_account::FFIPlatformPaymentAccountKey,
     out_count: *mut usize,
 ) -> bool {
@@ -832,10 +832,10 @@ pub unsafe extern "C" fn managed_account_collection_free_platform_payment_keys(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_has_platform_payment_accounts(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> bool {
     if collection.is_null() {
         return false;
@@ -849,10 +849,10 @@ pub unsafe extern "C" fn managed_account_collection_has_platform_payment_account
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_platform_payment_count(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> c_uint {
     if collection.is_null() {
         return 0;
@@ -868,10 +868,10 @@ pub unsafe extern "C" fn managed_account_collection_platform_payment_count(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_count(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> c_uint {
     if collection.is_null() {
         return 0;
@@ -924,12 +924,12 @@ pub unsafe extern "C" fn managed_account_collection_count(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - The returned string must be freed with `string_free` when no longer needed
 /// - Returns null if the collection pointer is null
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_summary(
-    collection: *const FFIManagedAccountCollection,
+    collection: *const FFIManagedCoreAccountCollection,
 ) -> *mut c_char {
     if collection.is_null() {
         return ptr::null_mut();
@@ -1088,13 +1088,13 @@ pub unsafe extern "C" fn managed_account_collection_summary(
 ///
 /// # Safety
 ///
-/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 /// - The returned pointer must be freed with `managed_account_collection_summary_free` when no longer needed
 /// - Returns null if the collection pointer is null
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_summary_data(
-    collection: *const FFIManagedAccountCollection,
-) -> *mut FFIManagedAccountCollectionSummary {
+    collection: *const FFIManagedCoreAccountCollection,
+) -> *mut FFIManagedCoreAccountCollectionSummary {
     if collection.is_null() {
         return ptr::null_mut();
     }
@@ -1176,7 +1176,7 @@ pub unsafe extern "C" fn managed_account_collection_summary_data(
     };
 
     // Create the summary struct
-    let summary = FFIManagedAccountCollectionSummary {
+    let summary = FFIManagedCoreAccountCollectionSummary {
         bip44_indices: bip44_ptr,
         bip44_count,
         bip32_indices: bip32_ptr,
@@ -1205,11 +1205,11 @@ pub unsafe extern "C" fn managed_account_collection_summary_data(
 ///
 /// # Safety
 ///
-/// - `summary` must be a valid pointer to an FFIManagedAccountCollectionSummary created by `managed_account_collection_summary_data`
+/// - `summary` must be a valid pointer to an FFIManagedCoreAccountCollectionSummary created by `managed_account_collection_summary_data`
 /// - `summary` must not be used after calling this function
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_summary_free(
-    summary: *mut FFIManagedAccountCollectionSummary,
+    summary: *mut FFIManagedCoreAccountCollectionSummary,
 ) {
     if !summary.is_null() {
         let summary = Box::from_raw(summary);
