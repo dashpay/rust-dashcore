@@ -38,7 +38,7 @@ Functions: 4
 |----------|-------------|--------|
 | `account_result_free_error` | Free an account result's error message (if any) Note: This does NOT free the... | account |
 | `error_message_free` | Free an error message  # Safety  - `message` must be a valid pointer to a C... | error |
-| `managed_account_result_free_error` | Free a managed account result's error message (if any) Note: This does NOT... | managed_account |
+| `managed_core_account_result_free_error` | Free a managed account result's error message (if any) Note: This does NOT... | managed_account |
 | `managed_platform_account_result_free_error` | Free a managed platform account result's error message (if any) Note: This... | managed_account |
 
 ### Wallet Manager
@@ -80,7 +80,7 @@ Functions: 65
 | `key_wallet_derive_address_from_key` | Derive an address from a private key  # Safety - `private_key` must be a... | derivation |
 | `key_wallet_derive_address_from_seed` | Derive an address from a seed at a specific derivation path  # Safety -... | derivation |
 | `key_wallet_derive_private_key_from_seed` | Derive a private key from a seed at a specific derivation path  # Safety -... | derivation |
-| `managed_account_get_parent_wallet_id` | Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't... | managed_account |
+| `managed_core_account_get_parent_wallet_id` | Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't... | managed_account |
 | `managed_wallet_check_transaction` | Check if a transaction belongs to the wallet  This function checks a... | transaction_checking |
 | `managed_wallet_free` | Free managed wallet info  # Safety  - `managed_wallet` must be a valid... | managed_wallet |
 | `managed_wallet_generate_addresses_to_index` | Generate addresses up to a specific index in a pool  This ensures that... | address_pool |
@@ -231,19 +231,19 @@ Functions: 109
 | `managed_account_collection_summary` | Get a human-readable summary of all accounts in the managed collection ... | managed_account_collection |
 | `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection ... | managed_account_collection |
 | `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  #... | managed_account_collection |
-| `managed_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer... | managed_account |
-| `managed_account_free_transactions` | Free transactions array returned by managed_account_get_transactions  #... | managed_account |
-| `managed_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a... | managed_account |
-| `managed_account_get_address_pool` | Get an address pool from a managed account by type  This function returns... | managed_account |
-| `managed_account_get_balance` | Get the balance of a managed account  # Safety  - `account` must be a valid... | managed_account |
-| `managed_account_get_external_address_pool` | Get the external address pool from a managed account  This function returns... | managed_account |
-| `managed_account_get_index` | Get the account index from a managed account  Returns the primary account... | managed_account |
-| `managed_account_get_internal_address_pool` | Get the internal address pool from a managed account  This function returns... | managed_account |
-| `managed_account_get_is_watch_only` | Check if a managed account is watch-only  # Safety  - `account` must be a... | managed_account |
-| `managed_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid... | managed_account |
-| `managed_account_get_transaction_count` | Get the number of transactions in a managed account  # Safety  - `account`... | managed_account |
-| `managed_account_get_transactions` | Get all transactions from a managed account  Returns an array of... | managed_account |
-| `managed_account_get_utxo_count` | Get the number of UTXOs in a managed account  # Safety  - `account` must be... | managed_account |
+| `managed_core_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer... | managed_account |
+| `managed_core_account_free_transactions` | Free transactions array returned by managed_core_account_get_transactions  #... | managed_account |
+| `managed_core_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a... | managed_account |
+| `managed_core_account_get_address_pool` | Get an address pool from a managed account by type  This function returns... | managed_account |
+| `managed_core_account_get_balance` | Get the balance of a managed account  # Safety  - `account` must be a valid... | managed_account |
+| `managed_core_account_get_external_address_pool` | Get the external address pool from a managed account  This function returns... | managed_account |
+| `managed_core_account_get_index` | Get the account index from a managed account  Returns the primary account... | managed_account |
+| `managed_core_account_get_internal_address_pool` | Get the internal address pool from a managed account  This function returns... | managed_account |
+| `managed_core_account_get_is_watch_only` | Check if a managed account is watch-only  # Safety  - `account` must be a... | managed_account |
+| `managed_core_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid... | managed_account |
+| `managed_core_account_get_transaction_count` | Get the number of transactions in a managed account  # Safety  - `account`... | managed_account |
+| `managed_core_account_get_transactions` | Get all transactions from a managed account  Returns an array of... | managed_account |
+| `managed_core_account_get_utxo_count` | Get the number of UTXOs in a managed account  # Safety  - `account` must be... | managed_account |
 | `managed_platform_account_free` | Free a managed platform account handle  # Safety  - `account` must be a... | managed_account |
 | `managed_platform_account_get_account_index` | Get the account index of a managed platform account  # Safety  - `account`... | managed_account |
 | `managed_platform_account_get_address_pool` | Get the address pool from a managed platform account  Platform accounts only... | managed_account |
@@ -416,17 +416,17 @@ Free an error message  # Safety  - `message` must be a valid pointer to a C stri
 
 ---
 
-#### `managed_account_result_free_error`
+#### `managed_core_account_result_free_error`
 
 ```c
-managed_account_result_free_error(result: *mut FFIManagedAccountResult) -> ()
+managed_core_account_result_free_error(result: *mut FFIManagedCoreAccountResult,) -> ()
 ```
 
 **Description:**
-Free a managed account result's error message (if any) Note: This does NOT free the account handle itself - use managed_account_free for that  # Safety  - `result` must be a valid pointer to an FFIManagedAccountResult - The error_message field must be either null or a valid CString allocated by this library - The caller must ensure the result pointer remains valid for the duration of this call
+Free a managed account result's error message (if any) Note: This does NOT free the account handle itself - use managed_core_account_free for that  # Safety  - `result` must be a valid pointer to an FFIManagedCoreAccountResult - The error_message field must be either null or a valid CString allocated by this library - The caller must ensure the result pointer remains valid for the duration of this call
 
 **Safety:**
-- `result` must be a valid pointer to an FFIManagedAccountResult - The error_message field must be either null or a valid CString allocated by this library - The caller must ensure the result pointer remains valid for the duration of this call
+- `result` must be a valid pointer to an FFIManagedCoreAccountResult - The error_message field must be either null or a valid CString allocated by this library - The caller must ensure the result pointer remains valid for the duration of this call
 
 **Module:** `managed_account`
 
@@ -835,10 +835,10 @@ Derive a private key from a seed at a specific derivation path  # Safety - `seed
 
 ---
 
-#### `managed_account_get_parent_wallet_id`
+#### `managed_core_account_get_parent_wallet_id`
 
 ```c
-managed_account_get_parent_wallet_id(wallet_id: *const u8) -> *const u8
+managed_core_account_get_parent_wallet_id(wallet_id: *const u8,) -> *const u8
 ```
 
 **Description:**
@@ -902,14 +902,14 @@ Generate addresses up to a specific index in a pool  This ensures that addresses
 #### `managed_wallet_get_account`
 
 ```c
-managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedAccountResult
+managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedCoreAccountResult
 ```
 
 **Description:**
-Get a managed account from a managed wallet  This function gets a ManagedAccount from the wallet manager's managed wallet info, returning a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+Get a managed account from a managed wallet  This function gets a ManagedAccount from the wallet manager's managed wallet info, returning a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account`
 
@@ -918,7 +918,7 @@ Get a managed account from a managed wallet  This function gets a ManagedAccount
 #### `managed_wallet_get_account_collection`
 
 ```c
-managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_id: *const u8, error: *mut FFIError,) -> *mut FFIManagedAccountCollection
+managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_id: *const u8, error: *mut FFIError,) -> *mut FFIManagedCoreAccountCollection
 ```
 
 **Description:**
@@ -1014,7 +1014,7 @@ Get BIP44 internal (change) addresses in the specified range  Returns internal a
 #### `managed_wallet_get_dashpay_external_account`
 
 ```c
-managed_wallet_get_dashpay_external_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
+managed_wallet_get_dashpay_external_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedCoreAccountResult
 ```
 
 **Description:**
@@ -1030,7 +1030,7 @@ Get a managed DashPay external account by composite key  # Safety - Pointers mus
 #### `managed_wallet_get_dashpay_receiving_account`
 
 ```c
-managed_wallet_get_dashpay_receiving_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedAccountResult
+managed_wallet_get_dashpay_receiving_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, user_identity_id: *const u8, friend_identity_id: *const u8,) -> FFIManagedCoreAccountResult
 ```
 
 **Description:**
@@ -1094,14 +1094,14 @@ Get a managed platform payment account from a managed wallet  Platform Payment a
 #### `managed_wallet_get_top_up_account_with_registration_index`
 
 ```c
-managed_wallet_get_top_up_account_with_registration_index(manager: *const FFIWalletManager, wallet_id: *const u8, registration_index: c_uint,) -> FFIManagedAccountResult
+managed_wallet_get_top_up_account_with_registration_index(manager: *const FFIWalletManager, wallet_id: *const u8, registration_index: c_uint,) -> FFIManagedCoreAccountResult
 ```
 
 **Description:**
-Get a managed IdentityTopUp account with a specific registration index  This is used for top-up accounts that are bound to a specific identity. Returns a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+Get a managed IdentityTopUp account with a specific registration index  This is used for top-up accounts that are bound to a specific identity. Returns a managed account handle that wraps the ManagedAccount.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_account_free` when no longer needed
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The caller must ensure all pointers remain valid for the duration of this call - The returned account must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account`
 
@@ -2545,14 +2545,14 @@ eddsa_account_get_network(account: *const FFIEdDSAAccount) -> FFINetwork
 #### `managed_account_collection_count`
 
 ```c
-managed_account_collection_count(collection: *const FFIManagedAccountCollection,) -> c_uint
+managed_account_collection_count(collection: *const FFIManagedCoreAccountCollection,) -> c_uint
 ```
 
 **Description:**
-Get the total number of accounts in the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Get the total number of accounts in the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2561,14 +2561,14 @@ Get the total number of accounts in the managed collection  # Safety  - `collect
 #### `managed_account_collection_free`
 
 ```c
-managed_account_collection_free(collection: *mut FFIManagedAccountCollection,) -> ()
+managed_account_collection_free(collection: *mut FFIManagedCoreAccountCollection,) -> ()
 ```
 
 **Description:**
-Free a managed account collection handle  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection created by this library - `collection` must not be used after calling this function
+Free a managed account collection handle  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection created by this library - `collection` must not be used after calling this function
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection created by this library - `collection` must not be used after calling this function
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection created by this library - `collection` must not be used after calling this function
 
 **Module:** `managed_account_collection`
 
@@ -2593,14 +2593,14 @@ Free platform payment keys array returned by managed_account_collection_get_plat
 #### `managed_account_collection_get_bip32_account`
 
 ```c
-managed_account_collection_get_bip32_account(collection: *const FFIManagedAccountCollection, index: c_uint,) -> *mut FFIManagedAccount
+managed_account_collection_get_bip32_account(collection: *const FFIManagedCoreAccountCollection, index: c_uint,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get a BIP32 account by index from the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get a BIP32 account by index from the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2609,14 +2609,14 @@ Get a BIP32 account by index from the managed collection  # Safety  - `collectio
 #### `managed_account_collection_get_bip32_indices`
 
 ```c
-managed_account_collection_get_bip32_indices(collection: *const FFIManagedAccountCollection, out_indices: *mut *mut c_uint, out_count: *mut usize,) -> bool
+managed_account_collection_get_bip32_indices(collection: *const FFIManagedCoreAccountCollection, out_indices: *mut *mut c_uint, out_count: *mut usize,) -> bool
 ```
 
 **Description:**
-Get all BIP32 account indices from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
+Get all BIP32 account indices from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2625,14 +2625,14 @@ Get all BIP32 account indices from managed collection  # Safety  - `collection` 
 #### `managed_account_collection_get_bip44_account`
 
 ```c
-managed_account_collection_get_bip44_account(collection: *const FFIManagedAccountCollection, index: c_uint,) -> *mut FFIManagedAccount
+managed_account_collection_get_bip44_account(collection: *const FFIManagedCoreAccountCollection, index: c_uint,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get a BIP44 account by index from the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get a BIP44 account by index from the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2641,14 +2641,14 @@ Get a BIP44 account by index from the managed collection  # Safety  - `collectio
 #### `managed_account_collection_get_bip44_indices`
 
 ```c
-managed_account_collection_get_bip44_indices(collection: *const FFIManagedAccountCollection, out_indices: *mut *mut c_uint, out_count: *mut usize,) -> bool
+managed_account_collection_get_bip44_indices(collection: *const FFIManagedCoreAccountCollection, out_indices: *mut *mut c_uint, out_count: *mut usize,) -> bool
 ```
 
 **Description:**
-Get all BIP44 account indices from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
+Get all BIP44 account indices from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2657,14 +2657,14 @@ Get all BIP44 account indices from managed collection  # Safety  - `collection` 
 #### `managed_account_collection_get_coinjoin_account`
 
 ```c
-managed_account_collection_get_coinjoin_account(collection: *const FFIManagedAccountCollection, index: c_uint,) -> *mut FFIManagedAccount
+managed_account_collection_get_coinjoin_account(collection: *const FFIManagedCoreAccountCollection, index: c_uint,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get a CoinJoin account by index from the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get a CoinJoin account by index from the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2673,14 +2673,14 @@ Get a CoinJoin account by index from the managed collection  # Safety  - `collec
 #### `managed_account_collection_get_coinjoin_indices`
 
 ```c
-managed_account_collection_get_coinjoin_indices(collection: *const FFIManagedAccountCollection, out_indices: *mut *mut c_uint, out_count: *mut usize,) -> bool
+managed_account_collection_get_coinjoin_indices(collection: *const FFIManagedCoreAccountCollection, out_indices: *mut *mut c_uint, out_count: *mut usize,) -> bool
 ```
 
 **Description:**
-Get all CoinJoin account indices from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
+Get all CoinJoin account indices from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2689,14 +2689,14 @@ Get all CoinJoin account indices from managed collection  # Safety  - `collectio
 #### `managed_account_collection_get_identity_invitation`
 
 ```c
-managed_account_collection_get_identity_invitation(collection: *const FFIManagedAccountCollection,) -> *mut FFIManagedAccount
+managed_account_collection_get_identity_invitation(collection: *const FFIManagedCoreAccountCollection,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get the identity invitation account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get the identity invitation account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2705,14 +2705,14 @@ Get the identity invitation account if it exists in managed collection  # Safety
 #### `managed_account_collection_get_identity_registration`
 
 ```c
-managed_account_collection_get_identity_registration(collection: *const FFIManagedAccountCollection,) -> *mut FFIManagedAccount
+managed_account_collection_get_identity_registration(collection: *const FFIManagedCoreAccountCollection,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get the identity registration account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get the identity registration account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2721,14 +2721,14 @@ Get the identity registration account if it exists in managed collection  # Safe
 #### `managed_account_collection_get_identity_topup`
 
 ```c
-managed_account_collection_get_identity_topup(collection: *const FFIManagedAccountCollection, registration_index: c_uint,) -> *mut FFIManagedAccount
+managed_account_collection_get_identity_topup(collection: *const FFIManagedCoreAccountCollection, registration_index: c_uint,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get an identity topup account by registration index from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get an identity topup account by registration index from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2737,14 +2737,14 @@ Get an identity topup account by registration index from managed collection  # S
 #### `managed_account_collection_get_identity_topup_indices`
 
 ```c
-managed_account_collection_get_identity_topup_indices(collection: *const FFIManagedAccountCollection, out_indices: *mut *mut c_uint, out_count: *mut usize,) -> bool
+managed_account_collection_get_identity_topup_indices(collection: *const FFIManagedCoreAccountCollection, out_indices: *mut *mut c_uint, out_count: *mut usize,) -> bool
 ```
 
 **Description:**
-Get all identity topup registration indices from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
+Get all identity topup registration indices from managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_indices` must be a valid pointer to store the indices array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `free_u32_array` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2753,14 +2753,14 @@ Get all identity topup registration indices from managed collection  # Safety  -
 #### `managed_account_collection_get_identity_topup_not_bound`
 
 ```c
-managed_account_collection_get_identity_topup_not_bound(collection: *const FFIManagedAccountCollection,) -> *mut FFIManagedAccount
+managed_account_collection_get_identity_topup_not_bound(collection: *const FFIManagedCoreAccountCollection,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get the identity topup not bound account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - `manager` must be a valid pointer to an FFIWalletManager - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get the identity topup not bound account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `manager` must be a valid pointer to an FFIWalletManager - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - `manager` must be a valid pointer to an FFIWalletManager - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `manager` must be a valid pointer to an FFIWalletManager - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2769,14 +2769,14 @@ Get the identity topup not bound account if it exists in managed collection  # S
 #### `managed_account_collection_get_platform_payment_account`
 
 ```c
-managed_account_collection_get_platform_payment_account(collection: *const FFIManagedAccountCollection, account_index: c_uint, key_class: c_uint,) -> *mut crate::managed_account::FFIManagedPlatformAccount
+managed_account_collection_get_platform_payment_account(collection: *const FFIManagedCoreAccountCollection, account_index: c_uint, key_class: c_uint,) -> *mut crate::managed_account::FFIManagedPlatformAccount
 ```
 
 **Description:**
-Get a Platform Payment account by account index and key class from the managed collection  Platform Payment accounts (DIP-17) are identified by two indices: - account_index: The account' level in the derivation path - key_class: The key_class' level in the derivation path (typically 0)  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
+Get a Platform Payment account by account index and key class from the managed collection  Platform Payment accounts (DIP-17) are identified by two indices: - account_index: The account' level in the derivation path - key_class: The key_class' level in the derivation path (typically 0)  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2785,14 +2785,14 @@ Get a Platform Payment account by account index and key class from the managed c
 #### `managed_account_collection_get_platform_payment_keys`
 
 ```c
-managed_account_collection_get_platform_payment_keys(collection: *const FFIManagedAccountCollection, out_keys: *mut *mut crate::managed_account::FFIPlatformPaymentAccountKey, out_count: *mut usize,) -> bool
+managed_account_collection_get_platform_payment_keys(collection: *const FFIManagedCoreAccountCollection, out_keys: *mut *mut crate::managed_account::FFIPlatformPaymentAccountKey, out_count: *mut usize,) -> bool
 ```
 
 **Description:**
-Get all Platform Payment account keys from managed collection  Returns an array of FFIPlatformPaymentAccountKey structures.  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_keys` must be a valid pointer to store the keys array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
+Get all Platform Payment account keys from managed collection  Returns an array of FFIPlatformPaymentAccountKey structures.  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_keys` must be a valid pointer to store the keys array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - `out_keys` must be a valid pointer to store the keys array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - `out_keys` must be a valid pointer to store the keys array - `out_count` must be a valid pointer to store the count - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2801,14 +2801,14 @@ Get all Platform Payment account keys from managed collection  Returns an array 
 #### `managed_account_collection_get_provider_operator_keys`
 
 ```c
-managed_account_collection_get_provider_operator_keys(collection: *const FFIManagedAccountCollection,) -> *mut std::os::raw::c_void
+managed_account_collection_get_provider_operator_keys(collection: *const FFIManagedCoreAccountCollection,) -> *mut std::os::raw::c_void
 ```
 
 **Description:**
-Get the provider operator keys account if it exists in managed collection Note: Returns null if the `bls` feature is not enabled  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed (when BLS is enabled)
+Get the provider operator keys account if it exists in managed collection Note: Returns null if the `bls` feature is not enabled  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed (when BLS is enabled)
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed (when BLS is enabled)
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed (when BLS is enabled)
 
 **Module:** `managed_account_collection`
 
@@ -2817,14 +2817,14 @@ Get the provider operator keys account if it exists in managed collection Note: 
 #### `managed_account_collection_get_provider_owner_keys`
 
 ```c
-managed_account_collection_get_provider_owner_keys(collection: *const FFIManagedAccountCollection,) -> *mut FFIManagedAccount
+managed_account_collection_get_provider_owner_keys(collection: *const FFIManagedCoreAccountCollection,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get the provider owner keys account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get the provider owner keys account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2833,14 +2833,14 @@ Get the provider owner keys account if it exists in managed collection  # Safety
 #### `managed_account_collection_get_provider_platform_keys`
 
 ```c
-managed_account_collection_get_provider_platform_keys(collection: *const FFIManagedAccountCollection,) -> *mut std::os::raw::c_void
+managed_account_collection_get_provider_platform_keys(collection: *const FFIManagedCoreAccountCollection,) -> *mut std::os::raw::c_void
 ```
 
 **Description:**
-Get the provider platform keys account if it exists in managed collection Note: Returns null if the `eddsa` feature is not enabled  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed (when EdDSA is enabled)
+Get the provider platform keys account if it exists in managed collection Note: Returns null if the `eddsa` feature is not enabled  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed (when EdDSA is enabled)
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed (when EdDSA is enabled)
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed (when EdDSA is enabled)
 
 **Module:** `managed_account_collection`
 
@@ -2849,14 +2849,14 @@ Get the provider platform keys account if it exists in managed collection Note: 
 #### `managed_account_collection_get_provider_voting_keys`
 
 ```c
-managed_account_collection_get_provider_voting_keys(collection: *const FFIManagedAccountCollection,) -> *mut FFIManagedAccount
+managed_account_collection_get_provider_voting_keys(collection: *const FFIManagedCoreAccountCollection,) -> *mut FFIManagedCoreAccount
 ```
 
 **Description:**
-Get the provider voting keys account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+Get the provider voting keys account if it exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_free` when no longer needed
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_core_account_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -2865,14 +2865,14 @@ Get the provider voting keys account if it exists in managed collection  # Safet
 #### `managed_account_collection_has_identity_invitation`
 
 ```c
-managed_account_collection_has_identity_invitation(collection: *const FFIManagedAccountCollection,) -> bool
+managed_account_collection_has_identity_invitation(collection: *const FFIManagedCoreAccountCollection,) -> bool
 ```
 
 **Description:**
-Check if identity invitation account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Check if identity invitation account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2881,14 +2881,14 @@ Check if identity invitation account exists in managed collection  # Safety  - `
 #### `managed_account_collection_has_identity_registration`
 
 ```c
-managed_account_collection_has_identity_registration(collection: *const FFIManagedAccountCollection,) -> bool
+managed_account_collection_has_identity_registration(collection: *const FFIManagedCoreAccountCollection,) -> bool
 ```
 
 **Description:**
-Check if identity registration account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Check if identity registration account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2897,14 +2897,14 @@ Check if identity registration account exists in managed collection  # Safety  -
 #### `managed_account_collection_has_identity_topup_not_bound`
 
 ```c
-managed_account_collection_has_identity_topup_not_bound(collection: *const FFIManagedAccountCollection,) -> bool
+managed_account_collection_has_identity_topup_not_bound(collection: *const FFIManagedCoreAccountCollection,) -> bool
 ```
 
 **Description:**
-Check if identity topup not bound account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Check if identity topup not bound account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2913,14 +2913,14 @@ Check if identity topup not bound account exists in managed collection  # Safety
 #### `managed_account_collection_has_platform_payment_accounts`
 
 ```c
-managed_account_collection_has_platform_payment_accounts(collection: *const FFIManagedAccountCollection,) -> bool
+managed_account_collection_has_platform_payment_accounts(collection: *const FFIManagedCoreAccountCollection,) -> bool
 ```
 
 **Description:**
-Check if there are any Platform Payment accounts in the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Check if there are any Platform Payment accounts in the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2929,14 +2929,14 @@ Check if there are any Platform Payment accounts in the managed collection  # Sa
 #### `managed_account_collection_has_provider_operator_keys`
 
 ```c
-managed_account_collection_has_provider_operator_keys(collection: *const FFIManagedAccountCollection,) -> bool
+managed_account_collection_has_provider_operator_keys(collection: *const FFIManagedCoreAccountCollection,) -> bool
 ```
 
 **Description:**
-Check if provider operator keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Check if provider operator keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2945,14 +2945,14 @@ Check if provider operator keys account exists in managed collection  # Safety  
 #### `managed_account_collection_has_provider_owner_keys`
 
 ```c
-managed_account_collection_has_provider_owner_keys(collection: *const FFIManagedAccountCollection,) -> bool
+managed_account_collection_has_provider_owner_keys(collection: *const FFIManagedCoreAccountCollection,) -> bool
 ```
 
 **Description:**
-Check if provider owner keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Check if provider owner keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2961,14 +2961,14 @@ Check if provider owner keys account exists in managed collection  # Safety  - `
 #### `managed_account_collection_has_provider_platform_keys`
 
 ```c
-managed_account_collection_has_provider_platform_keys(collection: *const FFIManagedAccountCollection,) -> bool
+managed_account_collection_has_provider_platform_keys(collection: *const FFIManagedCoreAccountCollection,) -> bool
 ```
 
 **Description:**
-Check if provider platform keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Check if provider platform keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2977,14 +2977,14 @@ Check if provider platform keys account exists in managed collection  # Safety  
 #### `managed_account_collection_has_provider_voting_keys`
 
 ```c
-managed_account_collection_has_provider_voting_keys(collection: *const FFIManagedAccountCollection,) -> bool
+managed_account_collection_has_provider_voting_keys(collection: *const FFIManagedCoreAccountCollection,) -> bool
 ```
 
 **Description:**
-Check if provider voting keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Check if provider voting keys account exists in managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -2993,14 +2993,14 @@ Check if provider voting keys account exists in managed collection  # Safety  - 
 #### `managed_account_collection_platform_payment_count`
 
 ```c
-managed_account_collection_platform_payment_count(collection: *const FFIManagedAccountCollection,) -> c_uint
+managed_account_collection_platform_payment_count(collection: *const FFIManagedCoreAccountCollection,) -> c_uint
 ```
 
 **Description:**
-Get the number of Platform Payment accounts in the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection
+Get the number of Platform Payment accounts in the managed collection  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
 
 **Module:** `managed_account_collection`
 
@@ -3009,14 +3009,14 @@ Get the number of Platform Payment accounts in the managed collection  # Safety 
 #### `managed_account_collection_summary`
 
 ```c
-managed_account_collection_summary(collection: *const FFIManagedAccountCollection,) -> *mut c_char
+managed_account_collection_summary(collection: *const FFIManagedCoreAccountCollection,) -> *mut c_char
 ```
 
 **Description:**
-Get a human-readable summary of all accounts in the managed collection  Returns a formatted string showing all account types and their indices. The format is designed to be clear and readable for end users.  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned string must be freed with `string_free` when no longer needed - Returns null if the collection pointer is null
+Get a human-readable summary of all accounts in the managed collection  Returns a formatted string showing all account types and their indices. The format is designed to be clear and readable for end users.  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned string must be freed with `string_free` when no longer needed - Returns null if the collection pointer is null
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned string must be freed with `string_free` when no longer needed - Returns null if the collection pointer is null
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned string must be freed with `string_free` when no longer needed - Returns null if the collection pointer is null
 
 **Module:** `managed_account_collection`
 
@@ -3025,14 +3025,14 @@ Get a human-readable summary of all accounts in the managed collection  Returns 
 #### `managed_account_collection_summary_data`
 
 ```c
-managed_account_collection_summary_data(collection: *const FFIManagedAccountCollection,) -> *mut FFIManagedAccountCollectionSummary
+managed_account_collection_summary_data(collection: *const FFIManagedCoreAccountCollection,) -> *mut FFIManagedCoreAccountCollectionSummary
 ```
 
 **Description:**
-Get structured account collection summary data for managed collection  Returns a struct containing arrays of indices for each account type and boolean flags for special accounts. This provides Swift with programmatic access to account information.  # Safety  - `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_collection_summary_free` when no longer needed - Returns null if the collection pointer is null
+Get structured account collection summary data for managed collection  Returns a struct containing arrays of indices for each account type and boolean flags for special accounts. This provides Swift with programmatic access to account information.  # Safety  - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_account_collection_summary_free` when no longer needed - Returns null if the collection pointer is null
 
 **Safety:**
-- `collection` must be a valid pointer to an FFIManagedAccountCollection - The returned pointer must be freed with `managed_account_collection_summary_free` when no longer needed - Returns null if the collection pointer is null
+- `collection` must be a valid pointer to an FFIManagedCoreAccountCollection - The returned pointer must be freed with `managed_account_collection_summary_free` when no longer needed - Returns null if the collection pointer is null
 
 **Module:** `managed_account_collection`
 
@@ -3041,222 +3041,222 @@ Get structured account collection summary data for managed collection  Returns a
 #### `managed_account_collection_summary_free`
 
 ```c
-managed_account_collection_summary_free(summary: *mut FFIManagedAccountCollectionSummary,) -> ()
+managed_account_collection_summary_free(summary: *mut FFIManagedCoreAccountCollectionSummary,) -> ()
 ```
 
 **Description:**
-Free a managed account collection summary and all its allocated memory  # Safety  - `summary` must be a valid pointer to an FFIManagedAccountCollectionSummary created by `managed_account_collection_summary_data` - `summary` must not be used after calling this function
+Free a managed account collection summary and all its allocated memory  # Safety  - `summary` must be a valid pointer to an FFIManagedCoreAccountCollectionSummary created by `managed_account_collection_summary_data` - `summary` must not be used after calling this function
 
 **Safety:**
-- `summary` must be a valid pointer to an FFIManagedAccountCollectionSummary created by `managed_account_collection_summary_data` - `summary` must not be used after calling this function
+- `summary` must be a valid pointer to an FFIManagedCoreAccountCollectionSummary created by `managed_account_collection_summary_data` - `summary` must not be used after calling this function
 
 **Module:** `managed_account_collection`
 
 ---
 
-#### `managed_account_free`
+#### `managed_core_account_free`
 
 ```c
-managed_account_free(account: *mut FFIManagedAccount) -> ()
+managed_core_account_free(account: *mut FFIManagedCoreAccount) -> ()
 ```
 
 **Description:**
-Free a managed account handle  # Safety  - `account` must be a valid pointer to an FFIManagedAccount that was allocated by this library - The pointer must not be used after calling this function - This function must only be called once per allocation
+Free a managed account handle  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount that was allocated by this library - The pointer must not be used after calling this function - This function must only be called once per allocation
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount that was allocated by this library - The pointer must not be used after calling this function - This function must only be called once per allocation
+- `account` must be a valid pointer to an FFIManagedCoreAccount that was allocated by this library - The pointer must not be used after calling this function - This function must only be called once per allocation
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_free_transactions`
+#### `managed_core_account_free_transactions`
 
 ```c
-managed_account_free_transactions(transactions: *mut FFITransactionRecord, count: usize,) -> ()
+managed_core_account_free_transactions(transactions: *mut FFITransactionRecord, count: usize,) -> ()
 ```
 
 **Description:**
-Free transactions array returned by managed_account_get_transactions  # Safety  - `transactions` must be a pointer returned by `managed_account_get_transactions` - `count` must be the count returned by `managed_account_get_transactions` - This function must only be called once per allocation
+Free transactions array returned by managed_core_account_get_transactions  # Safety  - `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
 
 **Safety:**
-- `transactions` must be a pointer returned by `managed_account_get_transactions` - `count` must be the count returned by `managed_account_get_transactions` - This function must only be called once per allocation
+- `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_account_type`
+#### `managed_core_account_get_account_type`
 
 ```c
-managed_account_get_account_type(account: *const FFIManagedAccount, index_out: *mut c_uint,) -> FFIAccountType
+managed_core_account_get_account_type(account: *const FFIManagedCoreAccount, index_out: *mut c_uint,) -> FFIAccountType
 ```
 
 **Description:**
-Get the account type of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance - `index_out` must be a valid pointer to receive the account index (or null)
+Get the account type of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `index_out` must be a valid pointer to receive the account index (or null)
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance - `index_out` must be a valid pointer to receive the account index (or null)
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - `index_out` must be a valid pointer to receive the account index (or null)
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_address_pool`
+#### `managed_core_account_get_address_pool`
 
 ```c
-managed_account_get_address_pool(account: *const FFIManagedAccount, pool_type: FFIAddressPoolType,) -> *mut FFIAddressPool
+managed_core_account_get_address_pool(account: *const FFIManagedCoreAccount, pool_type: FFIAddressPoolType,) -> *mut FFIAddressPool
 ```
 
 **Description:**
-Get an address pool from a managed account by type  This function returns the appropriate address pool based on the pool type parameter. For Standard accounts with External/Internal pool types, returns the corresponding pool. For non-standard accounts with Single pool type, returns their single address pool.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `account` must be a valid pointer to an FFIManagedAccount instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The returned pool must be freed with `address_pool_free` when no longer needed
+Get an address pool from a managed account by type  This function returns the appropriate address pool based on the pool type parameter. For Standard accounts with External/Internal pool types, returns the corresponding pool. For non-standard accounts with Single pool type, returns their single address pool.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The returned pool must be freed with `address_pool_free` when no longer needed
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `account` must be a valid pointer to an FFIManagedAccount instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The returned pool must be freed with `address_pool_free` when no longer needed
+- `manager` must be a valid pointer to an FFIWalletManager instance - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - The returned pool must be freed with `address_pool_free` when no longer needed
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_balance`
+#### `managed_core_account_get_balance`
 
 ```c
-managed_account_get_balance(account: *const FFIManagedAccount, balance_out: *mut crate::types::FFIBalance,) -> bool
+managed_core_account_get_balance(account: *const FFIManagedCoreAccount, balance_out: *mut crate::types::FFIBalance,) -> bool
 ```
 
 **Description:**
-Get the balance of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance - `balance_out` must be a valid pointer to an FFIBalance structure
+Get the balance of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `balance_out` must be a valid pointer to an FFIBalance structure
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance - `balance_out` must be a valid pointer to an FFIBalance structure
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - `balance_out` must be a valid pointer to an FFIBalance structure
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_external_address_pool`
+#### `managed_core_account_get_external_address_pool`
 
 ```c
-managed_account_get_external_address_pool(account: *const FFIManagedAccount,) -> *mut FFIAddressPool
+managed_core_account_get_external_address_pool(account: *const FFIManagedCoreAccount,) -> *mut FFIAddressPool
 ```
 
 **Description:**
-Get the external address pool from a managed account  This function returns the external (receive) address pool for Standard accounts. Returns NULL for account types that don't have separate external/internal pools.  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
+Get the external address pool from a managed account  This function returns the external (receive) address pool for Standard accounts. Returns NULL for account types that don't have separate external/internal pools.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_index`
+#### `managed_core_account_get_index`
 
 ```c
-managed_account_get_index(account: *const FFIManagedAccount) -> c_uint
+managed_core_account_get_index(account: *const FFIManagedCoreAccount,) -> c_uint
 ```
 
 **Description:**
-Get the account index from a managed account  Returns the primary account index for Standard and CoinJoin accounts. Returns 0 for account types that don't have an index (like Identity or Provider accounts).  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance
+Get the account index from a managed account  Returns the primary account index for Standard and CoinJoin accounts. Returns 0 for account types that don't have an index (like Identity or Provider accounts).  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_internal_address_pool`
+#### `managed_core_account_get_internal_address_pool`
 
 ```c
-managed_account_get_internal_address_pool(account: *const FFIManagedAccount,) -> *mut FFIAddressPool
+managed_core_account_get_internal_address_pool(account: *const FFIManagedCoreAccount,) -> *mut FFIAddressPool
 ```
 
 **Description:**
-Get the internal address pool from a managed account  This function returns the internal (change) address pool for Standard accounts. Returns NULL for account types that don't have separate external/internal pools.  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
+Get the internal address pool from a managed account  This function returns the internal (change) address pool for Standard accounts. Returns NULL for account types that don't have separate external/internal pools.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - The returned pool must be freed with `address_pool_free` when no longer needed
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_is_watch_only`
+#### `managed_core_account_get_is_watch_only`
 
 ```c
-managed_account_get_is_watch_only(account: *const FFIManagedAccount,) -> bool
+managed_core_account_get_is_watch_only(account: *const FFIManagedCoreAccount,) -> bool
 ```
 
 **Description:**
-Check if a managed account is watch-only  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance
+Check if a managed account is watch-only  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_network`
+#### `managed_core_account_get_network`
 
 ```c
-managed_account_get_network(account: *const FFIManagedAccount,) -> FFINetwork
+managed_core_account_get_network(account: *const FFIManagedCoreAccount,) -> FFINetwork
 ```
 
 **Description:**
-Get the network of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance - Returns `FFINetwork::Dash` if the account is null
+Get the network of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - Returns `FFINetwork::Dash` if the account is null
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance - Returns `FFINetwork::Dash` if the account is null
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - Returns `FFINetwork::Dash` if the account is null
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_transaction_count`
+#### `managed_core_account_get_transaction_count`
 
 ```c
-managed_account_get_transaction_count(account: *const FFIManagedAccount,) -> c_uint
+managed_core_account_get_transaction_count(account: *const FFIManagedCoreAccount,) -> c_uint
 ```
 
 **Description:**
-Get the number of transactions in a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance
+Get the number of transactions in a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_transactions`
+#### `managed_core_account_get_transactions`
 
 ```c
-managed_account_get_transactions(account: *const FFIManagedAccount, transactions_out: *mut *mut FFITransactionRecord, count_out: *mut usize,) -> bool
+managed_core_account_get_transactions(account: *const FFIManagedCoreAccount, transactions_out: *mut *mut FFITransactionRecord, count_out: *mut usize,) -> bool
 ```
 
 **Description:**
-Get all transactions from a managed account  Returns an array of FFITransactionRecord structures.  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_account_free_transactions`
+Get all transactions from a managed account  Returns an array of FFITransactionRecord structures.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_account_free_transactions`
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`
 
 **Module:** `managed_account`
 
 ---
 
-#### `managed_account_get_utxo_count`
+#### `managed_core_account_get_utxo_count`
 
 ```c
-managed_account_get_utxo_count(account: *const FFIManagedAccount,) -> c_uint
+managed_core_account_get_utxo_count(account: *const FFIManagedCoreAccount,) -> c_uint
 ```
 
 **Description:**
-Get the number of UTXOs in a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedAccount instance
+Get the number of UTXOs in a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedAccount instance
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Module:** `managed_account`
 
