@@ -107,7 +107,7 @@ async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
 
     // Check the coinbase transaction
     let result = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &coinbase_tx,
             context,
             &mut wallet,
@@ -181,7 +181,7 @@ async fn test_coinbase_transaction_routing_to_bip44_change_address() {
 
     // Check the coinbase transaction
     let result = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &coinbase_tx,
             context,
             &mut wallet,
@@ -251,7 +251,8 @@ async fn test_update_state_flag_behavior() {
     };
 
     // First check with update_state = false
-    let result1 = managed_wallet_info.check_transaction(&tx, context, &mut wallet, false).await;
+    let result1 =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false).await;
 
     assert!(result1.is_relevant);
 
@@ -274,7 +275,7 @@ async fn test_update_state_flag_behavior() {
 
     // Now check with update_state = true
     let result2 = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &tx,
             context,
             &mut wallet,
@@ -395,7 +396,7 @@ async fn test_coinbase_transaction_with_payload_routing() {
     };
 
     let result =
-        managed_wallet_info.check_transaction(&coinbase_tx, context, &mut wallet, true).await;
+        managed_wallet_info.check_core_transaction(&coinbase_tx, context, &mut wallet, true).await;
 
     assert!(result.is_relevant, "Coinbase with payload should be relevant");
     assert_eq!(result.total_received, 5000000000, "Should have received block reward");

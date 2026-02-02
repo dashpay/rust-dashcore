@@ -45,7 +45,7 @@ pub trait WalletTransactionChecker {
     ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
-    async fn check_transaction(
+    async fn check_core_transaction(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,
@@ -56,7 +56,7 @@ pub trait WalletTransactionChecker {
 
 #[async_trait]
 impl WalletTransactionChecker for ManagedWalletInfo {
-    async fn check_transaction(
+    async fn check_core_transaction(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,
@@ -92,59 +92,52 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
             for account_match in &result.affected_accounts {
                 // Find and update the specific account
-                use super::account_checker::AccountTypeMatch;
+                use super::account_checker::CoreAccountTypeMatch;
                 let account = match &account_match.account_type_match {
-                    AccountTypeMatch::StandardBIP44 {
+                    CoreAccountTypeMatch::StandardBIP44 {
                         account_index,
                         ..
                     } => self.accounts.standard_bip44_accounts.get_mut(account_index),
-                    AccountTypeMatch::StandardBIP32 {
+                    CoreAccountTypeMatch::StandardBIP32 {
                         account_index,
                         ..
                     } => self.accounts.standard_bip32_accounts.get_mut(account_index),
-                    AccountTypeMatch::CoinJoin {
+                    CoreAccountTypeMatch::CoinJoin {
                         account_index,
                         ..
                     } => self.accounts.coinjoin_accounts.get_mut(account_index),
-                    AccountTypeMatch::IdentityRegistration {
+                    CoreAccountTypeMatch::IdentityRegistration {
                         ..
                     } => self.accounts.identity_registration.as_mut(),
-                    AccountTypeMatch::IdentityTopUp {
+                    CoreAccountTypeMatch::IdentityTopUp {
                         account_index,
                         ..
                     } => self.accounts.identity_topup.get_mut(account_index),
-                    AccountTypeMatch::IdentityTopUpNotBound {
+                    CoreAccountTypeMatch::IdentityTopUpNotBound {
                         ..
                     } => self.accounts.identity_topup_not_bound.as_mut(),
-                    AccountTypeMatch::IdentityInvitation {
+                    CoreAccountTypeMatch::IdentityInvitation {
                         ..
                     } => self.accounts.identity_invitation.as_mut(),
-                    AccountTypeMatch::ProviderVotingKeys {
+                    CoreAccountTypeMatch::ProviderVotingKeys {
                         ..
                     } => self.accounts.provider_voting_keys.as_mut(),
-                    AccountTypeMatch::ProviderOwnerKeys {
+                    CoreAccountTypeMatch::ProviderOwnerKeys {
                         ..
                     } => self.accounts.provider_owner_keys.as_mut(),
-                    AccountTypeMatch::ProviderOperatorKeys {
+                    CoreAccountTypeMatch::ProviderOperatorKeys {
                         ..
                     } => self.accounts.provider_operator_keys.as_mut(),
-                    AccountTypeMatch::ProviderPlatformKeys {
+                    CoreAccountTypeMatch::ProviderPlatformKeys {
                         ..
                     } => self.accounts.provider_platform_keys.as_mut(),
-                    AccountTypeMatch::DashpayReceivingFunds {
+                    CoreAccountTypeMatch::DashpayReceivingFunds {
                         ..
                     }
-                    | AccountTypeMatch::DashpayExternalAccount {
+                    | CoreAccountTypeMatch::DashpayExternalAccount {
                         ..
                     } => {
                         // DashPay managed accounts are not persisted here yet
-                        None
-                    }
-                    AccountTypeMatch::PlatformPayment {
-                        ..
-                    } => {
-                        // Platform Payment addresses are NOT used in Core chain transactions.
-                        // This branch should never be reached by design (per DIP-17).
                         None
                     }
                 };
@@ -391,7 +384,8 @@ mod tests {
         let context = TransactionContext::Mempool;
 
         let mut wallet_mut = wallet;
-        let result = managed_wallet.check_transaction(&tx, context, &mut wallet_mut, true).await;
+        let result =
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet_mut, true).await;
 
         // Should return default result with no relevance
         assert!(!result.is_relevant);
@@ -471,7 +465,8 @@ mod tests {
             };
 
             // This should exercise BIP32 account branch in the update logic
-            let result = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+            let result =
+                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
 
             // Should be relevant since it's our address
             assert!(result.is_relevant);
@@ -507,7 +502,8 @@ mod tests {
             };
 
             // This should exercise CoinJoin account branch in the update logic
-            let result = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+            let result =
+                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
 
             // Since this is not a coinjoin looking transaction, we should not pick up on it.
             assert!(!result.is_relevant);
@@ -566,7 +562,7 @@ mod tests {
         };
 
         let result =
-            managed_wallet.check_transaction(&coinbase_tx, context, &mut wallet, true).await;
+            managed_wallet.check_core_transaction(&coinbase_tx, context, &mut wallet, true).await;
         // Set synced_height to block where coinbase was received to trigger balance updates.
         managed_wallet.update_synced_height(block_height);
 
@@ -630,8 +626,9 @@ mod tests {
             timestamp: Some(1_650_000_000),
         };
 
-        let funding_result =
-            managed_wallet.check_transaction(&funding_tx, funding_context, &mut wallet, true).await;
+        let funding_result = managed_wallet
+            .check_core_transaction(&funding_tx, funding_context, &mut wallet, true)
+            .await;
         assert!(funding_result.is_relevant, "Funding transaction must be relevant");
         assert_eq!(funding_result.total_received, funding_value);
 
@@ -665,8 +662,9 @@ mod tests {
             timestamp: Some(1_650_000_100),
         };
 
-        let spend_result =
-            managed_wallet.check_transaction(&spend_tx, spend_context, &mut wallet, true).await;
+        let spend_result = managed_wallet
+            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true)
+            .await;
 
         assert!(spend_result.is_relevant, "Spend transaction should be detected");
         assert_eq!(spend_result.total_received, 0);
@@ -741,7 +739,7 @@ mod tests {
 
         // Process the coinbase transaction
         let result =
-            managed_wallet.check_transaction(&coinbase_tx, context, &mut wallet, true).await;
+            managed_wallet.check_core_transaction(&coinbase_tx, context, &mut wallet, true).await;
         // Set synced_height to block where coinbase was received to trigger balance updates.
         managed_wallet.update_synced_height(block_height);
 
@@ -830,7 +828,7 @@ mod tests {
         // Test with Mempool context
         let context = TransactionContext::Mempool;
 
-        let result = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+        let result = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -877,7 +875,7 @@ mod tests {
         };
 
         // First processing - should be marked as new
-        let result1 = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+        let result1 = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
 
         assert!(result1.is_relevant, "Transaction should be relevant");
         assert!(
@@ -901,7 +899,7 @@ mod tests {
         );
 
         // Second processing (simulating rescan) - should be marked as existing
-        let result2 = managed_wallet.check_transaction(&tx, context, &mut wallet, true).await;
+        let result2 = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
 
         assert!(result2.is_relevant, "Transaction should still be relevant on rescan");
         assert!(
