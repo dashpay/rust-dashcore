@@ -1126,7 +1126,9 @@ impl DerivationPath {
     /// # Returns
     /// Full derivation path: m/9'/coin_type'/17'/0'/2'/index
     pub fn platform_address_funding_path(network: Network, index: u32) -> Self {
-        use crate::dip9::{PLATFORM_ADDRESS_FUNDING_PATH_MAINNET, PLATFORM_ADDRESS_FUNDING_PATH_TESTNET};
+        use crate::dip9::{
+            PLATFORM_ADDRESS_FUNDING_PATH_MAINNET, PLATFORM_ADDRESS_FUNDING_PATH_TESTNET,
+        };
 
         let mut root_derivation_path: DerivationPath = match network {
             Network::Dash => PLATFORM_ADDRESS_FUNDING_PATH_MAINNET,

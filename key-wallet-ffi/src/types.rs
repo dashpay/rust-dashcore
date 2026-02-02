@@ -262,7 +262,9 @@ impl FFIAccountType {
                      Platform Payment account creation must use a different API path."
                 );
             }
-            FFIAccountType::PlatformAddressFunding => key_wallet::AccountType::PlatformAddressFunding,
+            FFIAccountType::PlatformAddressFunding => {
+                key_wallet::AccountType::PlatformAddressFunding
+            }
         }
     }
 
