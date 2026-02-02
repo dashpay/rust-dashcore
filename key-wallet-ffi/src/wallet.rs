@@ -464,17 +464,55 @@ pub unsafe extern "C" fn wallet_free_const(wallet: *const FFIWallet) {
 /// The caller must ensure that:
 /// - The wallet pointer is either null or points to a valid FFIWallet
 /// - The FFIWallet remains valid for the duration of this call
+///
+/// # Note
+///
+/// This function does NOT support the following account types:
+/// - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+/// - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+/// - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account(
     wallet: *mut FFIWallet,
     account_type: crate::types::FFIAccountType,
     account_index: c_uint,
 ) -> crate::types::FFIAccountResult {
+    use crate::types::FFIAccountType;
+
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
             FFIErrorCode::InvalidInput,
             "Wallet is null".to_string(),
         );
+    }
+
+    // Check for account types that require special handling
+    match account_type {
+        FFIAccountType::PlatformPayment => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "PlatformPayment accounts require account and key_class indices. \
+                 Use wallet_add_platform_payment_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountType::DashpayReceivingFunds => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayReceivingFunds accounts require identity IDs. \
+                 Use wallet_add_dashpay_receiving_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountType::DashpayExternalAccount => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayExternalAccount accounts require identity IDs. \
+                 Use wallet_add_dashpay_external_account_with_xpub_bytes() instead."
+                    .to_string(),
+            );
+        }
+        _ => {} // Other types are supported
     }
 
     let wallet = &mut *wallet;
@@ -644,6 +682,13 @@ pub unsafe extern "C" fn wallet_add_dashpay_external_account_with_xpub_bytes(
 /// - The wallet pointer is either null or points to a valid FFIWallet
 /// - The xpub_bytes pointer is either null or points to at least xpub_len bytes
 /// - The FFIWallet remains valid for the duration of this call
+///
+/// # Note
+///
+/// This function does NOT support the following account types:
+/// - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+/// - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+/// - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     wallet: *mut FFIWallet,
@@ -652,6 +697,8 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     xpub_bytes: *const u8,
     xpub_len: usize,
 ) -> crate::types::FFIAccountResult {
+    use crate::types::FFIAccountType;
+
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
             FFIErrorCode::InvalidInput,
@@ -664,6 +711,35 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
             FFIErrorCode::InvalidInput,
             "Xpub bytes are null".to_string(),
         );
+    }
+
+    // Check for account types that require special handling
+    match account_type {
+        FFIAccountType::PlatformPayment => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "PlatformPayment accounts require account and key_class indices. \
+                 Use wallet_add_platform_payment_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountType::DashpayReceivingFunds => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayReceivingFunds accounts require identity IDs. \
+                 Use wallet_add_dashpay_receiving_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountType::DashpayExternalAccount => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayExternalAccount accounts require identity IDs. \
+                 Use wallet_add_dashpay_external_account_with_xpub_bytes() instead."
+                    .to_string(),
+            );
+        }
+        _ => {} // Other types are supported
     }
 
     let wallet = &mut *wallet;
@@ -730,6 +806,13 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 /// - The wallet pointer is either null or points to a valid FFIWallet
 /// - The xpub_string pointer is either null or points to a valid null-terminated C string
 /// - The FFIWallet remains valid for the duration of this call
+///
+/// # Note
+///
+/// This function does NOT support the following account types:
+/// - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+/// - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+/// - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     wallet: *mut FFIWallet,
@@ -737,6 +820,8 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     account_index: c_uint,
     xpub_string: *const c_char,
 ) -> crate::types::FFIAccountResult {
+    use crate::types::FFIAccountType;
+
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
             FFIErrorCode::InvalidInput,
@@ -749,6 +834,35 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
             FFIErrorCode::InvalidInput,
             "Xpub string is null".to_string(),
         );
+    }
+
+    // Check for account types that require special handling
+    match account_type {
+        FFIAccountType::PlatformPayment => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "PlatformPayment accounts require account and key_class indices. \
+                 Use wallet_add_platform_payment_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountType::DashpayReceivingFunds => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayReceivingFunds accounts require identity IDs. \
+                 Use wallet_add_dashpay_receiving_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountType::DashpayExternalAccount => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayExternalAccount accounts require identity IDs. \
+                 Use wallet_add_dashpay_external_account_with_xpub_bytes() instead."
+                    .to_string(),
+            );
+        }
+        _ => {} // Other types are supported
     }
 
     let wallet = &mut *wallet;
@@ -798,6 +912,74 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
                 format!("Failed to add account with xpub: {}", e),
             ),
         },
+        None => crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidState,
+            "Cannot modify wallet".to_string(),
+        ),
+    }
+}
+
+/// Add a Platform Payment account (DIP-17) to the wallet
+///
+/// Platform Payment accounts use the derivation path:
+/// `m/9'/coin_type'/17'/account'/key_class'/index`
+///
+/// # Arguments
+/// * `wallet` - Pointer to the wallet
+/// * `account_index` - The account index (hardened) in the derivation path
+/// * `key_class` - The key class (hardened) - typically 0' for main addresses
+///
+/// # Safety
+///
+/// This function dereferences a raw pointer to FFIWallet.
+/// The caller must ensure that:
+/// - The wallet pointer is either null or points to a valid FFIWallet
+/// - The FFIWallet remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn wallet_add_platform_payment_account(
+    wallet: *mut FFIWallet,
+    account_index: c_uint,
+    key_class: c_uint,
+) -> crate::types::FFIAccountResult {
+    use key_wallet::account::AccountType;
+
+    if wallet.is_null() {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Wallet is null".to_string(),
+        );
+    }
+
+    let wallet = &mut *wallet;
+
+    let account_type = AccountType::PlatformPayment {
+        account: account_index,
+        key_class,
+    };
+
+    match wallet.inner_mut() {
+        Some(w) => {
+            // Use the proper add_account method
+            match w.add_account(account_type, None) {
+                Ok(()) => {
+                    // Get the account we just added
+                    if let Some(account) = w.accounts.account_of_type(account_type) {
+                        let ffi_account = crate::types::FFIAccount::new(account);
+                        return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
+                            ffi_account,
+                        )));
+                    }
+                    crate::types::FFIAccountResult::error(
+                        FFIErrorCode::WalletError,
+                        "Failed to retrieve account after adding".to_string(),
+                    )
+                }
+                Err(e) => crate::types::FFIAccountResult::error(
+                    FFIErrorCode::WalletError,
+                    format!("Failed to add platform payment account: {}", e),
+                ),
+            }
+        }
         None => crate::types::FFIAccountResult::error(
             FFIErrorCode::InvalidState,
             "Cannot modify wallet".to_string(),

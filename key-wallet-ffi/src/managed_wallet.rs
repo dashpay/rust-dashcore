@@ -841,7 +841,9 @@ mod tests {
 
     #[test]
     fn test_comprehensive_address_generation() {
-        use key_wallet::account::{ManagedAccount, ManagedAccountCollection, StandardAccountType};
+        use key_wallet::account::{
+            ManagedAccountCollection, ManagedCoreAccount, StandardAccountType,
+        };
         use key_wallet::bip32::DerivationPath;
         use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
 
@@ -894,7 +896,7 @@ mod tests {
         )
         .expect("Failed to create internal pool");
 
-        let managed_account = ManagedAccount::new(
+        let managed_account = ManagedCoreAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
@@ -907,7 +909,10 @@ mod tests {
 
         managed_collection.standard_bip44_accounts.insert(0, managed_account.clone());
         // Insert the managed account directly into managed_info's accounts
-        managed_info.accounts.insert(managed_account);
+        managed_info
+            .accounts
+            .insert(managed_account)
+            .expect("insert should succeed for Standard account");
 
         // Create wrapper for managed info heap-allocated like C would do
         let ffi_managed = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
@@ -1023,7 +1028,7 @@ mod tests {
 
     #[test]
     fn test_managed_wallet_get_balance() {
-        use key_wallet::wallet::balance::WalletBalance;
+        use key_wallet::wallet::balance::WalletCoreBalance;
 
         let mut error = FFIError::success();
 
@@ -1046,7 +1051,7 @@ mod tests {
         let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
 
         // Set some test balance values
-        managed_info.balance = WalletBalance::new(1000000, 50000, 10000, 25000);
+        managed_info.balance = WalletCoreBalance::new(1000000, 50000, 10000, 25000);
 
         let ffi_managed = FFIManagedWalletInfo::new(managed_info);
         let ffi_managed_ptr = Box::into_raw(Box::new(ffi_managed));

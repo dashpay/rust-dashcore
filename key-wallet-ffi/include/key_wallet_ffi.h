@@ -256,12 +256,23 @@ typedef struct FFIExtendedPublicKey FFIExtendedPublicKey;
 /*
  Opaque managed account handle that wraps ManagedAccount
  */
-typedef struct FFIManagedAccount FFIManagedAccount;
+typedef struct FFIManagedCoreAccount FFIManagedCoreAccount;
 
 /*
  Opaque handle to a managed account collection
  */
-typedef struct FFIManagedAccountCollection FFIManagedAccountCollection;
+typedef struct FFIManagedCoreAccountCollection FFIManagedCoreAccountCollection;
+
+/*
+ Opaque managed platform account handle that wraps ManagedPlatformAccount
+
+ This is different from FFIManagedCoreAccount because ManagedPlatformAccount
+ has a different structure optimized for Platform Payment accounts (DIP-17):
+ - Simple u64 credit balance instead of WalletCoreBalance
+ - Per-address balances tracked directly
+ - No transactions or UTXOs (Platform handles these)
+ */
+typedef struct FFIManagedPlatformAccount FFIManagedPlatformAccount;
 
 /*
  Opaque type for a private key (SecretKey)
@@ -498,7 +509,7 @@ typedef struct {
     /*
      The managed account handle if successful, NULL if error
      */
-    FFIManagedAccount *account;
+    FFIManagedCoreAccount *account;
     /*
      Error code (0 = success)
      */
@@ -507,7 +518,7 @@ typedef struct {
      Error message (NULL if success, must be freed by caller if not NULL)
      */
     char *error_message;
-} FFIManagedAccountResult;
+} FFIManagedCoreAccountResult;
 
 /*
  FFI Balance type for representing wallet balances
@@ -568,6 +579,38 @@ typedef struct {
      */
     bool is_ours;
 } FFITransactionRecord;
+
+/*
+ FFI Result type for ManagedPlatformAccount operations
+ */
+typedef struct {
+    /*
+     The managed platform account handle if successful, NULL if error
+     */
+    FFIManagedPlatformAccount *account;
+    /*
+     Error code (0 = success)
+     */
+    int32_t error_code;
+    /*
+     Error message (NULL if success, must be freed by caller if not NULL)
+     */
+    char *error_message;
+} FFIManagedPlatformAccountResult;
+
+/*
+ C-compatible platform payment account key
+ */
+typedef struct {
+    /*
+     Account index (hardened)
+     */
+    unsigned int account;
+    /*
+     Key class (hardened)
+     */
+    unsigned int key_class;
+} FFIPlatformPaymentAccountKey;
 
 /*
  C-compatible summary of all accounts in a managed collection
@@ -637,7 +680,15 @@ typedef struct {
      Whether provider platform keys account exists
      */
     bool has_provider_platform_keys;
-} FFIManagedAccountCollectionSummary;
+    /*
+     Array of Platform Payment account keys (account, key_class pairs)
+     */
+    FFIPlatformPaymentAccountKey *platform_payment_keys;
+    /*
+     Number of Platform Payment accounts
+     */
+    size_t platform_payment_count;
+} FFIManagedCoreAccountCollectionSummary;
 
 /*
  Transaction output for building (legacy structure)
@@ -2390,13 +2441,13 @@ bool derivation_path_parse(const char *path,
  - `manager` must be a valid pointer to an FFIWalletManager instance
  - `wallet_id` must be a valid pointer to a 32-byte wallet ID
  - The caller must ensure all pointers remain valid for the duration of this call
- - The returned account must be freed with `managed_account_free` when no longer needed
+ - The returned account must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccountResult managed_wallet_get_account(const FFIWalletManager *manager,
-                                                   const uint8_t *wallet_id,
-                                                   unsigned int account_index,
-                                                   FFIAccountType account_type)
+FFIManagedCoreAccountResult managed_wallet_get_account(const FFIWalletManager *manager,
+                                                       const uint8_t *wallet_id,
+                                                       unsigned int account_index,
+                                                       FFIAccountType account_type)
 ;
 
 /*
@@ -2410,12 +2461,12 @@ FFIManagedAccountResult managed_wallet_get_account(const FFIWalletManager *manag
  - `manager` must be a valid pointer to an FFIWalletManager instance
  - `wallet_id` must be a valid pointer to a 32-byte wallet ID
  - The caller must ensure all pointers remain valid for the duration of this call
- - The returned account must be freed with `managed_account_free` when no longer needed
+ - The returned account must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccountResult managed_wallet_get_top_up_account_with_registration_index(const FFIWalletManager *manager,
-                                                                                  const uint8_t *wallet_id,
-                                                                                  unsigned int registration_index)
+FFIManagedCoreAccountResult managed_wallet_get_top_up_account_with_registration_index(const FFIWalletManager *manager,
+                                                                                      const uint8_t *wallet_id,
+                                                                                      unsigned int registration_index)
 ;
 
 /*
@@ -2426,11 +2477,11 @@ FFIManagedAccountResult managed_wallet_get_top_up_account_with_registration_inde
  - `user_identity_id` and `friend_identity_id` must each point to 32 bytes
  */
 
-FFIManagedAccountResult managed_wallet_get_dashpay_receiving_account(const FFIWalletManager *manager,
-                                                                     const uint8_t *wallet_id,
-                                                                     unsigned int account_index,
-                                                                     const uint8_t *user_identity_id,
-                                                                     const uint8_t *friend_identity_id)
+FFIManagedCoreAccountResult managed_wallet_get_dashpay_receiving_account(const FFIWalletManager *manager,
+                                                                         const uint8_t *wallet_id,
+                                                                         unsigned int account_index,
+                                                                         const uint8_t *user_identity_id,
+                                                                         const uint8_t *friend_identity_id)
 ;
 
 /*
@@ -2440,11 +2491,11 @@ FFIManagedAccountResult managed_wallet_get_dashpay_receiving_account(const FFIWa
  - Pointers must be valid
  */
 
-FFIManagedAccountResult managed_wallet_get_dashpay_external_account(const FFIWalletManager *manager,
-                                                                    const uint8_t *wallet_id,
-                                                                    unsigned int account_index,
-                                                                    const uint8_t *user_identity_id,
-                                                                    const uint8_t *friend_identity_id)
+FFIManagedCoreAccountResult managed_wallet_get_dashpay_external_account(const FFIWalletManager *manager,
+                                                                        const uint8_t *wallet_id,
+                                                                        unsigned int account_index,
+                                                                        const uint8_t *user_identity_id,
+                                                                        const uint8_t *friend_identity_id)
 ;
 
 /*
@@ -2452,10 +2503,10 @@ FFIManagedAccountResult managed_wallet_get_dashpay_external_account(const FFIWal
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  - Returns `FFINetwork::Dash` if the account is null
  */
- FFINetwork managed_account_get_network(const FFIManagedAccount *account) ;
+ FFINetwork managed_core_account_get_network(const FFIManagedCoreAccount *account) ;
 
 /*
  Get the parent wallet ID of a managed account
@@ -2470,7 +2521,7 @@ FFIManagedAccountResult managed_wallet_get_dashpay_external_account(const FFIWal
  - The caller must not free the returned pointer as it's the same as the input
  */
 
-const uint8_t *managed_account_get_parent_wallet_id(const uint8_t *wallet_id)
+const uint8_t *managed_core_account_get_parent_wallet_id(const uint8_t *wallet_id)
 ;
 
 /*
@@ -2478,12 +2529,12 @@ const uint8_t *managed_account_get_parent_wallet_id(const uint8_t *wallet_id)
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  - `index_out` must be a valid pointer to receive the account index (or null)
  */
 
-FFIAccountType managed_account_get_account_type(const FFIManagedAccount *account,
-                                                unsigned int *index_out)
+FFIAccountType managed_core_account_get_account_type(const FFIManagedCoreAccount *account,
+                                                     unsigned int *index_out)
 ;
 
 /*
@@ -2491,37 +2542,40 @@ FFIAccountType managed_account_get_account_type(const FFIManagedAccount *account
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  */
- bool managed_account_get_is_watch_only(const FFIManagedAccount *account) ;
+ bool managed_core_account_get_is_watch_only(const FFIManagedCoreAccount *account) ;
 
 /*
  Get the balance of a managed account
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  - `balance_out` must be a valid pointer to an FFIBalance structure
  */
- bool managed_account_get_balance(const FFIManagedAccount *account, FFIBalance *balance_out) ;
+
+bool managed_core_account_get_balance(const FFIManagedCoreAccount *account,
+                                      FFIBalance *balance_out)
+;
 
 /*
  Get the number of transactions in a managed account
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  */
- unsigned int managed_account_get_transaction_count(const FFIManagedAccount *account) ;
+ unsigned int managed_core_account_get_transaction_count(const FFIManagedCoreAccount *account) ;
 
 /*
  Get the number of UTXOs in a managed account
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  */
- unsigned int managed_account_get_utxo_count(const FFIManagedAccount *account) ;
+ unsigned int managed_core_account_get_utxo_count(const FFIManagedCoreAccount *account) ;
 
 /*
  Get all transactions from a managed account
@@ -2530,50 +2584,50 @@ FFIAccountType managed_account_get_account_type(const FFIManagedAccount *account
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  - `transactions_out` must be a valid pointer to receive the transactions array pointer
  - `count_out` must be a valid pointer to receive the count
- - The caller must free the returned array using `managed_account_free_transactions`
+ - The caller must free the returned array using `managed_core_account_free_transactions`
  */
 
-bool managed_account_get_transactions(const FFIManagedAccount *account,
-                                      FFITransactionRecord **transactions_out,
-                                      size_t *count_out)
+bool managed_core_account_get_transactions(const FFIManagedCoreAccount *account,
+                                           FFITransactionRecord **transactions_out,
+                                           size_t *count_out)
 ;
 
 /*
- Free transactions array returned by managed_account_get_transactions
+ Free transactions array returned by managed_core_account_get_transactions
 
  # Safety
 
- - `transactions` must be a pointer returned by `managed_account_get_transactions`
- - `count` must be the count returned by `managed_account_get_transactions`
+ - `transactions` must be a pointer returned by `managed_core_account_get_transactions`
+ - `count` must be the count returned by `managed_core_account_get_transactions`
  - This function must only be called once per allocation
  */
- void managed_account_free_transactions(FFITransactionRecord *transactions, size_t count) ;
+ void managed_core_account_free_transactions(FFITransactionRecord *transactions, size_t count) ;
 
 /*
  Free a managed account handle
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount that was allocated by this library
+ - `account` must be a valid pointer to an FFIManagedCoreAccount that was allocated by this library
  - The pointer must not be used after calling this function
  - This function must only be called once per allocation
  */
- void managed_account_free(FFIManagedAccount *account) ;
+ void managed_core_account_free(FFIManagedCoreAccount *account) ;
 
 /*
  Free a managed account result's error message (if any)
- Note: This does NOT free the account handle itself - use managed_account_free for that
+ Note: This does NOT free the account handle itself - use managed_core_account_free for that
 
  # Safety
 
- - `result` must be a valid pointer to an FFIManagedAccountResult
+ - `result` must be a valid pointer to an FFIManagedCoreAccountResult
  - The error_message field must be either null or a valid CString allocated by this library
  - The caller must ensure the result pointer remains valid for the duration of this call
  */
- void managed_account_result_free_error(FFIManagedAccountResult *result) ;
+ void managed_core_account_result_free_error(FFIManagedCoreAccountResult *result) ;
 
 /*
  Get number of accounts in a managed wallet
@@ -2599,9 +2653,9 @@ unsigned int managed_wallet_get_account_count(const FFIWalletManager *manager,
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  */
- unsigned int managed_account_get_index(const FFIManagedAccount *account) ;
+ unsigned int managed_core_account_get_index(const FFIManagedCoreAccount *account) ;
 
 /*
  Get the external address pool from a managed account
@@ -2611,10 +2665,12 @@ unsigned int managed_wallet_get_account_count(const FFIWalletManager *manager,
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  - The returned pool must be freed with `address_pool_free` when no longer needed
  */
- FFIAddressPool *managed_account_get_external_address_pool(const FFIManagedAccount *account) ;
+
+FFIAddressPool *managed_core_account_get_external_address_pool(const FFIManagedCoreAccount *account)
+;
 
 /*
  Get the internal address pool from a managed account
@@ -2624,10 +2680,12 @@ unsigned int managed_wallet_get_account_count(const FFIWalletManager *manager,
 
  # Safety
 
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  - The returned pool must be freed with `address_pool_free` when no longer needed
  */
- FFIAddressPool *managed_account_get_internal_address_pool(const FFIManagedAccount *account) ;
+
+FFIAddressPool *managed_core_account_get_internal_address_pool(const FFIManagedCoreAccount *account)
+;
 
 /*
  Get an address pool from a managed account by type
@@ -2639,14 +2697,154 @@ unsigned int managed_wallet_get_account_count(const FFIWalletManager *manager,
  # Safety
 
  - `manager` must be a valid pointer to an FFIWalletManager instance
- - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `account` must be a valid pointer to an FFIManagedCoreAccount instance
  - `wallet_id` must be a valid pointer to a 32-byte wallet ID
  - The returned pool must be freed with `address_pool_free` when no longer needed
  */
 
-FFIAddressPool *managed_account_get_address_pool(const FFIManagedAccount *account,
-                                                 FFIAddressPoolType pool_type)
+FFIAddressPool *managed_core_account_get_address_pool(const FFIManagedCoreAccount *account,
+                                                      FFIAddressPoolType pool_type)
 ;
+
+/*
+ Get a managed platform payment account from a managed wallet
+
+ Platform Payment accounts (DIP-17) are identified by account index and key_class.
+ Returns a platform account handle that wraps the ManagedPlatformAccount.
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+ - The caller must ensure all pointers remain valid for the duration of this call
+ - The returned account must be freed with `managed_platform_account_free` when no longer needed
+ */
+
+FFIManagedPlatformAccountResult managed_wallet_get_platform_payment_account(const FFIWalletManager *manager,
+                                                                            const uint8_t *wallet_id,
+                                                                            unsigned int account_index,
+                                                                            unsigned int key_class)
+;
+
+/*
+ Get the network of a managed platform account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - Returns `FFINetwork::Dash` if the account is null
+ */
+ FFINetwork managed_platform_account_get_network(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the account index of a managed platform account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ */
+ unsigned int managed_platform_account_get_account_index(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the key class of a managed platform account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ */
+ unsigned int managed_platform_account_get_key_class(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the total credit balance of a managed platform account
+
+ Returns the balance in credits (1000 credits = 1 duff)
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ */
+ uint64_t managed_platform_account_get_credit_balance(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the total balance in duffs of a managed platform account
+
+ Returns the balance in duffs (credit_balance / 1000)
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ */
+ uint64_t managed_platform_account_get_duff_balance(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the number of funded addresses in a managed platform account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ */
+
+unsigned int managed_platform_account_get_funded_address_count(const FFIManagedPlatformAccount *account)
+;
+
+/*
+ Get the total number of addresses in a managed platform account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ */
+
+unsigned int managed_platform_account_get_total_address_count(const FFIManagedPlatformAccount *account)
+;
+
+/*
+ Check if a managed platform account is watch-only
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ */
+ bool managed_platform_account_get_is_watch_only(const FFIManagedPlatformAccount *account) ;
+
+/*
+ Get the address pool from a managed platform account
+
+ Platform accounts only have a single address pool.
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
+ - The returned pool must be freed with `address_pool_free` when no longer needed
+ */
+
+FFIAddressPool *managed_platform_account_get_address_pool(const FFIManagedPlatformAccount *account)
+;
+
+/*
+ Free a managed platform account handle
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedPlatformAccount that was allocated by this library
+ - The pointer must not be used after calling this function
+ - This function must only be called once per allocation
+ */
+
+void managed_platform_account_free(FFIManagedPlatformAccount *account)
+;
+
+/*
+ Free a managed platform account result's error message (if any)
+ Note: This does NOT free the account handle itself - use managed_platform_account_free for that
+
+ # Safety
+
+ - `result` must be a valid pointer to an FFIManagedPlatformAccountResult
+ - The error_message field must be either null or a valid CString allocated by this library
+ - The caller must ensure the result pointer remains valid for the duration of this call
+ */
+ void managed_platform_account_result_free_error(FFIManagedPlatformAccountResult *result) ;
 
 /*
  Get managed account collection for a specific network from wallet manager
@@ -2659,9 +2857,9 @@ FFIAddressPool *managed_account_get_address_pool(const FFIManagedAccount *accoun
  - The returned pointer must be freed with `managed_account_collection_free` when no longer needed
  */
 
-FFIManagedAccountCollection *managed_wallet_get_account_collection(const FFIWalletManager *manager,
-                                                                   const uint8_t *wallet_id,
-                                                                   FFIError *error)
+FFIManagedCoreAccountCollection *managed_wallet_get_account_collection(const FFIWalletManager *manager,
+                                                                       const uint8_t *wallet_id,
+                                                                       FFIError *error)
 ;
 
 /*
@@ -2669,22 +2867,24 @@ FFIManagedAccountCollection *managed_wallet_get_account_collection(const FFIWall
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection created by this library
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection created by this library
  - `collection` must not be used after calling this function
  */
- void managed_account_collection_free(FFIManagedAccountCollection *collection) ;
+
+void managed_account_collection_free(FFIManagedCoreAccountCollection *collection)
+;
 
 /*
  Get a BIP44 account by index from the managed collection
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_bip44_account(const FFIManagedAccountCollection *collection,
-                                                                unsigned int index)
+FFIManagedCoreAccount *managed_account_collection_get_bip44_account(const FFIManagedCoreAccountCollection *collection,
+                                                                    unsigned int index)
 ;
 
 /*
@@ -2692,13 +2892,13 @@ FFIManagedAccount *managed_account_collection_get_bip44_account(const FFIManaged
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  - `out_indices` must be a valid pointer to store the indices array
  - `out_count` must be a valid pointer to store the count
  - The returned array must be freed with `free_u32_array` when no longer needed
  */
 
-bool managed_account_collection_get_bip44_indices(const FFIManagedAccountCollection *collection,
+bool managed_account_collection_get_bip44_indices(const FFIManagedCoreAccountCollection *collection,
                                                   unsigned int **out_indices,
                                                   size_t *out_count)
 ;
@@ -2708,12 +2908,12 @@ bool managed_account_collection_get_bip44_indices(const FFIManagedAccountCollect
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_bip32_account(const FFIManagedAccountCollection *collection,
-                                                                unsigned int index)
+FFIManagedCoreAccount *managed_account_collection_get_bip32_account(const FFIManagedCoreAccountCollection *collection,
+                                                                    unsigned int index)
 ;
 
 /*
@@ -2721,13 +2921,13 @@ FFIManagedAccount *managed_account_collection_get_bip32_account(const FFIManaged
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  - `out_indices` must be a valid pointer to store the indices array
  - `out_count` must be a valid pointer to store the count
  - The returned array must be freed with `free_u32_array` when no longer needed
  */
 
-bool managed_account_collection_get_bip32_indices(const FFIManagedAccountCollection *collection,
+bool managed_account_collection_get_bip32_indices(const FFIManagedCoreAccountCollection *collection,
                                                   unsigned int **out_indices,
                                                   size_t *out_count)
 ;
@@ -2737,12 +2937,12 @@ bool managed_account_collection_get_bip32_indices(const FFIManagedAccountCollect
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_coinjoin_account(const FFIManagedAccountCollection *collection,
-                                                                   unsigned int index)
+FFIManagedCoreAccount *managed_account_collection_get_coinjoin_account(const FFIManagedCoreAccountCollection *collection,
+                                                                       unsigned int index)
 ;
 
 /*
@@ -2750,13 +2950,13 @@ FFIManagedAccount *managed_account_collection_get_coinjoin_account(const FFIMana
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  - `out_indices` must be a valid pointer to store the indices array
  - `out_count` must be a valid pointer to store the count
  - The returned array must be freed with `free_u32_array` when no longer needed
  */
 
-bool managed_account_collection_get_coinjoin_indices(const FFIManagedAccountCollection *collection,
+bool managed_account_collection_get_coinjoin_indices(const FFIManagedCoreAccountCollection *collection,
                                                      unsigned int **out_indices,
                                                      size_t *out_count)
 ;
@@ -2766,11 +2966,11 @@ bool managed_account_collection_get_coinjoin_indices(const FFIManagedAccountColl
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_identity_registration(const FFIManagedAccountCollection *collection)
+FFIManagedCoreAccount *managed_account_collection_get_identity_registration(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2778,10 +2978,10 @@ FFIManagedAccount *managed_account_collection_get_identity_registration(const FF
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  */
 
-bool managed_account_collection_has_identity_registration(const FFIManagedAccountCollection *collection)
+bool managed_account_collection_has_identity_registration(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2789,12 +2989,12 @@ bool managed_account_collection_has_identity_registration(const FFIManagedAccoun
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_identity_topup(const FFIManagedAccountCollection *collection,
-                                                                 unsigned int registration_index)
+FFIManagedCoreAccount *managed_account_collection_get_identity_topup(const FFIManagedCoreAccountCollection *collection,
+                                                                     unsigned int registration_index)
 ;
 
 /*
@@ -2802,13 +3002,13 @@ FFIManagedAccount *managed_account_collection_get_identity_topup(const FFIManage
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  - `out_indices` must be a valid pointer to store the indices array
  - `out_count` must be a valid pointer to store the count
  - The returned array must be freed with `free_u32_array` when no longer needed
  */
 
-bool managed_account_collection_get_identity_topup_indices(const FFIManagedAccountCollection *collection,
+bool managed_account_collection_get_identity_topup_indices(const FFIManagedCoreAccountCollection *collection,
                                                            unsigned int **out_indices,
                                                            size_t *out_count)
 ;
@@ -2818,12 +3018,12 @@ bool managed_account_collection_get_identity_topup_indices(const FFIManagedAccou
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  - `manager` must be a valid pointer to an FFIWalletManager
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_identity_topup_not_bound(const FFIManagedAccountCollection *collection)
+FFIManagedCoreAccount *managed_account_collection_get_identity_topup_not_bound(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2831,10 +3031,10 @@ FFIManagedAccount *managed_account_collection_get_identity_topup_not_bound(const
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  */
 
-bool managed_account_collection_has_identity_topup_not_bound(const FFIManagedAccountCollection *collection)
+bool managed_account_collection_has_identity_topup_not_bound(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2842,11 +3042,11 @@ bool managed_account_collection_has_identity_topup_not_bound(const FFIManagedAcc
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_identity_invitation(const FFIManagedAccountCollection *collection)
+FFIManagedCoreAccount *managed_account_collection_get_identity_invitation(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2854,10 +3054,10 @@ FFIManagedAccount *managed_account_collection_get_identity_invitation(const FFIM
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  */
 
-bool managed_account_collection_has_identity_invitation(const FFIManagedAccountCollection *collection)
+bool managed_account_collection_has_identity_invitation(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2865,11 +3065,11 @@ bool managed_account_collection_has_identity_invitation(const FFIManagedAccountC
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_voting_keys(const FFIManagedAccountCollection *collection)
+FFIManagedCoreAccount *managed_account_collection_get_provider_voting_keys(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2877,10 +3077,10 @@ FFIManagedAccount *managed_account_collection_get_provider_voting_keys(const FFI
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  */
 
-bool managed_account_collection_has_provider_voting_keys(const FFIManagedAccountCollection *collection)
+bool managed_account_collection_has_provider_voting_keys(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2888,11 +3088,11 @@ bool managed_account_collection_has_provider_voting_keys(const FFIManagedAccount
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_owner_keys(const FFIManagedAccountCollection *collection)
+FFIManagedCoreAccount *managed_account_collection_get_provider_owner_keys(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2900,10 +3100,10 @@ FFIManagedAccount *managed_account_collection_get_provider_owner_keys(const FFIM
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  */
 
-bool managed_account_collection_has_provider_owner_keys(const FFIManagedAccountCollection *collection)
+bool managed_account_collection_has_provider_owner_keys(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2912,11 +3112,11 @@ bool managed_account_collection_has_provider_owner_keys(const FFIManagedAccountC
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed (when BLS is enabled)
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed (when BLS is enabled)
  */
 
-void *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *collection)
+void *managed_account_collection_get_provider_operator_keys(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2924,10 +3124,10 @@ void *managed_account_collection_get_provider_operator_keys(const FFIManagedAcco
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  */
 
-bool managed_account_collection_has_provider_operator_keys(const FFIManagedAccountCollection *collection)
+bool managed_account_collection_has_provider_operator_keys(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2936,11 +3136,11 @@ bool managed_account_collection_has_provider_operator_keys(const FFIManagedAccou
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - The returned pointer must be freed with `managed_account_free` when no longer needed (when EdDSA is enabled)
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_core_account_free` when no longer needed (when EdDSA is enabled)
  */
 
-void *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *collection)
+void *managed_account_collection_get_provider_platform_keys(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2948,10 +3148,82 @@ void *managed_account_collection_get_provider_platform_keys(const FFIManagedAcco
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  */
 
-bool managed_account_collection_has_provider_platform_keys(const FFIManagedAccountCollection *collection)
+bool managed_account_collection_has_provider_platform_keys(const FFIManagedCoreAccountCollection *collection)
+;
+
+/*
+ Get a Platform Payment account by account index and key class from the managed collection
+
+ Platform Payment accounts (DIP-17) are identified by two indices:
+ - account_index: The account' level in the derivation path
+ - key_class: The key_class' level in the derivation path (typically 0)
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - The returned pointer must be freed with `managed_platform_account_free` when no longer needed
+ */
+
+FFIManagedPlatformAccount *managed_account_collection_get_platform_payment_account(const FFIManagedCoreAccountCollection *collection,
+                                                                                   unsigned int account_index,
+                                                                                   unsigned int key_class)
+;
+
+/*
+ Get all Platform Payment account keys from managed collection
+
+ Returns an array of FFIPlatformPaymentAccountKey structures.
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ - `out_keys` must be a valid pointer to store the keys array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `managed_account_collection_free_platform_payment_keys` when no longer needed
+ */
+
+bool managed_account_collection_get_platform_payment_keys(const FFIManagedCoreAccountCollection *collection,
+                                                          FFIPlatformPaymentAccountKey **out_keys,
+                                                          size_t *out_count)
+;
+
+/*
+ Free platform payment keys array returned by managed_account_collection_get_platform_payment_keys
+
+ # Safety
+
+ - `keys` must be a pointer returned by `managed_account_collection_get_platform_payment_keys`
+ - `count` must be the count returned by `managed_account_collection_get_platform_payment_keys`
+ - This function must only be called once per allocation
+ */
+
+void managed_account_collection_free_platform_payment_keys(FFIPlatformPaymentAccountKey *keys,
+                                                           size_t count)
+;
+
+/*
+ Check if there are any Platform Payment accounts in the managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ */
+
+bool managed_account_collection_has_platform_payment_accounts(const FFIManagedCoreAccountCollection *collection)
+;
+
+/*
+ Get the number of Platform Payment accounts in the managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
+ */
+
+unsigned int managed_account_collection_platform_payment_count(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2959,9 +3231,9 @@ bool managed_account_collection_has_provider_platform_keys(const FFIManagedAccou
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  */
- unsigned int managed_account_collection_count(const FFIManagedAccountCollection *collection) ;
+ unsigned int managed_account_collection_count(const FFIManagedCoreAccountCollection *collection) ;
 
 /*
  Get a human-readable summary of all accounts in the managed collection
@@ -2971,11 +3243,11 @@ bool managed_account_collection_has_provider_platform_keys(const FFIManagedAccou
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  - The returned string must be freed with `string_free` when no longer needed
  - Returns null if the collection pointer is null
  */
- char *managed_account_collection_summary(const FFIManagedAccountCollection *collection) ;
+ char *managed_account_collection_summary(const FFIManagedCoreAccountCollection *collection) ;
 
 /*
  Get structured account collection summary data for managed collection
@@ -2986,12 +3258,12 @@ bool managed_account_collection_has_provider_platform_keys(const FFIManagedAccou
 
  # Safety
 
- - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `collection` must be a valid pointer to an FFIManagedCoreAccountCollection
  - The returned pointer must be freed with `managed_account_collection_summary_free` when no longer needed
  - Returns null if the collection pointer is null
  */
 
-FFIManagedAccountCollectionSummary *managed_account_collection_summary_data(const FFIManagedAccountCollection *collection)
+FFIManagedCoreAccountCollectionSummary *managed_account_collection_summary_data(const FFIManagedCoreAccountCollection *collection)
 ;
 
 /*
@@ -2999,11 +3271,11 @@ FFIManagedAccountCollectionSummary *managed_account_collection_summary_data(cons
 
  # Safety
 
- - `summary` must be a valid pointer to an FFIManagedAccountCollectionSummary created by `managed_account_collection_summary_data`
+ - `summary` must be a valid pointer to an FFIManagedCoreAccountCollectionSummary created by `managed_account_collection_summary_data`
  - `summary` must not be used after calling this function
  */
 
-void managed_account_collection_summary_free(FFIManagedAccountCollectionSummary *summary)
+void managed_account_collection_summary_free(FFIManagedCoreAccountCollectionSummary *summary)
 ;
 
 /*
@@ -3820,6 +4092,13 @@ FFIWallet *wallet_create_random_with_options(FFINetwork network,
  The caller must ensure that:
  - The wallet pointer is either null or points to a valid FFIWallet
  - The FFIWallet remains valid for the duration of this call
+
+ # Note
+
+ This function does NOT support the following account types:
+ - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+ - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+ - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
  */
 
 FFIAccountResult wallet_add_account(FFIWallet *wallet,
@@ -3867,6 +4146,13 @@ FFIAccountResult wallet_add_dashpay_external_account_with_xpub_bytes(FFIWallet *
  - The wallet pointer is either null or points to a valid FFIWallet
  - The xpub_bytes pointer is either null or points to at least xpub_len bytes
  - The FFIWallet remains valid for the duration of this call
+
+ # Note
+
+ This function does NOT support the following account types:
+ - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+ - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+ - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
  */
 
 FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
@@ -3886,12 +4172,43 @@ FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
  - The wallet pointer is either null or points to a valid FFIWallet
  - The xpub_string pointer is either null or points to a valid null-terminated C string
  - The FFIWallet remains valid for the duration of this call
+
+ # Note
+
+ This function does NOT support the following account types:
+ - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+ - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+ - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
  */
 
 FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
                                                      FFIAccountType account_type,
                                                      unsigned int account_index,
                                                      const char *xpub_string)
+;
+
+/*
+ Add a Platform Payment account (DIP-17) to the wallet
+
+ Platform Payment accounts use the derivation path:
+ `m/9'/coin_type'/17'/account'/key_class'/index`
+
+ # Arguments
+ * `wallet` - Pointer to the wallet
+ * `account_index` - The account index (hardened) in the derivation path
+ * `key_class` - The key class (hardened) - typically 0' for main addresses
+
+ # Safety
+
+ This function dereferences a raw pointer to FFIWallet.
+ The caller must ensure that:
+ - The wallet pointer is either null or points to a valid FFIWallet
+ - The FFIWallet remains valid for the duration of this call
+ */
+
+FFIAccountResult wallet_add_platform_payment_account(FFIWallet *wallet,
+                                                     unsigned int account_index,
+                                                     unsigned int key_class)
 ;
 
 /*
