@@ -115,6 +115,13 @@ pub enum ManagedAccountType {
         /// Platform payment address pool (single pool, non-hardened leaf index)
         addresses: AddressPool,
     },
+    /// Platform Address Funding account (DIP-17)
+    /// Path: m/9'/coin_type'/17'/0'/2'/index
+    /// This is a specialized account for asset lock funding with fixed account=0' and key_class=2'
+    PlatformAddressFunding {
+        /// Platform address funding address pool (single pool, non-hardened leaf index)
+        addresses: AddressPool,
+    },
 }
 
 impl ManagedAccountType {
@@ -167,6 +174,9 @@ impl ManagedAccountType {
                 account,
                 ..
             } => Some(*account),
+            Self::PlatformAddressFunding {
+                ..
+            } => None,
         }
     }
 
@@ -245,6 +255,10 @@ impl ManagedAccountType {
             | Self::PlatformPayment {
                 addresses,
                 ..
+            }
+            | Self::PlatformAddressFunding {
+                addresses,
+                ..
             } => vec![addresses],
         }
     }
@@ -306,6 +320,10 @@ impl ManagedAccountType {
                 ..
             }
             | Self::PlatformPayment {
+                addresses,
+                ..
+            }
+            | Self::PlatformAddressFunding {
                 addresses,
                 ..
             } => vec![addresses],
@@ -432,6 +450,9 @@ impl ManagedAccountType {
                 account: *account,
                 key_class: *key_class,
             },
+            Self::PlatformAddressFunding {
+                ..
+            } => AccountType::PlatformAddressFunding,
         }
     }
 
@@ -694,6 +715,23 @@ impl ManagedAccountType {
                 Ok(Self::PlatformPayment {
                     account,
                     key_class,
+                    addresses: pool,
+                })
+            }
+            AccountType::PlatformAddressFunding => {
+                // DIP-17: m/9'/coin_type'/17'/0'/2'/index (asset lock funding)
+                // The leaf index is non-hardened
+                let path = account_type
+                    .derivation_path(network)
+                    .unwrap_or_else(|_| DerivationPath::master());
+                let pool = AddressPool::new(
+                    path,
+                    crate::managed_account::address_pool::AddressPoolType::Absent,
+                    DIP17_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                Ok(Self::PlatformAddressFunding {
                     addresses: pool,
                 })
             }

@@ -28,6 +28,8 @@ pub enum DerivationPathReference {
     ProviderPlatformNodeKeys = 14,
     CoinJoin = 15,
     PlatformPayment = 16,
+    /// DIP-17: Platform Address Funding (m/9'/coin_type'/17'/0'/2'/index)
+    PlatformAddressFunding = 17,
     Root = 255,
 }
 
@@ -134,6 +136,14 @@ pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS: u32 = 3;
 pub const FEATURE_PURPOSE_DASHPAY: u32 = 15;
 /// DIP-17: Platform Payment Addresses feature index
 pub const FEATURE_PURPOSE_PLATFORM_PAYMENT: u32 = 17;
+
+/// DIP-17: Platform Payment key classes
+/// Key class for external/receiving addresses
+pub const PLATFORM_KEY_CLASS_PAYMENT: u32 = 0;
+/// Key class for internal/change (reserved)
+pub const PLATFORM_KEY_CLASS_INTERNAL: u32 = 1;
+/// Key class for asset lock funding addresses
+pub const PLATFORM_KEY_CLASS_FUNDING: u32 = 2;
 pub const DASH_BIP44_PATH_MAINNET: IndexConstPath<2> = IndexConstPath {
     indexes: [
         ChildNumber::Hardened {
@@ -416,4 +426,54 @@ pub const PLATFORM_PAYMENT_ROOT_PATH_TESTNET: IndexConstPath<3> = IndexConstPath
     ],
     reference: DerivationPathReference::PlatformPayment,
     path_type: DerivationPathType::CLEAR_FUNDS,
+};
+
+// DIP-17: Platform Address Funding Paths
+// Path: m/9'/coin_type'/17'/0'/2'/index
+// These are specifically for asset lock funding keys (key_class = 2)
+
+/// Platform Address Funding path for mainnet: m/9'/5'/17'/0'/2'
+pub const PLATFORM_ADDRESS_FUNDING_PATH_MAINNET: IndexConstPath<5> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_PLATFORM_PAYMENT,
+        },
+        ChildNumber::Hardened {
+            index: 0, // account index fixed at 0'
+        },
+        ChildNumber::Hardened {
+            index: PLATFORM_KEY_CLASS_FUNDING, // key class 2' for funding
+        },
+    ],
+    reference: DerivationPathReference::PlatformAddressFunding,
+    path_type: DerivationPathType::CREDIT_FUNDING,
+};
+
+/// Platform Address Funding path for testnet: m/9'/1'/17'/0'/2'
+pub const PLATFORM_ADDRESS_FUNDING_PATH_TESTNET: IndexConstPath<5> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_PLATFORM_PAYMENT,
+        },
+        ChildNumber::Hardened {
+            index: 0, // account index fixed at 0'
+        },
+        ChildNumber::Hardened {
+            index: PLATFORM_KEY_CLASS_FUNDING, // key class 2' for funding
+        },
+    ],
+    reference: DerivationPathReference::PlatformAddressFunding,
+    path_type: DerivationPathType::CREDIT_FUNDING,
 };

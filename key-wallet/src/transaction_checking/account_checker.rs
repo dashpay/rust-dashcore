@@ -114,6 +114,11 @@ pub enum AccountTypeMatch {
         key_class: u32,
         involved_addresses: Vec<AddressInfo>,
     },
+    /// Platform Address Funding account (DIP-17)
+    /// For asset lock funding keys
+    PlatformAddressFunding {
+        involved_addresses: Vec<AddressInfo>,
+    },
 }
 
 impl AccountTypeMatch {
@@ -172,6 +177,10 @@ impl AccountTypeMatch {
                 ..
             }
             | AccountTypeMatch::PlatformPayment {
+                involved_addresses,
+                ..
+            }
+            | AccountTypeMatch::PlatformAddressFunding {
                 involved_addresses,
                 ..
             } => involved_addresses.clone(),
@@ -258,6 +267,9 @@ impl AccountTypeMatch {
             AccountTypeMatch::PlatformPayment {
                 ..
             } => AccountTypeToCheck::PlatformPayment,
+            AccountTypeMatch::PlatformAddressFunding {
+                ..
+            } => AccountTypeToCheck::PlatformAddressFunding,
         }
     }
 }
@@ -396,6 +408,12 @@ impl ManagedAccountCollection {
                 // any Core chain transaction by design.
                 Vec::new()
             }
+            AccountTypeToCheck::PlatformAddressFunding => self
+                .platform_address_funding
+                .as_ref()
+                .and_then(|account| account.check_asset_lock_transaction_for_match(tx, None))
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -658,6 +676,11 @@ impl ManagedAccount {
                 } => AccountTypeMatch::PlatformPayment {
                     account_index: *account,
                     key_class: *key_class,
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::PlatformAddressFunding {
+                    ..
+                } => AccountTypeMatch::PlatformAddressFunding {
                     involved_addresses: involved_other_addresses,
                 },
             };

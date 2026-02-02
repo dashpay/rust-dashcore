@@ -1116,6 +1116,29 @@ impl DerivationPath {
         root_derivation_path
     }
 
+    /// DIP-17: Platform Address Funding path (m/9'/coin_type'/17'/0'/2'/index)
+    /// This is used for asset lock funding keys.
+    ///
+    /// # Arguments
+    /// * `network` - The network (Dash mainnet uses coin_type 5', testnet/devnet/regtest use 1')
+    /// * `index` - The address index (non-hardened)
+    ///
+    /// # Returns
+    /// Full derivation path: m/9'/coin_type'/17'/0'/2'/index
+    pub fn platform_address_funding_path(network: Network, index: u32) -> Self {
+        use crate::dip9::{PLATFORM_ADDRESS_FUNDING_PATH_MAINNET, PLATFORM_ADDRESS_FUNDING_PATH_TESTNET};
+
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => PLATFORM_ADDRESS_FUNDING_PATH_MAINNET,
+            _ => PLATFORM_ADDRESS_FUNDING_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Normal {
+            index,
+        }]);
+        root_derivation_path
+    }
+
     pub fn derive_priv_ecdsa_for_master_seed(
         &self,
         seed: &[u8],
@@ -2634,6 +2657,17 @@ mod tests {
             3,
         );
         assert_eq!(path.to_string(), "m/9'/1'/5'/0'/1'/2'/3'");
+    }
+
+    #[test]
+    fn test_platform_address_funding_path() {
+        // Mainnet funding key at index 0: m/9'/5'/17'/0'/2'/0
+        let path = DerivationPath::platform_address_funding_path(Network::Dash, 0);
+        assert_eq!(path.to_string(), "m/9'/5'/17'/0'/2'/0");
+
+        // Testnet funding key at index 5: m/9'/1'/17'/0'/2'/5
+        let path = DerivationPath::platform_address_funding_path(Network::Testnet, 5);
+        assert_eq!(path.to_string(), "m/9'/1'/17'/0'/2'/5");
     }
 
     #[test]

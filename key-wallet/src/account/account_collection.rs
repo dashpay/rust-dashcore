@@ -74,6 +74,9 @@ pub struct AccountCollection {
     pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, Account>,
     /// Platform Payment accounts (DIP-17)
     pub platform_payment_accounts: BTreeMap<PlatformPaymentAccountKey, Account>,
+    /// Platform Address Funding account (DIP-17, singleton)
+    /// Path: m/9'/coin_type'/17'/0'/2'/index (for asset lock funding)
+    pub platform_address_funding: Option<Account>,
 }
 
 impl AccountCollection {
@@ -96,6 +99,7 @@ impl AccountCollection {
             dashpay_receival_accounts: BTreeMap::new(),
             dashpay_external_accounts: BTreeMap::new(),
             platform_payment_accounts: BTreeMap::new(),
+            platform_address_funding: None,
         }
     }
 
@@ -180,6 +184,9 @@ impl AccountCollection {
                     key_class: *key_class,
                 };
                 self.platform_payment_accounts.insert(key, account);
+            }
+            AccountType::PlatformAddressFunding => {
+                self.platform_address_funding = Some(account);
             }
         }
         Ok(())
@@ -274,6 +281,7 @@ impl AccountCollection {
                 };
                 self.platform_payment_accounts.contains_key(&key)
             }
+            AccountType::PlatformAddressFunding => self.platform_address_funding.is_some(),
         }
     }
 
@@ -337,6 +345,7 @@ impl AccountCollection {
                 };
                 self.platform_payment_accounts.get(&key)
             }
+            AccountType::PlatformAddressFunding => self.platform_address_funding.as_ref(),
         }
     }
 
@@ -400,6 +409,7 @@ impl AccountCollection {
                 };
                 self.platform_payment_accounts.get_mut(&key)
             }
+            AccountType::PlatformAddressFunding => self.platform_address_funding.as_mut(),
         }
     }
 
@@ -440,6 +450,10 @@ impl AccountCollection {
         accounts.extend(self.dashpay_external_accounts.values());
         accounts.extend(self.platform_payment_accounts.values());
 
+        if let Some(account) = &self.platform_address_funding {
+            accounts.push(account);
+        }
+
         accounts
     }
 
@@ -479,6 +493,10 @@ impl AccountCollection {
         accounts.extend(self.dashpay_receival_accounts.values_mut());
         accounts.extend(self.dashpay_external_accounts.values_mut());
         accounts.extend(self.platform_payment_accounts.values_mut());
+
+        if let Some(account) = &mut self.platform_address_funding {
+            accounts.push(account);
+        }
 
         accounts
     }
@@ -566,7 +584,8 @@ impl AccountCollection {
             && self.identity_topup_not_bound.is_none()
             && self.identity_invitation.is_none()
             && self.provider_voting_keys.is_none()
-            && self.provider_owner_keys.is_none();
+            && self.provider_owner_keys.is_none()
+            && self.platform_address_funding.is_none();
 
         #[cfg(feature = "bls")]
         {
@@ -600,6 +619,7 @@ impl AccountCollection {
         {
             self.provider_platform_keys = None;
         }
+        self.platform_address_funding = None;
     }
 }
 

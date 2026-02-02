@@ -52,6 +52,9 @@ pub struct ManagedAccountCollection {
     pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, ManagedAccount>,
     /// Platform Payment accounts (DIP-17)
     pub platform_payment_accounts: BTreeMap<PlatformPaymentAccountKey, ManagedAccount>,
+    /// Platform Address Funding account (DIP-17, singleton)
+    /// Path: m/9'/coin_type'/17'/0'/2'/index (for asset lock funding)
+    pub platform_address_funding: Option<ManagedAccount>,
 }
 
 impl ManagedAccountCollection {
@@ -72,6 +75,7 @@ impl ManagedAccountCollection {
             dashpay_receival_accounts: BTreeMap::new(),
             dashpay_external_accounts: BTreeMap::new(),
             platform_payment_accounts: BTreeMap::new(),
+            platform_address_funding: None,
         }
     }
 
@@ -158,6 +162,9 @@ impl ManagedAccountCollection {
                 };
                 self.platform_payment_accounts.contains_key(&key)
             }
+            ManagedAccountType::PlatformAddressFunding {
+                ..
+            } => self.platform_address_funding.is_some(),
         }
     }
 
@@ -262,6 +269,11 @@ impl ManagedAccountCollection {
                 };
                 self.platform_payment_accounts.insert(key, account);
             }
+            ManagedAccountType::PlatformAddressFunding {
+                ..
+            } => {
+                self.platform_address_funding = Some(account);
+            }
         }
     }
 
@@ -362,6 +374,13 @@ impl ManagedAccountCollection {
         for (key, account) in &account_collection.platform_payment_accounts {
             if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
                 managed_collection.platform_payment_accounts.insert(*key, managed_account);
+            }
+        }
+
+        // Convert Platform Address Funding account
+        if let Some(account) = &account_collection.platform_address_funding {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.platform_address_funding = Some(managed_account);
             }
         }
 
@@ -623,6 +642,19 @@ impl ManagedAccountCollection {
                     addresses,
                 }
             }
+            AccountType::PlatformAddressFunding => {
+                // DIP-17: Platform Address Funding (asset lock funding)
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DIP17_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                ManagedAccountType::PlatformAddressFunding {
+                    addresses,
+                }
+            }
         };
 
         Ok(ManagedAccount::new(managed_type, network, is_watch_only))
@@ -768,6 +800,9 @@ impl ManagedAccountCollection {
                 // Platform Payment addresses are not used in Core chain transactions (DIP-17)
                 None
             }
+            AccountTypeMatch::PlatformAddressFunding {
+                ..
+            } => self.platform_address_funding.as_ref(),
         }
     }
 
@@ -869,6 +904,14 @@ impl ManagedAccountCollection {
         accounts.extend(self.dashpay_receival_accounts.values());
         accounts.extend(self.dashpay_external_accounts.values());
 
+        // Add Platform Payment accounts
+        accounts.extend(self.platform_payment_accounts.values());
+
+        // Add Platform Address Funding account
+        if let Some(account) = &self.platform_address_funding {
+            accounts.push(account);
+        }
+
         accounts
     }
 
@@ -920,6 +963,14 @@ impl ManagedAccountCollection {
         accounts.extend(self.dashpay_receival_accounts.values_mut());
         accounts.extend(self.dashpay_external_accounts.values_mut());
 
+        // Add Platform Payment accounts
+        accounts.extend(self.platform_payment_accounts.values_mut());
+
+        // Add Platform Address Funding account
+        if let Some(account) = &mut self.platform_address_funding {
+            accounts.push(account);
+        }
+
         accounts
     }
 
@@ -962,6 +1013,8 @@ impl ManagedAccountCollection {
             && self.provider_platform_keys.is_none()
             && self.dashpay_receival_accounts.is_empty()
             && self.dashpay_external_accounts.is_empty()
+            && self.platform_payment_accounts.is_empty()
+            && self.platform_address_funding.is_none()
     }
 
     /// Clear all accounts
@@ -979,5 +1032,7 @@ impl ManagedAccountCollection {
         self.provider_platform_keys = None;
         self.dashpay_receival_accounts.clear();
         self.dashpay_external_accounts.clear();
+        self.platform_payment_accounts.clear();
+        self.platform_address_funding = None;
     }
 }

@@ -30,6 +30,8 @@ pub enum FFIDerivationPathType {
     PathBlockchainIdentityCreditInvitationFunding = 13,
     PathProviderPlatformNodeKeys = 14,
     PathCoinJoin = 15,
+    PathPlatformPayment = 16,
+    PathPlatformAddressFunding = 17,
     PathRoot = 255,
 }
 
@@ -391,6 +393,62 @@ pub extern "C" fn derivation_identity_authentication_path(
         identity_index,
         key_index,
     );
+
+    let path_str = format!("{}", derivation);
+
+    let c_string = match CString::new(path_str) {
+        Ok(s) => s,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::AllocationFailed,
+                "Failed to create C string".to_string(),
+            );
+            return false;
+        }
+    };
+
+    let bytes = c_string.as_bytes_with_nul();
+    if bytes.len() > path_max_len {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            format!("Path too long: {} > {}", bytes.len(), path_max_len),
+        );
+        return false;
+    }
+
+    unsafe {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
+    }
+
+    FFIError::set_success(error);
+    true
+}
+
+/// Derive platform address funding path (m/9'/5'/17'/0'/2'/index)
+/// DIP-17: Used for asset lock funding keys
+#[no_mangle]
+pub extern "C" fn derivation_platform_address_funding_path(
+    network: FFINetwork,
+    index: c_uint,
+    path_out: *mut c_char,
+    path_max_len: usize,
+    error: *mut FFIError,
+) -> bool {
+    if path_out.is_null() {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Path output buffer is null".to_string(),
+        );
+        return false;
+    }
+
+    let network_rust: key_wallet::Network = network.into();
+
+    use key_wallet::bip32::DerivationPath;
+    let derivation = DerivationPath::platform_address_funding_path(network_rust, index);
 
     let path_str = format!("{}", derivation);
 

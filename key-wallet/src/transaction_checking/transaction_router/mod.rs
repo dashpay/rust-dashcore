@@ -115,6 +115,7 @@ impl TransactionRouter {
                 AccountTypeToCheck::IdentityTopUp,
                 AccountTypeToCheck::IdentityTopUpNotBound,
                 AccountTypeToCheck::IdentityInvitation,
+                AccountTypeToCheck::PlatformAddressFunding,
             ],
             TransactionType::AssetUnlock => {
                 vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
@@ -181,6 +182,9 @@ pub enum AccountTypeToCheck {
     /// Platform Payment accounts (DIP-17).
     /// Note: These are NOT checked for Core chain transactions as they operate on Dash Platform.
     PlatformPayment,
+    /// Platform Address Funding accounts (DIP-17).
+    /// Note: These ARE checked for Core chain transactions as they are used for asset lock funding.
+    PlatformAddressFunding,
 }
 
 impl From<ManagedAccountType> for AccountTypeToCheck {
@@ -233,6 +237,9 @@ impl From<ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::PlatformPayment {
                 ..
             } => AccountTypeToCheck::PlatformPayment,
+            ManagedAccountType::PlatformAddressFunding {
+                ..
+            } => AccountTypeToCheck::PlatformAddressFunding,
         }
     }
 }
@@ -287,6 +294,9 @@ impl From<&ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::PlatformPayment {
                 ..
             } => AccountTypeToCheck::PlatformPayment,
+            ManagedAccountType::PlatformAddressFunding {
+                ..
+            } => AccountTypeToCheck::PlatformAddressFunding,
         }
     }
 }

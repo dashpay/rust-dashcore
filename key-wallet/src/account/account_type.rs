@@ -92,6 +92,10 @@ pub enum AccountType {
         /// Key class (hardened) - default 0', 1' reserved for change-like segregation
         key_class: u32,
     },
+    /// Platform Address Funding account (DIP-17)
+    /// Path: m/9'/coin_type'/17'/0'/2'/index
+    /// This is a specialized account for asset lock funding with fixed account=0' and key_class=2'
+    PlatformAddressFunding,
 }
 
 impl From<AccountType> for AccountTypeToCheck {
@@ -128,6 +132,7 @@ impl From<AccountType> for AccountTypeToCheck {
             AccountType::PlatformPayment {
                 ..
             } => AccountTypeToCheck::PlatformPayment,
+            AccountType::PlatformAddressFunding => AccountTypeToCheck::PlatformAddressFunding,
         }
     }
 }
@@ -156,7 +161,7 @@ impl AccountType {
                 account,
                 ..
             } => Some(*account),
-            // Identity and provider types don't have account indices
+            // Identity, provider, and special platform funding types don't have account indices
             Self::IdentityRegistration
             | Self::IdentityTopUp {
                 ..
@@ -166,7 +171,8 @@ impl AccountType {
             | Self::ProviderVotingKeys
             | Self::ProviderOwnerKeys
             | Self::ProviderOperatorKeys
-            | Self::ProviderPlatformKeys => None,
+            | Self::ProviderPlatformKeys
+            | Self::PlatformAddressFunding => None,
         }
     }
 
@@ -227,6 +233,7 @@ impl AccountType {
             Self::PlatformPayment {
                 ..
             } => DerivationPathReference::PlatformPayment,
+            Self::PlatformAddressFunding => DerivationPathReference::PlatformAddressFunding,
         }
     }
 
@@ -434,6 +441,20 @@ impl AccountType {
                         .map_err(crate::error::Error::Bip32)?,
                 );
                 Ok(path)
+            }
+            Self::PlatformAddressFunding => {
+                // DIP-17: m/9'/coin_type'/17'/0'/2' (base path without index)
+                // account=0' and key_class=2' (funding) are fixed
+                // The leaf index is non-hardened and appended during address generation
+                match network {
+                    Network::Dash => {
+                        Ok(DerivationPath::from(crate::dip9::PLATFORM_ADDRESS_FUNDING_PATH_MAINNET))
+                    }
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        Ok(DerivationPath::from(crate::dip9::PLATFORM_ADDRESS_FUNDING_PATH_TESTNET))
+                    }
+                    _ => Err(crate::error::Error::InvalidNetwork),
+                }
             }
         }
     }

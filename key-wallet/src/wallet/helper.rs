@@ -843,6 +843,9 @@ impl Wallet {
                 // and xpubs are not retrieved via this helper
                 None
             }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::PlatformAddressFunding => {
+                coll.platform_address_funding.as_ref().map(|a| a.account_xpub)
+            }
         }
     }
 }

@@ -64,6 +64,7 @@ fn get_managed_account_by_type<'a>(
             // Platform Payment accounts are not currently persisted in ManagedAccountCollection
             None
         }
+        AccountType::PlatformAddressFunding => collection.platform_address_funding.as_ref(),
     }
 }
 
@@ -113,6 +114,7 @@ fn get_managed_account_by_type_mut<'a>(
             // Platform Payment accounts are not currently persisted in ManagedAccountCollection
             None
         }
+        AccountType::PlatformAddressFunding => collection.platform_address_funding.as_mut(),
     }
 }
 

@@ -147,6 +147,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         // This branch should never be reached by design (per DIP-17).
                         None
                     }
+                    AccountTypeMatch::PlatformAddressFunding {
+                        ..
+                    } => self.accounts.platform_address_funding.as_mut(),
                 };
 
                 if let Some(account) = account {

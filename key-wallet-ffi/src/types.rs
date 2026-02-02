@@ -190,6 +190,9 @@ pub enum FFIAccountType {
     DashpayExternalAccount = 12,
     /// Platform Payment address (DIP-17) - Path: m/9'/5'/17'/account'/key_class'/index
     PlatformPayment = 13,
+    /// Platform Address Funding (DIP-17) - Path: m/9'/5'/17'/0'/2'/index
+    /// For asset lock funding keys (fixed account=0', key_class=2')
+    PlatformAddressFunding = 14,
 }
 
 impl FFIAccountType {
@@ -259,6 +262,7 @@ impl FFIAccountType {
                      Platform Payment account creation must use a different API path."
                 );
             }
+            FFIAccountType::PlatformAddressFunding => key_wallet::AccountType::PlatformAddressFunding,
         }
     }
 
@@ -347,6 +351,9 @@ impl FFIAccountType {
                 account,
                 key_class,
             } => (FFIAccountType::PlatformPayment, *account, Some(*key_class)),
+            key_wallet::AccountType::PlatformAddressFunding => {
+                (FFIAccountType::PlatformAddressFunding, 0, None)
+            }
         }
     }
 }

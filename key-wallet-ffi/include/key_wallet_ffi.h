@@ -92,6 +92,11 @@ typedef enum {
      Platform Payment address (DIP-17) - Path: m/9'/5'/17'/account'/key_class'/index
      */
     PLATFORM_PAYMENT = 13,
+    /*
+     Platform Address Funding (DIP-17) - Path: m/9'/5'/17'/0'/2'/index
+     For asset lock funding keys (fixed account=0', key_class=2')
+     */
+    PLATFORM_ADDRESS_FUNDING = 14,
 } FFIAccountType;
 
 /*
@@ -637,6 +642,10 @@ typedef struct {
      Whether provider platform keys account exists
      */
     bool has_provider_platform_keys;
+    /*
+     Whether platform address funding account exists (DIP-17)
+     */
+    bool has_platform_address_funding;
 } FFIManagedAccountCollectionSummary;
 
 /*
@@ -1928,6 +1937,18 @@ bool derivation_identity_authentication_path(FFINetwork network,
 ;
 
 /*
+ Derive platform address funding path (m/9'/5'/17'/0'/2'/index)
+ DIP-17: Used for asset lock funding keys
+ */
+
+bool derivation_platform_address_funding_path(FFINetwork network,
+                                              unsigned int index,
+                                              char *path_out,
+                                              size_t path_max_len,
+                                              FFIError *error)
+;
+
+/*
  Derive private key for a specific path from seed
 
  # Safety
@@ -2952,6 +2973,30 @@ void *managed_account_collection_get_provider_platform_keys(const FFIManagedAcco
  */
 
 bool managed_account_collection_has_provider_platform_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the platform address funding account if it exists in managed collection
+ DIP-17: Path: m/9'/coin_type'/17'/0'/2'/index (for asset lock funding)
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_platform_address_funding(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Check if platform address funding account exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_platform_address_funding(const FFIManagedAccountCollection *collection)
 ;
 
 /*

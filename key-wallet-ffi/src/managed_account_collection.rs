@@ -75,6 +75,9 @@ pub struct FFIManagedAccountCollectionSummary {
     #[cfg(feature = "eddsa")]
     /// Whether provider platform keys account exists
     pub has_provider_platform_keys: bool,
+
+    /// Whether platform address funding account exists (DIP-17)
+    pub has_platform_address_funding: bool,
 }
 
 /// Get managed account collection for a specific network from wallet manager
@@ -725,6 +728,50 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_platform_keys(
     }
 }
 
+// Platform Address Funding account functions
+
+/// Get the platform address funding account if it exists in managed collection
+/// DIP-17: Path: m/9'/coin_type'/17'/0'/2'/index (for asset lock funding)
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+/// - The returned pointer must be freed with `managed_account_free` when no longer needed
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_get_platform_address_funding(
+    collection: *const FFIManagedAccountCollection,
+) -> *mut FFIManagedAccount {
+    if collection.is_null() {
+        return ptr::null_mut();
+    }
+
+    let collection = &*collection;
+    match &collection.collection.platform_address_funding {
+        Some(account) => {
+            let ffi_account = FFIManagedAccount::new(account);
+            Box::into_raw(Box::new(ffi_account))
+        }
+        None => ptr::null_mut(),
+    }
+}
+
+/// Check if platform address funding account exists in managed collection
+///
+/// # Safety
+///
+/// - `collection` must be a valid pointer to an FFIManagedAccountCollection
+#[no_mangle]
+pub unsafe extern "C" fn managed_account_collection_has_platform_address_funding(
+    collection: *const FFIManagedAccountCollection,
+) -> bool {
+    if collection.is_null() {
+        return false;
+    }
+
+    let collection = &*collection;
+    collection.collection.platform_address_funding.is_some()
+}
+
 // Utility functions
 
 /// Get the total number of accounts in the managed collection
@@ -906,6 +953,10 @@ pub unsafe extern "C" fn managed_account_collection_summary(
         summary_parts.push("• Provider Platform Keys Account (EdDSA)".to_string());
     }
 
+    if collection.collection.platform_address_funding.is_some() {
+        summary_parts.push("• Platform Address Funding Account (DIP-17)".to_string());
+    }
+
     // If there are no accounts at all
     if summary_parts.len() == 1 {
         summary_parts.push("No accounts configured".to_string());
@@ -1015,6 +1066,7 @@ pub unsafe extern "C" fn managed_account_collection_summary_data(
         has_provider_operator_keys: collection.collection.provider_operator_keys.is_some(),
         #[cfg(feature = "eddsa")]
         has_provider_platform_keys: collection.collection.provider_platform_keys.is_some(),
+        has_platform_address_funding: collection.collection.platform_address_funding.is_some(),
     };
 
     Box::into_raw(Box::new(summary))

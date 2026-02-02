@@ -167,6 +167,9 @@ pub unsafe extern "C" fn managed_wallet_get_account(
             AccountType::PlatformPayment {
                 ..
             } => None,
+            AccountType::PlatformAddressFunding => {
+                managed_collection.platform_address_funding.as_ref()
+            }
         };
 
         match managed_account {
@@ -474,6 +477,7 @@ pub unsafe extern "C" fn managed_account_get_account_type(
         AccountType::PlatformPayment {
             ..
         } => FFIAccountType::PlatformPayment,
+        AccountType::PlatformAddressFunding => FFIAccountType::PlatformAddressFunding,
     }
 }
 
@@ -948,6 +952,10 @@ pub unsafe extern "C" fn managed_account_get_address_pool(
                     ..
                 } => addresses,
                 ManagedAccountType::PlatformPayment {
+                    addresses,
+                    ..
+                } => addresses,
+                ManagedAccountType::PlatformAddressFunding {
                     addresses,
                     ..
                 } => addresses,
