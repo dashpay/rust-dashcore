@@ -99,8 +99,16 @@ impl MasternodeListEngine {
         // Only God and maybe Odysseus knows why (64 - n - 1)
         let quorum_index = quorum_index_mask & (selection_hash_64 >> (64 - n - 1)) as usize;
 
-        // Retrieve the selected quorum
-        let quorum = quorums.get(quorum_index).expect("quorum index should always be within range");
+        // Find the quorum by its quorum_index field.
+        let quorum = quorums
+            .iter()
+            .find(|q| q.quorum_entry.quorum_index == Some(quorum_index as i16))
+            .ok_or({
+                MessageVerificationError::QuorumIndexNotFound(
+                    quorum_index as u16,
+                    instant_lock.cyclehash,
+                )
+            })?;
 
         Ok((quorum, request_id, quorum_index))
     }
@@ -465,5 +473,87 @@ mod tests {
         assert_eq!(quorum.quorum_entry.quorum_hash, expected_quorum_hash);
 
         mn_list_engine.verify_chain_lock(&chain_lock).expect("expected to verify chain lock");
+    }
+
+    /// Test that quorums are looked up by their quorum_index field, not by array position.
+    #[test]
+    pub fn is_lock_quorum_lookup_by_quorum_index_not_array_position() {
+        let block_hex =
+            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mut mn_list_engine: MasternodeListEngine =
+            bincode::decode_from_slice(&data, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+
+        let lock_data = hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").expect("expected valid hex");
+        let lock: InstantLock = deserialize(lock_data.as_slice()).expect("expected to deserialize");
+
+        // Get the original result
+        let (original_quorum, _, original_index) =
+            mn_list_engine.is_lock_quorum(&lock).expect("expected to get quorum");
+        let expected_quorum_hash = original_quorum.quorum_entry.quorum_hash;
+        let expected_quorum_index = original_quorum.quorum_entry.quorum_index;
+        assert_eq!(original_index, 23);
+        assert_eq!(expected_quorum_index, Some(23));
+
+        // Reverse the quorum array order so array positions no longer match quorum indices
+        let cycle_hash = lock.cyclehash;
+        if let Some(quorums) = mn_list_engine.rotated_quorums_per_cycle.get_mut(&cycle_hash) {
+            quorums.reverse();
+
+            // Verify the quorum with index 23 is no longer at position 23
+            let quorum_at_pos_23 = quorums.get(23);
+            assert!(
+                quorum_at_pos_23.is_none()
+                    || quorum_at_pos_23.unwrap().quorum_entry.quorum_index != Some(23),
+                "after reversing, quorum at position 23 should not have quorum_index 23"
+            );
+        }
+
+        // The lookup should still find the correct quorum by its quorum_index field
+        let (found_quorum, _, found_index) =
+            mn_list_engine.is_lock_quorum(&lock).expect("expected to find quorum by index");
+        assert_eq!(found_index, 23);
+        assert_eq!(found_quorum.quorum_entry.quorum_hash, expected_quorum_hash);
+        assert_eq!(found_quorum.quorum_entry.quorum_index, expected_quorum_index);
+    }
+
+    /// Test that QuorumIndexNotFound error is returned when the required quorum index is missing.
+    #[test]
+    pub fn is_lock_quorum_not_found_error() {
+        use crate::sml::message_verification_error::MessageVerificationError;
+
+        let block_hex =
+            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mut mn_list_engine: MasternodeListEngine =
+            bincode::decode_from_slice(&data, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+
+        let lock_data = hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").expect("expected valid hex");
+        let lock: InstantLock = deserialize(lock_data.as_slice()).expect("expected to deserialize");
+
+        // The lock should resolve to quorum_index 23
+        let (_, _, index) = mn_list_engine.is_lock_quorum(&lock).expect("expected quorum");
+        assert_eq!(index, 23);
+
+        // Remove the quorum with index 23 from the cycle
+        let cycle_hash = lock.cyclehash;
+        if let Some(quorums) = mn_list_engine.rotated_quorums_per_cycle.get_mut(&cycle_hash) {
+            quorums.retain(|q| q.quorum_entry.quorum_index != Some(23));
+        }
+
+        // Now the lookup should return QuorumIndexNotFound
+        let result = mn_list_engine.is_lock_quorum(&lock);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            MessageVerificationError::QuorumIndexNotFound(idx, hash) => {
+                assert_eq!(idx, 23);
+                assert_eq!(hash, cycle_hash);
+            }
+            other => panic!("expected QuorumIndexNotFound error, got: {:?}", other),
+        }
     }
 }
