@@ -899,6 +899,7 @@ impl MasternodeListEngine {
                 masternode_list_diff.clone(),
                 diff_end_height,
                 previous_chain_lock_sigs,
+                self.network,
             )?;
             if verify_quorums {
                 // We should go through all quorums of the masternode list to update those that were not yet verified
@@ -968,6 +969,7 @@ impl MasternodeListEngine {
                 masternode_list_diff.clone(),
                 diff_end_height,
                 None,
+                self.network,
             )?;
             if verify_quorums {
                 return Err(SmlError::FeatureNotTurnedOn(
@@ -1425,5 +1427,56 @@ mod tests {
                 .validate_rotation_cycle_quorums(quorums.iter().collect::<Vec<_>>().as_slice())
                 .expect("expected to validated quorums");
         }
+    }
+
+    #[test]
+    fn feed_qr_info_rejects_post_v20_with_missing_chainlock_signatures() {
+        let mn_list_diff_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
+        let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+        let mut masternode_list_engine =
+            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Dash)
+                .expect("expected to start engine");
+
+        let block_container_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/block_container_2240504.dat");
+        let block_container: MasternodeListEngineBlockContainer =
+            bincode::decode_from_slice(block_container_bytes, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+        let mn_list_diffs_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mnlistdiffs_2240504.dat");
+        let mn_list_diffs: BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff> =
+            bincode::decode_from_slice(mn_list_diffs_bytes, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+        let qr_info_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/qrinfo_2240504.dat");
+        let mut qr_info: QRInfo =
+            bincode::decode_from_slice(qr_info_bytes, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+
+        masternode_list_engine.block_container = block_container;
+
+        for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
+            masternode_list_engine
+                .apply_diff(diff, Some(height), false, None)
+                .expect("expected to apply diff");
+        }
+
+        // Clear chainlock signatures to simulate missing data for post-V20 block
+        qr_info.mn_list_diff_at_h_minus_2c.quorums_chainlock_signatures.clear();
+
+        // feed_qr_info should fail for post-V20 blocks with missing signatures
+        let result = masternode_list_engine
+            .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>>(
+                qr_info, false, false, None,
+            );
+
+        assert!(
+            result.is_err(),
+            "Post-V20 feed_qr_info should reject missing chainlock signatures"
+        );
     }
 }

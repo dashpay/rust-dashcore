@@ -69,6 +69,10 @@ pub const PROTOCOL_VERSION: u32 = 70237;
 pub trait NetworkExt {
     /// The known dash genesis block hash for mainnet and testnet
     fn known_genesis_block_hash(&self) -> Option<BlockHash>;
+
+    /// V20 activation height when quorumsCLSigs was introduced (protocol 70230).
+    /// See DIP-0029 and Dash Core src/chainparams.cpp.
+    fn v20_activation_height(&self) -> u32;
 }
 
 impl NetworkExt for Network {
@@ -97,6 +101,15 @@ impl NetworkExt for Network {
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
             _ => None,
+        }
+    }
+
+    fn v20_activation_height(&self) -> u32 {
+        match self {
+            Network::Dash => 1_987_776,
+            Network::Testnet => 905_100,
+            // Devnet and regtest activate V20 immediately
+            _ => 0,
         }
     }
 }
