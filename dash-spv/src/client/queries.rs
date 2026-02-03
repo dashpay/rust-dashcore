@@ -69,7 +69,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let masternode_engine = self.masternode_list_engine()?;
         let masternode_engine_guard = masternode_engine.read().await;
         let (before, _after) = masternode_engine_guard.masternode_lists_around_height(height);
-
         if let Some(ml) = before {
             let list_height = ml.known_height;
             match ml.quorums.get(&quorum_type) {
