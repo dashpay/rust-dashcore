@@ -117,14 +117,18 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
 
     let engine_guard = engine.blocking_read();
     let (before, _after) = engine_guard.masternode_lists_around_height(core_chain_locked_height);
-    let Some(ml) = before else {
-        return FFIResult::error(
-            FFIErrorCode::ValidationError,
-            &format!(
-                "No masternode list found at or before height {}",
-                core_chain_locked_height
-            ),
-        );
+    let ml = match before {
+        Some(ml) => ml,
+        None => {
+            return FFIResult::error(
+                FFIErrorCode::ValidationError,
+                &format!(
+                    "No masternode list found at or before height {}",
+                    core_chain_locked_height
+                ),
+            );
+        }
+    };
 
     let list_height = ml.known_height;
     match ml.quorums.get(&llmq_type) {
