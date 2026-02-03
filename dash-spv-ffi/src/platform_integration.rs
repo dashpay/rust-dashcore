@@ -125,7 +125,6 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
                 core_chain_locked_height
             ),
         );
-    };
 
     let list_height = ml.known_height;
     match ml.quorums.get(&llmq_type) {
