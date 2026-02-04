@@ -80,6 +80,17 @@ impl ProviderUpdateServicePayload {
     pub fn size(&self) -> usize {
         let mut size = 2 + 32 + 16 + 2 + 32 + 96; // 180
         size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();
+
+        // Additional fields for BasicBLS version (v2+)
+        if self.version >= ProTxVersion::BasicBLS as u16 {
+            size += 2; // mn_type
+
+            // Platform fields for Evo masternodes
+            if self.mn_type == Some(ProviderMasternodeType::HighPerformance as u16) {
+                size += 20 + 2 + 2; // platform_node_id + p2p_port + http_port
+            }
+        }
+
         size
     }
 }
@@ -88,11 +99,27 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
     fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(&mut s)?;
+
+        // Write mn_type for BasicBLS version (v2+)
+        if self.version >= ProTxVersion::BasicBLS as u16 {
+            len += self.mn_type.unwrap_or_default().consensus_encode(&mut s)?;
+        }
+
         len += self.pro_tx_hash.consensus_encode(&mut s)?;
         len += self.ip_address.consensus_encode(&mut s)?;
         len += u16::swap_bytes(self.port).consensus_encode(&mut s)?;
         len += self.script_payout.consensus_encode(&mut s)?;
         len += self.inputs_hash.consensus_encode(&mut s)?;
+
+        // Write platform fields for Evo masternodes (only in v2+)
+        if self.version >= ProTxVersion::BasicBLS as u16
+            && self.mn_type == Some(ProviderMasternodeType::HighPerformance as u16)
+        {
+            len += s.write(&self.platform_node_id.unwrap_or([0u8; 20]))?;
+            len += self.platform_p2p_port.unwrap_or_default().consensus_encode(&mut s)?;
+            len += self.platform_http_port.unwrap_or_default().consensus_encode(&mut s)?;
+        }
+
         Ok(len)
     }
 
@@ -286,10 +313,9 @@ mod tests {
     }
 
     #[test]
-    fn size() {
-        let want = 191;
-        let payload = ProviderUpdateServicePayload {
-            version: 0,
+    fn round_trip_v1_legacy_bls() {
+        let original = ProviderUpdateServicePayload {
+            version: 1,
             mn_type: None,
             pro_tx_hash: Txid::all_zeros(),
             ip_address: 0,
@@ -301,9 +327,67 @@ mod tests {
             platform_http_port: None,
             payload_sig: BLSSignature::from([0; 96]),
         };
-        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
-        assert_eq!(payload.size(), want);
-        assert_eq!(actual, want);
+
+        let mut encoded = Vec::new();
+        original.consensus_encode(&mut encoded).unwrap();
+
+        // version(2) + pro_tx_hash(32) + ip(16) + port(2) + script(10) + inputs_hash(32) + sig(96)
+        assert_eq!(encoded.len(), 191);
+
+        let decoded = ProviderUpdateServicePayload::consensus_decode(&mut &encoded[..]).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn round_trip_v2_basic_bls_regular_masternode() {
+        let original = ProviderUpdateServicePayload {
+            version: 2,
+            mn_type: Some(0), // Regular
+            pro_tx_hash: Txid::all_zeros(),
+            ip_address: 0,
+            port: 0,
+            script_payout: ScriptBuf::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
+            inputs_hash: InputsHash::all_zeros(),
+            platform_node_id: None,
+            platform_p2p_port: None,
+            platform_http_port: None,
+            payload_sig: BLSSignature::from([0; 96]),
+        };
+
+        let mut encoded = Vec::new();
+        original.consensus_encode(&mut encoded).unwrap();
+
+        // v1 base (191) + mn_type(2) = 193
+        assert_eq!(encoded.len(), 193);
+
+        let decoded = ProviderUpdateServicePayload::consensus_decode(&mut &encoded[..]).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn round_trip_v2_basic_bls_evo_masternode() {
+        let original = ProviderUpdateServicePayload {
+            version: 2,
+            mn_type: Some(1), // HighPerformance (Evo)
+            pro_tx_hash: Txid::all_zeros(),
+            ip_address: 0,
+            port: 0,
+            script_payout: ScriptBuf::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
+            inputs_hash: InputsHash::all_zeros(),
+            platform_node_id: Some([0; 20]),
+            platform_p2p_port: Some(0),
+            platform_http_port: Some(0),
+            payload_sig: BLSSignature::from([0; 96]),
+        };
+
+        let mut encoded = Vec::new();
+        original.consensus_encode(&mut encoded).unwrap();
+
+        // v1 base (191) + mn_type(2) + platform_node_id(20) + p2p_port(2) + http_port(2) = 217
+        assert_eq!(encoded.len(), 217);
+
+        let decoded = ProviderUpdateServicePayload::consensus_decode(&mut &encoded[..]).unwrap();
+        assert_eq!(decoded, original);
     }
 
     #[test]
