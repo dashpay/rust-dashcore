@@ -115,6 +115,17 @@ impl MasternodeListEngine {
         // Only God and maybe Odysseus knows why (64 - n - 1)
         let quorum_index = quorum_index_mask & (selection_hash_64 >> (64 - n - 1)) as usize;
 
+        log::debug!(
+            "IS lock quorum selection: txid={}, request_id={}, selection_hash_64={:#018x}, quorum_count={}, n={}, mask={:#x}, computed_index={}",
+            instant_lock.txid,
+            request_id,
+            selection_hash_64,
+            quorum_count,
+            n,
+            quorum_index_mask,
+            quorum_index
+        );
+
         // Find the quorum by its quorum_index field.
         let quorum = quorums
             .iter()
@@ -125,6 +136,14 @@ impl MasternodeListEngine {
                     instant_lock.cyclehash,
                 )
             })?;
+
+        log::debug!(
+            "IS lock selected quorum: hash={}, index={:?}, public_key={}, verified={:?}",
+            quorum.quorum_entry.quorum_hash,
+            quorum.quorum_entry.quorum_index,
+            quorum.quorum_entry.quorum_public_key,
+            quorum.verified
+        );
 
         Ok((quorum, request_id, quorum_index))
     }
@@ -166,7 +185,7 @@ impl MasternodeListEngine {
         &self,
         instant_lock: &InstantLock,
     ) -> Result<(), MessageVerificationError> {
-        let (quorum, request_id, _) = self.is_lock_quorum(instant_lock)?;
+        let (quorum, request_id, quorum_index) = self.is_lock_quorum(instant_lock)?;
 
         let sign_id = instant_lock
             .sign_id(
@@ -176,9 +195,39 @@ impl MasternodeListEngine {
             )
             .map_err(|e| e.to_string())?;
 
-        quorum.verify_message_digest(sign_id.to_byte_array(), instant_lock.signature)?;
+        log::debug!(
+            "IS lock verify: txid={}, cyclehash={}, quorum_index={}, quorum_hash={}, sign_id={}, public_key={}, signature={}",
+            instant_lock.txid,
+            instant_lock.cyclehash,
+            quorum_index,
+            quorum.quorum_entry.quorum_hash,
+            sign_id,
+            quorum.quorum_entry.quorum_public_key,
+            instant_lock.signature
+        );
 
-        Ok(())
+        match quorum.verify_message_digest(sign_id.to_byte_array(), instant_lock.signature) {
+            Ok(()) => {
+                log::info!(
+                    "IS lock verified: txid={}, quorum_index={}, quorum_hash={}",
+                    instant_lock.txid,
+                    quorum_index,
+                    quorum.quorum_entry.quorum_hash
+                );
+                Ok(())
+            }
+            Err(e) => {
+                log::warn!(
+                    "IS lock verification failed: txid={}, quorum_index={}, quorum_hash={}, public_key={}, error={}",
+                    instant_lock.txid,
+                    quorum_index,
+                    quorum.quorum_entry.quorum_hash,
+                    quorum.quorum_entry.quorum_public_key,
+                    e
+                );
+                Err(e)
+            }
+        }
     }
 
     /// Retrieves the potential quorum for verifying a ChainLock from the masternode list **before or at**
