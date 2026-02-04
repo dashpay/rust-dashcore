@@ -26,7 +26,6 @@ use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
 use crate::storage::lockfile::LockFile;
-use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
 use crate::types::{HashedBlock, HashedBlockHeader, MempoolState, UnconfirmedTransaction};
 use crate::ClientConfig;
@@ -38,7 +37,7 @@ pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHeaderStorage};
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
 pub use crate::storage::masternode::{MasternodeStateStorage, PersistentMasternodeStateStorage};
-pub use crate::storage::metadata::MetadataStorage;
+pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
 pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
 pub use crate::storage::transactions::TransactionStorage;
 
@@ -83,6 +82,9 @@ pub trait StorageManager:
 
     /// Returns shared access to the block storage.
     fn blocks(&self) -> Arc<RwLock<PersistentBlockStorage>>;
+
+    /// Returns shared access to the metadata storage.
+    fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>>;
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -273,6 +275,10 @@ impl StorageManager for DiskStorageManager {
 
     fn blocks(&self) -> Arc<RwLock<PersistentBlockStorage>> {
         Arc::clone(&self.blocks)
+    }
+
+    fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>> {
+        Arc::clone(&self.metadata)
     }
 }
 

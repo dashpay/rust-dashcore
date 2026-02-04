@@ -8,7 +8,7 @@ use crate::{
 };
 
 #[async_trait]
-pub trait MetadataStorage {
+pub trait MetadataStorage: Send + Sync + 'static {
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()>;
 
     async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>>;

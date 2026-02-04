@@ -14,7 +14,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::SyncResult;
 use crate::network::NetworkManager;
-use crate::storage::{BlockHeaderStorage, BlockStorage, FilterHeaderStorage, FilterStorage};
+use crate::storage::{
+    BlockHeaderStorage, BlockStorage, FilterHeaderStorage, FilterStorage, MetadataStorage,
+};
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager,
@@ -59,12 +61,13 @@ macro_rules! spawn_manager {
 }
 
 /// Container for all manager instances.
-pub struct Managers<H, FH, F, B, W>
+pub struct Managers<H, FH, F, B, M, W>
 where
     H: BlockHeaderStorage,
     FH: FilterHeaderStorage,
     F: FilterStorage,
     B: BlockStorage,
+    M: MetadataStorage,
     W: WalletInterface + 'static,
 {
     pub block_headers: Option<BlockHeadersManager<H>>,
@@ -72,16 +75,17 @@ where
     pub filters: Option<FiltersManager<H, FH, F, W>>,
     pub blocks: Option<BlocksManager<H, B, W>>,
     pub masternode: Option<MasternodesManager<H>>,
-    pub chainlock: Option<ChainLockManager<H>>,
+    pub chainlock: Option<ChainLockManager<H, M>>,
     pub instantsend: Option<InstantSendManager>,
 }
 
-impl<H, FH, F, B, W> Default for Managers<H, FH, F, B, W>
+impl<H, FH, F, B, M, W> Default for Managers<H, FH, F, B, M, W>
 where
     H: BlockHeaderStorage,
     FH: FilterHeaderStorage,
     F: FilterStorage,
     B: BlockStorage,
+    M: MetadataStorage,
     W: WalletInterface + 'static,
 {
     fn default() -> Self {
@@ -102,16 +106,17 @@ where
 /// - Spawns each manager in its own tokio task
 /// - Tracks and aggregates progress via watch channels
 /// - Coordinates graceful shutdown
-pub struct SyncCoordinator<H, FH, F, B, W>
+pub struct SyncCoordinator<H, FH, F, B, M, W>
 where
     H: BlockHeaderStorage,
     FH: FilterHeaderStorage,
     F: FilterStorage,
     B: BlockStorage,
+    M: MetadataStorage,
     W: WalletInterface + 'static,
 {
     /// Manager instances provided on construction and consumed in start spawned tasks.
-    managers: Managers<H, FH, F, B, W>,
+    managers: Managers<H, FH, F, B, M, W>,
     /// Progress receivers from spawned manager tasks.
     progress_receivers: Vec<watch::Receiver<SyncManagerProgress>>,
     /// JoinSet for managing spawned tasks.
@@ -130,18 +135,19 @@ where
     progress_task: Option<tokio::task::JoinHandle<()>>,
 }
 
-impl<H, FH, F, B, W> SyncCoordinator<H, FH, F, B, W>
+impl<H, FH, F, B, M, W> SyncCoordinator<H, FH, F, B, M, W>
 where
     H: BlockHeaderStorage,
     FH: FilterHeaderStorage,
     F: FilterStorage,
     B: BlockStorage,
+    M: MetadataStorage,
     W: WalletInterface + 'static,
 {
     /// Create a new coordinator with the given config.
     ///
     /// Managers are passed to `start()` when sync begins.
-    pub fn new(managers: Managers<H, FH, F, B, W>) -> Self {
+    pub fn new(managers: Managers<H, FH, F, B, M, W>) -> Self {
         let (progress_sender, progress_receiver) = watch::channel(SyncProgress::default());
         Self {
             managers,
@@ -299,12 +305,13 @@ where
     }
 }
 
-impl<H, FH, F, B, W> std::fmt::Debug for SyncCoordinator<H, FH, F, B, W>
+impl<H, FH, F, B, M, W> std::fmt::Debug for SyncCoordinator<H, FH, F, B, M, W>
 where
     H: BlockHeaderStorage,
     FH: FilterHeaderStorage,
     F: FilterStorage,
     B: BlockStorage,
+    M: MetadataStorage,
     W: WalletInterface + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
