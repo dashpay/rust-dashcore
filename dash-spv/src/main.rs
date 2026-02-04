@@ -6,7 +6,6 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Arg, Command};
-use dash_spv::terminal::TerminalGuard;
 use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
@@ -100,26 +99,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .default_value("full"),
         )
         .arg(
-            Arg::new("watch-address")
-                .short('w')
-                .long("watch-address")
-                .value_name("ADDRESS")
-                .help("Dash address to watch for transactions (can be used multiple times)")
-                .action(clap::ArgAction::Append),
-        )
-        .arg(
-            Arg::new("add-example-addresses")
-                .long("add-example-addresses")
-                .help("Add some example Dash addresses to watch for testing")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("terminal-ui")
-                .long("terminal-ui")
-                .help("Enable terminal UI status bar")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
             Arg::new("start-height")
                 .long("start-height")
                 .short('s')
@@ -210,15 +189,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Parse logging flags and initialize logging early
     let no_log_file = matches.get_flag("no-log-file");
     let print_to_console = matches.get_flag("print-to-console");
-    let enable_terminal_ui = matches.get_flag("terminal-ui");
     let max_log_files = *matches.get_one::<usize>("max-log-files").unwrap();
     let log_dir = matches
         .get_one::<String>("log-dir")
         .map(PathBuf::from)
         .unwrap_or_else(|| data_dir.join("logs"));
 
-    // When terminal UI is enabled, force file logging and disable console to avoid mixing
-    let file_config = if !no_log_file || enable_terminal_ui {
+    let file_config = if !no_log_file {
         Some(dash_spv::LogFileConfig {
             log_dir,
             max_files: max_log_files,
@@ -227,12 +204,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Disable console logging when terminal UI is enabled
-    let console_enabled = if enable_terminal_ui {
-        false
-    } else {
-        no_log_file || print_to_console
-    };
+    let console_enabled = no_log_file || print_to_console;
 
     let logging_config = dash_spv::LoggingConfig {
         level: Some(log_level),
@@ -301,7 +273,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
-    let wallet_id = wallet_manager.create_wallet_from_mnemonic(
+    wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
         "",
         0,
@@ -325,16 +297,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             process::exit(1);
         }
     };
-    run_client(
-        config,
-        network_manager,
-        storage_manager,
-        wallet,
-        enable_terminal_ui,
-        &matches,
-        wallet_id,
-    )
-    .await?;
+    run_client(config, network_manager, storage_manager, wallet).await?;
 
     Ok(())
 }
@@ -344,9 +307,6 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
     network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
-    enable_terminal_ui: bool,
-    matches: &clap::ArgMatches,
-    wallet_id: [u8; 32],
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
     let mut client =
@@ -364,252 +324,12 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
             }
         };
 
-    // Enable terminal UI in the client if requested
-    let _terminal_guard = if enable_terminal_ui {
-        client.enable_terminal_ui();
-
-        // Get the terminal UI from the client and initialize it
-        if let Some(ui) = client.get_terminal_ui() {
-            match TerminalGuard::new(ui.clone()) {
-                Ok(guard) => {
-                    // Initial update with network info
-                    let network_name = format!("{:?}", config.network);
-                    let _ = ui
-                        .update_status(|status| {
-                            status.network = network_name;
-                            status.peer_count = 0; // Will be updated when connected
-                        })
-                        .await;
-
-                    Some(guard)
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to initialize terminal UI: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
     if let Err(e) = client.start().await {
         eprintln!("Failed to start SPV client: {}", e);
         process::exit(1);
     }
 
     tracing::info!("SPV client started successfully");
-
-    // Set up event logging: count detected transactions and log wallet balances periodically
-    // Take the client's event receiver and spawn a logger task
-    if let Some(mut event_rx) = client.take_event_receiver() {
-        let wallet_for_logger = wallet.clone();
-        let wallet_id_for_logger = wallet_id;
-        tokio::spawn(async move {
-            use dash_spv::types::SpvEvent;
-            let mut total_detected_block_txs: u64 = 0;
-            let mut total_detected_mempool_txs: u64 = 0;
-            let mut last_snapshot = std::time::Instant::now();
-            let snapshot_interval = std::time::Duration::from_secs(10);
-
-            loop {
-                tokio::select! {
-                    maybe_event = event_rx.recv() => {
-                        match maybe_event {
-                            Some(SpvEvent::BlockProcessed { relevant_transactions, .. }) => {
-                                if relevant_transactions > 0 {
-                                    total_detected_block_txs = total_detected_block_txs.saturating_add(relevant_transactions as u64);
-                                    tracing::info!(
-                                        "Detected {} wallet-relevant tx(s) in block; cumulative (blocks): {}",
-                                        relevant_transactions,
-                                        total_detected_block_txs
-                                    );
-                                }
-                            }
-                            Some(SpvEvent::MempoolTransactionAdded { .. }) => {
-                                total_detected_mempool_txs = total_detected_mempool_txs.saturating_add(1);
-                                tracing::info!(
-                                    "Detected wallet-relevant mempool tx; cumulative (mempool): {}",
-                                    total_detected_mempool_txs
-                                );
-                            }
-                            Some(_) => { /* ignore other events */ }
-                            None => break, // sender closed
-                        }
-                    }
-                    // Also do a periodic snapshot while events are flowing
-                    _ = tokio::time::sleep(snapshot_interval) => {
-                        // Log snapshot if interval has elapsed
-                        if last_snapshot.elapsed() >= snapshot_interval {
-                            let (tx_count, wallet_balance) = {
-                                let mgr = wallet_for_logger.read().await;
-
-                                // Count wallet-affecting transactions from wallet transaction history
-                                let tx_count = mgr
-                                    .wallet_transaction_history(&wallet_id_for_logger)
-                                    .map(|v| v.len())
-                                    .unwrap_or(0);
-
-                                // Read wallet balance from the managed wallet info
-                                let wallet_balance = mgr.get_wallet_balance(&wallet_id_for_logger).unwrap_or_default();
-
-                                (tx_count, wallet_balance)
-                            };
-                            tracing::info!(
-                                "Wallet tx summary: tx_count={} (blocks={} + mempool={}), balances: {}",
-                                tx_count,
-                                total_detected_block_txs,
-                                total_detected_mempool_txs,
-                                wallet_balance,
-                            );
-                            last_snapshot = std::time::Instant::now();
-                        }
-                    }
-                }
-            }
-        });
-    } else {
-        tracing::warn!("Event channel not available; transaction/balance logging disabled");
-    }
-
-    // Add watch addresses if specified
-    if let Some(addresses) = matches.get_many::<String>("watch-address") {
-        for addr_str in addresses {
-            match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
-                Ok(addr) => {
-                    let network = config.network;
-                    let checked_addr = addr.require_network(network).map_err(|_| {
-                        format!("Address '{}' is not valid for network {:?}", addr_str, network)
-                    });
-                    match checked_addr {
-                        Ok(valid_addr) => {
-                            // TODO: Add address to wallet for monitoring
-                            // For now, just log that we would watch this address
-                            tracing::info!(
-                                "Would watch address: {} (wallet integration pending)",
-                                valid_addr
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!("Invalid address for network: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Invalid address format '{}': {}", addr_str, e);
-                }
-            }
-        }
-    }
-
-    // Add example addresses for testing if requested
-    if matches.get_flag("add-example-addresses") {
-        let network = config.network;
-        let example_addresses = match network {
-            dashcore::Network::Dash => vec![
-                // Some example mainnet addresses (these are from block explorers/faucets)
-                "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3", // Crowdnode
-            ],
-            dashcore::Network::Testnet => vec![
-                // Testnet addresses
-                "yNEr8u4Kx8PTH9A9G3P7NwkJRmqFD7tKSj", // Example testnet address
-                "yMGqjKTqr2HKKV6zqSg5vTPQUzJNt72h8h", // Another testnet example
-            ],
-            dashcore::Network::Regtest => vec![
-                // Regtest addresses (these would be from local testing)
-                "yQ9J8qK3nNW8JL8h5T6tB3VZwwH9h5T6tB", // Example regtest address
-                "yeRZBWYfeNE4yVUHV4ZLs83Ppn9aMRH57A", // Another regtest example
-            ],
-            _ => vec![],
-        };
-
-        for addr_str in example_addresses {
-            match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
-                Ok(addr) => {
-                    if let Ok(_valid_addr) = addr.require_network(network) {
-                        // TODO: In the future, we could add these example addresses to the wallet
-                        // For now, just log that we would monitor them
-                        let height_info = if network == dashcore::Network::Dash
-                            && addr_str == "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3"
-                        {
-                            " (from height 200,000)"
-                        } else {
-                            ""
-                        };
-                        tracing::info!(
-                            "Would monitor example address: {}{}",
-                            addr_str,
-                            height_info
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Example address '{}' failed to parse: {}", addr_str, e);
-                }
-            }
-        }
-    }
-
-    // Display current wallet addresses
-    {
-        let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.monitored_addresses();
-        if !monitored.is_empty() {
-            tracing::info!("Wallet monitoring {} addresses:", monitored.len());
-            for (i, addr) in monitored.iter().take(10).enumerate() {
-                tracing::info!("  {}: {}", i + 1, addr);
-            }
-            if monitored.len() > 10 {
-                tracing::info!("  ... and {} more addresses", monitored.len() - 10);
-            }
-        } else {
-            tracing::info!("No addresses being monitored by wallet. The wallet will generate addresses as needed.");
-        }
-    }
-
-    // Wait for at least one peer to connect before attempting sync
-    tracing::info!("Waiting for peers to connect...");
-    let mut wait_time = 0;
-    const MAX_WAIT_TIME: u64 = 60; // Wait up to 60 seconds for peers
-
-    loop {
-        let peer_count = client.get_peer_count().await;
-        if peer_count > 0 {
-            tracing::info!("Connected to {} peer(s), starting synchronization", peer_count);
-            break;
-        }
-
-        if wait_time >= MAX_WAIT_TIME {
-            tracing::error!("No peers connected after {} seconds", MAX_WAIT_TIME);
-            return Err("SPV client failed to connect to any peers".into());
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        wait_time += 1;
-
-        if wait_time % 5 == 0 {
-            tracing::info!("Still waiting for peers... ({}s elapsed)", wait_time);
-        }
-    }
-
-    // Check filters for matches if wallet has addresses before starting monitoring
-    let should_check_filters = {
-        let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.monitored_addresses();
-        !monitored.is_empty() && !matches.get_flag("no-filters")
-    };
-
-    // Start monitoring immediately after sync requests are sent
-    tracing::info!("Starting network monitoring...");
-
-    // For now, just focus on the core fix - getting headers to sync properly
-    // Filter checking can be done manually later
-    if should_check_filters {
-        tracing::info!("Filter checking will be available after headers sync completes");
-        tracing::info!("You can manually trigger filter sync later if needed");
-    }
 
     let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let shutdown_token = CancellationToken::new();

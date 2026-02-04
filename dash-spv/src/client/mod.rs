@@ -1,42 +1,33 @@
 //! High-level client API for the Dash SPV client.
 //!
-//! This module has been refactored from a monolithic 2,851-line file into focused submodules:
+//! Provides `DashSpvClient`, the main entry point for SPV operations including
+//! sync orchestration, mempool tracking, peer/masternode queries, and transaction
+//! broadcasting.
 //!
 //! ## Module Structure
 //!
-//! - `core.rs` - Core DashSpvClient struct definition and simple accessors
+//! - `config.rs` - Client configuration
+//! - `core.rs` - Core `DashSpvClient` struct definition and simple accessors
 //! - `lifecycle.rs` - Client lifecycle (new, start, stop, shutdown)
 //! - `events.rs` - Event emission and progress tracking receivers
 //! - `mempool.rs` - Mempool tracking and coordination
 //! - `queries.rs` - Peer, masternode, and balance queries
 //! - `transactions.rs` - Transaction operations (e.g., broadcast)
-//! - `chainlock.rs` - ChainLock and InstantLock processing
-//! - `sync_coordinator.rs` - Sync orchestration and network monitoring (the largest module)
+//! - `sync_coordinator.rs` - Sync orchestration and network monitoring
+//! - `interface.rs` - Client interface trait
 //!
-//! ## Already Extracted Modules
+//! ## Lock Ordering
 //!
-//! - `config.rs` (484 lines) - Client configuration
-//! - `message_handler.rs` (585 lines) - Network message handling
-//! - `status_display.rs` (242 lines) - Status display formatting
-//!
-//! ## Lock Ordering (CRITICAL - Prevents Deadlocks)
-//!
-//! When acquiring multiple locks, ALWAYS use this order:
+//! When acquiring multiple locks, always use this order:
 //! 1. running (`Arc<RwLock<bool>>`)
-//! 2. state (`Arc<RwLock<ChainState>>`)
-//! 3. mempool_state (`Arc<RwLock<MempoolState>>`)
-//! 4. storage (`Arc<Mutex<S>>`)
+//! 2. mempool_state (`Arc<RwLock<MempoolState>>`)
+//! 3. storage (`Arc<Mutex<S>>`)
 //!
 //! Never acquire locks in reverse order or deadlock will occur!
 
-// Existing extracted modules
 pub mod config;
 pub mod interface;
-pub mod message_handler;
-pub mod status_display;
 
-// New refactored modules
-mod chainlock;
 mod core;
 mod events;
 mod lifecycle;
@@ -47,17 +38,12 @@ mod transactions;
 
 // Re-export public types from extracted modules
 pub use config::ClientConfig;
-pub use message_handler::MessageHandler;
-pub use status_display::StatusDisplay;
 
 // Re-export the main client struct
 pub use core::DashSpvClient;
 
 #[cfg(test)]
 mod config_test;
-
-#[cfg(test)]
-mod message_handler_test;
 
 #[cfg(test)]
 mod tests {

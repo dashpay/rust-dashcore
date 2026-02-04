@@ -77,29 +77,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_progress_extreme_values() {
-        let progress = dash_spv::SyncProgress {
-            header_height: u32::MAX,
-            filter_header_height: u32::MAX,
-            masternode_height: u32::MAX,
-            peer_count: u32::MAX,
-            filter_sync_available: true,
-            filters_downloaded: u64::MAX,
-            last_synced_filter_height: Some(u32::MAX),
-            sync_start: std::time::SystemTime::now(),
-            last_update: std::time::SystemTime::now(),
-        };
-
-        let ffi_progress = FFILegacySyncProgress::from(progress);
-        assert_eq!(ffi_progress.header_height, u32::MAX);
-        assert_eq!(ffi_progress.filter_header_height, u32::MAX);
-        assert_eq!(ffi_progress.masternode_height, u32::MAX);
-        assert_eq!(ffi_progress.peer_count, u32::MAX);
-        assert_eq!(ffi_progress.filters_downloaded, u32::MAX); // Note: truncated from u64
-        assert_eq!(ffi_progress.last_synced_filter_height, u32::MAX);
-    }
-
-    #[test]
     fn test_concurrent_ffi_string_creation() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;

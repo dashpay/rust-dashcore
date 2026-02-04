@@ -10,11 +10,10 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
 
 use super::{ClientConfig, DashSpvClient};
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
-use crate::chain::ChainLockManager as LegacyChainLockManager;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
@@ -26,7 +25,7 @@ use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, SyncCoordinator,
 };
-use crate::types::{ChainState, MempoolState};
+use crate::types::MempoolState;
 use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
@@ -42,9 +41,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     ) -> Result<Self> {
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
-
-        // Initialize state for the network
-        let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
 
         let masternode_engine = {
             if config.enable_masternodes {
@@ -117,12 +113,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Create sync coordinator (managers are passed to start() later)
         let sync_coordinator = SyncCoordinator::new(managers);
 
-        // Create ChainLock manager
-        let chainlock_manager = Arc::new(LegacyChainLockManager::new(true));
-
-        // Create event channels
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-
         // Create mempool state
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
 
@@ -131,19 +121,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         Ok(Self {
             config,
-            state,
             network,
             storage,
             wallet,
             masternode_engine,
             sync_coordinator,
-            chainlock_manager,
             running: Arc::new(RwLock::new(false)),
-            #[cfg(feature = "terminal-ui")]
-            terminal_ui: None,
-            filter_processor: None,
-            event_tx,
-            event_rx: Some(event_rx),
             mempool_state,
             mempool_filter: None,
         })
@@ -187,34 +170,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         }
 
-        // For sequential sync, filter processor is handled internally
-        if self.config.enable_filters && self.filter_processor.is_none() {
-            tracing::info!("📊 Sequential sync mode: filter processing handled internally");
-        }
-
         // Initialize genesis block if not already present
         self.initialize_genesis_block().await?;
-
-        // Update terminal UI after connection with initial data
-        #[cfg(feature = "terminal-ui")]
-        if let Some(ui) = &self.terminal_ui {
-            // Get initial header count from storage
-            let (header_height, filter_height) = {
-                let storage = self.storage.lock().await;
-                let h_height = storage.get_tip_height().await.unwrap_or(0);
-                let f_height =
-                    storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
-                (h_height, f_height)
-            };
-
-            let _ = ui
-                .update_status(|status| {
-                    status.peer_count = 1; // Connected to one peer
-                    status.headers = header_height;
-                    status.filter_headers = filter_height;
-                })
-                .await;
-        }
 
         // Start all sync tasks before connecting to the network to make sure initial connection
         // events are handled correctly in the sync coordinator.
@@ -303,9 +260,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         start_height
                     );
 
-                    // Initialize chain state with checkpoint
-                    let mut chain_state = self.state.write().await;
-
                     // Build header from checkpoint
                     use dashcore::{
                         block::{Header as BlockHeader, Version},
@@ -336,31 +290,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                             calculated_hash
                         );
                     } else {
-                        // Initialize chain state from checkpoint
-                        chain_state.init_from_checkpoint(
-                            checkpoint.height,
-                            checkpoint_header,
-                            self.config.network,
-                        );
-
-                        // Clone the chain state for storage
-                        let chain_state_for_storage = (*chain_state).clone();
-                        drop(chain_state);
-
-                        // Update storage with chain state including sync_base_height
                         {
                             let mut storage = self.storage.lock().await;
                             storage
                                 .store_headers_at_height(&[checkpoint_header], checkpoint.height)
                                 .await?;
-                            storage
-                                .store_chain_state(&chain_state_for_storage)
-                                .await
-                                .map_err(SpvError::Storage)?;
                         }
-
-                        // Don't store the checkpoint header itself - we'll request headers from peers
-                        // starting from this checkpoint
 
                         tracing::info!(
                             "✅ Initialized from checkpoint at height {}, skipping {} headers",

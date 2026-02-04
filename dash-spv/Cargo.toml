@@ -51,9 +51,6 @@ indexmap = "2.0"
 # Parallelization
 rayon = "1.11"
 
-# Terminal UI (optional)
-crossterm = { version = "0.27", optional = true }
-
 # DNS (trust-dns-resolver was renamed to hickory_resolver)
 hickory-resolver = "0.25"
 
@@ -78,13 +75,10 @@ harness = false
 [[bin]]
 name = "dash-spv"
 path = "src/main.rs"
-required-features = ["terminal-ui"]
 
 [lib]
 name = "dash_spv"
 path = "src/lib.rs"
 
 [features]
-# Terminal UI feature (off by default, for use by binary only)
-terminal-ui = ["dep:crossterm"]
 test-utils = []

@@ -8,14 +8,11 @@
 //! - Configuration updates
 //! - Terminal UI accessors
 
-#[cfg(feature = "terminal-ui")]
-use crate::terminal::TerminalUI;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
 
-use super::{ClientConfig, StatusDisplay};
-use crate::chain::ChainLockManager;
+use super::ClientConfig;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
@@ -23,9 +20,8 @@ use crate::storage::{
     PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
     PersistentFilterStorage, StorageManager,
 };
-use crate::sync::legacy::filters::FilterNotificationSender;
 use crate::sync::SyncCoordinator;
-use crate::types::{ChainState, MempoolState, SpvEvent};
+use crate::types::MempoolState;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 /// Main Dash SPV client with generic trait-based architecture.
@@ -101,7 +97,6 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 /// The generic design is an intentional, beneficial architectural choice for a library.
 pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
     pub(super) config: ClientConfig,
-    pub(super) state: Arc<RwLock<ChainState>>,
     pub(super) network: N,
     pub(super) storage: Arc<Mutex<S>>,
     /// External wallet implementation (required)
@@ -114,13 +109,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
         PersistentBlockStorage,
         W,
     >,
-    pub(super) chainlock_manager: Arc<ChainLockManager>,
     pub(super) running: Arc<RwLock<bool>>,
-    #[cfg(feature = "terminal-ui")]
-    pub(super) terminal_ui: Option<Arc<TerminalUI>>,
-    pub(super) filter_processor: Option<FilterNotificationSender>,
-    pub(super) event_tx: mpsc::UnboundedSender<SpvEvent>,
-    pub(super) event_rx: Option<mpsc::UnboundedReceiver<SpvEvent>>,
     pub(super) mempool_state: Arc<RwLock<MempoolState>>,
     pub(super) mempool_filter: Option<Arc<MempoolFilter>>,
 }
@@ -143,11 +132,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.storage.clone()
     }
 
-    /// Get reference to chainlock manager.
-    pub fn chainlock_manager(&self) -> &Arc<ChainLockManager> {
-        &self.chainlock_manager
-    }
-
     // ============ State Queries ============
 
     /// Check if the client is running.
@@ -166,12 +150,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.storage.lock().await.get_tip_height().await.unwrap_or(0)
     }
 
-    /// Get current chain state (read-only).
-    pub async fn chain_state(&self) -> ChainState {
-        let display = self.create_status_display().await;
-        display.chain_state().await
-    }
-
     // ============ Storage Operations ============
 
     /// Clear all persisted storage (headers, filters, state, sync state) and reset in-memory state.
@@ -180,12 +158,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         {
             let mut storage = self.storage.lock().await;
             storage.clear().await.map_err(SpvError::Storage)?;
-        }
-
-        // Reset in-memory chain state to a clean baseline for the current network
-        {
-            let mut state = self.state.write().await;
-            *state = ChainState::new_for_network(self.config.network);
         }
 
         // Reset mempool tracking (state and bloom filter)
@@ -214,46 +186,5 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.config = new_config;
 
         Ok(())
-    }
-
-    // ============ Terminal UI ============
-
-    /// Enable terminal UI for status display.
-    #[cfg(feature = "terminal-ui")]
-    pub fn enable_terminal_ui(&mut self) {
-        let ui = Arc::new(TerminalUI::new(true));
-        self.terminal_ui = Some(ui);
-    }
-
-    /// Get the terminal UI handle.
-    #[cfg(feature = "terminal-ui")]
-    pub fn get_terminal_ui(&self) -> Option<Arc<TerminalUI>> {
-        self.terminal_ui.clone()
-    }
-
-    // ============ Internal Helpers ============
-
-    /// Helper to create a StatusDisplay instance.
-    #[cfg(feature = "terminal-ui")]
-    pub(super) async fn create_status_display(&self) -> StatusDisplay<'_, S, W> {
-        StatusDisplay::new(
-            &self.state,
-            self.storage.clone(),
-            Some(&self.wallet),
-            &self.terminal_ui,
-            &self.config,
-        )
-    }
-
-    /// Helper to create a StatusDisplay instance (without terminal UI).
-    #[cfg(not(feature = "terminal-ui"))]
-    pub(super) async fn create_status_display(&self) -> StatusDisplay<'_, S, W> {
-        StatusDisplay::new(
-            &self.state,
-            self.storage.clone(),
-            Some(&self.wallet),
-            &None,
-            &self.config,
-        )
     }
 }

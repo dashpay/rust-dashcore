@@ -18,7 +18,7 @@ The project follows a layered, trait-based architecture with clear separation of
 - **`sync/sequential/`**: Sequential sync manager that handles all synchronization phases
 - **`validation/`**: Header validation, ChainLock, and InstantLock verification
 - **`wallet/`**: UTXO tracking, balance calculation, and transaction processing
-- **`types.rs`**: Common data structures (`SyncProgress`, `ValidationMode`, `WatchItem`, etc.)
+- **`types.rs`**: Common data structures
 - **`error.rs`**: Unified error handling with domain-specific error types
 
 ### Key Design Patterns
@@ -103,7 +103,7 @@ TCP-based networking with proper Dash protocol implementation:
 - **Exclusive mode**: When explicit peers are provided, uses only those peers (no DNS discovery)
 - Connection management via `Peer`
 - Handshake handling via `HandshakeManager`
-- Message routing via `MessageHandler`
+- Message routing via `MessageDispatcher`
 - Peer support via `PeerNetworkManager`
 
 ### Validation Modes

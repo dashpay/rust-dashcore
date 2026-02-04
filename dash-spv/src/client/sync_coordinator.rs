@@ -130,31 +130,4 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
         Ok(())
     }
-
-    /// Report balance changes for watched addresses.
-    #[allow(dead_code)]
-    pub(super) async fn report_balance_changes(
-        &self,
-        balance_changes: &std::collections::HashMap<dashcore::Address, i64>,
-        block_height: u32,
-    ) -> Result<()> {
-        tracing::info!("💰 Balance changes detected in block at height {}:", block_height);
-
-        for (address, change_sat) in balance_changes {
-            if *change_sat != 0 {
-                let change_amount = dashcore::Amount::from_sat(change_sat.unsigned_abs());
-                let sign = if *change_sat > 0 {
-                    "+"
-                } else {
-                    "-"
-                };
-                tracing::info!("  📍 Address {}: {}{}", address, sign, change_amount);
-            }
-        }
-
-        // TODO: Get monitored addresses from wallet and report balances
-        // Will be implemented when wallet integration is complete
-
-        Ok(())
-    }
 }

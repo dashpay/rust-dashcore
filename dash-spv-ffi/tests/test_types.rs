@@ -4,7 +4,6 @@ mod tests {
         BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
         FiltersProgress, InstantSendProgress, MasternodesProgress, SyncProgress, SyncState,
     };
-    use dash_spv::SyncProgress as LegacySyncProgress;
     use dash_spv_ffi::*;
     use key_wallet_ffi::FFINetwork;
 
@@ -42,30 +41,6 @@ mod tests {
         assert_eq!(FFINetwork::Testnet, dashcore::Network::Testnet.into());
         assert_eq!(FFINetwork::Regtest, dashcore::Network::Regtest.into());
         assert_eq!(FFINetwork::Devnet, dashcore::Network::Devnet.into());
-    }
-
-    #[test]
-    fn test_legacy_sync_progress_conversion() {
-        let progress = LegacySyncProgress {
-            header_height: 100,
-            filter_header_height: 90,
-            masternode_height: 80,
-            peer_count: 5,
-            filter_sync_available: true,
-            filters_downloaded: 50,
-            last_synced_filter_height: Some(45),
-            sync_start: std::time::SystemTime::now(),
-            last_update: std::time::SystemTime::now(),
-        };
-
-        let ffi_progress = FFILegacySyncProgress::from(progress);
-
-        assert_eq!(ffi_progress.header_height, 100);
-        assert_eq!(ffi_progress.filter_header_height, 90);
-        assert_eq!(ffi_progress.masternode_height, 80);
-        assert_eq!(ffi_progress.peer_count, 5);
-        assert_eq!(ffi_progress.filters_downloaded, 50);
-        assert_eq!(ffi_progress.last_synced_filter_height, 45);
     }
 
     #[test]

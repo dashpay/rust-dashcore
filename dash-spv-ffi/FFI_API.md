@@ -999,7 +999,6 @@ Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
 - `FFINetwork` - Network type (Dash, Testnet, Regtest, Devnet)
 - `FFIValidationMode` - Validation mode (None, Basic, Full)
 - `FFIMempoolStrategy` - Mempool strategy (FetchAll, BloomFilter, Selective)
-- `FFISyncStage` - Synchronization stage
 
 ## Memory Management
 

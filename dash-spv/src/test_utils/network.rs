@@ -62,7 +62,7 @@ impl MockNetworkManager {
         let mut headers = Vec::new();
         let mut prev_hash = genesis_hash;
 
-        // Skip genesis (height 0) as it's already in ChainState
+        // Skip genesis (height 0) as it's already in the storage
         for i in 1..count {
             let header = BlockHeader {
                 version: dashcore::block::Version::from_consensus(1),

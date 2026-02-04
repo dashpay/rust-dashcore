@@ -66,8 +66,6 @@ pub mod mempool_filter;
 pub mod network;
 pub mod storage;
 pub mod sync;
-#[cfg(feature = "terminal-ui")]
-pub mod terminal;
 pub mod types;
 pub mod validation;
 
@@ -78,7 +76,7 @@ pub use error::{
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
 pub use tracing::level_filters::LevelFilter;
-pub use types::{ChainState, FilterMatch, SyncProgress, ValidationMode};
+pub use types::{FilterMatch, ValidationMode};
 
 // Re-export commonly used dashcore types
 pub use dashcore::{Address, BlockHash, Network, OutPoint, QuorumHash, ScriptBuf};

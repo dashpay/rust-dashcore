@@ -4,7 +4,6 @@ pub mod types;
 
 mod block_headers;
 mod blocks;
-mod chainstate;
 mod filter_headers;
 mod filters;
 mod io;
@@ -26,18 +25,16 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::error::StorageResult;
-use crate::storage::chainstate::PersistentChainStateStorage;
 use crate::storage::lockfile::LockFile;
 use crate::storage::metadata::PersistentMetadataStorage;
 use crate::storage::transactions::PersistentTransactionStorage;
 use crate::types::{HashedBlock, HashedBlockHeader, MempoolState, UnconfirmedTransaction};
-use crate::{ChainState, ClientConfig};
+use crate::ClientConfig;
 
 pub use crate::storage::block_headers::{
     BlockHeaderStorage, BlockHeaderTip, PersistentBlockHeaderStorage,
 };
 pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
-pub use crate::storage::chainstate::ChainStateStorage;
 pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHeaderStorage};
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
 pub use crate::storage::masternode::{MasternodeStateStorage, PersistentMasternodeStateStorage};
@@ -64,7 +61,6 @@ pub trait StorageManager:
     + BlockStorage
     + TransactionStorage
     + MetadataStorage
-    + ChainStateStorage
     + MasternodeStateStorage
     + Send
     + Sync
@@ -109,7 +105,6 @@ pub struct DiskStorageManager {
     blocks: Arc<RwLock<PersistentBlockStorage>>,
     transactions: Arc<RwLock<PersistentTransactionStorage>>,
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
-    chainstate: Arc<RwLock<PersistentChainStateStorage>>,
     masternodestate: Arc<RwLock<PersistentMasternodeStateStorage>>,
 
     // Background worker
@@ -148,9 +143,6 @@ impl DiskStorageManager {
                 PersistentTransactionStorage::open(&storage_path).await?,
             )),
             metadata: Arc::new(RwLock::new(PersistentMetadataStorage::open(&storage_path).await?)),
-            chainstate: Arc::new(RwLock::new(
-                PersistentChainStateStorage::open(&storage_path).await?,
-            )),
             masternodestate: Arc::new(RwLock::new(
                 PersistentMasternodeStateStorage::open(&storage_path).await?,
             )),
@@ -181,7 +173,6 @@ impl DiskStorageManager {
         let blocks = Arc::clone(&self.blocks);
         let transactions = Arc::clone(&self.transactions);
         let metadata = Arc::clone(&self.metadata);
-        let chainstate = Arc::clone(&self.chainstate);
         let masternodestate = Arc::clone(&self.masternodestate);
 
         let storage_path = self.storage_path.clone();
@@ -198,7 +189,6 @@ impl DiskStorageManager {
                 let _ = blocks.write().await.persist(&storage_path).await;
                 let _ = transactions.write().await.persist(&storage_path).await;
                 let _ = metadata.write().await.persist(&storage_path).await;
-                let _ = chainstate.write().await.persist(&storage_path).await;
                 let _ = masternodestate.write().await.persist(&storage_path).await;
             }
         });
@@ -257,7 +247,6 @@ impl DiskStorageManager {
         let _ = self.blocks.write().await.persist(storage_path).await;
         let _ = self.transactions.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
-        let _ = self.chainstate.write().await.persist(storage_path).await;
         let _ = self.masternodestate.write().await.persist(storage_path).await;
     }
 }
@@ -297,8 +286,6 @@ impl StorageManager for DiskStorageManager {
         self.transactions =
             Arc::new(RwLock::new(PersistentTransactionStorage::open(storage_path).await?));
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
-        self.chainstate =
-            Arc::new(RwLock::new(PersistentChainStateStorage::open(storage_path).await?));
         self.masternodestate =
             Arc::new(RwLock::new(PersistentMasternodeStateStorage::open(storage_path).await?));
 
@@ -483,17 +470,6 @@ impl metadata::MetadataStorage for DiskStorageManager {
 
     async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
         self.metadata.read().await.load_metadata(key).await
-    }
-}
-
-#[async_trait]
-impl chainstate::ChainStateStorage for DiskStorageManager {
-    async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
-        self.chainstate.write().await.store_chain_state(state).await
-    }
-
-    async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
-        self.chainstate.read().await.load_chain_state().await
     }
 }
 

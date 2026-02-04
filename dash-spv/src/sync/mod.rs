@@ -1,8 +1,5 @@
 //! Synchronization management for the Dash SPV client.
 
-// Legacy sync modules (moved to legacy/ subdirectory)
-pub mod legacy;
-
 mod block_headers;
 mod blocks;
 mod chainlock;

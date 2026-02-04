@@ -13,7 +13,6 @@ use dash_spv::Hash;
 use futures::future::{AbortHandle, Abortable};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::runtime::Runtime;
 use tokio::sync::{broadcast, watch};
@@ -348,70 +347,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
     let client = &mut (*client);
     match stop_client_internal(client) {
         Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
-pub fn client_test_sync(client: &FFIDashSpvClient) -> i32 {
-    let result = client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = client.inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-        tracing::info!("Starting test sync...");
-
-        // Get initial height
-        let progress = spv_client.sync_progress();
-        let start_height = match progress.headers() {
-            Ok(progress) => progress.current_height(),
-            Err(e) => {
-                tracing::error!("Failed to get initial height: {}", e);
-                return Err(e.into());
-            }
-        };
-        tracing::info!("Initial height: {}", start_height);
-
-        // Wait a bit for headers to download
-        tokio::time::sleep(Duration::from_secs(10)).await;
-
-        // Check if headers increased
-        let progress = spv_client.sync_progress();
-        let end_height = match progress.headers() {
-            Ok(progress) => progress.current_height(),
-            Err(e) => {
-                tracing::error!("Failed to get final height: {}", e);
-                let mut guard = client.inner.lock().unwrap();
-                *guard = Some(spv_client);
-                return Err(e.into());
-            }
-        };
-        tracing::info!("Final height: {}", end_height);
-
-        let result = if end_height > start_height {
-            tracing::info!("✅ Sync working! Downloaded {} headers", end_height - start_height);
-            Ok(())
-        } else {
-            let msg = "No headers downloaded".to_string();
-            tracing::error!("❌ {}", msg);
-            Err(dash_spv::SpvError::Sync(dash_spv::SyncError::Network(msg)))
-        };
-
-        // put client back
-        let mut guard = client.inner.lock().unwrap();
-        *guard = Some(spv_client);
-        result
-    });
-
-    match result {
-        Ok(_) => FFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
             FFIErrorCode::from(e) as i32
