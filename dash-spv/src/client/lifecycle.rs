@@ -60,7 +60,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             W,
         > = Managers::default();
 
-        let header_storage = storage.header_storage_ref().expect("Headers storage must exist");
         let checkpoints = match config.network {
             dashcore::Network::Dash => mainnet_checkpoints(),
             dashcore::Network::Testnet => testnet_checkpoints(),
@@ -68,31 +67,19 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         };
         let checkpoint_manager = Arc::new(CheckpointManager::new(checkpoints));
         managers.block_headers =
-            Some(BlockHeadersManager::new(header_storage.clone(), checkpoint_manager));
+            Some(BlockHeadersManager::new(storage.block_headers(), checkpoint_manager));
 
         if config.enable_filters {
-            let filter_headers_storage = storage
-                .filter_header_storage_ref()
-                .expect("Filters headers storage must exist if filters are enabled");
-            let filters_storage = storage
-                .filter_storage_ref()
-                .expect("Filters storage must exist if filters are enabled");
-            let blocks_storage = storage
-                .block_storage_ref()
-                .expect("Blocks storage must exist if filters are enabled");
-
-            managers.filter_headers = Some(FilterHeadersManager::new(
-                header_storage.clone(),
-                filter_headers_storage.clone(),
-            ));
+            managers.filter_headers =
+                Some(FilterHeadersManager::new(storage.block_headers(), storage.filter_headers()));
             managers.filters = Some(FiltersManager::new(
                 wallet.clone(),
-                header_storage.clone(),
-                filter_headers_storage,
-                filters_storage,
+                storage.block_headers(),
+                storage.filter_headers(),
+                storage.filters(),
             ));
             managers.blocks =
-                Some(BlocksManager::new(wallet.clone(), header_storage.clone(), blocks_storage));
+                Some(BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()));
         }
 
         // Build masternode manager if enabled
@@ -101,12 +88,14 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 .clone()
                 .expect("Masternode list engine must exist if masternodes are enabled");
             managers.masternode = Some(MasternodesManager::new(
-                header_storage.clone(),
+                storage.block_headers(),
                 masternode_list_engine.clone(),
                 config.network,
             ));
-            managers.chainlock =
-                Some(ChainLockManager::new(header_storage.clone(), masternode_list_engine.clone()));
+            managers.chainlock = Some(ChainLockManager::new(
+                storage.block_headers(),
+                masternode_list_engine.clone(),
+            ));
             managers.instantsend = Some(InstantSendManager::new(masternode_list_engine.clone()));
         }
 

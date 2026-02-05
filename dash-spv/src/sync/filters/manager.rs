@@ -765,7 +765,7 @@ mod tests {
     use crate::network::MessageType;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
-        PersistentFilterStorage,
+        PersistentFilterStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
     use key_wallet_manager::test_utils::MockWallet;
@@ -783,9 +783,9 @@ mod tests {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
         FiltersManager::new(
             wallet,
-            storage.header_storage(),
-            storage.filter_header_storage(),
-            storage.filter_storage(),
+            storage.block_headers(),
+            storage.filter_headers(),
+            storage.filters(),
         )
     }
 

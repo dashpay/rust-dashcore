@@ -230,6 +230,7 @@ mod tests {
     use crate::network::MessageType;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
+        StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
 
@@ -239,7 +240,7 @@ mod tests {
 
     async fn create_test_manager() -> TestFilterHeadersManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        FilterHeadersManager::new(storage.header_storage(), storage.filter_header_storage())
+        FilterHeadersManager::new(storage.block_headers(), storage.filter_headers())
     }
 
     #[tokio::test]

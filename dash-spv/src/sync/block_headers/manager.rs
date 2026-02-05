@@ -217,7 +217,7 @@ mod tests {
     use super::*;
     use crate::chain::checkpoints::testnet_checkpoints;
     use crate::network::MessageType;
-    use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage};
+    use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
 
     type TestBlockHeadersManager = BlockHeadersManager<PersistentBlockHeaderStorage>;
@@ -229,7 +229,7 @@ mod tests {
     async fn create_test_manager() -> TestBlockHeadersManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
-        BlockHeadersManager::new(storage.header_storage(), checkpoint_manager)
+        BlockHeadersManager::new(storage.block_headers(), checkpoint_manager)
     }
 
     #[tokio::test]

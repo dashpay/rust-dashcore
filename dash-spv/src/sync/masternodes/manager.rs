@@ -213,7 +213,7 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for MasternodesManager<H> {
 mod tests {
     use super::*;
     use crate::network::MessageType;
-    use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage};
+    use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
     use crate::sync::sync_manager::SyncManager;
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
 
@@ -224,7 +224,7 @@ mod tests {
         let engine = Arc::new(RwLock::new(MasternodeListEngine::default_for_network(
             dashcore::Network::Testnet,
         )));
-        MasternodesManager::new(storage.header_storage(), engine, dashcore::Network::Testnet)
+        MasternodesManager::new(storage.block_headers(), engine, dashcore::Network::Testnet)
     }
 
     #[tokio::test]

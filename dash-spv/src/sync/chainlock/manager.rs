@@ -191,7 +191,7 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for ChainLockManager<H> {
 mod tests {
     use super::*;
     use crate::network::MessageType;
-    use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage};
+    use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
     use crate::Network;
     use dashcore::bls_sig_utils::BLSSignature;
@@ -204,7 +204,7 @@ mod tests {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let engine =
             Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
-        ChainLockManager::new(storage.header_storage(), engine)
+        ChainLockManager::new(storage.block_headers(), engine)
     }
 
     fn create_test_chainlock(height: u32) -> ChainLock {

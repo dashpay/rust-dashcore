@@ -155,7 +155,7 @@ mod tests {
     use super::*;
     use crate::network::{MessageType, NetworkManager};
     use crate::storage::{
-        DiskStorageManager, PersistentBlockHeaderStorage, PersistentBlockStorage,
+        DiskStorageManager, PersistentBlockHeaderStorage, PersistentBlockStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
@@ -170,7 +170,7 @@ mod tests {
     async fn create_test_manager() -> TestBlocksManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        BlocksManager::new(wallet, storage.header_storage(), storage.block_storage())
+        BlocksManager::new(wallet, storage.block_headers(), storage.blocks())
     }
 
     #[tokio::test]

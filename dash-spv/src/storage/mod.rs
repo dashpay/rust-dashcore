@@ -72,25 +72,17 @@ pub trait StorageManager:
     /// Stops all background tasks and persists the data.
     async fn shutdown(&mut self);
 
-    /// Get shared reference to header storage for parallel access.
-    fn header_storage_ref(&self) -> Option<Arc<RwLock<PersistentBlockHeaderStorage>>> {
-        None
-    }
+    /// Returns shared access to the block headers storage.
+    fn block_headers(&self) -> Arc<RwLock<PersistentBlockHeaderStorage>>;
 
-    /// Get shared reference to filter header storage for parallel access.
-    fn filter_header_storage_ref(&self) -> Option<Arc<RwLock<PersistentFilterHeaderStorage>>> {
-        None
-    }
+    /// Returns shared access to the filter headers storage.
+    fn filter_headers(&self) -> Arc<RwLock<PersistentFilterHeaderStorage>>;
 
-    /// Get shared reference to filter storage for parallel access.
-    fn filter_storage_ref(&self) -> Option<Arc<RwLock<PersistentFilterStorage>>> {
-        None
-    }
+    /// Returns shared access to the filters storage.
+    fn filters(&self) -> Arc<RwLock<PersistentFilterStorage>>;
 
-    /// Get shared reference to block storage for parallel access.
-    fn block_storage_ref(&self) -> Option<Arc<RwLock<PersistentBlockStorage>>> {
-        None
-    }
+    /// Returns shared access to the block storage.
+    fn blocks(&self) -> Arc<RwLock<PersistentBlockStorage>>;
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -203,41 +195,6 @@ impl DiskStorageManager {
         }
     }
 
-    /// Get a reference to the block headers storage.
-    pub fn header_storage(&self) -> Arc<RwLock<PersistentBlockHeaderStorage>> {
-        Arc::clone(&self.block_headers)
-    }
-
-    /// Get a reference to the filter headers storage.
-    pub fn filter_header_storage(&self) -> Arc<RwLock<PersistentFilterHeaderStorage>> {
-        Arc::clone(&self.filter_headers)
-    }
-
-    /// Get a reference to the filters storage.
-    pub fn filter_storage(&self) -> Arc<RwLock<PersistentFilterStorage>> {
-        Arc::clone(&self.filters)
-    }
-
-    /// Get a reference to the block storage.
-    pub fn block_storage(&self) -> Arc<RwLock<PersistentBlockStorage>> {
-        Arc::clone(&self.blocks)
-    }
-
-    /// Get a reference to the transaction storage.
-    pub fn transaction_storage(&self) -> Arc<RwLock<PersistentTransactionStorage>> {
-        Arc::clone(&self.transactions)
-    }
-
-    /// Get a reference to the metadata storage.
-    pub fn metadata_storage(&self) -> Arc<RwLock<PersistentMetadataStorage>> {
-        Arc::clone(&self.metadata)
-    }
-
-    /// Get a reference to the masternode state storage.
-    pub fn masternode_storage(&self) -> Arc<RwLock<PersistentMasternodeStateStorage>> {
-        Arc::clone(&self.masternodestate)
-    }
-
     async fn persist(&self) {
         let storage_path = &self.storage_path;
 
@@ -302,20 +259,20 @@ impl StorageManager for DiskStorageManager {
         self.persist().await;
     }
 
-    fn header_storage_ref(&self) -> Option<Arc<RwLock<PersistentBlockHeaderStorage>>> {
-        Some(Arc::clone(&self.block_headers))
+    fn block_headers(&self) -> Arc<RwLock<PersistentBlockHeaderStorage>> {
+        Arc::clone(&self.block_headers)
     }
 
-    fn filter_header_storage_ref(&self) -> Option<Arc<RwLock<PersistentFilterHeaderStorage>>> {
-        Some(Arc::clone(&self.filter_headers))
+    fn filter_headers(&self) -> Arc<RwLock<PersistentFilterHeaderStorage>> {
+        Arc::clone(&self.filter_headers)
     }
 
-    fn filter_storage_ref(&self) -> Option<Arc<RwLock<PersistentFilterStorage>>> {
-        Some(Arc::clone(&self.filters))
+    fn filters(&self) -> Arc<RwLock<PersistentFilterStorage>> {
+        Arc::clone(&self.filters)
     }
 
-    fn block_storage_ref(&self) -> Option<Arc<RwLock<PersistentBlockStorage>>> {
-        Some(Arc::clone(&self.blocks))
+    fn blocks(&self) -> Arc<RwLock<PersistentBlockStorage>> {
+        Arc::clone(&self.blocks)
     }
 }
 
