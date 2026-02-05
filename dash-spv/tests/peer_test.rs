@@ -223,7 +223,7 @@ mod unit_tests {
         handler.add_known_address(peer, ServiceFlags::from(1)).await;
         let known = handler.get_known_addresses().await;
         assert_eq!(known.len(), 1);
-        assert_eq!(known[0], peer);
+        assert_eq!(known[0].socket_addr().unwrap(), peer);
 
         // Test getting addresses for sharing
         let to_share = handler.get_addresses_for_peer(10).await;

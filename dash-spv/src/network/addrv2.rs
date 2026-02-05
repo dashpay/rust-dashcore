@@ -114,8 +114,8 @@ impl AddrV2Handler {
     }
 
     /// Get all known socket addresses
-    pub async fn get_known_addresses(&self) -> Vec<SocketAddr> {
-        self.known_peers.read().await.iter().filter_map(|addr| addr.socket_addr().ok()).collect()
+    pub async fn get_known_addresses(&self) -> Vec<AddrV2Message> {
+        self.known_peers.read().await.clone()
     }
 
     /// Add a known peer address
@@ -183,7 +183,7 @@ mod tests {
 
         let known = handler.get_known_addresses().await;
         assert_eq!(known.len(), 1);
-        assert_eq!(known[0], addr);
+        assert_eq!(known[0].socket_addr().unwrap(), addr);
     }
 
     #[tokio::test]

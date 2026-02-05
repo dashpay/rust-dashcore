@@ -5,14 +5,14 @@
 //! implements automatic banning for excessive misbehavior, and provides reputation
 //! decay over time for recovery.
 
+use crate::storage::PeerStorage;
+use dashcore::network::address::AddrV2Message;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-
-use crate::storage::PeerStorage;
 
 /// Misbehavior score thresholds for different violations
 pub mod misbehavior_scores {
@@ -498,7 +498,7 @@ pub trait ReputationAware {
     /// Select best peers based on reputation
     fn select_best_peers(
         &self,
-        available_peers: Vec<SocketAddr>,
+        available_peers: Vec<AddrV2Message>,
         count: usize,
     ) -> impl std::future::Future<Output = Vec<SocketAddr>> + Send;
 
@@ -512,18 +512,23 @@ pub trait ReputationAware {
 impl ReputationAware for PeerReputationManager {
     async fn select_best_peers(
         &self,
-        available_peers: Vec<SocketAddr>,
+        available_peers: Vec<AddrV2Message>,
         count: usize,
     ) -> Vec<SocketAddr> {
         let mut peer_scores = Vec::new();
         let mut reputations = self.reputations.write().await;
 
         for peer in available_peers {
-            let reputation = reputations.entry(peer).or_default();
+            let Ok(socket_addr) = peer.socket_addr() else {
+                log::warn!("Skip invalid peer address: {:?}", peer);
+                continue;
+            };
+
+            let reputation = reputations.entry(socket_addr).or_default();
             reputation.apply_decay();
 
             if !reputation.is_banned() {
-                peer_scores.push((peer, reputation.score));
+                peer_scores.push((socket_addr, reputation.score));
             }
         }
 
