@@ -13,7 +13,7 @@ use std::time::Instant;
 use crate::chain::CheckpointManager;
 use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
-use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
+use crate::storage::{BlockHeaderStorage, BlockHeaderTip, MetadataStorage};
 use crate::sync::block_headers::HeadersPipeline;
 use crate::sync::{BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState};
 use crate::types::HashedBlockHeader;
@@ -30,18 +30,20 @@ use tokio::sync::RwLock;
 /// - Post-sync header updates via inventory announcements
 ///
 /// Generic over `H: BlockHeaderStorage` to allow different storage implementations.
-pub struct BlockHeadersManager<H: BlockHeaderStorage> {
+pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Current progress of the manager.
     pub(super) progress: BlockHeadersProgress,
     /// Block header storage.
     pub(super) header_storage: Arc<RwLock<H>>,
+    /// Metadata storage for persisting the best peer tip height.
+    pub(super) metadata_storage: Arc<RwLock<M>>,
     /// Pipeline for parallel header downloads (used for both initial sync and post-sync).
     pub(super) pipeline: HeadersPipeline,
     /// Pending block announcements waiting for headers message (post-sync).
     pub(super) pending_announcements: HashMap<BlockHash, Instant>,
 }
 
-impl<H: BlockHeaderStorage> std::fmt::Debug for BlockHeadersManager<H> {
+impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for BlockHeadersManager<H, M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlockHeadersManager")
             .field("progress", &self.progress)
@@ -50,15 +52,41 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for BlockHeadersManager<H> {
     }
 }
 
-impl<H: BlockHeaderStorage> BlockHeadersManager<H> {
+impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     /// Create a new headers manager with the given storage and checkpoint manager.
-    pub fn new(header_storage: Arc<RwLock<H>>, checkpoint_manager: Arc<CheckpointManager>) -> Self {
-        Self {
-            progress: BlockHeadersProgress::default(),
+    ///
+    /// Loads the current tip and last target height from storage to populate
+    /// initial progress before any sync begins.
+    pub async fn new(
+        header_storage: Arc<RwLock<H>>,
+        metadata_storage: Arc<RwLock<M>>,
+        checkpoint_manager: Arc<CheckpointManager>,
+    ) -> SyncResult<Self> {
+        let tip = header_storage
+            .read()
+            .await
+            .get_tip()
+            .await
+            .ok_or_else(|| SyncError::MissingDependency("No tip in storage".to_string()))?;
+
+        // Restore persisted target height, fall back to tip height
+        let target_height =
+            metadata_storage.read().await.load_last_target_height().await.unwrap_or(tip.height());
+
+        let mut initial_progress = BlockHeadersProgress::default();
+        initial_progress.set_state(SyncState::WaitingForConnections);
+        initial_progress.update_tip_height(tip.height());
+        initial_progress.update_target_height(target_height);
+
+        tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
+
+        Ok(Self {
+            progress: initial_progress,
             header_storage,
-            pipeline: HeadersPipeline::new(checkpoint_manager.clone()),
+            metadata_storage,
+            pipeline: HeadersPipeline::new(checkpoint_manager),
             pending_announcements: HashMap::new(),
-        }
+        })
     }
 
     pub(super) async fn tip(&self) -> SyncResult<BlockHeaderTip> {
@@ -217,26 +245,34 @@ mod tests {
     use super::*;
     use crate::chain::checkpoints::testnet_checkpoints;
     use crate::network::MessageType;
-    use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
+    use crate::storage::{
+        DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
+    };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
 
-    type TestBlockHeadersManager = BlockHeadersManager<PersistentBlockHeaderStorage>;
+    type TestBlockHeadersManager =
+        BlockHeadersManager<PersistentBlockHeaderStorage, PersistentMetadataStorage>;
 
     fn create_test_checkpoint_manager() -> Arc<CheckpointManager> {
         Arc::new(CheckpointManager::new(testnet_checkpoints()))
     }
 
     async fn create_test_manager() -> TestBlockHeadersManager {
-        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        // Store a genesis header so the manager can initialize
+        let genesis = Header::dummy_batch(0..1);
+        storage.store_headers(&genesis).await.unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
-        BlockHeadersManager::new(storage.block_headers(), checkpoint_manager)
+        BlockHeadersManager::new(storage.block_headers(), storage.metadata(), checkpoint_manager)
+            .await
+            .expect("Failed to create BlockHeadersManager")
     }
 
     #[tokio::test]
     async fn test_block_headers_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::BlockHeader);
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::Headers, MessageType::Inv]);
     }
 
@@ -249,7 +285,7 @@ mod tests {
 
         let progress = manager.progress();
         if let SyncManagerProgress::BlockHeaders(progress) = progress {
-            assert_eq!(progress.state(), SyncState::Initializing);
+            assert_eq!(progress.state(), SyncState::WaitingForConnections);
             assert_eq!(progress.tip_height(), 100);
             assert_eq!(progress.target_height(), 200);
             assert_eq!(progress.processed(), 50);

@@ -1,5 +1,6 @@
 use crate::error::SyncResult;
 use crate::storage::FilterHeaderStorage;
+use crate::sync::ManagerIdentifier;
 use crate::SyncError;
 use dashcore::hash_types::FilterHeader;
 use dashcore_hashes::Hash;
@@ -16,9 +17,9 @@ pub(super) async fn get_prev_filter_header<S: FilterHeaderStorage>(
     }
 
     storage.get_filter_header(height - 1).await?.ok_or_else(|| {
-        SyncError::InvalidState(format!(
-            "Missing filter header at height {} for verification",
-            height - 1
-        ))
+        SyncError::InvalidState(
+            ManagerIdentifier::FilterHeader,
+            format!("Missing filter header at height {} for verification", height - 1),
+        )
     })
 }

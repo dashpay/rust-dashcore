@@ -13,6 +13,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::BlockHeaderStorage;
 use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
+use crate::sync::ManagerIdentifier;
 
 /// Batch size for filter header requests.
 const FILTER_HEADERS_BATCH_SIZE: u32 = 2000;
@@ -185,10 +186,10 @@ impl FilterHeadersPipeline {
 
         for stop_hash in stop_hashes {
             let Some(&start_height) = self.batch_starts.get(&stop_hash) else {
-                return Err(SyncError::InvalidState(format!(
-                    "No batch_starts entry for pending stop_hash {}",
-                    stop_hash
-                )));
+                return Err(SyncError::InvalidState(
+                    ManagerIdentifier::FilterHeader,
+                    format!("No batch_starts entry for pending stop_hash {}", stop_hash),
+                ));
             };
 
             requests.request_filter_headers(start_height, stop_hash)?;
@@ -473,7 +474,7 @@ mod tests {
         let requests = RequestSender::new(tx);
 
         let err = pipeline.send_pending(&requests).unwrap_err();
-        assert!(matches!(err, SyncError::InvalidState(_)));
+        assert!(matches!(err, SyncError::InvalidState(ManagerIdentifier::FilterHeader, _)));
     }
 
     #[test]

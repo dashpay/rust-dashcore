@@ -36,11 +36,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub async fn new(
         config: ClientConfig,
         network: N,
-        storage: S,
+        mut storage: S,
         wallet: Arc<RwLock<W>>,
     ) -> Result<Self> {
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
+
+        // Initialize genesis block or checkpoint before creating managers,
+        // so they can read the tip from storage during construction.
+        Self::initialize_genesis_block(&config, &mut storage).await?;
 
         let masternode_engine = {
             if config.enable_masternodes {
@@ -67,20 +71,34 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             _ => Vec::new(),
         };
         let checkpoint_manager = Arc::new(CheckpointManager::new(checkpoints));
-        managers.block_headers =
-            Some(BlockHeadersManager::new(storage.block_headers(), checkpoint_manager));
+        managers.block_headers = Some(
+            BlockHeadersManager::new(
+                storage.block_headers(),
+                storage.metadata(),
+                checkpoint_manager,
+            )
+            .await
+            .map_err(SpvError::Sync)?,
+        );
 
         if config.enable_filters {
-            managers.filter_headers =
-                Some(FilterHeadersManager::new(storage.block_headers(), storage.filter_headers()));
-            managers.filters = Some(FiltersManager::new(
-                wallet.clone(),
-                storage.block_headers(),
-                storage.filter_headers(),
-                storage.filters(),
-            ));
-            managers.blocks =
-                Some(BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()));
+            managers.filter_headers = Some(
+                FilterHeadersManager::new(storage.block_headers(), storage.filter_headers())
+                    .await
+                    .map_err(SpvError::Sync)?,
+            );
+            managers.filters = Some(
+                FiltersManager::new(
+                    wallet.clone(),
+                    storage.block_headers(),
+                    storage.filter_headers(),
+                    storage.filters(),
+                )
+                .await,
+            );
+            managers.blocks = Some(
+                BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()).await,
+            );
         }
 
         // Build masternode manager if enabled
@@ -88,21 +106,27 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             let masternode_list_engine = masternode_engine
                 .clone()
                 .expect("Masternode list engine must exist if masternodes are enabled");
-            managers.masternode = Some(MasternodesManager::new(
-                storage.block_headers(),
-                masternode_list_engine.clone(),
-                config.network,
-            ));
-            managers.chainlock = Some(ChainLockManager::new(
-                storage.block_headers(),
-                storage.metadata(),
-                masternode_list_engine.clone(),
-            ));
+            managers.masternode = Some(
+                MasternodesManager::new(
+                    storage.block_headers(),
+                    masternode_list_engine.clone(),
+                    config.network,
+                )
+                .await,
+            );
+            managers.chainlock = Some(
+                ChainLockManager::new(
+                    storage.block_headers(),
+                    storage.metadata(),
+                    masternode_list_engine.clone(),
+                )
+                .await,
+            );
             managers.instantsend = Some(InstantSendManager::new(masternode_list_engine.clone()));
         }
 
-        // Create sync coordinator (managers are passed to start() later)
-        let sync_coordinator = SyncCoordinator::new(managers);
+        // Create sync coordinator and initialize managers from storage
+        let sync_coordinator = SyncCoordinator::new(managers).await;
 
         // Create mempool state
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
@@ -110,7 +134,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Wrap storage in Arc<Mutex>
         let storage = Arc::new(Mutex::new(storage));
 
-        Ok(Self {
+        let mut client = Self {
             config,
             network,
             storage,
@@ -120,10 +144,40 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             running: Arc::new(RwLock::new(false)),
             mempool_state,
             mempool_filter: None,
-        })
+        };
+
+        // Load wallet data from storage
+        client.load_wallet_data().await?;
+
+        // Initialize mempool filter if mempool tracking is enabled
+        if client.config.enable_mempool_tracking {
+            client.mempool_filter = Some(Arc::new(MempoolFilter::new(
+                client.config.mempool_strategy,
+                client.config.max_mempool_transactions,
+                client.mempool_state.clone(),
+                HashSet::new(), // TODO: populate from wallet's monitored addresses
+                client.config.network,
+            )));
+
+            // Load mempool state from storage if persistence is enabled
+            if client.config.persist_mempool {
+                if let Some(state) = client
+                    .storage
+                    .lock()
+                    .await
+                    .load_mempool_state()
+                    .await
+                    .map_err(SpvError::Storage)?
+                {
+                    *client.mempool_state.write().await = state;
+                }
+            }
+        }
+
+        Ok(client)
     }
 
-    /// Start the SPV client.
+    /// Start the SPV client: spawn sync tasks and connect to the network.
     pub async fn start(&mut self) -> Result<()> {
         {
             let running = self.running.read().await;
@@ -132,40 +186,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         }
 
-        // Load wallet data from storage
-        self.load_wallet_data().await?;
-
-        // Initialize mempool filter if mempool tracking is enabled
-        if self.config.enable_mempool_tracking {
-            // TODO: Get monitored addresses from wallet
-            self.mempool_filter = Some(Arc::new(MempoolFilter::new(
-                self.config.mempool_strategy,
-                self.config.max_mempool_transactions,
-                self.mempool_state.clone(),
-                HashSet::new(), // Will be populated from wallet's monitored addresses
-                self.config.network,
-            )));
-
-            // Load mempool state from storage if persistence is enabled
-            if self.config.persist_mempool {
-                if let Some(state) = self
-                    .storage
-                    .lock()
-                    .await
-                    .load_mempool_state()
-                    .await
-                    .map_err(SpvError::Storage)?
-                {
-                    *self.mempool_state.write().await = state;
-                }
-            }
-        }
-
-        // Initialize genesis block if not already present
-        self.initialize_genesis_block().await?;
-
-        // Start all sync tasks before connecting to the network to make sure initial connection
-        // events are handled correctly in the sync coordinator.
+        // Spawn all sync tasks before connecting to the network to make sure
+        // initial connection events are handled correctly in the sync coordinator.
         if let Err(e) = self.sync_coordinator.start(&mut self.network).await {
             tracing::error!("Failed to start sync coordinator: {}", e);
             return Err(SpvError::Sync(e));
@@ -215,24 +237,22 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.stop().await
     }
 
-    /// Initialize genesis block or checkpoint.
-    pub(super) async fn initialize_genesis_block(&mut self) -> Result<()> {
+    /// Initialize genesis block or checkpoint in storage.
+    ///
+    /// Called before creating managers so they can read the tip during construction.
+    async fn initialize_genesis_block(config: &ClientConfig, storage: &mut S) -> Result<()> {
         // Check if we already have any headers in storage
-        let current_tip = {
-            let storage = self.storage.lock().await;
-            storage.get_tip_height().await
-        };
+        let current_tip = storage.get_tip_height().await;
 
         if current_tip.is_some() {
-            // We already have headers, genesis block should be at height 0
             tracing::debug!("Headers already exist in storage, skipping genesis initialization");
             return Ok(());
         }
 
         // Check if we should use a checkpoint instead of genesis
-        if let Some(start_height) = self.config.start_from_height {
+        if let Some(start_height) = config.start_from_height {
             // Get checkpoints for this network
-            let checkpoints = match self.config.network {
+            let checkpoints = match config.network {
                 dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
                 dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
                 _ => vec![],
@@ -281,12 +301,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                             calculated_hash
                         );
                     } else {
-                        {
-                            let mut storage = self.storage.lock().await;
-                            storage
-                                .store_headers_at_height(&[checkpoint_header], checkpoint.height)
-                                .await?;
-                        }
+                        storage
+                            .store_headers_at_height(&[checkpoint_header], checkpoint.height)
+                            .await?;
 
                         tracing::info!(
                             "✅ Initialized from checkpoint at height {}, skipping {} headers",
@@ -301,20 +318,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Get the genesis block hash for this network
-        let genesis_hash = self
-            .config
+        let genesis_hash = config
             .network
             .known_genesis_block_hash()
             .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
 
         tracing::info!(
             "Initializing genesis block for network {:?}: {}",
-            self.config.network,
+            config.network,
             genesis_hash
         );
 
-        let genesis_header =
-            dashcore::blockdata::constants::genesis_block(self.config.network).header;
+        let genesis_header = dashcore::blockdata::constants::genesis_block(config.network).header;
 
         // Verify the header produces the expected genesis hash
         let calculated_hash = genesis_header.block_hash();
@@ -328,17 +343,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         tracing::debug!("Using genesis block header with hash: {}", calculated_hash);
 
         // Store the genesis header at height 0
-        let genesis_headers = vec![genesis_header];
-        {
-            let mut storage = self.storage.lock().await;
-            storage.store_headers(&genesis_headers).await.map_err(SpvError::Storage)?;
-        }
+        storage.store_headers(&[genesis_header]).await.map_err(SpvError::Storage)?;
 
         // Verify it was stored correctly
-        let stored_height = {
-            let storage = self.storage.lock().await;
-            storage.get_tip_height().await
-        };
+        let stored_height = storage.get_tip_height().await;
         tracing::info!(
             "✅ Genesis block initialized at height 0, storage reports tip height: {:?}",
             stored_height

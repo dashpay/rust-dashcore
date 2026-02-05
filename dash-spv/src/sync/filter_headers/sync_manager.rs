@@ -30,22 +30,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         &[MessageType::CFHeaders]
     }
 
-    async fn initialize(&mut self) -> SyncResult<()> {
-        // Load current filter tip
-        let filter_tip =
-            self.filter_header_storage.read().await.get_filter_tip_height().await?.unwrap_or(0);
-
-        self.progress.update_current_height(filter_tip);
-        self.set_state(SyncState::WaitingForConnections);
-
-        tracing::info!(
-            "FilterHeadersManager initialized at height {}, waiting for headers",
-            self.progress.current_height()
-        );
-
-        Ok(())
-    }
-
     async fn handle_message(
         &mut self,
         msg: Message,

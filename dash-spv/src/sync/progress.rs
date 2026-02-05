@@ -1,7 +1,7 @@
 use crate::error::{SyncError, SyncResult};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
-    FiltersProgress, InstantSendProgress, MasternodesProgress,
+    FiltersProgress, InstantSendProgress, ManagerIdentifier, MasternodesProgress,
 };
 use dashcore::prelude::CoreBlockHeight;
 use std::fmt;
@@ -10,9 +10,8 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SyncState {
     #[default]
-    Initializing,
-    WaitingForConnections,
     WaitForEvents,
+    WaitingForConnections,
     Syncing,
     Synced,
     Error,
@@ -55,19 +54,16 @@ impl SyncProgress {
         .collect();
 
         if states.is_empty() {
-            return SyncState::Initializing;
+            return SyncState::WaitForEvents;
         }
 
         // Return the "most progressed" state
-        // Priority: Error > Syncing > WaitForEvents > WaitingForConnections > Synced > Initializing
+        // Priority: Error > Syncing > WaitingForConnections > Synced > WaitForEvents
         if states.contains(&SyncState::Error) {
             return SyncState::Error;
         }
         if states.contains(&SyncState::Syncing) {
             return SyncState::Syncing;
-        }
-        if states.contains(&SyncState::WaitForEvents) {
-            return SyncState::WaitForEvents;
         }
         if states.contains(&SyncState::WaitingForConnections) {
             return SyncState::WaitingForConnections;
@@ -75,7 +71,7 @@ impl SyncProgress {
         if states.iter().all(|s| *s == SyncState::Synced) {
             return SyncState::Synced;
         }
-        SyncState::Initializing
+        SyncState::WaitForEvents
     }
 
     /// Check if all managers are idle (sync complete).
@@ -102,53 +98,68 @@ impl SyncProgress {
     /// Get overall completion percentage (0.0 to 1.0).
     pub fn percentage(&self) -> f64 {
         let percentages = [
-            self.headers.as_ref().map(|h| h.percentage()).unwrap_or(1.0),
-            self.filter_headers.as_ref().map(|f| f.percentage()).unwrap_or(1.0),
-            self.filters.as_ref().map(|f| f.percentage()).unwrap_or(1.0),
+            self.headers.as_ref().map(|h| h.percentage()).unwrap_or(0.0),
+            self.filter_headers.as_ref().map(|f| f.percentage()).unwrap_or(0.0),
+            self.filters.as_ref().map(|f| f.percentage()).unwrap_or(0.0),
         ];
         percentages.iter().sum::<f64>() / percentages.len() as f64
     }
 
     pub fn headers(&self) -> SyncResult<&BlockHeadersProgress> {
-        self.headers
-            .as_ref()
-            .ok_or_else(|| SyncError::InvalidState("BlockHeadersManager not started".into()))
+        self.headers.as_ref().ok_or_else(|| {
+            SyncError::InvalidState(
+                ManagerIdentifier::BlockHeader,
+                "BlockHeadersManager not started".into(),
+            )
+        })
     }
 
     pub fn filter_headers(&self) -> SyncResult<&FilterHeadersProgress> {
-        self.filter_headers
-            .as_ref()
-            .ok_or_else(|| SyncError::InvalidState("FilterHeadersManager not started".into()))
+        self.filter_headers.as_ref().ok_or_else(|| {
+            SyncError::InvalidState(
+                ManagerIdentifier::FilterHeader,
+                "FilterHeadersManager not started".into(),
+            )
+        })
     }
 
     pub fn filters(&self) -> SyncResult<&FiltersProgress> {
-        self.filters
-            .as_ref()
-            .ok_or_else(|| SyncError::InvalidState("FiltersManager not started".into()))
+        self.filters.as_ref().ok_or_else(|| {
+            SyncError::InvalidState(ManagerIdentifier::Filter, "FiltersManager not started".into())
+        })
     }
 
     pub fn blocks(&self) -> SyncResult<&BlocksProgress> {
-        self.blocks
-            .as_ref()
-            .ok_or_else(|| SyncError::InvalidState("BlocksManager not started".into()))
+        self.blocks.as_ref().ok_or_else(|| {
+            SyncError::InvalidState(ManagerIdentifier::Block, "BlocksManager not started".into())
+        })
     }
 
     pub fn masternodes(&self) -> SyncResult<&MasternodesProgress> {
-        self.masternodes
-            .as_ref()
-            .ok_or_else(|| SyncError::InvalidState("MasternodeListManager not started".into()))
+        self.masternodes.as_ref().ok_or_else(|| {
+            SyncError::InvalidState(
+                ManagerIdentifier::Masternode,
+                "MasternodeListManager not started".into(),
+            )
+        })
     }
 
     pub fn chainlocks(&self) -> SyncResult<&ChainLockProgress> {
-        self.chainlocks
-            .as_ref()
-            .ok_or_else(|| SyncError::InvalidState("ChainLocksManager not started".into()))
+        self.chainlocks.as_ref().ok_or_else(|| {
+            SyncError::InvalidState(
+                ManagerIdentifier::ChainLock,
+                "ChainLocksManager not started".into(),
+            )
+        })
     }
 
     pub fn instantsend(&self) -> SyncResult<&InstantSendProgress> {
-        self.instantsend
-            .as_ref()
-            .ok_or_else(|| SyncError::InvalidState("InstantSendManager not started".into()))
+        self.instantsend.as_ref().ok_or_else(|| {
+            SyncError::InvalidState(
+                ManagerIdentifier::InstantSend,
+                "InstantSendManager not started".into(),
+            )
+        })
     }
 
     pub fn update_headers(&mut self, progress: BlockHeadersProgress) {

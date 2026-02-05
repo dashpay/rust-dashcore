@@ -29,10 +29,19 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 const TASK_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_SYNC_EVENT_CAPACITY: usize = 10000;
 
-/// Macro to spawn a manager if present.
+/// Macro to merge progress from an optional manager into a SyncProgress.
+macro_rules! try_merge_progress {
+    ($manager_opt:expr, $progress:expr) => {
+        if let Some(ref manager) = $manager_opt {
+            update_progress_from_manager($progress, manager.progress());
+        }
+    };
+}
+
+/// Macro to spawn an already-initialized manager.
 macro_rules! spawn_manager {
-    ($self:expr, $field:ident, $network:expr) => {
-        if let Some(manager) = $self.managers.$field.take() {
+    ($self:expr, $manager:expr, $network:expr) => {
+        if let Some(manager) = $manager {
             let identifier = manager.identifier();
             let wanted_message_types = manager.wanted_message_types();
             let requests = $network.request_sender();
@@ -71,7 +80,7 @@ where
     M: MetadataStorage,
     W: WalletInterface + 'static,
 {
-    pub block_headers: Option<BlockHeadersManager<H>>,
+    pub block_headers: Option<BlockHeadersManager<H, M>>,
     pub filter_headers: Option<FilterHeadersManager<H, FH>>,
     pub filters: Option<FiltersManager<H, FH, F, W>>,
     pub blocks: Option<BlocksManager<H, B, W>>,
@@ -145,11 +154,25 @@ where
     M: MetadataStorage,
     W: WalletInterface + 'static,
 {
-    /// Create a new coordinator with the given config.
+    /// Create a new coordinator and initialize all managers.
     ///
-    /// Managers are passed to `start()` when sync begins.
-    pub fn new(managers: Managers<H, FH, F, B, M, W>) -> Self {
-        let (progress_sender, progress_receiver) = watch::channel(SyncProgress::default());
+    /// Initializes managers from storage so that progress data is available
+    /// immediately, before connecting to the network.
+    pub(crate) async fn new(managers: Managers<H, FH, F, B, M, W>) -> Self {
+        let mut initial_progress = SyncProgress::default();
+
+        try_merge_progress!(managers.block_headers, &mut initial_progress);
+        try_merge_progress!(managers.filter_headers, &mut initial_progress);
+        try_merge_progress!(managers.filters, &mut initial_progress);
+        try_merge_progress!(managers.blocks, &mut initial_progress);
+        try_merge_progress!(managers.masternode, &mut initial_progress);
+        try_merge_progress!(managers.chainlock, &mut initial_progress);
+        try_merge_progress!(managers.instantsend, &mut initial_progress);
+
+        tracing::info!("Initial sync progress {}", initial_progress.clone());
+
+        let (progress_sender, progress_receiver) = watch::channel(initial_progress);
+
         Self {
             managers,
             progress_receivers: Vec::new(),
@@ -157,7 +180,7 @@ where
             sync_event_sender: broadcast::Sender::new(DEFAULT_SYNC_EVENT_CAPACITY),
             progress_sender,
             progress_receiver,
-            sync_start_time: None,
+            sync_start_time: Some(Instant::now()),
             shutdown: CancellationToken::new(),
             progress_task: None,
         }
@@ -175,6 +198,8 @@ where
 
     /// Start all managers by spawning each in its own task.
     ///
+    /// Requires `initialize()` to have been called first.
+    ///
     /// Each manager receives:
     /// - A message stream filtered by its subscribed types
     /// - An event bus subscription for inter-manager events
@@ -188,13 +213,19 @@ where
             return Err(SyncError::SyncInProgress);
         }
 
-        tracing::info!("Starting sync managers in separate tasks");
+        let sync_start_time =
+            self.sync_start_time.expect("sync_start_time set during initialize()");
 
-        // Record sync start time
-        let sync_start_time = Instant::now();
-        self.sync_start_time = Some(sync_start_time);
+        // Take managers for spawning
+        let block_headers = self.managers.block_headers.take();
+        let filter_headers = self.managers.filter_headers.take();
+        let filters = self.managers.filters.take();
+        let blocks = self.managers.blocks.take();
+        let masternode = self.managers.masternode.take();
+        let chainlock = self.managers.chainlock.take();
+        let instantsend = self.managers.instantsend.take();
 
-        // Spawn each manager using the macro
+        // Spawn tasks for initialized managers
         spawn_manager!(self, block_headers, network);
         spawn_manager!(self, filter_headers, network);
         spawn_manager!(self, filters, network);
@@ -240,7 +271,7 @@ where
                 }
                 Err(e) => {
                     tracing::error!("Manager task panicked: {}", e);
-                    return Err(SyncError::InvalidState(format!("Manager task panicked: {}", e)));
+                    return Err(SyncError::Network(format!("Manager task panicked: {}", e)));
                 }
             }
         }
@@ -328,7 +359,8 @@ where
 /// Reactive progress aggregation task.
 ///
 /// Listens to all manager progress receivers and emits consolidated updates
-/// immediately when any manager's progress changes.
+/// immediately when any manager's progress changes. The initial progress is
+/// emitted synchronously in `start()` before this task is spawned.
 async fn run_progress_task(
     receivers: Vec<watch::Receiver<SyncManagerProgress>>,
     progress_sender: watch::Sender<SyncProgress>,
@@ -337,10 +369,10 @@ async fn run_progress_task(
     sync_start_time: Instant,
 ) {
     let streams: Vec<_> =
-        receivers.into_iter().map(|rx| WatchStream::new(rx).map(move |p| p)).collect();
+        receivers.into_iter().map(|rx| WatchStream::from_changes(rx).map(move |p| p)).collect();
 
     let mut merged = select_all(streams);
-    let mut progress = SyncProgress::default();
+    let mut progress = progress_sender.borrow().clone();
     let mut sync_complete_emitted = false;
 
     loop {
@@ -388,7 +420,7 @@ mod tests {
     #[test]
     fn test_sync_progress_default() {
         let progress = SyncProgress::default();
-        assert_eq!(progress.state(), SyncState::Initializing);
+        assert_eq!(progress.state(), SyncState::WaitForEvents);
         assert!(!progress.is_synced());
         // Fields are None by default - getters return errors
         assert!(progress.headers().is_err());
@@ -399,8 +431,8 @@ mod tests {
     #[test]
     fn test_sync_percentage_empty() {
         let progress = SyncProgress::default();
-        // Both headers and filters are None, so percentage defaults to 1.0
-        assert_eq!(progress.percentage(), 1.0);
+        // All fields are None, so percentage defaults to 0.0
+        assert_eq!(progress.percentage(), 0.0);
     }
 
     #[test]
@@ -423,7 +455,7 @@ mod tests {
         filters_progress.add_downloaded(250);
         progress.update_filters(filters_progress);
 
-        // (0.5 + 1.0 + 0.25) / 3 = ~0.583 (filter_headers defaults to 1.0)
-        assert!((progress.percentage() - 0.583).abs() < 0.01);
+        // (0.5 + 0.0 + 0.25) / 3 = 0.25 (filter_headers is None so defaults to 0.0)
+        assert!((progress.percentage() - 0.25).abs() < 0.01);
     }
 }

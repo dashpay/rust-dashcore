@@ -51,9 +51,8 @@ impl FFIString {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FFISyncState {
     #[default]
-    Initializing = 0,
-    WaitingForConnections = 1,
-    WaitForEvents = 2,
+    WaitForEvents = 1,
+    WaitingForConnections = 2,
     Syncing = 3,
     Synced = 4,
     Error = 5,
@@ -62,7 +61,6 @@ pub enum FFISyncState {
 impl From<SyncState> for FFISyncState {
     fn from(state: SyncState) -> Self {
         match state {
-            SyncState::Initializing => FFISyncState::Initializing,
             SyncState::WaitingForConnections => FFISyncState::WaitingForConnections,
             SyncState::WaitForEvents => FFISyncState::WaitForEvents,
             SyncState::Syncing => FFISyncState::Syncing,

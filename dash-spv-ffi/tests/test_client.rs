@@ -7,10 +7,16 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
+    use std::os::raw::c_void;
+
     struct _TestCallbackData {
         progress_called: Arc<Mutex<bool>>,
         completion_called: Arc<Mutex<bool>>,
         last_progress: Arc<Mutex<f64>>,
+    }
+
+    struct ProgressCallbackData {
+        called: Mutex<bool>,
     }
 
     fn create_test_config() -> (*mut FFIClientConfig, TempDir) {
@@ -76,6 +82,43 @@ mod tests {
 
             let progress = dash_spv_ffi_client_get_sync_progress(std::ptr::null_mut());
             assert!(progress.is_null());
+        }
+    }
+
+    extern "C" fn test_progress_callback(progress: *const FFISyncProgress, user_data: *mut c_void) {
+        assert!(!progress.is_null());
+        let data = unsafe { &*(user_data as *const ProgressCallbackData) };
+        *data.called.lock().unwrap() = true;
+    }
+
+    #[test]
+    #[serial]
+    fn test_set_progress_callback_emits_initial_progress() {
+        unsafe {
+            let (config, _temp_dir) = create_test_config();
+            let client = dash_spv_ffi_client_new(config);
+            assert!(!client.is_null());
+
+            let callback_data = Box::new(ProgressCallbackData {
+                called: Mutex::new(false),
+            });
+            let data_ptr = &*callback_data as *const ProgressCallbackData as *mut c_void;
+
+            let progress_callback = FFIProgressCallback {
+                on_progress: Some(test_progress_callback),
+                user_data: data_ptr,
+            };
+
+            let result = dash_spv_ffi_client_set_progress_callback(client, progress_callback);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+
+            assert!(
+                *callback_data.called.lock().unwrap(),
+                "progress callback should be invoked immediately when set"
+            );
+
+            dash_spv_ffi_client_destroy(client);
+            dash_spv_ffi_config_destroy(config);
         }
     }
 }

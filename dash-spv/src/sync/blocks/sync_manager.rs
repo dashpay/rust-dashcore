@@ -30,21 +30,8 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         &[MessageType::Block]
     }
 
-    async fn initialize(&mut self) -> SyncResult<()> {
-        // Get wallet state
-        let wallet = self.wallet.read().await;
-        let synced_height = wallet.synced_height();
-        drop(wallet);
-
-        self.progress.update_last_processed(synced_height);
-        self.progress.set_state(SyncState::WaitingForConnections);
-
-        tracing::info!("BlocksManager initialized at height {}", self.progress.last_processed());
-
-        Ok(())
-    }
-
     async fn start_sync(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+        self.ensure_not_started()?;
         // Check if filters already completed (event received before start_sync)
         if self.filters_sync_complete && self.pipeline.is_complete() {
             self.progress.set_state(SyncState::Synced);
@@ -87,10 +74,13 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
             .get_header_height_by_hash(hashed_block.hash())
             .await?
             .ok_or_else(|| {
-                SyncError::InvalidState(format!(
-                    "Block {} has no stored header - cannot determine height",
-                    hashed_block.hash()
-                ))
+                SyncError::InvalidState(
+                    self.identifier(),
+                    format!(
+                        "Block {} has no stored header - cannot determine height",
+                        hashed_block.hash()
+                    ),
+                )
             })?;
 
         tracing::debug!("Received block {} at height {}", hashed_block.hash(), height);

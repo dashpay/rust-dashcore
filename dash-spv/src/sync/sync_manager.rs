@@ -7,6 +7,7 @@ use crate::sync::{
 };
 use async_trait::async_trait;
 
+use crate::SyncError;
 /// Contains a trait for event-driven sync managers.
 ///
 /// Each manager is responsible for a specific sync task (headers, filters, blocks, etc.)
@@ -84,13 +85,12 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// manager's task via topic-based filtering.
     fn wanted_message_types(&self) -> &'static [MessageType];
 
-    /// Initialize the manager.
-    ///
-    /// Called once at startup before the main loop. Loads persisted state
-    /// from internal storage and initial target heights.
-    async fn initialize(&mut self) -> SyncResult<()> {
-        self.set_state(SyncState::WaitingForConnections);
-        tracing::info!("{} initialized", self.identifier());
+    /// Prepare the state for the sync to start. Called before emitting the SyncStart event.
+    fn ensure_not_started(&mut self) -> SyncResult<()> {
+        if self.state() != SyncState::WaitingForConnections {
+            tracing::warn!("{} sync already started.", self.identifier());
+            return Err(SyncError::InvalidState(self.identifier(), "already started".to_string()));
+        }
         Ok(())
     }
 
@@ -100,11 +100,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// For example, BlockHeadersManager sends its first getheaders request here.
     /// The default implementation is for reactive managers that just wait for events.
     async fn start_sync(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        if !matches!(self.state(), SyncState::WaitingForConnections | SyncState::WaitForEvents) {
-            tracing::warn!("{} sync already started.", self.identifier());
-            return Ok(vec![]);
-        }
-
+        self.ensure_not_started()?;
         self.set_state(SyncState::WaitForEvents);
         Ok(vec![SyncEvent::SyncStart {
             identifier: self.identifier(),
@@ -197,7 +193,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// Run the manager task, processing messages, events, and periodic ticks.
     ///
     /// This consumes the manager and runs until shutdown is signaled.
-    /// The `initial_peer_count` parameter indicates how many peers are connected at start.
+    /// Assumes the manager has already been initialized via `initialize()`.
     async fn run(mut self, mut context: SyncManagerTaskContext) -> SyncResult<ManagerIdentifier>
     where
         Self: Sized,
@@ -206,9 +202,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         tracing::info!("{} task starting", identifier);
 
         let mut sync_event_receiver = context.sync_event_sender.subscribe();
-
-        // Initialize the manager
-        self.initialize().await?;
 
         // Tick interval for periodic housekeeping
         let mut tick_interval = interval(Duration::from_millis(100));
@@ -404,7 +397,7 @@ mod tests {
 
         let manager = MockManager {
             identifier: ManagerIdentifier::BlockHeader,
-            state: SyncState::Initializing,
+            state: SyncState::WaitForEvents,
             message_count: message_count.clone(),
             event_count: event_count.clone(),
             tick_count: tick_count.clone(),

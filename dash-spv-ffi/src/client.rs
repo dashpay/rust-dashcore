@@ -1046,6 +1046,16 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_progress_callback(
     let client = &(*client);
     *client.progress_callback.lock().unwrap() = Some(callback);
 
+    // Emit the current progress immediately so the caller gets an initial snapshot
+    let guard = client.inner.lock().unwrap();
+    if let Some(ref spv_client) = *guard {
+        let progress = spv_client.progress();
+        let cb_guard = client.progress_callback.lock().unwrap();
+        if let Some(ref cb) = *cb_guard {
+            cb.dispatch(&progress);
+        }
+    }
+
     FFIErrorCode::Success as i32
 }
 

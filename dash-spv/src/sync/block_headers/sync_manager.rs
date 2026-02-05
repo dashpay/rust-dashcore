@@ -1,11 +1,10 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
-use crate::storage::BlockHeaderStorage;
+use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::{
     BlockHeadersManager, ManagerIdentifier, ProgressPercentage, SyncEvent, SyncManager,
     SyncManagerProgress, SyncState,
 };
-use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::BlockHash;
@@ -15,7 +14,7 @@ use std::time::{Duration, Instant};
 pub(super) const UNSOLICITED_HEADERS_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[async_trait]
-impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
+impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersManager<H, M> {
     fn identifier(&self) -> ManagerIdentifier {
         ManagerIdentifier::BlockHeader
     }
@@ -36,29 +35,8 @@ impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
         &[MessageType::Headers, MessageType::Inv]
     }
 
-    async fn initialize(&mut self) -> SyncResult<()> {
-        let tip = self
-            .header_storage
-            .read()
-            .await
-            .get_tip()
-            .await
-            .ok_or_else(|| SyncError::MissingDependency("No tip in storage".to_string()))?;
-
-        self.progress.set_state(SyncState::WaitingForConnections);
-        self.progress.update_tip_height(tip.height());
-        self.progress.update_target_height(tip.height());
-
-        tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
-
-        Ok(())
-    }
-
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        if self.state() != SyncState::WaitingForConnections {
-            tracing::warn!("{} sync already started.", self.identifier());
-            return Ok(vec![]);
-        }
+        self.ensure_not_started()?;
         self.progress.set_state(SyncState::Syncing);
 
         let tip = self.tip().await?;
@@ -173,6 +151,8 @@ impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
         {
             if let Some(best_height) = best_height {
                 self.progress.update_target_height(*best_height);
+                let mut metadata_storage = self.metadata_storage.write().await;
+                metadata_storage.store_last_target_height(*best_height).await?;
             }
             if *connected_count == 0 {
                 self.stop_sync();

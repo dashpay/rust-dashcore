@@ -37,27 +37,8 @@ impl<
         &[MessageType::CFilter]
     }
 
-    async fn initialize(&mut self) -> SyncResult<()> {
-        let wallet = self.wallet.read().await;
-        let synced_height = wallet.synced_height();
-        drop(wallet);
-
-        self.progress.update_current_height(synced_height);
-        self.set_state(SyncState::WaitingForConnections);
-
-        tracing::info!(
-            "FiltersManager initialized at height {}, waiting for filter headers",
-            self.progress.current_height()
-        );
-
-        Ok(())
-    }
-
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        if self.state() != SyncState::WaitingForConnections {
-            tracing::warn!("{} sync already started.", self.identifier());
-            return Ok(vec![]);
-        }
+        self.ensure_not_started()?;
 
         // Check if there are already stored filters we need to process
         // This handles restart where filters are persisted but wallet state isn't

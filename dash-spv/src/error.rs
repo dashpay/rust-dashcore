@@ -1,5 +1,6 @@
 //! Error types for the Dash SPV client.
 
+use crate::sync::ManagerIdentifier;
 use std::io;
 use thiserror::Error;
 
@@ -198,8 +199,8 @@ pub enum SyncError {
 
     /// Indicates an invalid state in the sync process (e.g., unexpected phase transitions)
     /// Use this for sync state machine errors, not validation errors
-    #[error("Invalid sync state: {0}")]
-    InvalidState(String),
+    #[error("Invalid sync state: {0} - {1}")]
+    InvalidState(ManagerIdentifier, String),
 
     /// Indicates a missing dependency required for sync (e.g., missing previous block)
     #[error("Missing dependency: {0}")]
@@ -236,7 +237,7 @@ impl SyncError {
     /// Returns a static string representing the error category based on the variant
     pub fn category(&self) -> &'static str {
         match self {
-            SyncError::SyncInProgress | SyncError::InvalidState(_) => "state",
+            SyncError::SyncInProgress | SyncError::InvalidState(_, _) => "state",
             SyncError::Timeout(_) => "timeout",
             SyncError::Validation(_) => "validation",
             SyncError::MissingDependency(_) => "dependency",
@@ -335,7 +336,10 @@ mod tests {
 
         // Test existing variant categories
         assert_eq!(SyncError::SyncInProgress.category(), "state");
-        assert_eq!(SyncError::InvalidState("test".to_string()).category(), "state");
+        assert_eq!(
+            SyncError::InvalidState(ManagerIdentifier::BlockHeader, "test".to_string()).category(),
+            "state"
+        );
         assert_eq!(SyncError::MissingDependency("test".to_string()).category(), "dependency");
 
         // Test deprecated SyncFailed always returns "unknown"

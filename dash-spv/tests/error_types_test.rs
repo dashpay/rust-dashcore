@@ -11,6 +11,7 @@ use dashcore_hashes::Hash;
 use std::io;
 
 use dash_spv::error::*;
+use dash_spv::sync::ManagerIdentifier;
 
 #[test]
 fn test_network_error_from_io_error() {
@@ -228,9 +229,12 @@ fn test_sync_error_variants_and_categories() {
     let test_cases = vec![
         (SyncError::SyncInProgress, "state", "Sync already in progress"),
         (
-            SyncError::InvalidState("Unexpected phase transition".to_string()),
+            SyncError::InvalidState(
+                ManagerIdentifier::BlockHeader,
+                "Unexpected phase transition".to_string(),
+            ),
             "state",
-            "Invalid sync state: Unexpected phase transition",
+            "Invalid sync state: BlockHeader - Unexpected phase transition",
         ),
         (
             SyncError::MissingDependency("Previous block not found".to_string()),

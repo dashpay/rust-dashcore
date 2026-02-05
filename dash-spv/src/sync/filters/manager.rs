@@ -79,14 +79,24 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     FiltersManager<H, FH, F, W>
 {
     /// Create a new filters manager with the given storage references.
-    pub fn new(
+    pub async fn new(
         wallet: Arc<RwLock<W>>,
         header_storage: Arc<RwLock<H>>,
         filter_header_storage: Arc<RwLock<FH>>,
         filter_storage: Arc<RwLock<F>>,
     ) -> Self {
+        let synced_height = wallet.read().await.synced_height();
+
+        // Load block header tip for target display
+        let header_tip =
+            header_storage.read().await.get_tip().await.map(|t| t.height()).unwrap_or(0);
+
+        let mut initial_progress = FiltersProgress::default();
+        initial_progress.update_current_height(synced_height);
+        initial_progress.update_target_height(header_tip);
+
         Self {
-            progress: FiltersProgress::default(),
+            progress: initial_progress,
             header_storage,
             filter_header_storage,
             filter_storage,
@@ -788,13 +798,14 @@ mod tests {
             storage.filter_headers(),
             storage.filters(),
         )
+        .await
     }
 
     #[tokio::test]
     async fn test_filters_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::Filter);
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::CFilter]);
     }
 
