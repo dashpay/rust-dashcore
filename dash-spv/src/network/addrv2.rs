@@ -1,7 +1,7 @@
 //! AddrV2 message handling for modern peer exchange protocol
 
 use rand::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,10 +13,20 @@ use dashcore::network::message::NetworkMessage;
 
 use crate::network::constants::{MAX_ADDR_TO_SEND, MAX_ADDR_TO_STORE};
 
+/// Evict oldest entries if the map exceeds capacity, keeping the freshest addresses.
+fn evict_if_needed(peers: &mut HashMap<SocketAddr, AddrV2Message>) {
+    if peers.len() > MAX_ADDR_TO_STORE {
+        let mut entries: Vec<_> = peers.drain().collect();
+        entries.sort_by_key(|(_, msg)| std::cmp::Reverse(msg.time));
+        entries.truncate(MAX_ADDR_TO_STORE);
+        peers.extend(entries);
+    }
+}
+
 /// Handler for AddrV2 peer exchange protocol
 pub struct AddrV2Handler {
     /// Known peer addresses from AddrV2 messages
-    known_peers: Arc<RwLock<Vec<AddrV2Message>>>,
+    known_peers: Arc<RwLock<HashMap<SocketAddr, AddrV2Message>>>,
     /// Peers that support AddrV2
     supports_addrv2: Arc<RwLock<HashSet<SocketAddr>>>,
 }
@@ -25,7 +35,7 @@ impl AddrV2Handler {
     /// Create a new AddrV2 handler
     pub fn new() -> Self {
         Self {
-            known_peers: Arc::new(RwLock::new(Vec::new())),
+            known_peers: Arc::new(RwLock::new(HashMap::new())),
             supports_addrv2: Arc::new(RwLock::new(HashSet::new())),
         }
     }
@@ -47,8 +57,9 @@ impl AddrV2Handler {
             })
             .as_secs() as u32;
 
-        let _initial_count = known_peers.len();
+        let received = messages.len();
         let mut added = 0;
+        let mut updated = 0;
 
         for msg in messages {
             // Validate timestamp
@@ -58,33 +69,26 @@ impl AddrV2Handler {
                 continue;
             }
 
-            // Only store if we can convert to socket address
-            if msg.socket_addr().is_ok() {
-                known_peers.push(msg);
-                added += 1;
+            let Ok(socket_addr) = msg.socket_addr() else {
+                continue;
+            };
+
+            // Only update if new or has fresher timestamp
+            match known_peers.get(&socket_addr) {
+                Some(existing) if existing.time >= msg.time => continue,
+                Some(_) => updated += 1,
+                None => added += 1,
             }
+            known_peers.insert(socket_addr, msg);
         }
 
-        // Sort by timestamp (newest first) and deduplicate
-        known_peers.sort_by_key(|a| std::cmp::Reverse(a.time));
+        evict_if_needed(&mut known_peers);
 
-        // Deduplicate by socket address
-        let mut seen = HashSet::new();
-        known_peers.retain(|addr| {
-            if let Ok(socket_addr) = addr.socket_addr() {
-                seen.insert(socket_addr)
-            } else {
-                false
-            }
-        });
-
-        // Keep only the most recent addresses
-        known_peers.truncate(MAX_ADDR_TO_STORE);
-
-        let _processed_count = added;
         log::info!(
-            "Processed AddrV2 messages: added {}, total known peers: {}",
+            "Processed AddrV2 messages: received {}, added {}, updated {}, total known peers: {}",
+            received,
             added,
+            updated,
             known_peers.len()
         );
     }
@@ -102,9 +106,8 @@ impl AddrV2Handler {
         let count = count.min(MAX_ADDR_TO_SEND).min(known_peers.len());
 
         let addresses: Vec<AddrV2Message> =
-            known_peers.choose_multiple(&mut rng, count).cloned().collect();
+            known_peers.values().choose_multiple(&mut rng, count).into_iter().cloned().collect();
 
-        log::debug!("Sharing {} addresses with peer", addresses.len());
         addresses
     }
 
@@ -115,7 +118,7 @@ impl AddrV2Handler {
 
     /// Get all known socket addresses
     pub async fn get_known_addresses(&self) -> Vec<AddrV2Message> {
-        self.known_peers.read().await.clone()
+        self.known_peers.read().await.values().cloned().collect()
     }
 
     /// Add a known peer address
@@ -141,13 +144,8 @@ impl AddrV2Handler {
         };
 
         let mut known_peers = self.known_peers.write().await;
-        known_peers.push(addr_msg);
-
-        // Keep size under control
-        if known_peers.len() > MAX_ADDR_TO_STORE {
-            known_peers.sort_by_key(|a| std::cmp::Reverse(a.time));
-            known_peers.truncate(MAX_ADDR_TO_STORE);
-        }
+        known_peers.insert(addr, addr_msg);
+        evict_if_needed(&mut known_peers);
     }
 
     /// Build a GetAddr response message
