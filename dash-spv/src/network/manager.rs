@@ -886,7 +886,7 @@ impl PeerNetworkManager {
 
                 // Only save known peers if not in exclusive mode
                 if !exclusive_mode {
-                    let addresses = addrv2_handler.get_addresses_for_peer(MAX_ADDR_TO_STORE).await;
+                    let addresses = addrv2_handler.get_known_addresses().await;
                     if !addresses.is_empty() {
                         if let Err(e) = peer_store.save_peers(&addresses).await {
                             log::warn!("Failed to save peers: {}", e);
