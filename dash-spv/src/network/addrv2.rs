@@ -13,6 +13,9 @@ use dashcore::network::message::NetworkMessage;
 
 use crate::network::constants::{MAX_ADDR_TO_SEND, MAX_ADDR_TO_STORE};
 
+const ONE_WEEK: u32 = 7 * 24 * 60 * 60;
+const TEN_MINUTES: u32 = 600;
+
 /// Evict oldest entries if the map exceeds capacity, keeping the freshest addresses.
 fn evict_if_needed(peers: &mut HashMap<SocketAddr, AddrV2Message>) {
     if peers.len() > MAX_ADDR_TO_STORE {
@@ -62,9 +65,9 @@ impl AddrV2Handler {
         let mut updated = 0;
 
         for msg in messages {
-            // Validate timestamp
-            // Accept addresses from up to 3 hours ago and up to 10 minutes in the future
-            if msg.time <= now.saturating_sub(10800) || msg.time > now + 600 {
+            // Accept addresses seen within the last week. Older addresses are likely stale.
+            // Also, reject timestamps more than 10 minutes in the future which are invalid.
+            if msg.time < now.saturating_sub(ONE_WEEK) || msg.time > now + TEN_MINUTES {
                 log::trace!("Ignoring AddrV2 with invalid timestamp: {}", msg.time);
                 continue;
             }
