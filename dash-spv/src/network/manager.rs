@@ -26,7 +26,7 @@ use crate::network::{
 };
 use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
-use dashcore::network::address::AddrV2Message;
+use dashcore::network::address::{AddrV2, AddrV2Message};
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::CompressionState;
@@ -257,6 +257,11 @@ impl PeerNetworkManager {
                         Ok(_) => {
                             log::info!("Successfully connected to {}", addr);
 
+                            // Request addresses from the peer for discovery
+                            if let Err(e) = peer.send_message(NetworkMessage::GetAddr).await {
+                                log::warn!("Failed to send GetAddr to {}: {}", addr, e);
+                            }
+
                             // Record successful connection
                             reputation_manager.record_successful_connection(addr).await;
 
@@ -463,9 +468,32 @@ impl PeerNetworkManager {
                                 );
                                 continue;
                             }
-                            NetworkMessage::Addr(_) => {
-                                // Handle legacy addr messages (convert to AddrV2 if needed)
-                                log::trace!("Received legacy addr message from {}", addr);
+                            NetworkMessage::Addr(addresses) => {
+                                // Convert legacy addr messages to AddrV2 format
+                                let converted: Vec<AddrV2Message> = addresses
+                                    .iter()
+                                    .filter_map(|(time, a)| {
+                                        let socket = a.socket_addr().ok()?;
+                                        let addr_v2 = match socket.ip() {
+                                            std::net::IpAddr::V4(v4) => AddrV2::Ipv4(v4),
+                                            std::net::IpAddr::V6(v6) => AddrV2::Ipv6(v6),
+                                        };
+                                        Some(AddrV2Message {
+                                            time: *time,
+                                            services: a.services,
+                                            addr: addr_v2,
+                                            port: socket.port(),
+                                        })
+                                    })
+                                    .collect();
+                                if !converted.is_empty() {
+                                    log::debug!(
+                                        "Converted {} legacy addr entries from {}",
+                                        converted.len(),
+                                        addr
+                                    );
+                                    addrv2_handler.handle_addrv2(converted).await;
+                                }
                                 continue;
                             }
                             NetworkMessage::Headers(headers) => {
