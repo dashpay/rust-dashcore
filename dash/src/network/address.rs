@@ -276,6 +276,22 @@ pub struct AddrV2Message {
 }
 
 impl AddrV2Message {
+    pub fn new(socket_addr: SocketAddr, flags: ServiceFlags) -> Self {
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as u32;
+        let addr_v2 = match socket_addr.ip() {
+            std::net::IpAddr::V4(v4) => AddrV2::Ipv4(v4),
+            std::net::IpAddr::V6(v6) => AddrV2::Ipv6(v6),
+        };
+        Self {
+            time,
+            services: flags,
+            addr: addr_v2,
+            port: socket_addr.port(),
+        }
+    }
     /// Extract socket address from an [AddrV2Message] message.
     /// This will return [io::Error] [io::ErrorKind::AddrNotAvailable]
     /// if the address type can't be converted into a [SocketAddr].

@@ -26,6 +26,7 @@ use crate::network::{
 };
 use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
+use dashcore::network::address::AddrV2Message;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::CompressionState;
@@ -152,7 +153,11 @@ impl PeerNetworkManager {
     pub async fn start(&self) -> Result<(), Error> {
         log::info!("Starting peer network manager for {:?}", self.network);
 
-        let mut peer_addresses = self.initial_peers.clone();
+        let mut peer_addresses: Vec<AddrV2Message> = self
+            .initial_peers
+            .iter()
+            .map(|addr| AddrV2Message::new(*addr, ServiceFlags::NETWORK))
+            .collect();
 
         if self.exclusive_mode {
             log::info!(
@@ -161,7 +166,10 @@ impl PeerNetworkManager {
             );
         } else {
             // Load saved peers from disk
-            let saved_peers = self.peer_store.load_peers().await.unwrap_or_default();
+            let saved_peers = self.peer_store.load_peers().await.unwrap_or_else(|e| {
+                tracing::warn!("Failed to load peers: {}", e);
+                Vec::new()
+            });
             peer_addresses.extend(saved_peers);
 
             // If we still have no peers, immediately discover via DNS
@@ -171,10 +179,16 @@ impl PeerNetworkManager {
                     self.network
                 );
                 let dns_peers = self.discovery.discover_peers(self.network).await;
-                peer_addresses.extend(dns_peers.iter().take(TARGET_PEERS));
+                let dns_peers_found = dns_peers.len();
+                peer_addresses.extend(
+                    dns_peers
+                        .into_iter()
+                        .take(TARGET_PEERS)
+                        .map(|addr| AddrV2Message::new(addr, ServiceFlags::NETWORK)),
+                );
                 log::info!(
                     "DNS discovery found {} peers, using {} for startup",
-                    dns_peers.len(),
+                    dns_peers_found,
                     peer_addresses.len()
                 );
             } else {
@@ -185,15 +199,7 @@ impl PeerNetworkManager {
             }
         }
 
-        // Connect to peers (all in exclusive mode, or up to TARGET_PEERS in normal mode)
-        let max_connections = if self.exclusive_mode {
-            peer_addresses.len()
-        } else {
-            TARGET_PEERS
-        };
-        for addr in peer_addresses.iter().take(max_connections) {
-            self.connect_to_peer(*addr).await;
-        }
+        self.addrv2_handler.handle_addrv2(peer_addresses.clone()).await;
 
         // Start maintenance loop
         self.start_maintenance_loop().await;

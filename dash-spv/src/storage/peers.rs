@@ -22,7 +22,7 @@ pub trait PeerStorage {
         peers: &[dashcore::network::address::AddrV2Message],
     ) -> StorageResult<()>;
 
-    async fn load_peers(&self) -> StorageResult<Vec<SocketAddr>>;
+    async fn load_peers(&self) -> StorageResult<Vec<AddrV2Message>>;
 
     async fn save_peers_reputation(
         &self,
@@ -90,7 +90,7 @@ impl PeerStorage for PersistentPeerStorage {
         Ok(())
     }
 
-    async fn load_peers(&self) -> StorageResult<Vec<SocketAddr>> {
+    async fn load_peers(&self) -> StorageResult<Vec<AddrV2Message>> {
         let peers_file = self.peers_data_file();
 
         if !fs::try_exists(&peers_file).await? {
@@ -121,8 +121,6 @@ impl PeerStorage for PersistentPeerStorage {
         })
         .await
         .map_err(|e| StorageError::ReadFailed(format!("Failed to load peers: {e}")))??;
-
-        let peers = peers.into_iter().filter_map(|p| p.socket_addr().ok()).collect();
 
         Ok(peers)
     }
@@ -190,7 +188,7 @@ mod tests {
 
         let loaded = store.load_peers().await.expect("Failed to load peers in test");
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0], addr);
+        assert_eq!(loaded[0].socket_addr().unwrap(), addr);
     }
 
     #[tokio::test]
