@@ -1,4 +1,5 @@
 use crate::error::{NetworkError, NetworkResult};
+use crate::network::peer::Peer;
 use crate::network::{
     Message, MessageDispatcher, MessageType, NetworkEvent, NetworkManager, NetworkRequest,
     RequestSender,
@@ -8,11 +9,12 @@ use dashcore::network::constants::ServiceFlags;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{
     block::Header as BlockHeader, network::message::NetworkMessage,
-    network::message_blockdata::GetHeadersMessage, BlockHash,
+    network::message_blockdata::GetHeadersMessage, BlockHash, Network,
 };
 use dashcore_hashes::Hash;
 use std::any::Any;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
@@ -188,5 +190,12 @@ impl NetworkManager for MockNetworkManager {
 
     fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {
         self.network_event_sender.subscribe()
+    }
+}
+
+impl Peer {
+    pub fn dummy() -> Self {
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        Peer::new(addr, Duration::from_secs(10), Network::Dash)
     }
 }

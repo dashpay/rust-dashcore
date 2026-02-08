@@ -762,8 +762,9 @@ impl Peer {
         true
     }
 
-    /// Clean up old pending pings that haven't received responses.
-    pub fn cleanup_old_pings(&mut self) {
+    /// Remove pending pings that have timed out.
+    /// Returns `true` if any pings were removed.
+    pub fn remove_expired_pings(&mut self) -> bool {
         const PING_TIMEOUT: Duration = Duration::from_secs(60); // 1 minute timeout for pings
 
         let now = SystemTime::now();
@@ -775,10 +776,13 @@ impl Peer {
             }
         }
 
+        let has_expired = !expired_nonces.is_empty();
         for nonce in expired_nonces {
             self.pending_pings.remove(&nonce);
             tracing::warn!("Ping timeout for {} with nonce {}", self.address, nonce);
         }
+
+        has_expired
     }
 
     /// Get ping/pong statistics.
@@ -826,5 +830,41 @@ impl Peer {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime};
+
+    use super::Peer;
+
+    #[test]
+    fn remove_expired_pings() {
+        let mut peer = Peer::dummy();
+        let now = SystemTime::now();
+        let expired = now - Duration::from_secs(61);
+
+        // No pings at all
+        assert!(!peer.remove_expired_pings());
+
+        // Only recent pings — nothing removed
+        peer.pending_pings.insert(1, now);
+        peer.pending_pings.insert(2, now);
+        assert!(!peer.remove_expired_pings());
+        assert_eq!(peer.pending_pings.len(), 2);
+
+        // Add an expired ping — only it gets removed
+        peer.pending_pings.insert(3, expired);
+        assert!(peer.remove_expired_pings());
+        assert_eq!(peer.pending_pings.len(), 2);
+        assert!(!peer.pending_pings.contains_key(&3));
+
+        // All expired — map ends up empty
+        peer.pending_pings.clear();
+        peer.pending_pings.insert(10, expired);
+        peer.pending_pings.insert(20, expired);
+        assert!(peer.remove_expired_pings());
+        assert!(peer.pending_pings.is_empty());
     }
 }
