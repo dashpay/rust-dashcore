@@ -61,8 +61,9 @@ impl PeerPool {
         Ok(())
     }
 
-    /// Remove a peer from the pool
+    /// Remove a peer from the pool and clear connecting state
     pub async fn remove_peer(&self, addr: &SocketAddr) -> Option<Arc<RwLock<Peer>>> {
+        self.connecting.write().await.remove(addr);
         let removed = self.peers.write().await.remove(addr);
         if removed.is_some() {
             log::info!("Removed peer {}", addr);
