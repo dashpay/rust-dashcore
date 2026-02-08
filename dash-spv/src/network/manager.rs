@@ -762,6 +762,102 @@ impl PeerNetworkManager {
         });
     }
 
+    async fn maintenance_tick(&self) {
+        // Clean up disconnected peers
+        self.pool.cleanup_disconnected().await;
+
+        let count = self.pool.peer_count().await;
+        log::debug!("Connected peers: {}", count);
+        // Keep the cached counter in sync with actual pool count
+        self.connected_peer_count.store(count, Ordering::Relaxed);
+        if self.exclusive_mode {
+            // In exclusive mode, only reconnect to originally specified peers
+            for addr in self.initial_peers.iter() {
+                if !self.pool.is_connected(addr).await && !self.pool.is_connecting(addr).await {
+                    log::info!("Reconnecting to exclusive peer: {}", addr);
+                    self.connect_to_peer(*addr).await;
+                }
+            }
+        } else {
+            // Normal mode: try to maintain minimum peer count with discovery
+            if count < TARGET_PEERS {
+                // Try known addresses first, sorted by reputation
+                let known = self.addrv2_handler.get_known_addresses().await;
+                let needed = TARGET_PEERS.saturating_sub(count);
+                // Select best peers based on reputation
+                let best_peers = self.reputation_manager.select_best_peers(known, needed * 2).await;
+                let mut attempted = 0;
+
+                for addr in best_peers {
+                    if !self.pool.is_connected(&addr).await && !self.pool.is_connecting(&addr).await
+                    {
+                        self.connect_to_peer(addr).await;
+                        attempted += 1;
+                        if attempted >= needed {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Send ping to all peers if needed
+        for (addr, peer) in self.pool.get_all_peers().await {
+            let mut peer_guard = peer.write().await;
+            if peer_guard.should_ping() {
+                if let Err(e) = peer_guard.send_ping().await {
+                    log::error!("Failed to ping {}: {}", addr, e);
+                    // Update reputation for ping failure
+                    self.reputation_manager
+                        .update_reputation(addr, misbehavior_scores::TIMEOUT, "Ping failed")
+                        .await;
+                }
+            }
+            peer_guard.cleanup_old_pings();
+        }
+
+        // Only save known peers if not in exclusive mode
+        if !self.exclusive_mode {
+            let addresses = self.addrv2_handler.get_known_addresses().await;
+            if !addresses.is_empty() {
+                if let Err(e) = self.peer_store.save_peers(&addresses).await {
+                    log::warn!("Failed to save peers: {}", e);
+                }
+            }
+
+            // Save reputation data periodically
+            if let Err(e) = self.reputation_manager.save_to_storage(&*self.peer_store).await {
+                log::warn!("Failed to save reputation data: {}", e);
+            }
+        }
+    }
+
+    async fn dns_fallback_tick(&self) {
+        let count = self.pool.peer_count().await;
+        if count >= TARGET_PEERS {
+            return;
+        }
+        let dns_peers = tokio::select! {
+            peers = self.discovery.discover_peers(self.network) => peers,
+            _ = self.shutdown_token.cancelled() => {
+                log::info!("Maintenance loop shutting down during DNS discovery");
+                return
+            }
+        };
+        let needed = TARGET_PEERS.saturating_sub(count);
+        log::debug!("DNS fallback tick found {} addresses. Needed {}", dns_peers.len(), needed);
+        let mut dns_attempted = 0;
+        for addr in dns_peers.iter() {
+            if !self.pool.is_connected(addr).await && !self.pool.is_connecting(addr).await {
+                self.connect_to_peer(*addr).await;
+                dns_attempted += 1;
+                if dns_attempted >= needed {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Start peer connection maintenance loop
     async fn start_maintenance_loop(&self) {
         let this = self.clone();
@@ -771,107 +867,13 @@ impl PeerNetworkManager {
             let mut dns_interval = time::interval(DNS_DISCOVERY_DELAY);
 
             while !this.shutdown_token.is_cancelled() {
-                // Clean up disconnected peers
-                this.pool.cleanup_disconnected().await;
-
-                let count = this.pool.peer_count().await;
-                log::debug!("Connected peers: {}", count);
-                // Keep the cached counter in sync with actual pool count
-                this.connected_peer_count.store(count, Ordering::Relaxed);
-                if this.exclusive_mode {
-                    // In exclusive mode, only reconnect to originally specified peers
-                    for addr in this.initial_peers.iter() {
-                        if !this.pool.is_connected(addr).await
-                            && !this.pool.is_connecting(addr).await
-                        {
-                            log::info!("Reconnecting to exclusive peer: {}", addr);
-                            this.connect_to_peer(*addr).await;
-                        }
-                    }
-                } else {
-                    // Normal mode: try to maintain minimum peer count with discovery
-                    if count < TARGET_PEERS {
-                        // Try known addresses first, sorted by reputation
-                        let known = this.addrv2_handler.get_known_addresses().await;
-                        let needed = TARGET_PEERS.saturating_sub(count);
-                        // Select best peers based on reputation
-                        let best_peers =
-                            this.reputation_manager.select_best_peers(known, needed * 2).await;
-                        let mut attempted = 0;
-
-                        for addr in best_peers {
-                            if !this.pool.is_connected(&addr).await
-                                && !this.pool.is_connecting(&addr).await
-                            {
-                                this.connect_to_peer(addr).await;
-                                attempted += 1;
-                                if attempted >= needed {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Send ping to all peers if needed
-                for (addr, peer) in this.pool.get_all_peers().await {
-                    let mut peer_guard = peer.write().await;
-                    if peer_guard.should_ping() {
-                        if let Err(e) = peer_guard.send_ping().await {
-                            log::error!("Failed to ping {}: {}", addr, e);
-                            // Update reputation for ping failure
-                            this.reputation_manager
-                                .update_reputation(addr, misbehavior_scores::TIMEOUT, "Ping failed")
-                                .await;
-                        }
-                    }
-                    peer_guard.cleanup_old_pings();
-                }
-
-                // Only save known peers if not in exclusive mode
-                if !this.exclusive_mode {
-                    let addresses =
-                        this.addrv2_handler.get_known_addresses().await;
-                    if !addresses.is_empty() {
-                        if let Err(e) = this.peer_store.save_peers(&addresses).await {
-                            log::warn!("Failed to save peers: {}", e);
-                        }
-                    }
-
-                    // Save reputation data periodically
-                    if let Err(e) = this.reputation_manager.save_to_storage(&*this.peer_store).await
-                    {
-                        log::warn!("Failed to save reputation data: {}", e);
-                    }
-                }
-
                 tokio::select! {
                     _ = time::sleep(MAINTENANCE_INTERVAL) => {
                         log::debug!("Maintenance interval elapsed");
+                        this.maintenance_tick().await;
                     }
                     _ = dns_interval.tick(), if !this.exclusive_mode => {
-                        let count = this.pool.peer_count().await;
-                        if count >= TARGET_PEERS {
-                            continue;
-                        }
-                        let dns_peers = tokio::select! {
-                            peers = this.discovery.discover_peers(this.network) => peers,
-                            _ = this.shutdown_token.cancelled() => {
-                                log::info!("Maintenance loop shutting down during DNS discovery");
-                                break;
-                            }
-                        };
-                        let needed = TARGET_PEERS.saturating_sub(count);
-                        let mut dns_attempted = 0;
-                        for addr in dns_peers.iter() {
-                            if !this.pool.is_connected(addr).await && !this.pool.is_connecting(addr).await {
-                                this.connect_to_peer(*addr).await;
-                                dns_attempted += 1;
-                                if dns_attempted >= needed {
-                                    break;
-                                }
-                            }
-                        }
+                        this.dns_fallback_tick().await;
                     }
                     _ = this.shutdown_token.cancelled() => {
                         log::info!("Maintenance loop shutting down");
