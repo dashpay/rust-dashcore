@@ -260,6 +260,20 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(items)
     }
 
+    /// Get a single item by height. Returns `None` for sentinel (empty) slots.
+    /// Unlike `get_items()`, this does not assert dense storage — safe for sparse data.
+    pub async fn get_item(&mut self, height: u32) -> StorageResult<Option<I>> {
+        let segment_id = Self::height_to_segment_id(height);
+        let offset = Self::height_to_offset(height);
+        let segment = self.get_segment_mut(&segment_id).await?;
+        let item = segment.get_single(offset);
+        if *item == I::sentinel() {
+            Ok(None)
+        } else {
+            Ok(Some(item.clone()))
+        }
+    }
+
     pub async fn store_items(&mut self, items: &[I]) -> StorageResult<()> {
         self.store_items_at_height(items, self.next_height()).await
     }
@@ -477,6 +491,12 @@ impl<I: Persistable> Segment<I> {
 
         self.state = SegmentState::Dirty;
         self.last_accessed = std::time::Instant::now();
+    }
+
+    /// Get a single item by offset, returning the raw value (may be a sentinel).
+    pub fn get_single(&mut self, offset: u32) -> &I {
+        self.last_accessed = Instant::now();
+        &self.items[offset as usize]
     }
 
     pub fn get(&mut self, range: Range<u32>) -> &[I] {

@@ -1,10 +1,9 @@
 //! Block storage for persisting full blocks that contain wallet-relevant transactions.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::error::StorageResult;
-use crate::storage::segments::{Persistable, SegmentCache};
+use crate::storage::segments::SegmentCache;
 use crate::storage::PersistentStorage;
 use crate::types::HashedBlock;
 use async_trait::async_trait;
@@ -29,9 +28,6 @@ pub trait BlockStorage: Send + Sync + 'static {
 pub struct PersistentBlockStorage {
     /// Block storage segments.
     blocks: RwLock<SegmentCache<HashedBlock>>,
-    /// Set of available block heights used for fast lookups and to bypass sentinel loading and gap
-    /// detection asserts (in debug builds) in the underlying segment implementation.
-    available_heights: HashSet<CoreBlockHeight>,
 }
 
 impl PersistentBlockStorage {
@@ -46,24 +42,10 @@ impl PersistentStorage for PersistentBlockStorage {
 
         tracing::debug!("Opening PersistentBlockStorage from {:?}", blocks_folder);
 
-        let mut blocks: SegmentCache<HashedBlock> =
-            SegmentCache::load_or_new(&blocks_folder).await?;
-
-        let mut available_heights = HashSet::new();
-
-        if let (Some(start), Some(end)) = (blocks.start_height(), blocks.tip_height()) {
-            let hashed_blocks = blocks.get_items(start..end + 1).await?;
-            let sentinel = HashedBlock::sentinel();
-            for (i, hashed_block) in hashed_blocks.iter().enumerate() {
-                if hashed_block != &sentinel {
-                    available_heights.insert(start + i as CoreBlockHeight);
-                }
-            }
-        }
+        let blocks: SegmentCache<HashedBlock> = SegmentCache::load_or_new(&blocks_folder).await?;
 
         Ok(Self {
             blocks: RwLock::new(blocks),
-            available_heights,
         })
     }
 
@@ -78,17 +60,11 @@ impl PersistentStorage for PersistentBlockStorage {
 #[async_trait]
 impl BlockStorage for PersistentBlockStorage {
     async fn store_block(&mut self, height: u32, hashed_block: HashedBlock) -> StorageResult<()> {
-        self.available_heights.insert(height);
         self.blocks.write().await.store_items_at_height(&[hashed_block], height).await
     }
 
     async fn load_block(&self, height: u32) -> StorageResult<Option<HashedBlock>> {
-        // This early return avoids unnecessary disk lookups and bypasses sentinel loading and gap
-        // detection asserts (in debug builds) in the underlying segment implementation.
-        if !self.available_heights.contains(&height) {
-            return Ok(None);
-        }
-        Ok(self.blocks.write().await.get_items(height..height + 1).await?.first().cloned())
+        self.blocks.write().await.get_item(height).await
     }
 }
 
