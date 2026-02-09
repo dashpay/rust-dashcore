@@ -138,8 +138,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
             self.progress.block_header_tip_height()
         );
 
-        // Track checkpoint start height for storing prev header on first batch
-        if start_height > 0 {
+        // Track checkpoint start height for storing prev header on first batch.
+        // Only needed on fresh checkpoint sync (no existing filter headers).
+        // On resume, start_height-1 is already stored so re-inserting would panic in debug builds.
+        if start_height > 0 && filter_headers_tip == 0 {
             self.checkpoint_start_height = Some(start_height);
         }
 
