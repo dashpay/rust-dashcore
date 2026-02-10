@@ -866,7 +866,7 @@ impl PeerNetworkManager {
             let mut dns_interval = time::interval_at(Instant::now() + DNS_DISCOVERY_DELAY, DNS_DISCOVERY_DELAY);
             // Periodic reconnection check (active in both modes)
             let mut maintenance_interval = time::interval(MAINTENANCE_INTERVAL);
-
+            let mut network_events = this.network_event_sender.subscribe();
             while !this.shutdown_token.is_cancelled() {
                 tokio::select! {
                     _ = maintenance_interval.tick() => {
@@ -875,6 +875,19 @@ impl PeerNetworkManager {
                     }
                     _ = dns_interval.tick(), if !this.exclusive_mode => {
                         this.dns_fallback_tick().await;
+                    }
+                    event = network_events.recv() => {
+                        match event {
+                            Ok(event) => {
+                                log::debug!("Network event in maintenance loop: {}", event.description());
+                                dns_interval.reset();
+                                this.maintenance_tick().await;
+                            }
+                            Err(error) => {
+                                tracing::error!("Network event error: {}", error);
+                                break;
+                            }
+                        }
                     }
                     _ = this.shutdown_token.cancelled() => {
                         log::info!("Maintenance loop shutting down");
