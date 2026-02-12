@@ -1,3 +1,4 @@
+use crate::sync::progress::ProgressPercentage;
 use crate::sync::SyncState;
 use std::fmt;
 use std::time::Instant;
@@ -8,7 +9,7 @@ pub struct BlockHeadersProgress {
     /// Current sync state.
     state: SyncState,
     /// The tip height of the block-header storage.
-    current_height: u32,
+    tip_height: u32,
     /// Equals to current_height (blockchain tip) when synced and to the best height of connected peers during initial sync.
     target_height: u32,
     /// Number of block-headers processed (stored) in the current sync session.
@@ -23,7 +24,7 @@ impl Default for BlockHeadersProgress {
     fn default() -> Self {
         Self {
             state: SyncState::default(),
-            current_height: 0,
+            tip_height: 0,
             target_height: 0,
             processed: 0,
             buffered: 0,
@@ -33,34 +34,17 @@ impl Default for BlockHeadersProgress {
 }
 
 impl BlockHeadersProgress {
-    /// Get completion percentage (0.0 to 1.0).
-    /// Includes buffered headers for more accurate progress during parallel sync.
-    pub fn percentage(&self) -> f64 {
-        if self.target_height == 0 {
-            return 1.0;
-        }
-        // Include buffered headers in progress calculation
-        (self.effective_height() as f64 / self.target_height as f64).min(1.0)
-    }
     /// Get the current sync state.
     pub fn state(&self) -> SyncState {
         self.state
     }
     /// Get the current height (last successfully processed height).
-    pub fn current_height(&self) -> u32 {
-        self.current_height
-    }
-    /// Get the target height (the best height of the connected peers)
-    pub fn target_height(&self) -> u32 {
-        self.target_height
+    pub fn tip_height(&self) -> u32 {
+        self.tip_height
     }
     /// Number of block-headers processed (stored) in the current sync session.
     pub fn processed(&self) -> u32 {
         self.processed
-    }
-    /// Get the effective height (current_height + buffered).
-    pub fn effective_height(&self) -> u32 {
-        self.current_height + self.buffered
     }
     /// The last time a block-header was stored to disk or the last manager state change.
     pub fn last_activity(&self) -> Instant {
@@ -71,9 +55,9 @@ impl BlockHeadersProgress {
         self.state = state;
         self.bump_last_activity();
     }
-    /// Update the current height (last successfully processed height).
-    pub fn update_current_height(&mut self, height: u32) {
-        self.current_height = height;
+    /// Update the tip height (last successfully processed height).
+    pub fn update_tip_height(&mut self, height: u32) {
+        self.tip_height = height;
         self.bump_last_activity();
     }
     /// Update the target height (the best height of the connected peers).
@@ -110,12 +94,23 @@ impl fmt::Display for BlockHeadersProgress {
             f,
             "{:?} {}/{} ({:.1}%) processed: {}, buffered: {}, last_activity: {}s",
             self.state,
-            self.effective_height(),
+            self.current_height(),
             self.target_height,
             pct,
             self.processed,
             self.buffered,
             self.last_activity.elapsed().as_secs()
         )
+    }
+}
+
+impl ProgressPercentage for BlockHeadersProgress {
+    fn target_height(&self) -> u32 {
+        self.target_height
+    }
+    fn current_height(&self) -> u32 {
+        // Use the effective height here for the progress to show more realistic values since
+        // we download headers in parallel and the tip height is only updated when sequential segments complete.
+        self.tip_height + self.buffered
     }
 }

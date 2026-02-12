@@ -1,7 +1,7 @@
+use crate::sync::progress::ProgressPercentage;
+use crate::sync::SyncState;
 use std::fmt;
 use std::time::Instant;
-
-use crate::sync::SyncState;
 
 /// Progress for filter-header synchronization.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,30 +34,10 @@ impl Default for FilterHeadersProgress {
 }
 
 impl FilterHeadersProgress {
-    /// Get completion percentage (0.0 to 1.0).
-    /// Uses target_height (peer's best height) for accurate progress display.
-    pub fn percentage(&self) -> f64 {
-        if self.target_height == 0 {
-            return 1.0;
-        }
-        (self.current_height as f64 / self.target_height as f64).min(1.0)
-    }
-
     /// Get the current sync state.
     pub fn state(&self) -> SyncState {
         self.state
     }
-
-    /// Get the current height (last successfully processed filter-header height).
-    pub fn current_height(&self) -> u32 {
-        self.current_height
-    }
-
-    /// Get the target height (peer's best height, for progress display).
-    pub fn target_height(&self) -> u32 {
-        self.target_height
-    }
-
     /// Get the block-header tip height (the download limit for filter headers).
     pub fn block_header_tip_height(&self) -> u32 {
         self.block_header_tip_height
@@ -125,5 +105,14 @@ impl fmt::Display for FilterHeadersProgress {
             self.processed,
             self.last_activity.elapsed().as_secs()
         )
+    }
+}
+
+impl ProgressPercentage for FilterHeadersProgress {
+    fn target_height(&self) -> u32 {
+        self.target_height
+    }
+    fn current_height(&self) -> u32 {
+        self.current_height
     }
 }

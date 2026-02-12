@@ -49,7 +49,7 @@ mod tests {
 
         let mut headers = BlockHeadersProgress::default();
         headers.set_state(SyncState::Syncing);
-        headers.update_current_height(100);
+        headers.update_tip_height(100);
         headers.update_target_height(200);
         headers.add_processed(20);
         headers.update_buffered(5);
@@ -116,7 +116,7 @@ mod tests {
         unsafe {
             let headers = &*ffi_progress.headers;
             assert_eq!(headers.state, FFISyncState::Syncing);
-            assert_eq!(headers.current_height, 100);
+            assert_eq!(headers.tip_height, 100);
             assert_eq!(headers.target_height, 200);
             assert_eq!(headers.processed, 20);
             assert_eq!(headers.buffered, 5);

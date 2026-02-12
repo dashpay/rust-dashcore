@@ -13,6 +13,7 @@ use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage};
 use crate::sync::filter_headers::util::compute_filter_headers;
+use crate::sync::progress::ProgressPercentage;
 use crate::sync::{FilterHeadersProgress, SyncEvent, SyncManager, SyncState};
 
 /// Filter headers manager for downloading compact block filter headers.

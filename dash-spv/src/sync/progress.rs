@@ -3,6 +3,7 @@ use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
     FiltersProgress, InstantSendProgress, MasternodesProgress,
 };
+use dashcore::prelude::CoreBlockHeight;
 use std::fmt;
 
 /// Overall state of the parallel sync system.
@@ -230,5 +231,21 @@ impl fmt::Display for SyncProgress {
             writeln!(f, "  InstantSend:    {}", i)?;
         }
         Ok(())
+    }
+}
+
+/// A trait that provides methods for calculating progress as a percentage from a current height
+/// towards a target height.
+pub trait ProgressPercentage {
+    /// Get the target height used for calculating progress.
+    fn target_height(&self) -> CoreBlockHeight;
+    /// Get the current height used for calculating progress.
+    fn current_height(&self) -> CoreBlockHeight;
+    /// Get completion percentage (0.0 to 1.0).
+    fn percentage(&self) -> f64 {
+        if self.target_height() == 0 {
+            return 0.0;
+        }
+        (self.current_height() as f64 / self.target_height() as f64).min(1.0)
     }
 }

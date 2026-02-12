@@ -1,7 +1,8 @@
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
-    FiltersProgress, InstantSendProgress, MasternodesProgress, SyncProgress, SyncState,
+    FiltersProgress, InstantSendProgress, MasternodesProgress, ProgressPercentage, SyncProgress,
+    SyncState,
 };
 use dash_spv::types::MempoolRemovalReason;
 use std::ffi::{CStr, CString};
@@ -76,7 +77,7 @@ impl From<SyncState> for FFISyncState {
 #[derive(Debug, Clone, Default)]
 pub struct FFIBlockHeadersProgress {
     pub state: FFISyncState,
-    pub current_height: u32,
+    pub tip_height: u32,
     pub target_height: u32,
     pub processed: u32,
     pub buffered: u32,
@@ -88,7 +89,7 @@ impl From<&BlockHeadersProgress> for FFIBlockHeadersProgress {
     fn from(progress: &BlockHeadersProgress) -> Self {
         FFIBlockHeadersProgress {
             state: progress.state().into(),
-            current_height: progress.current_height(),
+            tip_height: progress.tip_height(),
             target_height: progress.target_height(),
             processed: progress.processed(),
             buffered: progress.buffered(),

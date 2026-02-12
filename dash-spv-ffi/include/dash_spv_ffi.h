@@ -59,7 +59,7 @@ typedef struct FFIClientConfig {
  */
 typedef struct FFIBlockHeadersProgress {
   enum FFISyncState state;
-  uint32_t current_height;
+  uint32_t tip_height;
   uint32_t target_height;
   uint32_t processed;
   uint32_t buffered;

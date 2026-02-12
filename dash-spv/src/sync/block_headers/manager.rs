@@ -15,7 +15,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
 use crate::sync::block_headers::HeadersPipeline;
-use crate::sync::{BlockHeadersProgress, SyncEvent, SyncManager, SyncState};
+use crate::sync::{BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState};
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
 use dashcore::block::Header;
@@ -83,7 +83,7 @@ impl<H: BlockHeaderStorage> BlockHeadersManager<H> {
         let tip = self.tip().await?;
 
         // Update state
-        self.progress.update_current_height(tip.height());
+        self.progress.update_tip_height(tip.height());
         self.progress.add_processed(headers.len() as u32);
 
         Ok(tip)
@@ -243,14 +243,14 @@ mod tests {
     #[tokio::test]
     async fn test_headers_manager_progress() {
         let mut manager = create_test_manager().await;
-        manager.progress.update_current_height(100);
+        manager.progress.update_tip_height(100);
         manager.progress.update_target_height(200);
         manager.progress.add_processed(50);
 
         let progress = manager.progress();
         if let SyncManagerProgress::BlockHeaders(progress) = progress {
             assert_eq!(progress.state(), SyncState::Initializing);
-            assert_eq!(progress.current_height(), 100);
+            assert_eq!(progress.tip_height(), 100);
             assert_eq!(progress.target_height(), 200);
             assert_eq!(progress.processed(), 50);
             assert!(progress.last_activity().elapsed().as_secs() < 1);
