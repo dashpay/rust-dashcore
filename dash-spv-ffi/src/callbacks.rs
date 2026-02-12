@@ -575,6 +575,48 @@ impl Default for FFIWalletEventCallbacks {
     }
 }
 
+// ============================================================================
+// FFIClientErrorCallback - Fatal client-level errors
+// ============================================================================
+
+/// Callback for fatal client errors (e.g. start failure, monitor thread crash).
+///
+/// The `error` string pointer is borrowed and only valid for the duration
+/// of the callback. Callers must copy the string if they need to retain it
+/// after the callback returns.
+pub type OnClientErrorCallback =
+    Option<extern "C" fn(error: *const c_char, user_data: *mut c_void)>;
+
+/// Client error callback configuration.
+#[repr(C)]
+#[derive(Clone)]
+pub struct FFIClientErrorCallback {
+    pub on_error: OnClientErrorCallback,
+    pub user_data: *mut c_void,
+}
+
+unsafe impl Send for FFIClientErrorCallback {}
+unsafe impl Sync for FFIClientErrorCallback {}
+
+impl Default for FFIClientErrorCallback {
+    fn default() -> Self {
+        Self {
+            on_error: None,
+            user_data: std::ptr::null_mut(),
+        }
+    }
+}
+
+impl FFIClientErrorCallback {
+    /// Dispatch a client error to the callback.
+    pub fn dispatch(&self, error: &str) {
+        if let Some(cb) = self.on_error {
+            let c_error = CString::new(error).unwrap_or_default();
+            cb(c_error.as_ptr(), self.user_data);
+        }
+    }
+}
+
 impl FFIWalletEventCallbacks {
     /// Dispatch a WalletEvent to the appropriate callback.
     pub fn dispatch(&self, event: &key_wallet_manager::WalletEvent) {

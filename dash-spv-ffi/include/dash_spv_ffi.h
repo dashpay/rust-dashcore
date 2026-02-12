@@ -434,6 +434,23 @@ typedef struct FFIProgressCallback {
 } FFIProgressCallback;
 
 /**
+ * Callback for fatal client errors (e.g. start failure, monitor thread crash).
+ *
+ * The `error` string pointer is borrowed and only valid for the duration
+ * of the callback. Callers must copy the string if they need to retain it
+ * after the callback returns.
+ */
+typedef void (*OnClientErrorCallback)(const char *error, void *user_data);
+
+/**
+ * Client error callback configuration.
+ */
+typedef struct FFIClientErrorCallback {
+  OnClientErrorCallback on_error;
+  void *user_data;
+} FFIClientErrorCallback;
+
+/**
  * FFIResult type for error handling
  */
 typedef struct FFIResult {
@@ -674,6 +691,27 @@ int32_t dash_spv_ffi_client_set_progress_callback(struct FFIDashSpvClient *clien
  * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
  */
  int32_t dash_spv_ffi_client_clear_progress_callback(struct FFIDashSpvClient *client) ;
+
+/**
+ * Set a callback for fatal client errors (start failure, sync thread crash).
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ * - The `callback` struct and its `user_data` must remain valid until the callback is cleared.
+ * - The callback must be thread-safe as it may be called from a background thread.
+ */
+
+int32_t dash_spv_ffi_client_set_client_error_callback(struct FFIDashSpvClient *client,
+                                                      struct FFIClientErrorCallback callback)
+;
+
+/**
+ * Clear the client error callback.
+ *
+ * # Safety
+ * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+ */
+ int32_t dash_spv_ffi_client_clear_client_error_callback(struct FFIDashSpvClient *client) ;
 
  struct FFIClientConfig *dash_spv_ffi_config_new(FFINetwork network) ;
 

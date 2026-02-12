@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 47
+**Total Functions**: 49
 
 ## Table of Contents
 
@@ -93,12 +93,14 @@ Functions: 2
 
 ### Event Callbacks
 
-Functions: 4
+Functions: 6
 
 | Function | Description | Module |
 |----------|-------------|--------|
+| `dash_spv_ffi_client_clear_client_error_callback` | Clear the client error callback | client |
 | `dash_spv_ffi_client_clear_network_event_callbacks` | Clear network event callbacks | client |
 | `dash_spv_ffi_client_clear_progress_callback` | Clear progress callback | client |
+| `dash_spv_ffi_client_set_client_error_callback` | Set a callback for fatal client errors (start failure, sync thread crash) | client |
 | `dash_spv_ffi_client_set_network_event_callbacks` | Set network event callbacks for push-based event notifications | client |
 | `dash_spv_ffi_client_set_progress_callback` | Set progress callback for sync progress updates | client |
 
@@ -592,6 +594,22 @@ This function is unsafe because: - The caller must ensure all pointers are valid
 
 ### Event Callbacks - Detailed
 
+#### `dash_spv_ffi_client_clear_client_error_callback`
+
+```c
+dash_spv_ffi_client_clear_client_error_callback(client: *mut FFIDashSpvClient,) -> i32
+```
+
+**Description:**
+Clear the client error callback.  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+
+**Safety:**
+- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+
+**Module:** `client`
+
+---
+
 #### `dash_spv_ffi_client_clear_network_event_callbacks`
 
 ```c
@@ -619,6 +637,22 @@ Clear progress callback.  # Safety - `client` must be a valid, non-null pointer 
 
 **Safety:**
 - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+
+**Module:** `client`
+
+---
+
+#### `dash_spv_ffi_client_set_client_error_callback`
+
+```c
+dash_spv_ffi_client_set_client_error_callback(client: *mut FFIDashSpvClient, callback: FFIClientErrorCallback,) -> i32
+```
+
+**Description:**
+Set a callback for fatal client errors (start failure, sync thread crash).  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callback` struct and its `user_data` must remain valid until the callback is cleared. - The callback must be thread-safe as it may be called from a background thread.
+
+**Safety:**
+- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callback` struct and its `user_data` must remain valid until the callback is cleared. - The callback must be thread-safe as it may be called from a background thread.
 
 **Module:** `client`
 

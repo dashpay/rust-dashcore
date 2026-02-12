@@ -236,9 +236,11 @@ where
                 }
                 Ok(Err(e)) => {
                     tracing::error!("Manager task failed: {}", e);
+                    return Err(e);
                 }
                 Err(e) => {
                     tracing::error!("Manager task panicked: {}", e);
+                    return Err(SyncError::InvalidState(format!("Manager task panicked: {}", e)));
                 }
             }
         }
