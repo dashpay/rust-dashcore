@@ -19,7 +19,7 @@ use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::{
     PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
-    PersistentFilterStorage, StorageManager,
+    PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
 };
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
@@ -57,6 +57,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             PersistentFilterHeaderStorage,
             PersistentFilterStorage,
             PersistentBlockStorage,
+            PersistentMetadataStorage,
             W,
         > = Managers::default();
 
@@ -94,6 +95,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             ));
             managers.chainlock = Some(ChainLockManager::new(
                 storage.block_headers(),
+                storage.metadata(),
                 masternode_list_engine.clone(),
             ));
             managers.instantsend = Some(InstantSendManager::new(masternode_list_engine.clone()));

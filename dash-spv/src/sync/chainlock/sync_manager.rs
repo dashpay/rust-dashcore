@@ -1,6 +1,6 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
-use crate::storage::BlockHeaderStorage;
+use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::{
     ChainLockManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
@@ -9,7 +9,7 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 
 #[async_trait]
-impl<H: BlockHeaderStorage> SyncManager for ChainLockManager<H> {
+impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager<H, M> {
     fn identifier(&self) -> ManagerIdentifier {
         ManagerIdentifier::ChainLock
     }
@@ -24,6 +24,13 @@ impl<H: BlockHeaderStorage> SyncManager for ChainLockManager<H> {
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
         &[MessageType::CLSig, MessageType::Inv]
+    }
+
+    async fn initialize(&mut self) -> SyncResult<()> {
+        self.load_best_chainlock().await;
+        self.set_state(SyncState::WaitingForConnections);
+        tracing::info!("{} initialized", self.identifier());
+        Ok(())
     }
 
     async fn handle_message(

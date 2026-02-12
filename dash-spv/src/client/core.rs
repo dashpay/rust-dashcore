@@ -18,7 +18,7 @@ use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::{
     PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
-    PersistentFilterStorage, StorageManager,
+    PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
 };
 use crate::sync::SyncCoordinator;
 use crate::types::MempoolState;
@@ -107,6 +107,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
         PersistentFilterHeaderStorage,
         PersistentFilterStorage,
         PersistentBlockStorage,
+        PersistentMetadataStorage,
         W,
     >,
     pub(super) running: Arc<RwLock<bool>>,
