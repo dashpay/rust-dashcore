@@ -2,7 +2,8 @@ use crate::error::SyncResult;
 use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
 use crate::storage::BlockHeaderStorage;
 use crate::sync::{
-    BlockHeadersManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
+    BlockHeadersManager, ManagerIdentifier, ProgressPercentage, SyncEvent, SyncManager,
+    SyncManagerProgress, SyncState,
 };
 use crate::SyncError;
 use async_trait::async_trait;
@@ -45,7 +46,7 @@ impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
             .ok_or_else(|| SyncError::MissingDependency("No tip in storage".to_string()))?;
 
         self.progress.set_state(SyncState::WaitingForConnections);
-        self.progress.update_current_height(tip.height());
+        self.progress.update_tip_height(tip.height());
         self.progress.update_target_height(tip.height());
 
         tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
@@ -182,13 +183,13 @@ impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
                 // When already synced but behind peer height, request missing headers
                 if self.state() == SyncState::Synced {
                     if let Some(best_height) = best_height {
-                        if *best_height > self.progress.current_height()
+                        if *best_height > self.progress.tip_height()
                             && !self.pipeline.tip_segment_has_pending_request()
                         {
                             tracing::info!(
                                 "Peer height {} > our height {}, requesting headers to catch up",
                                 best_height,
-                                self.progress.current_height()
+                                self.progress.tip_height()
                             );
                             // Reset tip segment and send requests via pipeline
                             self.pipeline.reset_tip_segment();

@@ -24,6 +24,6 @@ pub use masternodes::{MasternodesManager, MasternodesProgress};
 
 pub use events::SyncEvent;
 pub use identifier::ManagerIdentifier;
-pub use progress::{SyncProgress, SyncState};
+pub use progress::{ProgressPercentage, SyncProgress, SyncState};
 pub use sync_coordinator::{Managers, SyncCoordinator};
 pub use sync_manager::{SyncManager, SyncManagerProgress, SyncManagerTaskContext};

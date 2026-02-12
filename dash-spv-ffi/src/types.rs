@@ -1,7 +1,8 @@
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
-    FiltersProgress, InstantSendProgress, MasternodesProgress, SyncProgress, SyncState,
+    FiltersProgress, InstantSendProgress, MasternodesProgress, ProgressPercentage, SyncProgress,
+    SyncState,
 };
 use dash_spv::types::MempoolRemovalReason;
 use std::ffi::{CStr, CString};

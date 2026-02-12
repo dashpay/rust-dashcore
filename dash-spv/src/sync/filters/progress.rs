@@ -1,3 +1,4 @@
+use crate::sync::progress::ProgressPercentage;
 use crate::sync::SyncState;
 use std::fmt;
 use std::time::Instant;
@@ -40,28 +41,9 @@ impl Default for FiltersProgress {
 }
 
 impl FiltersProgress {
-    /// Get completion percentage (0.0 to 1.0).
-    /// Uses target_height (peer's best height) for accurate progress display.
-    pub fn percentage(&self) -> f64 {
-        if self.target_height == 0 {
-            return 1.0;
-        }
-        (self.current_height as f64 / self.target_height as f64).min(1.0)
-    }
-
     /// Get the current sync state.
     pub fn state(&self) -> SyncState {
         self.state
-    }
-
-    /// Get the current height (last successfully processed height).
-    pub fn current_height(&self) -> u32 {
-        self.current_height
-    }
-
-    /// Get the target height (peer's best height, for progress display).
-    pub fn target_height(&self) -> u32 {
-        self.target_height
     }
 
     /// Get the filter header tip height (the download limit for filters).
@@ -155,5 +137,14 @@ impl fmt::Display for FiltersProgress {
             self.matched,
             self.last_activity.elapsed().as_secs(),
         )
+    }
+}
+
+impl ProgressPercentage for FiltersProgress {
+    fn target_height(&self) -> u32 {
+        self.target_height
+    }
+    fn current_height(&self) -> u32 {
+        self.current_height
     }
 }

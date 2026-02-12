@@ -49,7 +49,7 @@ mod tests {
 
         let mut headers = BlockHeadersProgress::default();
         headers.set_state(SyncState::Syncing);
-        headers.update_current_height(100);
+        headers.update_tip_height(100);
         headers.update_target_height(200);
         headers.add_processed(20);
         headers.update_buffered(5);

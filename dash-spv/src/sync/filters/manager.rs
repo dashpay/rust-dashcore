@@ -19,6 +19,7 @@ use crate::sync::filters::util::get_prev_filter_header;
 use crate::sync::{FiltersProgress, SyncEvent, SyncManager, SyncState};
 use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 
+use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
 use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::{check_compact_filters_for_addresses, FilterMatchKey};
