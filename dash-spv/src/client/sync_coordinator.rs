@@ -39,46 +39,59 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let mut sync_coordinator_tick_interval = tokio::time::interval(SYNC_COORDINATOR_TICK_MS);
         let mut progress_updates = self.sync_coordinator.subscribe_progress();
 
-        loop {
+        let error = loop {
             // Check if we should stop
             let running = self.running.read().await;
             if !*running {
                 tracing::info!("Stopping network monitoring");
-                break;
+                break None;
             }
             drop(running);
 
-            tokio::select! {
+            let error = tokio::select! {
                 received = command_receiver.recv() => {
                     match received {
-                    None => {tracing::warn!("DashSpvClientCommand channel closed.");},
-                    Some(command) => {
-                            self.handle_command(command).await.unwrap_or_else(|e| tracing::error!("Failed to handle command: {}", e));
+                        None => {
+                            tracing::warn!("DashSpvClientCommand channel closed.");
+                            break None
+                        }
+                        Some(command) => self.handle_command(command).await.err(),
+                    }
+                }
+                result = progress_updates.changed() => {
+                    match result {
+                        Ok(()) => {
+                            tracing::info!("Sync progress:{}", *progress_updates.borrow());
+                            None
+                        }
+                        Err(_) => {
+                            tracing::warn!("Progress channel closed.");
+                            break None
                         }
                     }
                 }
-                _ = progress_updates.changed() => {
-                    tracing::info!("Sync progress:{}", *progress_updates.borrow());
-                }
                 _ = sync_coordinator_tick_interval.tick() => {
-                    // Tick the sync coordinator to aggregate progress
-                    if let Err(e) = self.sync_coordinator.tick().await {
-                        tracing::warn!("Sync coordinator tick error: {}", e);
-                    }
+                    self.sync_coordinator.tick().await.err().map(Into::into)
                 }
                 _ = token.cancelled() => {
                     tracing::debug!("DashSpvClient run loop cancelled");
-                    break
+                    break None
                 }
-            }
-        }
+            };
 
-        // Shutdown the sync coordinator
+            if error.is_some() {
+                break error;
+            }
+        };
+
         if let Err(e) = self.sync_coordinator.shutdown().await {
             tracing::warn!("Error shutting down sync coordinator: {}", e);
         }
 
-        Ok(())
+        match error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     pub async fn run(

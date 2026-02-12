@@ -9,6 +9,7 @@ mod tests {
     use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
     use std::thread;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -207,6 +208,132 @@ mod tests {
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);
         }
+    }
+
+    #[test]
+    #[serial]
+    fn test_client_error_callback_fires_on_start_failure() {
+        let error_store: StdArc<StdMutex<Option<String>>> = StdArc::new(StdMutex::new(None));
+        let error_store_raw = StdArc::into_raw(error_store.clone());
+
+        extern "C" fn on_error(
+            error: *const std::os::raw::c_char,
+            user_data: *mut std::os::raw::c_void,
+        ) {
+            let store = unsafe { StdArc::from_raw(user_data as *const StdMutex<Option<String>>) };
+            let error_str = unsafe { std::ffi::CStr::from_ptr(error) }.to_str().unwrap().to_owned();
+            *store.lock().unwrap() = Some(error_str);
+            // Leak back to avoid drop — cleaned up via error_store
+            let _ = StdArc::into_raw(store);
+        }
+
+        unsafe {
+            let (config, _temp_dir) = create_test_config_with_dir();
+            let client = dash_spv_ffi_client_new(config);
+            assert!(!client.is_null());
+
+            let callback = FFIClientErrorCallback {
+                on_error: Some(on_error),
+                user_data: error_store_raw as *mut std::os::raw::c_void,
+            };
+            let result = dash_spv_ffi_client_set_client_error_callback(client, callback);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+
+            // Call start() directly on the inner client, then call run which
+            // calls start() again in the sync thread, triggering "already running"
+            let client_ref = &*client;
+            let inner = client_ref.inner.clone();
+            client_ref.runtime.block_on(async {
+                let mut spv_client = inner.lock().unwrap().take().unwrap();
+                spv_client.start().await.unwrap();
+                *inner.lock().unwrap() = Some(spv_client);
+            });
+
+            let _run_result = dash_spv_ffi_client_run(client);
+
+            // Give the sync thread time to start and fail
+            thread::sleep(Duration::from_millis(500));
+
+            let received_error = error_store.lock().unwrap();
+            assert!(
+                received_error.is_some(),
+                "Client error callback should have been called on start failure"
+            );
+            let error_msg = received_error.as_ref().unwrap();
+            assert!(
+                error_msg.contains("already running"),
+                "Expected 'already running' error, got: {}",
+                error_msg
+            );
+
+            // Clean up the leaked Arc
+            drop(received_error);
+            drop(StdArc::from_raw(error_store_raw));
+
+            dash_spv_ffi_client_stop(client);
+            dash_spv_ffi_client_destroy(client);
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_client_error_callback_dispatch() {
+        let error_store: StdArc<StdMutex<Option<String>>> = StdArc::new(StdMutex::new(None));
+        let error_store_raw = StdArc::into_raw(error_store.clone());
+
+        extern "C" fn on_error(
+            error: *const std::os::raw::c_char,
+            user_data: *mut std::os::raw::c_void,
+        ) {
+            assert!(!error.is_null());
+            let store = unsafe { StdArc::from_raw(user_data as *const StdMutex<Option<String>>) };
+            let error_str = unsafe { std::ffi::CStr::from_ptr(error) }.to_str().unwrap().to_owned();
+            *store.lock().unwrap() = Some(error_str);
+            let _ = StdArc::into_raw(store);
+        }
+
+        let callback = FFIClientErrorCallback {
+            on_error: Some(on_error),
+            user_data: error_store_raw as *mut std::os::raw::c_void,
+        };
+
+        callback.dispatch("test error message");
+
+        let received = error_store.lock().unwrap();
+        assert_eq!(received.as_deref(), Some("test error message"));
+        drop(received);
+
+        unsafe { drop(StdArc::from_raw(error_store_raw)) };
+    }
+
+    #[test]
+    #[serial]
+    fn test_client_error_callback_null_client() {
+        unsafe {
+            let callback = FFIClientErrorCallback {
+                on_error: None,
+                user_data: std::ptr::null_mut(),
+            };
+
+            assert_eq!(
+                dash_spv_ffi_client_set_client_error_callback(std::ptr::null_mut(), callback),
+                FFIErrorCode::NullPointer as i32
+            );
+
+            assert_eq!(
+                dash_spv_ffi_client_clear_client_error_callback(std::ptr::null_mut()),
+                FFIErrorCode::NullPointer as i32
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_client_error_callback_no_callback_set() {
+        // Dispatch with no callback set should not panic
+        let callback = FFIClientErrorCallback::default();
+        callback.dispatch("should not panic");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use crate::{
-    null_check, set_last_error, FFIClientConfig, FFIErrorCode, FFINetworkEventCallbacks,
-    FFIProgressCallback, FFISyncEventCallbacks, FFISyncProgress, FFIWalletEventCallbacks,
-    FFIWalletManager,
+    null_check, set_last_error, FFIClientConfig, FFIClientErrorCallback, FFIErrorCode,
+    FFINetworkEventCallbacks, FFIProgressCallback, FFISyncEventCallbacks, FFISyncProgress,
+    FFIWalletEventCallbacks, FFIWalletManager,
 };
 // Import wallet types from key-wallet-ffi
 use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
@@ -130,6 +130,7 @@ pub struct FFIDashSpvClient {
     network_event_callbacks: Arc<Mutex<Option<FFINetworkEventCallbacks>>>,
     wallet_event_callbacks: Arc<Mutex<Option<FFIWalletEventCallbacks>>>,
     progress_callback: Arc<Mutex<Option<FFIProgressCallback>>>,
+    client_error_callback: Arc<Mutex<Option<FFIClientErrorCallback>>>,
 }
 
 /// Create a new SPV client and return an opaque pointer.
@@ -189,6 +190,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 network_event_callbacks: Arc::new(Mutex::new(None)),
                 wallet_event_callbacks: Arc::new(Mutex::new(None)),
                 progress_callback: Arc::new(Mutex::new(None)),
+                client_error_callback: Arc::new(Mutex::new(None)),
             };
             Box::into_raw(Box::new(ffi_client))
         }
@@ -380,34 +382,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
     tracing::info!("dash_spv_ffi_client_run: starting client");
 
-    // Start the client first
-    let inner = client.inner.clone();
-    let start_result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.start().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
-
-    if let Err(e) = start_result {
-        tracing::error!("dash_spv_ffi_client_run: start failed: {}", e);
-        set_last_error(&e.to_string());
-        return FFIErrorCode::from(e) as i32;
-    }
-
-    tracing::info!("dash_spv_ffi_client_run: client started, setting up event monitoring");
-
     // Get event subscriptions before taking the client for the sync thread.
     // The sync thread needs exclusive access, so we must subscribe first.
     let inner = client.inner.clone();
@@ -487,6 +461,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
     tracing::info!("dash_spv_ffi_client_run: spawning sync thread");
 
+    let error_callback = client.client_error_callback.clone();
+
     // Now take the client for the sync thread
     let spv_client = {
         let mut guard = inner.lock().unwrap();
@@ -506,7 +482,19 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
             let mut spv_client = spv_client;
 
-            tracing::debug!("Sync thread: got client, starting monitor_network");
+            if let Err(e) = spv_client.start().await {
+                tracing::error!("Sync thread: client start error: {}", e);
+                let guard = error_callback.lock().unwrap();
+                if let Some(cb) = guard.as_ref() {
+                    cb.dispatch(&e.to_string());
+                }
+                drop(guard);
+                let mut guard = inner.lock().unwrap();
+                *guard = Some(spv_client);
+                return;
+            }
+
+            tracing::debug!("Sync thread: starting monitor_network");
 
             let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
             let run_token = shutdown_token.clone();
@@ -536,6 +524,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
             if let Err(e) = result {
                 tracing::error!("Sync thread: sync error: {}", e);
+                let guard = error_callback.lock().unwrap();
+                if let Some(cb) = guard.as_ref() {
+                    cb.dispatch(&e.to_string());
+                }
+                drop(guard);
             }
 
             tracing::debug!("Sync thread: putting client back");
@@ -1068,6 +1061,41 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_progress_callback(
 
     let client = &(*client);
     *client.progress_callback.lock().unwrap() = None;
+
+    FFIErrorCode::Success as i32
+}
+
+/// Set a callback for fatal client errors (start failure, sync thread crash).
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+/// - The `callback` struct and its `user_data` must remain valid until the callback is cleared.
+/// - The callback must be thread-safe as it may be called from a background thread.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_set_client_error_callback(
+    client: *mut FFIDashSpvClient,
+    callback: FFIClientErrorCallback,
+) -> i32 {
+    null_check!(client);
+
+    let client = &(*client);
+    *client.client_error_callback.lock().unwrap() = Some(callback);
+
+    FFIErrorCode::Success as i32
+}
+
+/// Clear the client error callback.
+///
+/// # Safety
+/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_clear_client_error_callback(
+    client: *mut FFIDashSpvClient,
+) -> i32 {
+    null_check!(client);
+
+    let client = &(*client);
+    *client.client_error_callback.lock().unwrap() = None;
 
     FFIErrorCode::Success as i32
 }
