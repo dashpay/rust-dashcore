@@ -656,8 +656,6 @@ impl PeerNetworkManager {
                                     }
                                 }
 
-                                // For other errors, wait a bit then break
-                                tokio::time::sleep(Duration::from_secs(1)).await;
                                 break;
                             }
                         }

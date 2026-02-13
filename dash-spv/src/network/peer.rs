@@ -368,11 +368,9 @@ impl Peer {
 
     /// Receive a message from the peer.
     pub async fn receive_message(&mut self) -> NetworkResult<Option<Message>> {
-        // First check if we have a state
-        let state_arc = self
-            .state
-            .as_ref()
-            .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
+        // If the state was cleared e.g. by a write-path broken pipe, treat as disconnected
+        // so the reader loop handles it identically to a read-path EOF.
+        let state_arc = self.state.as_ref().ok_or(NetworkError::PeerDisconnected)?;
 
         // Lock the state for the entire read operation
         // This ensures no concurrent access to the socket
