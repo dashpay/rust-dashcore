@@ -33,6 +33,7 @@ use dashcore::network::message_headers2::CompressionState;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Network;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_NETWORK_EVENT_CAPACITY: usize = 10000;
@@ -768,7 +769,9 @@ impl PeerNetworkManager {
         let mut tasks = self.tasks.lock().await;
         tasks.spawn(async move {
             // Periodic DNS discovery check (only active in non-exclusive mode)
-            let mut dns_interval = time::interval(DNS_DISCOVERY_DELAY);
+            let mut dns_interval = time::interval_at(Instant::now() + DNS_DISCOVERY_DELAY, DNS_DISCOVERY_DELAY);
+            // Periodic reconnection check (active in both modes)
+            let mut maintenance_interval = time::interval(MAINTENANCE_INTERVAL);
 
             while !this.shutdown_token.is_cancelled() {
                 // Clean up disconnected peers
@@ -846,7 +849,7 @@ impl PeerNetworkManager {
                 }
 
                 tokio::select! {
-                    _ = time::sleep(MAINTENANCE_INTERVAL) => {
+                    _ = maintenance_interval.tick() => {
                         log::debug!("Maintenance interval elapsed");
                     }
                     _ = dns_interval.tick(), if !this.exclusive_mode => {
