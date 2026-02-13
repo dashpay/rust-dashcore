@@ -102,6 +102,16 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
     }
 
+    /// Clear all in-flight processing state. Called on peer disconnect when
+    /// in-flight filter batches and block tracking become invalid.
+    pub(super) fn clear_in_flight_state(&mut self) {
+        self.active_batches.clear();
+        self.blocks_remaining.clear();
+        self.filters_matched.clear();
+        self.pending_batches.clear();
+        self.filter_pipeline = FiltersPipeline::new();
+    }
+
     async fn load_filters(
         &self,
         start_height: u32,
