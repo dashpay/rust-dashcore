@@ -132,10 +132,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
         self.set_state(SyncState::Syncing);
-        // Get wallet state
-        let (wallet_birth_height, wallet_synced_height) = {
+        // Use filter_committed_height for restart recovery instead of
+        // synced_height, which advances per-block and may exceed committed scan progress.
+        let (wallet_birth_height, wallet_committed_height) = {
             let wallet = self.wallet.read().await;
-            (wallet.earliest_required_height().await, wallet.synced_height())
+            (wallet.earliest_required_height().await, wallet.filter_committed_height())
         };
 
         // Get stored filters tip
@@ -147,8 +148,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         // Calculate scan start (where we need to start processing)
         // Must be at least header_start_height for checkpoint-based sync
-        let scan_start = if wallet_synced_height > 0 {
-            wallet_birth_height.max(wallet_synced_height + 1)
+        let scan_start = if wallet_committed_height > 0 {
+            wallet_birth_height.max(wallet_committed_height + 1)
         } else {
             wallet_birth_height
         }
@@ -498,9 +499,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
             // Commit this batch
             let batch = self.active_batches.remove(&batch_start).unwrap();
-            self.committed_height = batch.end_height();
-            self.wallet.write().await.update_synced_height(batch.end_height());
-            self.processing_height = batch.end_height() + 1;
+            let end = batch.end_height();
+            if end > self.committed_height {
+                self.committed_height = end;
+                self.wallet.write().await.update_filter_committed_height(end);
+            }
+            self.processing_height = end + 1;
 
             tracing::info!(
                 "Committed batch {}-{}, committed_height now {}",

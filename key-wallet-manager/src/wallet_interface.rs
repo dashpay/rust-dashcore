@@ -75,6 +75,21 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Update the wallet's synced height. This also triggers balance updates.
     fn update_synced_height(&mut self, height: CoreBlockHeight);
 
+    /// Return the height at which filter scanning was last committed.
+    /// Defaults to `synced_height()` for implementations that don't separate these concepts.
+    // TODO: This can probably somehow be combined with synced_height().
+    fn filter_committed_height(&self) -> CoreBlockHeight {
+        self.synced_height()
+    }
+
+    /// Update the filter committed height. Call when a height is fully processed
+    /// (including any rescans for newly discovered addresses).
+    fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
+        if height > self.synced_height() {
+            self.update_synced_height(height);
+        }
+    }
+
     /// Provide a human-readable description of the wallet implementation.
     ///
     /// Implementations are encouraged to include high-level state such as the
