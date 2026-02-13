@@ -298,7 +298,7 @@ typedef void (*OnManagerErrorCallback)(enum FFIManagerId manager_id,
 /**
  * Callback for SyncEvent::SyncComplete
  */
-typedef void (*OnSyncCompleteCallback)(uint32_t header_tip, void *user_data);
+typedef void (*OnSyncCompleteCallback)(uint32_t header_tip, uint32_t cycle, void *user_data);
 
 /**
  * Sync event callbacks - one callback per SyncEvent variant.

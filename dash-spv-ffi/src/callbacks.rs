@@ -209,7 +209,8 @@ pub type OnManagerErrorCallback =
     Option<extern "C" fn(manager_id: FFIManagerId, error: *const c_char, user_data: *mut c_void)>;
 
 /// Callback for SyncEvent::SyncComplete
-pub type OnSyncCompleteCallback = Option<extern "C" fn(header_tip: u32, user_data: *mut c_void)>;
+pub type OnSyncCompleteCallback =
+    Option<extern "C" fn(header_tip: u32, cycle: u32, user_data: *mut c_void)>;
 
 /// Sync event callbacks - one callback per SyncEvent variant.
 ///
@@ -409,9 +410,10 @@ impl FFISyncEventCallbacks {
             }
             SyncEvent::SyncComplete {
                 header_tip,
+                cycle,
             } => {
                 if let Some(cb) = self.on_sync_complete {
-                    cb(*header_tip, self.user_data);
+                    cb(*header_tip, *cycle, self.user_data);
                 }
             }
         }

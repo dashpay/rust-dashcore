@@ -122,8 +122,8 @@ extern "C" fn on_manager_error(
     println!("[Sync] Manager error: {:?} - {}", manager_id, error_str);
 }
 
-extern "C" fn on_sync_complete(header_tip: u32, _user_data: *mut c_void) {
-    println!("[Sync] Sync complete at height: {}", header_tip);
+extern "C" fn on_sync_complete(header_tip: u32, cycle: u32, _user_data: *mut c_void) {
+    println!("[Sync] Sync complete at height: {} (cycle {})", header_tip, cycle);
 }
 
 // ============================================================================

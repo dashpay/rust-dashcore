@@ -339,7 +339,9 @@ async fn run_progress_task(
 
     let mut merged = select_all(streams);
     let mut progress = SyncProgress::default();
-    let mut sync_complete_emitted = false;
+    let mut was_synced = false;
+    let mut sync_cycle: u32 = 0;
+    let mut cycle_start = sync_start_time;
 
     loop {
         tokio::select! {
@@ -349,14 +351,18 @@ async fn run_progress_task(
 
                 let _ = progress_sender.send(progress.clone());
 
-                if progress.is_synced() && !sync_complete_emitted {
-                    let duration = sync_start_time.elapsed();
-                    tracing::info!("Initial sync complete in {:.2}s", duration.as_secs_f64());
+                let is_synced = progress.is_synced();
+                if is_synced && !was_synced {
+                    let duration = cycle_start.elapsed();
+                    tracing::info!("Sync complete in {:.2}s (cycle {})", duration.as_secs_f64(), sync_cycle);
 
                     let header_tip = progress.headers().ok().map(|h| h.current_height()).unwrap_or(0);
-                    let _ = sync_event_sender.send(SyncEvent::SyncComplete { header_tip });
-                    sync_complete_emitted = true;
+                    let _ = sync_event_sender.send(SyncEvent::SyncComplete { header_tip, cycle: sync_cycle });
+                    sync_cycle += 1;
+                } else if !is_synced && was_synced {
+                    cycle_start = Instant::now();
                 }
+                was_synced = is_synced;
             }
         }
     }

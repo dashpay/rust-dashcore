@@ -269,7 +269,7 @@ mod tests {
                 data.headers_stored.store(true, Ordering::SeqCst);
             }
 
-            extern "C" fn on_sync_complete(_header_tip: u32, user_data: *mut c_void) {
+            extern "C" fn on_sync_complete(_header_tip: u32, _cycle: u32, user_data: *mut c_void) {
                 let data = unsafe { &*(user_data as *const EventData) };
                 data.sync_complete.store(true, Ordering::SeqCst);
             }

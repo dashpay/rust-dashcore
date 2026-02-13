@@ -144,11 +144,17 @@ pub enum SyncEvent {
 
     /// Sync has reached the chain tip (all managers idle).
     ///
+    /// Emitted on every not-synced to synced transition. Cycle 0 is the
+    /// initial sync while subsequent cycles are incremental syncs triggered by
+    /// new blocks arriving from the network.
+    ///
     /// Emitted by: Coordinator
     /// Consumed by: External listeners
     SyncComplete {
         /// Final header tip height
         header_tip: u32,
+        /// Sync cycle (0 = initial, 1+ = incremental)
+        cycle: u32,
     },
 }
 
@@ -235,8 +241,9 @@ impl SyncEvent {
             }
             SyncEvent::SyncComplete {
                 header_tip,
+                cycle,
             } => {
-                format!("SyncComplete(tip={})", header_tip)
+                format!("SyncComplete(tip={}, cycle={})", header_tip, cycle)
             }
         }
     }
