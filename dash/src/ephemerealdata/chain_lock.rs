@@ -25,7 +25,7 @@ const CL_REQUEST_ID_PREFIX: &str = "clsig";
 /// confirm latest block using LLMQ signature. This approach
 /// reduces mining uncertainty and mitigate 51% attack.
 /// This data structure represents a p2p message containing a data to verify such a lock.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ChainLock {

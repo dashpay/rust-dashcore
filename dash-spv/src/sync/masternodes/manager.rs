@@ -4,11 +4,14 @@
 //! Subscribes to BlockHeaderSyncComplete events to start sync after headers are caught up.
 //! Emits MasternodeStateUpdated events.
 
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use dashcore::BlockHash;
 use tokio::sync::RwLock;
 
 use super::pipeline::MnListDiffPipeline;
@@ -16,8 +19,6 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::BlockHeaderStorage;
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
-use dashcore::BlockHash;
-use std::collections::{BTreeSet, HashSet};
 
 /// Sync state for masternode list synchronization.
 #[derive(Debug, Default)]
@@ -64,6 +65,9 @@ impl MasternodeSyncState {
     }
 }
 
+/// Maximum number of validated ChainLock signatures kept in the runtime cache.
+const MAX_CACHED_CHAINLOCK_SIGNATURES: usize = 10;
+
 /// Masternode manager for synchronizing masternode lists.
 ///
 /// This manager:
@@ -84,6 +88,10 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     network: dashcore::Network,
     /// Sync state tracking.
     pub(super) sync_state: MasternodeSyncState,
+    /// Runtime cache of recent validated ChainLocks.
+    /// Used as fallback when QRInfo diffs are missing CL signatures.
+    /// Ordered by block height (natural field ordering).
+    cached_chainlocks: BTreeSet<ChainLock>,
 }
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
@@ -99,6 +107,23 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             engine,
             network,
             sync_state: MasternodeSyncState::new(),
+            cached_chainlocks: BTreeSet::new(),
+        }
+    }
+
+    /// Returns a reference to the cached ChainLocks.
+    pub(super) fn cached_chainlocks(&self) -> &BTreeSet<ChainLock> {
+        &self.cached_chainlocks
+    }
+
+    /// Stores a validated ChainLock in the runtime cache.
+    ///
+    /// The cache is pruned to the most recent entries to bound memory usage.
+    pub(super) fn cache_chainlock(&mut self, chain_lock: ChainLock) {
+        self.cached_chainlocks.insert(chain_lock);
+
+        while self.cached_chainlocks.len() > MAX_CACHED_CHAINLOCK_SIGNATURES {
+            self.cached_chainlocks.pop_first();
         }
     }
 
@@ -209,6 +234,8 @@ mod tests {
     use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
     use crate::sync::sync_manager::SyncManager;
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use dashcore::bls_sig_utils::BLSSignature;
+    use dashcore_hashes::Hash;
 
     type TestMasternodesManager = MasternodesManager<PersistentBlockHeaderStorage>;
 
@@ -229,6 +256,31 @@ mod tests {
             manager.wanted_message_types(),
             vec![MessageType::MnListDiff, MessageType::QRInfo]
         );
+    }
+
+    #[tokio::test]
+    async fn test_chainlock_cache_prunes_oldest() {
+        let mut manager = create_test_manager().await;
+
+        // Fill cache beyond the limit
+        let total = MAX_CACHED_CHAINLOCK_SIGNATURES as u32 + 3;
+        for i in 0..total {
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes[0..4].copy_from_slice(&i.to_le_bytes());
+            manager.cache_chainlock(ChainLock {
+                block_height: i,
+                block_hash: BlockHash::from_byte_array(hash_bytes),
+                signature: BLSSignature::from([i as u8; 96]),
+            });
+        }
+
+        assert_eq!(manager.cached_chainlocks().len(), MAX_CACHED_CHAINLOCK_SIGNATURES);
+
+        // The oldest (lowest height) entries should have been pruned
+        let min_height = manager.cached_chainlocks().iter().next().unwrap().block_height;
+        let max_height = manager.cached_chainlocks().iter().last().unwrap().block_height;
+        assert_eq!(min_height, 3);
+        assert_eq!(max_height, total - 1);
     }
 
     #[tokio::test]

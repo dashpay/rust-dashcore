@@ -9,9 +9,10 @@ mod validation;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use crate::ephemerealdata::chain_lock::ChainLock;
 use crate::network::constants::NetworkExt;
 use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
-use crate::network::message_sml::MnListDiff;
+use crate::network::message_sml::{MnListDiff, QuorumCLSigObject};
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 #[cfg(feature = "quorum_validation")]
@@ -403,6 +404,34 @@ impl MasternodeListEngine {
         self.block_container.feed_block_height(height, block_hash)
     }
 
+    /// Injects a cached ChainLock signature into a diff that is missing one.
+    ///
+    /// When a QRInfo response is assembled by a peer before the CL is available,
+    /// the diff may be missing its CL signatures. If a matching ChainLock exists
+    /// in the provided cache, inject its signature into the diff so `apply_diff`
+    /// can process it without failing.
+    fn inject_cached_chainlock_signature(
+        diff: &mut MnListDiff,
+        cached_chainlocks: &BTreeSet<ChainLock>,
+    ) {
+        if !diff.quorums_chainlock_signatures.is_empty() || diff.new_quorums.is_empty() {
+            return;
+        }
+        let Some(cl) = cached_chainlocks.iter().find(|cl| cl.block_hash == diff.block_hash) else {
+            return;
+        };
+        let index_set: Vec<u16> = (0..diff.new_quorums.len() as u16).collect();
+        log::debug!(
+            "Injecting cached chainlock signature as fallback for block {} ({} quorums)",
+            diff.block_hash,
+            index_set.len()
+        );
+        diff.quorums_chainlock_signatures.push(QuorumCLSigObject {
+            signature: cl.signature,
+            index_set,
+        });
+    }
+
     /// Extracts rotating quorums from a masternode list at a given work block height
     /// and stores them by cycle boundary hash.
     ///
@@ -574,6 +603,8 @@ impl MasternodeListEngine {
     /// - `verify_tip_non_rotated_quorums`: Whether to verify non-rotating quorums at the tip
     /// - `verify_rotated_quorums`: Whether to verify rotating quorums
     /// - `fetch_block_height`: Optional function to fetch block heights from hashes
+    /// - `cached_chainlocks`: Validated ChainLocks to use as fallback when QRInfo diffs
+    ///   are missing CL signatures
     ///
     /// # Returns
     /// Result indicating success or a quorum validation error.
@@ -583,6 +614,7 @@ impl MasternodeListEngine {
         verify_tip_non_rotated_quorums: bool,
         verify_rotated_quorums: bool,
         fetch_block_height: Option<FH>,
+        cached_chainlocks: &BTreeSet<ChainLock>,
     ) -> Result<(), QuorumValidationError>
     where
         FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
@@ -662,13 +694,19 @@ impl MasternodeListEngine {
         self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
+        let mut mn_list_diff_at_h_minus_2c = mn_list_diff_at_h_minus_2c;
+        Self::inject_cached_chainlock_signature(&mut mn_list_diff_at_h_minus_2c, cached_chainlocks);
         let maybe_sigm2 = self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
+        let mut mn_list_diff_at_h_minus_c = mn_list_diff_at_h_minus_c;
+        Self::inject_cached_chainlock_signature(&mut mn_list_diff_at_h_minus_c, cached_chainlocks);
         let maybe_sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
         // Capture work block hash before diff is consumed (only needed for quorum_validation)
         #[cfg(feature = "quorum_validation")]
         let work_block_hash = mn_list_diff_h.block_hash;
+        let mut mn_list_diff_h = mn_list_diff_h;
+        Self::inject_cached_chainlock_signature(&mut mn_list_diff_h, cached_chainlocks);
         let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
 
         let sigs = match (maybe_sigm2, maybe_sigm1, maybe_sigm0) {
@@ -678,6 +716,8 @@ impl MasternodeListEngine {
 
         #[allow(unused_variables)]
         let mn_list_diff_tip_block_hash = mn_list_diff_tip.block_hash;
+        let mut mn_list_diff_tip = mn_list_diff_tip;
+        Self::inject_cached_chainlock_signature(&mut mn_list_diff_tip, cached_chainlocks);
         #[allow(unused_variables)]
         let maybe_sigmtip =
             self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
@@ -1201,6 +1241,7 @@ impl MasternodeListEngine {
 #[cfg(test)]
 mod tests {
     use crate::BlockHash;
+    use crate::ChainLock;
     use crate::Network;
     use crate::consensus::deserialize;
     use crate::network::message_qrinfo::QRInfo;
@@ -1217,7 +1258,7 @@ mod tests {
     };
     use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
     use crate::sml::quorum_validation_error::ClientDataRetrievalError;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn verify_masternode_list_quorums(
         mn_list_engine: &MasternodeListEngine,
@@ -1382,7 +1423,11 @@ mod tests {
 
         masternode_list_engine
             .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>>(
-                qr_info, true, true, None,
+                qr_info,
+                true,
+                true,
+                None,
+                &BTreeSet::new(),
             )
             .expect("expected to feed_qr_info");
 
@@ -1546,12 +1591,92 @@ mod tests {
         // feed_qr_info should fail for post-V20 blocks with missing signatures
         let result = masternode_list_engine
             .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>>(
-                qr_info, false, false, None,
+                qr_info,
+                false,
+                false,
+                None,
+                &BTreeSet::new(),
             );
 
         assert!(
             result.is_err(),
             "Post-V20 feed_qr_info should reject missing chainlock signatures"
+        );
+    }
+
+    #[test]
+    fn feed_qr_info_uses_cached_chainlock_signature_as_fallback() {
+        let mn_list_diff_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
+        let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+        let mut engine =
+            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Dash)
+                .expect("expected to start engine");
+
+        let block_container_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/block_container_2240504.dat");
+        let block_container: MasternodeListEngineBlockContainer =
+            bincode::decode_from_slice(block_container_bytes, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+        let mn_list_diffs_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mnlistdiffs_2240504.dat");
+        let mn_list_diffs: BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff> =
+            bincode::decode_from_slice(mn_list_diffs_bytes, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+        let qr_info_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/qrinfo_2240504.dat");
+        let mut qr_info: QRInfo =
+            bincode::decode_from_slice(qr_info_bytes, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+
+        engine.block_container = block_container;
+
+        for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
+            engine.apply_diff(diff, Some(height), false, None).expect("expected to apply diff");
+        }
+
+        // Extract the CL signature from h-2c before clearing it
+        let h_minus_2c_block_hash = qr_info.mn_list_diff_at_h_minus_2c.block_hash;
+        let h_minus_2c_height = engine
+            .block_container
+            .get_height(&h_minus_2c_block_hash)
+            .expect("expected height for h-2c");
+
+        // Get the signature that would normally come from the diff
+        let original_sig = qr_info
+            .mn_list_diff_at_h_minus_2c
+            .quorums_chainlock_signatures
+            .first()
+            .map(|cl_sig_obj| cl_sig_obj.signature)
+            .expect("expected at least one CL sig in h-2c diff");
+
+        // Clear the CL signatures to simulate the peer not having them
+        qr_info.mn_list_diff_at_h_minus_2c.quorums_chainlock_signatures.clear();
+
+        // Build a cached ChainLock set to simulate receiving it via a clsig message
+        let cached_chainlocks = BTreeSet::from([ChainLock {
+            block_height: h_minus_2c_height,
+            block_hash: h_minus_2c_block_hash,
+            signature: original_sig,
+        }]);
+
+        // feed_qr_info should succeed using the cached ChainLock as fallback
+        let result = engine
+            .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>>(
+                qr_info,
+                false,
+                false,
+                None,
+                &cached_chainlocks,
+            );
+
+        assert!(
+            result.is_ok(),
+            "feed_qr_info should succeed with cached CL signature fallback, but got: {:?}",
+            result.err()
         );
     }
 }

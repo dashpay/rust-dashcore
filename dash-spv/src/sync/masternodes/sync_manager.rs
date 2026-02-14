@@ -259,6 +259,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                             dashcore::sml::quorum_validation_error::ClientDataRetrievalError,
                         >,
                     >,
+                    self.cached_chainlocks(),
                 ) {
                     tracing::error!("QRInfo processing failed: {}", e);
                     return Err(SyncError::MasternodeSyncFailed(e.to_string()));
@@ -382,6 +383,17 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         event: &SyncEvent,
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
+        // Cache validated ChainLocks for use as fallback in QRInfo processing
+        if let SyncEvent::ChainLockReceived {
+            chain_lock,
+            validated,
+        } = event
+        {
+            if *validated {
+                self.cache_chainlock(chain_lock.clone());
+            }
+        }
+
         // Track block header tip height as headers come in
         if let SyncEvent::BlockHeadersStored {
             tip_height,
