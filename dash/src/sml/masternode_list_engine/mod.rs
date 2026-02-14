@@ -14,6 +14,8 @@ use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
+#[cfg(feature = "quorum_validation")]
+use crate::sml::llmq_entry_verification::LLMQEntryVerificationSkipStatus;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::network::NetworkLLMQExt;
@@ -660,19 +662,13 @@ impl MasternodeListEngine {
         self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
-        #[cfg(feature = "quorum_validation")]
-        let mn_list_diff_at_h_minus_2c_block_hash = mn_list_diff_at_h_minus_2c.block_hash;
         let maybe_sigm2 = self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
-        #[cfg(feature = "quorum_validation")]
-        let mn_list_diff_at_h_minus_c_block_hash = mn_list_diff_at_h_minus_c.block_hash;
         let maybe_sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
         // Capture work block hash before diff is consumed (only needed for quorum_validation)
         #[cfg(feature = "quorum_validation")]
         let work_block_hash = mn_list_diff_h.block_hash;
-        #[cfg(feature = "quorum_validation")]
-        let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
         let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
 
         let sigs = match (maybe_sigm2, maybe_sigm1, maybe_sigm0) {
@@ -721,40 +717,29 @@ impl MasternodeListEngine {
                     self.known_qualified_quorum_entry(&quorum_entry)
                 {
                     Ok(qualified_quorum_entry)
-                } else {
-                    let sigm2 = maybe_sigm2.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            3,
-                            mn_list_diff_at_h_minus_2c_block_hash,
-                        ),
-                    )?;
-
-                    let sigm1 = maybe_sigm1.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            2,
-                            mn_list_diff_at_h_minus_c_block_hash,
-                        ),
-                    )?;
-
-                    let sigm0 = maybe_sigm0.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            1,
-                            mn_list_diff_at_h_block_hash,
-                        ),
-                    )?;
-                    let sigmtip = maybe_sigmtip.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            0,
-                            mn_list_diff_tip_block_hash,
-                        ),
-                    )?;
-                    let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
-                    qualified_quorum_entry.verifying_chain_lock_signature =
-                        Some(VerifyingChainLockSignaturesType::Rotating([
-                            sigm2, sigm1, sigm0, sigmtip,
-                        ]));
-                    Ok(qualified_quorum_entry)
-                }
+                } else if let (Some(sigm2), Some(sigm1), Some(sigm0), Some(sigmtip)) =
+                        (maybe_sigm2, maybe_sigm1, maybe_sigm0, maybe_sigmtip)
+                    {
+                        let mut qualified_quorum_entry: QualifiedQuorumEntry =
+                            quorum_entry.into();
+                        qualified_quorum_entry.verifying_chain_lock_signature =
+                            Some(VerifyingChainLockSignaturesType::Rotating([
+                                sigm2, sigm1, sigm0, sigmtip,
+                            ]));
+                        Ok(qualified_quorum_entry)
+                    } else {
+                        log::debug!(
+                            "ChainLock signatures incomplete for rotated quorum {}, storing without CL verification",
+                            quorum_entry.quorum_hash
+                        );
+                        let mut qualified: QualifiedQuorumEntry = quorum_entry.into();
+                        qualified.verified = LLMQEntryVerificationStatus::Skipped(
+                            LLMQEntryVerificationSkipStatus::OtherContext(
+                                "ChainLock signatures incomplete".to_string(),
+                            ),
+                        );
+                        Ok(qualified)
+                    }
             })
             .collect::<Result<Vec<QualifiedQuorumEntry>, QuorumValidationError>>()?;
 

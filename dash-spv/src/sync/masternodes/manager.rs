@@ -36,9 +36,6 @@ pub(super) struct MasternodeSyncState {
     pub(super) qrinfo_wait_start: Option<Instant>,
     /// Current retry count for QRInfo.
     pub(super) qrinfo_retry_count: u8,
-    /// When to retry after a ChainLock unavailability error.
-    /// The QRInfo response includes the current tip which may not have ChainLock yet.
-    pub(super) chainlock_retry_after: Option<Instant>,
 }
 
 impl MasternodeSyncState {
@@ -146,10 +143,6 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             known_hashes.push(hash);
         }
 
-        // Send QRInfo request for the tip
-        // Note: The server's response includes `mn_list_diff_tip` which is always the current tip,
-        // regardless of the requested block. If the tip was just mined and doesn't have a ChainLock
-        // yet, we'll retry after a delay.
         tracing::info!("Requesting QRInfo for tip at height {}", tip_height);
         requests.request_qr_info(known_hashes, tip_block_hash, true)?;
 

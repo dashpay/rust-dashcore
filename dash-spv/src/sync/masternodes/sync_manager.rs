@@ -9,21 +9,16 @@ use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
-use dashcore::sml::quorum_validation_error::QuorumValidationError;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
 use std::collections::{BTreeSet, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Timeout duration for waiting for QRInfo response.
 const QRINFO_TIMEOUT_SECS: u64 = 15;
 
 /// Maximum number of retry attempts before giving up.
 const MAX_RETRY_ATTEMPTS: u8 = 3;
-
-/// Delay between retries when ChainLock is not yet available for the tip.
-/// ChainLocks typically propagate within a few seconds after a block is mined.
-const CHAINLOCK_RETRY_DELAY_SECS: u64 = 5;
 
 /// Build MnListDiff request pairs (base_hash, target_hash) for quorum validation.
 ///
@@ -265,40 +260,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         >,
                     >,
                 ) {
-                    // Check if this is a tip ChainLock error (h - 0 means the tip block)
-                    // The QRInfo response always includes `mn_list_diff_tip` which is the current
-                    // chain tip. If the tip was just mined, the ChainLock hasn't propagated yet.
-                    let is_tip_chainlock_error = matches!(
-                        e,
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, _)
-                    );
-
-                    if is_tip_chainlock_error {
-                        self.sync_state.qrinfo_retry_count += 1;
-
-                        if self.sync_state.qrinfo_retry_count <= MAX_RETRY_ATTEMPTS {
-                            tracing::info!(
-                                "ChainLock not yet available for tip, scheduling retry {}/{} in {}s",
-                                self.sync_state.qrinfo_retry_count,
-                                MAX_RETRY_ATTEMPTS,
-                                CHAINLOCK_RETRY_DELAY_SECS
-                            );
-                            // Schedule a delayed retry - the tick handler will trigger it
-                            self.sync_state.chainlock_retry_after = Some(
-                                Instant::now() + Duration::from_secs(CHAINLOCK_RETRY_DELAY_SECS),
-                            );
-                            drop(engine);
-                            self.set_state(SyncState::Syncing);
-                            return Ok(vec![]);
-                        }
-                    }
-
-                    // For other errors or max retries reached, fail
-                    tracing::error!(
-                        "QRInfo failed after {} retries: {}",
-                        self.sync_state.qrinfo_retry_count,
-                        e
-                    );
+                    tracing::error!("QRInfo processing failed: {}", e);
                     return Err(SyncError::MasternodeSyncFailed(e.to_string()));
                 }
 
@@ -503,17 +465,6 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
         // If Synced with no pending requests, nothing to do
         if self.state() == SyncState::Synced && !self.sync_state.has_pending_requests() {
-            return Ok(vec![]);
-        }
-
-        // Check for ChainLock retry (tip didn't have ChainLock yet)
-        if let Some(retry_after) = self.sync_state.chainlock_retry_after {
-            if Instant::now() >= retry_after {
-                tracing::info!("Retrying QRInfo after ChainLock delay");
-                self.sync_state.chainlock_retry_after = None;
-                return self.send_qrinfo_for_tip(requests).await;
-            }
-            // Still waiting for retry delay
             return Ok(vec![]);
         }
 
