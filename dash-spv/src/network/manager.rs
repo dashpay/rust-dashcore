@@ -790,7 +790,7 @@ impl PeerNetworkManager {
                     }
                 } else {
                     // Normal mode: try to maintain minimum peer count with discovery
-                    if count < MIN_PEERS {
+                    if count < TARGET_PEERS {
                         // Try known addresses first, sorted by reputation
                         let known = this.addrv2_handler.get_known_addresses().await;
                         let needed = TARGET_PEERS.saturating_sub(count);
@@ -851,7 +851,7 @@ impl PeerNetworkManager {
                     }
                     _ = dns_interval.tick(), if !this.exclusive_mode => {
                         let count = this.pool.peer_count().await;
-                        if count >= MIN_PEERS {
+                        if count >= TARGET_PEERS {
                             continue;
                         }
                         let dns_peers = tokio::select! {

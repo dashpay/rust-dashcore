@@ -28,7 +28,7 @@ mod pool_tests {
         // Test needs_more_peers logic
         assert!(pool.needs_more_peers().await);
 
-        // Can accept up to MAX_PEERS
+        // Can accept up to TARGET_PEERS
         assert!(pool.can_accept_peers().await);
 
         // Test peer count

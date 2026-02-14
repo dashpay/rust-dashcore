@@ -1,7 +1,7 @@
 //! Peer pool for managing multiple peer connections
 
 use crate::error::{NetworkError, SpvError as Error};
-use crate::network::constants::{MAX_PEERS, MIN_PEERS};
+use crate::network::constants::TARGET_PEERS;
 use crate::network::peer::Peer;
 use dashcore::prelude::CoreBlockHeight;
 use std::collections::{HashMap, HashSet};
@@ -41,10 +41,10 @@ impl PeerPool {
         connecting.remove(&addr);
 
         // Check if we're at capacity
-        if peers.len() >= MAX_PEERS {
+        if peers.len() >= TARGET_PEERS {
             return Err(Error::Network(NetworkError::ConnectionFailed(format!(
                 "Maximum peers ({}) reached",
-                MAX_PEERS
+                TARGET_PEERS
             ))));
         }
 
@@ -151,12 +151,12 @@ impl PeerPool {
 
     /// Check if we need more peers
     pub async fn needs_more_peers(&self) -> bool {
-        self.peer_count().await < MIN_PEERS
+        self.peer_count().await < TARGET_PEERS
     }
 
     /// Check if we can accept more peers
     pub async fn can_accept_peers(&self) -> bool {
-        self.peer_count().await < MAX_PEERS
+        self.peer_count().await < TARGET_PEERS
     }
 
     /// Clean up disconnected peers
