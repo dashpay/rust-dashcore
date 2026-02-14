@@ -210,6 +210,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         level: Some(log_level),
         console: console_enabled,
         file: file_config,
+        thread_local: false,
     };
 
     // Initialize logging, keep guard alive for the duration of run()

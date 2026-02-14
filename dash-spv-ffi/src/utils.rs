@@ -68,6 +68,7 @@ pub unsafe extern "C" fn dash_spv_ffi_init_logging(
         level: level_filter,
         console: enable_console,
         file: file_config,
+        thread_local: false,
     };
 
     match dash_spv::init_logging(config) {

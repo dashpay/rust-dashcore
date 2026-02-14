@@ -10,6 +10,8 @@ use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+use tracing::subscriber::DefaultGuard;
+
 use crate::error::{LoggingError, LoggingResult};
 
 /// Prefix for archived log files.
@@ -19,9 +21,11 @@ const ACTIVE_LOG_NAME: &str = "run.log";
 
 /// Guard that must be kept alive to ensure log flushing on shutdown.
 /// When this guard is dropped, all buffered log entries will be flushed.
+/// For thread-local logging (tests), also holds the subscriber scope guard.
 #[derive(Debug)]
 pub struct LoggingGuard {
     _worker_guard: Option<WorkerGuard>,
+    _default_guard: Option<DefaultGuard>,
 }
 
 /// Configuration for logging output.
@@ -33,6 +37,10 @@ pub struct LoggingConfig {
     pub console: bool,
     /// Optional file logging configuration.
     pub file: Option<LogFileConfig>,
+    /// Use a thread-local subscriber instead of the global one.
+    /// Allows multiple independent loggers in the same process (e.g. parallel tests).
+    /// Only works on the calling thread — use with single-threaded tokio runtimes.
+    pub thread_local: bool,
 }
 
 /// Configuration for log file output.
@@ -53,6 +61,7 @@ pub fn init_console_logging(level: LevelFilter) -> LoggingResult<LoggingGuard> {
         level: Some(level),
         console: true,
         file: None,
+        thread_local: false,
     })
 }
 
@@ -86,6 +95,7 @@ pub fn init_console_logging(level: LevelFilter) -> LoggingResult<LoggingGuard> {
 ///     level: Some(LevelFilter::INFO),
 ///     console: true,
 ///     file: None,
+///     thread_local: false,
 /// }).unwrap();
 ///
 /// // File logging only (CLI default)
@@ -96,6 +106,7 @@ pub fn init_console_logging(level: LevelFilter) -> LoggingResult<LoggingGuard> {
 ///         log_dir: PathBuf::from("/path/to/data/logs"),
 ///         max_files: 20,
 ///     }),
+///     thread_local: false,
 /// }).unwrap();
 /// ```
 pub fn init_logging(config: LoggingConfig) -> LoggingResult<LoggingGuard> {
@@ -103,6 +114,7 @@ pub fn init_logging(config: LoggingConfig) -> LoggingResult<LoggingGuard> {
     if !config.console && config.file.is_none() {
         return Ok(LoggingGuard {
             _worker_guard: None,
+            _default_guard: None,
         });
     }
 
@@ -115,7 +127,7 @@ pub fn init_logging(config: LoggingConfig) -> LoggingResult<LoggingGuard> {
 
     // Set up file layer if requested
     let (file_layer, guard) = if let Some(ref file_config) = config.file {
-        let (non_blocking, guard) = setup_file_logging(file_config)?;
+        let (non_blocking, guard) = setup_file_logging(file_config, config.thread_local)?;
         let layer = fmt::layer()
             .with_target(true)
             .with_thread_ids(false)
@@ -131,20 +143,32 @@ pub fn init_logging(config: LoggingConfig) -> LoggingResult<LoggingGuard> {
         config.console.then(|| fmt::layer().with_target(true).with_thread_ids(false));
 
     // Combine layers and initialize
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(file_layer)
-        .with(console_layer)
-        .try_init()
-        .map_err(|e| LoggingError::SubscriberInit(e.to_string()))?;
+    let subscriber =
+        tracing_subscriber::registry().with(env_filter).with(file_layer).with(console_layer);
+
+    let default_guard = if config.thread_local {
+        // Thread-local subscriber — allows multiple independent loggers per process
+        Some(tracing::subscriber::set_default(subscriber))
+    } else {
+        // Global subscriber — covers all threads, can only be set once
+        subscriber.try_init().map_err(|e| LoggingError::SubscriberInit(e.to_string()))?;
+        None
+    };
 
     Ok(LoggingGuard {
         _worker_guard: guard,
+        _default_guard: default_guard,
     })
 }
 
 /// Set up file logging: create directory, rotate old log, cleanup, and create writer.
-fn setup_file_logging(config: &LogFileConfig) -> LoggingResult<(NonBlocking, WorkerGuard)> {
+///
+/// When `lossless` is true, the writer applies backpressure instead of dropping messages.
+/// This prevents log loss in tests where high-volume output can overflow the default buffer.
+fn setup_file_logging(
+    config: &LogFileConfig,
+    lossless: bool,
+) -> LoggingResult<(NonBlocking, WorkerGuard)> {
     // Create logs directory if needed
     fs::create_dir_all(&config.log_dir)?;
 
@@ -158,8 +182,12 @@ fn setup_file_logging(config: &LogFileConfig) -> LoggingResult<(NonBlocking, Wor
     let log_path = config.log_dir.join(ACTIVE_LOG_NAME);
     let file = File::create(&log_path)?;
 
-    // Wrap in non-blocking writer
-    Ok(tracing_appender::non_blocking(file))
+    // Wrap in non-blocking writer (lossless avoids dropping messages under load)
+    if lossless {
+        Ok(tracing_appender::non_blocking::NonBlockingBuilder::default().lossy(false).finish(file))
+    } else {
+        Ok(tracing_appender::non_blocking(file))
+    }
 }
 
 /// Rotate the previous run.log to an archived name.
@@ -557,6 +585,7 @@ mod tests {
             level: Some(LevelFilter::INFO),
             console: false,
             file: None,
+            thread_local: false,
         });
 
         assert!(result.is_ok());
@@ -575,7 +604,7 @@ mod tests {
             max_files: 7,
         };
 
-        let result = setup_file_logging(&config);
+        let result = setup_file_logging(&config, false);
         assert!(result.is_ok());
 
         // Directory should now exist
@@ -611,7 +640,7 @@ mod tests {
             max_files: 3,
         };
 
-        let result = setup_file_logging(&config);
+        let result = setup_file_logging(&config, false);
         assert!(result.is_ok());
 
         // Old run.log should be archived (now we have 6 archives total, but limit is 3)

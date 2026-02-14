@@ -100,6 +100,16 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
     }
 
+    /// Clear all in-flight processing state. Called on peer disconnect when
+    /// in-flight filter batches and block tracking become invalid.
+    pub(super) fn clear_in_flight_state(&mut self) {
+        self.active_batches.clear();
+        self.blocks_remaining.clear();
+        self.filters_matched.clear();
+        self.pending_batches.clear();
+        self.filter_pipeline = FiltersPipeline::new();
+    }
+
     async fn load_filters(
         &self,
         start_height: u32,
@@ -163,7 +173,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     tip_height: self.progress.committed_height(),
                 }]);
             }
-            // Caught up to available filter headers but chain tip not reached yet
+            // Not enough filter headers yet to start scanning. Go back to waiting
+            // so the next FilterHeadersStored event triggers start_download again
+            // with a higher tip (rather than the Syncing branch's extend_target which
+            // skips batch processing state initialization).
+            self.set_state(SyncState::WaitForEvents);
             return Ok(vec![]);
         }
 
@@ -175,59 +189,27 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             scan_start
         };
 
-        // Initialize storage tracking
-        // If we have pending batches from a previous run, continue from their boundaries
-        // instead of recalculating from storage (which might not reflect in-flight batches)
-        if !self.pending_batches.is_empty() {
-            let first_pending = self.pending_batches.first().unwrap().start_height();
-            tracing::info!(
-                "Resuming with {} pending batches, next_batch_to_store staying at {} (first pending: {})",
-                self.pending_batches.len(),
-                self.next_batch_to_store,
-                first_pending
-            );
-            // Don't reset next_batch_to_store - keep the existing value
-        } else {
-            tracing::info!(
-                "Initializing next_batch_to_store to {} (stored_filters_tip={}, scan_start={})",
-                download_start,
-                stored_filters_tip,
-                scan_start
-            );
-            self.next_batch_to_store = download_start;
-        }
-
+        self.next_batch_to_store = download_start;
         self.processing_height = scan_start;
+        self.set_state(SyncState::Syncing);
 
-        // Initialize download pipeline for all remaining filters
+        tracing::info!(
+            "Starting filter download (scan_start={}, download_start={}, stored_filters_tip={}, target={})",
+            scan_start,
+            download_start,
+            stored_filters_tip,
+            self.progress.filter_header_tip_height()
+        );
+
+        // Initialize download pipeline for remaining filters
         if download_start <= self.progress.filter_header_tip_height() {
-            // Only reinitialize if pipeline is empty - avoid losing in-flight batches
-            if self.filter_pipeline.active_count() == 0 && self.pending_batches.is_empty() {
-                self.filter_pipeline.init(download_start, self.progress.filter_header_tip_height());
-                tracing::info!(
-                    "Starting filter download from {} to {} (batch-based processing)",
-                    download_start,
-                    self.progress.filter_header_tip_height()
-                );
-            } else {
-                // Extend target without resetting state - batches still in flight
-                self.filter_pipeline.extend_target(self.progress.filter_header_tip_height());
-                tracing::info!(
-                    "Resuming filter download to {} (active batches: {}, pending: {})",
-                    self.progress.filter_header_tip_height(),
-                    self.filter_pipeline.active_count(),
-                    self.pending_batches.len()
-                );
-            }
-
+            self.filter_pipeline.init(download_start, self.progress.filter_header_tip_height());
             let header_storage = self.header_storage.read().await;
             self.filter_pipeline.send_pending(requests, &*header_storage).await?;
             drop(header_storage);
         } else {
-            // No new filters to download - initialize pipeline to a "complete" state
-            // so it doesn't try to download from its default start height
+            // No new filters to download, scanning stored filters only
             self.filter_pipeline.init(download_start, download_start.saturating_sub(1));
-            tracing::info!("Rescan mode: no new filters to download, scanning stored filters only");
         }
 
         // Initialize the first processing batch
@@ -735,13 +717,19 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             SyncState::Syncing | SyncState::Synced
                 if self.progress.stored_height() < self.progress.filter_header_tip_height() =>
             {
+                // Transition back to Syncing so is_synced() returns false
+                // until all new filters and matched blocks are fully processed.
+                if self.state() == SyncState::Synced {
+                    self.set_state(SyncState::Syncing);
+                }
+
                 self.filter_pipeline.extend_target(tip_height);
                 {
                     let header_storage = self.header_storage.read().await;
                     self.filter_pipeline.send_pending(requests, &*header_storage).await?;
                 }
 
-                if self.state() == SyncState::Synced && self.active_batches.is_empty() {
+                if self.active_batches.is_empty() {
                     tracing::debug!("Processing new filter (target: {})", tip_height);
                     return self.try_create_lookahead_batches().await;
                 }

@@ -16,6 +16,9 @@ pub use platform_integration::*;
 pub use types::*;
 pub use utils::*;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 // FFINetwork is now defined in types.rs for cbindgen compatibility
 // It must match the definition in key_wallet_ffi
 

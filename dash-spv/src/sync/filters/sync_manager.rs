@@ -37,6 +37,11 @@ impl<
         &[MessageType::CFilter]
     }
 
+    fn stop_sync(&mut self) {
+        self.set_state(SyncState::WaitingForConnections);
+        self.clear_in_flight_state();
+    }
+
     async fn initialize(&mut self) -> SyncResult<()> {
         let wallet = self.wallet.read().await;
         let committed_height = wallet.filter_committed_height();

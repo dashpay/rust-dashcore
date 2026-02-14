@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read
 
+env:
+  DASHVERSION: "23.0.2"
+  TEST_DATA_REPO: "dashpay/regtest-blockchain"
+  TEST_DATA_VERSION: "v0.0.2"
+
 jobs:
   test:
     name: ${{ matrix.group }}
@@ -28,5 +33,32 @@ jobs:
         with:
           shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
       - run: pip install pyyaml
+
+      # Set up dashd and test data for groups that need it
+      - name: Cache dashd and test data
+        if: matrix.group == 'spv' || matrix.group == 'ffi'
+        uses: actions/cache@v4
+        with:
+          path: .rust-dashcore-test
+          key: rust-dashcore-test-${{ inputs.os }}-${{ env.DASHVERSION }}-${{ env.TEST_DATA_VERSION }}
+
+      - name: Setup dashd for integration tests
+        if: matrix.group == 'spv' || matrix.group == 'ffi'
+        env:
+          CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
+        shell: bash
+        run: python contrib/setup-dashd.py >> "$GITHUB_ENV"
+
       - name: Run tests
+        env:
+          DASHD_TEST_RETAIN_DIR: ${{ matrix.group == 'spv' && '/tmp/dashd-test-logs' || '' }}
         run: python .github/scripts/ci_config.py run-group ${{ matrix.group }} --os ${{ inputs.os }}
+
+      - name: Upload failed SPV test logs
+        if: failure() && matrix.group == 'spv'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spv-test-logs-${{ inputs.os }}
+          path: /tmp/dashd-test-logs/
+          retention-days: 7
+          if-no-files-found: ignore

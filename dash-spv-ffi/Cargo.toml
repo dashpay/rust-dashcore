@@ -32,11 +32,17 @@ key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager" }
 rand = "0.8"
 clap = { version = "4.5", features = ["derive"] }
+tempfile = { version = "3.8", optional = true }
+
+[features]
+test-utils = ["dep:tempfile"]
 
 [dev-dependencies]
-tempfile = "3.8"
+dash-spv = { path = "../dash-spv", features = ["test-utils"] }
+dash-spv-ffi = { path = ".", features = ["test-utils"] }
 serial_test = "3.0"
 env_logger = "0.10"
+hex = "0.4"
 
 [build-dependencies]
 cbindgen = "0.29"

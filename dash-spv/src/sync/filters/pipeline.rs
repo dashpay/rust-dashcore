@@ -50,6 +50,10 @@ pub(super) struct FiltersPipeline {
     completed_batches: BTreeSet<FiltersBatch>,
     /// Target height for sync.
     target_height: u32,
+    /// Planned end heights for each queued batch (start_height -> end_height).
+    /// Fixed at queue time so `send_pending` respects the original boundaries
+    /// regardless of later `target_height` changes from `extend_target`.
+    planned_ends: HashMap<u32, u32>,
     /// Total filters received.
     filters_received: u32,
     /// Highest filter height received.
@@ -75,14 +79,10 @@ impl FiltersPipeline {
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
             target_height: 0,
+            planned_ends: HashMap::new(),
             filters_received: 0,
             highest_received: 0,
         }
-    }
-
-    /// Get the number of active batches.
-    pub(super) fn active_count(&self) -> usize {
-        self.coordinator.active_count()
     }
 
     /// Take completed batches with their buffered filter data for processing.
@@ -97,22 +97,26 @@ impl FiltersPipeline {
         self.coordinator.clear();
         self.batch_trackers.clear();
         self.completed_batches.clear();
+        self.planned_ends.clear();
         self.target_height = target_height;
         self.highest_received = start_height.saturating_sub(1);
         self.filters_received = 0;
 
-        // Pre-queue all batches
+        // Pre-queue all batches with their planned end heights
         let mut current = start_height;
         while current <= target_height {
-            self.coordinator.enqueue([current]);
             let batch_end = (current + FILTER_BATCH_SIZE - 1).min(target_height);
+            self.coordinator.enqueue([current]);
+            self.planned_ends.insert(current, batch_end);
             current = batch_end + 1;
         }
     }
 
     /// Extend the target height without resetting pipeline state.
     ///
-    /// Queues additional batches from the old target to the new target.
+    /// Queues additional batches from the old target boundary to the new target.
+    /// Each batch stores its planned end height so `send_pending` uses the
+    /// correct boundary regardless of further target extensions.
     pub(super) fn extend_target(&mut self, new_target: u32) {
         if new_target <= self.target_height {
             return;
@@ -124,8 +128,9 @@ impl FiltersPipeline {
         // Queue new batches from (old_target + 1) to new_target
         let mut current = old_target + 1;
         while current <= new_target {
-            self.coordinator.enqueue([current]);
             let batch_end = (current + FILTER_BATCH_SIZE - 1).min(new_target);
+            self.coordinator.enqueue([current]);
+            self.planned_ends.insert(current, batch_end);
             current = batch_end + 1;
         }
     }
@@ -145,7 +150,11 @@ impl FiltersPipeline {
         let mut sent = 0;
 
         for start_height in start_heights {
-            let batch_end = (start_height + FILTER_BATCH_SIZE - 1).min(self.target_height);
+            // Use the planned end from queue time, falling back to dynamic computation
+            let batch_end =
+                self.planned_ends.get(&start_height).copied().unwrap_or_else(|| {
+                    (start_height + FILTER_BATCH_SIZE - 1).min(self.target_height)
+                });
 
             // Get stop hash for this batch
             let stop_hash = storage
@@ -290,6 +299,7 @@ mod tests {
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
             target_height: 0,
+            planned_ends: HashMap::new(),
             filters_received: 0,
             highest_received: 0,
         }
@@ -315,7 +325,7 @@ mod tests {
     fn test_pipeline_new() {
         let pipeline = FiltersPipeline::new();
 
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
         assert!(pipeline.batch_trackers.is_empty());
         assert!(pipeline.completed_batches.is_empty());
         assert_eq!(pipeline.target_height, 0);
@@ -328,7 +338,10 @@ mod tests {
         let default_pipeline = FiltersPipeline::default();
         let new_pipeline = FiltersPipeline::new();
 
-        assert_eq!(default_pipeline.active_count(), new_pipeline.active_count());
+        assert_eq!(
+            default_pipeline.coordinator.active_count(),
+            new_pipeline.coordinator.active_count()
+        );
         assert_eq!(default_pipeline.target_height, new_pipeline.target_height);
     }
 
@@ -360,7 +373,7 @@ mod tests {
 
         assert!(pipeline.batch_trackers.is_empty());
         assert!(pipeline.completed_batches.is_empty());
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.filters_received, 0);
         // 1 batch queued for heights 200-300
         assert_eq!(pipeline.coordinator.pending_count(), 1);
@@ -379,6 +392,116 @@ mod tests {
         pipeline.extend_target(200);
 
         assert_eq!(pipeline.target_height, 200);
+    }
+
+    #[tokio::test]
+    async fn test_extend_target_no_overlap_no_gap() {
+        // Verify that init + extend_target produces contiguous, non-overlapping batches.
+        // The init's last batch is truncated (3000-3500), and extend_target fills from 3501.
+        // send_pending respects planned_ends so the truncated batch stays at 3000-3500.
+        let headers = Header::dummy_batch(0..6000);
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        storage.store_headers(&headers).await.unwrap();
+
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.init(0, 3500);
+        assert_eq!(pipeline.coordinator.pending_count(), 4); // 0, 1000, 2000, 3000
+
+        // Extend target — new batches start at 3501
+        pipeline.extend_target(5000);
+        assert_eq!(pipeline.coordinator.pending_count(), 6); // + 3501, 4501
+
+        let (sender, _rx) = create_test_request_sender();
+        pipeline.send_pending(&sender, &storage).await.unwrap();
+
+        // Verify batch trackers have no overlapping ranges and no gaps
+        let mut ranges: Vec<(u32, u32)> = pipeline
+            .batch_trackers
+            .iter()
+            .map(|(&start, tracker)| (start, tracker.end_height()))
+            .collect();
+        ranges.sort_by_key(|&(start, _)| start);
+
+        for window in ranges.windows(2) {
+            assert!(
+                window[0].1 < window[1].0,
+                "Overlapping batches: {}-{} and {}-{}",
+                window[0].0,
+                window[0].1,
+                window[1].0,
+                window[1].1
+            );
+            assert_eq!(
+                window[0].1 + 1,
+                window[1].0,
+                "Gap between batches: {}-{} and {}-{}",
+                window[0].0,
+                window[0].1,
+                window[1].0,
+                window[1].1
+            );
+        }
+
+        // Verify: 0-999, 1000-1999, 2000-2999, 3000-3500, 3501-4500, 4501-5000
+        assert_eq!(ranges[0], (0, 999));
+        assert_eq!(ranges[3], (3000, 3500)); // kept at planned end, not expanded
+        assert_eq!(ranges[4], (3501, 4500));
+        assert_eq!(ranges[5], (4501, 5000));
+    }
+
+    #[tokio::test]
+    async fn test_extend_target_after_send_no_gap() {
+        // Verify that when the last init batch is sent BEFORE extend_target,
+        // there's no gap. The sent batch uses its planned end (truncated),
+        // and extend_target fills from old_target + 1.
+        let headers = Header::dummy_batch(0..6000);
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        storage.store_headers(&headers).await.unwrap();
+
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.init(0, 3500);
+
+        let (sender, _rx) = create_test_request_sender();
+
+        // Send all init batches first
+        pipeline.send_pending(&sender, &storage).await.unwrap();
+        assert_eq!(pipeline.batch_trackers.get(&3000).unwrap().end_height(), 3500);
+
+        // Now extend target
+        pipeline.extend_target(5000);
+
+        // Send the new batches
+        pipeline.send_pending(&sender, &storage).await.unwrap();
+
+        let mut ranges: Vec<(u32, u32)> = pipeline
+            .batch_trackers
+            .iter()
+            .map(|(&start, tracker)| (start, tracker.end_height()))
+            .collect();
+        ranges.sort_by_key(|&(start, _)| start);
+
+        // Verify contiguous: 0-999, 1000-1999, 2000-2999, 3000-3500, 3501-4500, 4501-5000
+        for window in ranges.windows(2) {
+            assert!(
+                window[0].1 < window[1].0,
+                "Overlapping batches: {}-{} and {}-{}",
+                window[0].0,
+                window[0].1,
+                window[1].0,
+                window[1].1
+            );
+            assert_eq!(
+                window[0].1 + 1,
+                window[1].0,
+                "Gap between batches: {}-{} and {}-{}",
+                window[0].0,
+                window[0].1,
+                window[1].0,
+                window[1].1
+            );
+        }
     }
 
     #[test]
@@ -609,7 +732,7 @@ mod tests {
         assert_eq!(timed_out, vec![0]);
         // Batch should be re-queued in coordinator's pending queue
         assert_eq!(pipeline.coordinator.pending_count(), 1);
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
     }
 
     #[test]
@@ -650,6 +773,7 @@ mod tests {
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
             target_height: 2999,
+            planned_ends: HashMap::new(),
             filters_received: 0,
             highest_received: 0,
         };
@@ -660,7 +784,7 @@ mod tests {
         pipeline.batch_trackers.insert(2000, BatchTracker::new(2999));
         pipeline.coordinator.mark_sent(&[0, 1000, 2000]);
 
-        assert_eq!(pipeline.active_count(), 3);
+        assert_eq!(pipeline.coordinator.active_count(), 3);
         assert_eq!(pipeline.coordinator.pending_count(), 0);
 
         // Wait for timeout
@@ -672,7 +796,7 @@ mod tests {
 
         // All 3 batches should be in the pending queue, not duplicated
         assert_eq!(pipeline.coordinator.pending_count(), 3);
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
 
         // Take pending items - should get exactly 3, not more
         let pending = pipeline.coordinator.take_pending(10);
@@ -701,7 +825,7 @@ mod tests {
         let count = pipeline.send_pending(&sender, &storage).await.unwrap();
 
         assert_eq!(count, 1);
-        assert_eq!(pipeline.active_count(), 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
         assert!(pipeline.batch_trackers.contains_key(&0));
         // No more pending since the single batch was sent
         assert_eq!(pipeline.coordinator.pending_count(), 0);
@@ -735,7 +859,7 @@ mod tests {
         // Should respect MAX_CONCURRENT_FILTER_BATCHES (20)
         // 25 batches needed, but only 20 can be in-flight at once
         assert_eq!(count, MAX_CONCURRENT_FILTER_BATCHES);
-        assert_eq!(pipeline.active_count(), MAX_CONCURRENT_FILTER_BATCHES);
+        assert_eq!(pipeline.coordinator.active_count(), MAX_CONCURRENT_FILTER_BATCHES);
         assert_eq!(pipeline.batch_trackers.len(), MAX_CONCURRENT_FILTER_BATCHES);
         // 5 batches still pending
         assert_eq!(pipeline.coordinator.pending_count(), 5);
@@ -783,7 +907,7 @@ mod tests {
 
         // Should send all 3 batches: 0-999, 1000-1999, 2000-2500
         assert_eq!(count, 3);
-        assert_eq!(pipeline.active_count(), 3);
+        assert_eq!(pipeline.coordinator.active_count(), 3);
         assert_eq!(pipeline.coordinator.pending_count(), 0);
     }
 
@@ -827,7 +951,7 @@ mod tests {
         // Send request
         let sent = pipeline.send_pending(&sender, &storage).await.unwrap();
         assert_eq!(sent, 1);
-        assert_eq!(pipeline.active_count(), 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
 
         // Receive all filters
         for h in 0..=99 {
@@ -836,7 +960,7 @@ mod tests {
         }
 
         // Batch should be complete
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.completed_batches.len(), 1);
         assert_eq!(pipeline.filters_received, 100);
         assert_eq!(pipeline.highest_received, 99);
@@ -861,7 +985,7 @@ mod tests {
 
         // Send initial request
         pipeline.send_pending(&sender, &storage).await.unwrap();
-        assert_eq!(pipeline.active_count(), 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
         assert_eq!(pipeline.coordinator.pending_count(), 0);
 
         // Wait for timeout
@@ -871,14 +995,14 @@ mod tests {
         let timed_out = pipeline.handle_timeouts();
         assert_eq!(timed_out.len(), 1);
         assert_eq!(pipeline.coordinator.pending_count(), 1);
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
 
         // Tracker should still exist for late arrivals
         assert!(pipeline.batch_trackers.contains_key(&0));
 
         // Can retry by sending again
         pipeline.send_pending(&sender, &storage).await.unwrap();
-        assert_eq!(pipeline.active_count(), 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
 
         // Existing tracker is reused (not replaced)
         assert!(pipeline.batch_trackers.contains_key(&0));
@@ -906,5 +1030,84 @@ mod tests {
             .insert(FilterMatchKey::new(0, BlockHash::all_zeros()), BlockFilter::new(&[0x01]));
 
         assert_eq!(batch.filters().len(), 1);
+    }
+
+    // =========================================================================
+    // Boundary batch with deferred send tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_boundary_batch_planned_end_survives_extend_target() {
+        // Reproduce the exact scenario from the flaky test:
+        // init(0, 26000) creates 27 batches, but only 20 can be sent (max concurrent).
+        // Batch 26000 (the boundary batch with planned_end=26000) stays in the queue.
+        // Then extend_target is called multiple times, changing target_height to 40000.
+        // When batch 26000 is finally dequeued, planned_ends[26000] must still be 26000.
+        let headers = Header::dummy_batch(0..41000);
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        storage.store_headers(&headers).await.unwrap();
+
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.init(0, 26000);
+
+        // Verify init created correct planned ends
+        assert_eq!(pipeline.planned_ends.get(&0), Some(&999));
+        assert_eq!(pipeline.planned_ends.get(&25000), Some(&25999));
+        assert_eq!(pipeline.planned_ends.get(&26000), Some(&26000));
+        assert_eq!(pipeline.coordinator.pending_count(), 27);
+
+        let (sender, _rx) = create_test_request_sender();
+
+        // Send first 20 batches (max concurrent)
+        pipeline.send_pending(&sender, &storage).await.unwrap();
+        assert_eq!(pipeline.coordinator.active_count(), 20);
+        assert_eq!(pipeline.coordinator.pending_count(), 7); // 20000-26000
+
+        // Verify planned_ends[26000] still exists after initial send
+        assert_eq!(pipeline.planned_ends.get(&26000), Some(&26000));
+
+        // Extend target multiple times (simulates FilterHeadersStored events)
+        pipeline.extend_target(28000);
+        assert_eq!(pipeline.planned_ends.get(&26000), Some(&26000));
+        assert_eq!(pipeline.planned_ends.get(&26001), Some(&27000));
+
+        pipeline.extend_target(30000);
+        pipeline.extend_target(32000);
+        pipeline.extend_target(34000);
+        pipeline.extend_target(36000);
+        pipeline.extend_target(38000);
+        pipeline.extend_target(40000);
+
+        // After all extends, planned_ends[26000] must still be 26000
+        assert_eq!(
+            pipeline.planned_ends.get(&26000),
+            Some(&26000),
+            "planned_ends[26000] was corrupted by extend_target"
+        );
+        assert_eq!(pipeline.target_height, 40000);
+
+        // Simulate batches completing and dequeuing remaining items.
+        // Complete batches 0-6000 (7 batches) to free slots for 20000-26000.
+        for batch_start in (0..7000).step_by(1000) {
+            let end = batch_start + 999;
+            // Feed all filters for this batch
+            for h in batch_start..=end {
+                let hash = headers[h as usize].block_hash();
+                pipeline.receive_with_data(h, hash, &dummy_filter_data(h));
+            }
+            // Each completion frees a slot; send_pending dequeues the next item
+            pipeline.send_pending(&sender, &storage).await.unwrap();
+        }
+
+        // Now batches 20000-26000 should have been sent.
+        // Check the batch tracker for 26000 to verify it was sent with the correct end.
+        let tracker_26000 = pipeline.batch_trackers.get(&26000);
+        assert!(tracker_26000.is_some(), "Batch 26000 should have been sent");
+        assert_eq!(
+            tracker_26000.unwrap().end_height(),
+            26000,
+            "Batch 26000 should have end_height 26000 (from planned_ends), not 26999 (from fallback)"
+        );
     }
 }
