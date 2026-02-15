@@ -164,6 +164,12 @@ impl HeadersPipeline {
         // Find the segment that matches
         for (idx, segment) in self.segments.iter_mut().enumerate() {
             if segment.matches(&prev_hash) {
+                // Skip completed non-tip segments. After a segment reaches its checkpoint,
+                // its current_tip_hash equals the next segment's start_hash, so it would
+                // incorrectly steal the next segment's responses.
+                if segment.complete && segment.target_height.is_some() {
+                    continue;
+                }
                 // If tip segment was completed but receives new headers (post-sync),
                 // reset it so take_ready_to_store() can process the new headers
                 if segment.complete && segment.target_height.is_none() {
@@ -294,6 +300,7 @@ mod tests {
     use tokio::sync::mpsc::unbounded_channel;
 
     use crate::network::{NetworkRequest, RequestSender};
+    use crate::sync::block_headers::segment_state::SegmentState;
 
     fn create_test_checkpoint_manager(is_testnet: bool) -> Arc<CheckpointManager> {
         let checkpoints = if is_testnet {
@@ -392,5 +399,44 @@ mod tests {
 
         let ready = pipeline.take_ready_to_store();
         assert!(ready.is_empty());
+    }
+
+    #[test]
+    fn test_completed_segment_does_not_steal_next_segment_headers() {
+        // Create two segments which share the checkpoint hash boundary.
+        // - Segment 0: height 0 -> target 100
+        // - Segment 1: height 100 -> target 200
+        let shared_hash = BlockHash::dummy(42);
+
+        let mut segment_0 =
+            SegmentState::new(0, 0, BlockHash::dummy(0), Some(100), Some(shared_hash));
+        // Mark segment 0 as complete at the checkpoint — its current_tip_hash is the shared hash
+        segment_0.complete = true;
+        segment_0.current_height = 100;
+        segment_0.current_tip_hash = shared_hash;
+
+        let segment_1 = SegmentState::new(1, 100, shared_hash, Some(200), None);
+
+        // Build a pipeline with these two segments
+        let checkpoint_manager = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(checkpoint_manager);
+        pipeline.initialized = true;
+        pipeline.segments = vec![segment_0, segment_1];
+
+        // Create a header whose prev_blockhash is the shared hash
+        let mut header = Header::dummy(1);
+        header.prev_blockhash = shared_hash;
+
+        // Mark segment 1 request as in-flight so receive works
+        pipeline.segments[1].coordinator.mark_sent(&[shared_hash]);
+
+        // Route headers should go to segment 1, not the completed segment 0
+        let matched = pipeline.receive_headers(&[header]).unwrap();
+        assert_eq!(matched, Some(1), "Headers should route to segment 1, not completed segment 0");
+
+        // Segment 0 should still have no extra buffered headers
+        assert!(pipeline.segments[0].buffered_headers.is_empty());
+        // Segment 1 should have the header
+        assert_eq!(pipeline.segments[1].buffered_headers.len(), 1);
     }
 }

@@ -20,7 +20,7 @@ pub(super) struct SegmentState {
     /// Target hash (next checkpoint hash for validation).
     target_hash: Option<BlockHash>,
     /// Current tip hash for GetHeaders locator.
-    current_tip_hash: BlockHash,
+    pub(super) current_tip_hash: BlockHash,
     /// Current height reached in this segment.
     pub(super) current_height: u32,
     /// Download coordinator for tracking in-flight requests.
