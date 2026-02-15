@@ -175,6 +175,8 @@ impl HeadersPipeline {
                 if segment.complete && segment.target_height.is_none() {
                     segment.complete = false;
                     self.next_to_store = idx;
+                    // Mark as in-flight so the coordinator accepts these unsolicited headers
+                    segment.coordinator.mark_sent(&[prev_hash]);
                     tracing::debug!(
                         "Tip segment {} receiving post-sync headers, reset for continued processing",
                         segment.segment_id
@@ -399,6 +401,35 @@ mod tests {
 
         let ready = pipeline.take_ready_to_store();
         assert!(ready.is_empty());
+    }
+
+    #[test]
+    fn test_completed_tip_segment_accepts_unsolicited_post_sync_headers() {
+        // After initial sync completes, peers may push new block headers without
+        // us requesting them. The completed tip segment should accept these
+        // unsolicited headers by marking them as in-flight before processing.
+        let tip_hash = BlockHash::dummy(99);
+
+        let mut tip_seg = SegmentState::new(0, 1000, tip_hash, None, None);
+        tip_seg.complete = true;
+        tip_seg.current_height = 1000;
+        tip_seg.current_tip_hash = tip_hash;
+
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.initialized = true;
+        pipeline.segments = vec![tip_seg];
+
+        // Simulate an unsolicited header arriving from a peer (no in-flight request)
+        let mut header = Header::dummy(1);
+        header.prev_blockhash = tip_hash;
+
+        let matched = pipeline.receive_headers(&[header]).unwrap();
+        assert_eq!(matched, Some(0), "Tip segment should accept unsolicited post-sync headers");
+
+        assert!(!pipeline.segments[0].complete, "Tip segment should be reset to non-complete");
+        assert_eq!(pipeline.segments[0].buffered_headers.len(), 1);
+        assert_eq!(pipeline.segments[0].current_height, 1001);
     }
 
     #[test]

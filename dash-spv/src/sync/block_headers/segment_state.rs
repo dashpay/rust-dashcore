@@ -100,9 +100,24 @@ impl SegmentState {
             return Ok(0);
         }
 
-        // Mark the request as received
+        // Reject headers on a segment that already reached its checkpoint
+        if self.complete {
+            return Err(SyncError::InvalidState(format!(
+                "Segment {}: received {} headers on completed segment (height {})",
+                self.segment_id,
+                headers.len(),
+                self.current_height
+            )));
+        }
+
+        // Mark the request as received, reject if we never requested this hash
         let prev_hash = headers[0].prev_blockhash;
-        self.coordinator.receive(&prev_hash);
+        if !self.coordinator.receive(&prev_hash) {
+            return Err(SyncError::InvalidState(format!(
+                "Segment {}: received unrequested headers (prev_hash {})",
+                self.segment_id, prev_hash
+            )));
+        }
 
         // Process headers
         let mut processed = 0;
@@ -307,5 +322,49 @@ mod tests {
         // Segment should be complete with the header buffered
         assert!(segment.complete);
         assert_eq!(segment.buffered_headers.len(), 1);
+    }
+
+    #[test]
+    fn test_unrequested_headers_returns_error() {
+        let start_hash = BlockHash::dummy(0);
+        let mut segment = SegmentState::new(0, 0, start_hash, None, None);
+
+        let mut header = Header::dummy(1);
+        header.prev_blockhash = start_hash;
+
+        let result = segment.receive_headers(&[header]);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SyncError::InvalidState(msg) => {
+                assert!(msg.contains("unrequested headers"));
+            }
+            other => panic!("Expected SyncError::InvalidState, got {:?}", other),
+        }
+        assert!(segment.buffered_headers.is_empty());
+    }
+
+    #[test]
+    fn test_completed_segment_rejects_new_headers() {
+        let start_hash = BlockHash::dummy(0);
+        let mut segment = SegmentState::new(0, 0, start_hash, Some(100), None);
+
+        // Mark segment as complete (simulating checkpoint reached)
+        segment.complete = true;
+        segment.current_height = 100;
+
+        // Create a header that would match
+        let mut header = Header::dummy(1);
+        header.prev_blockhash = start_hash;
+
+        // Completed segment should return an invalid state error
+        let result = segment.receive_headers(&[header]);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SyncError::InvalidState(msg) => {
+                assert!(msg.contains("completed segment"));
+            }
+            other => panic!("Expected SyncError::InvalidState, got {:?}", other),
+        }
+        assert!(segment.buffered_headers.is_empty());
     }
 }
