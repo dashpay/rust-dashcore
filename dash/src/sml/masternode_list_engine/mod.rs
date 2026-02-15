@@ -432,17 +432,26 @@ impl MasternodeListEngine {
         });
     }
 
-    /// Extracts rotating quorums from a masternode list at a given work block height
-    /// and stores them by cycle boundary hash.
+    /// Extracts rotating quorums from a masternode list and stores them by cycle boundary hash.
     ///
-    /// This is used to store historical cycle quorums from QRInfo diffs (h-c, h-2c, h-3c, h-4c)
-    /// so that InstantLocks referencing previous cycles can be verified.
+    /// The work block for a cycle is 8 blocks before the cycle base. The masternode list at
+    /// that height contains quorums from the PREVIOUS cycle (since the current cycle's DKG
+    /// hasn't happened yet). To get the correct quorums for a given cycle, we need to look at
+    /// the masternode list from the NEXT cycle's work block, where the target cycle's quorums
+    /// have already been committed.
     ///
     /// # Parameters
-    /// - `work_block_hash`: The block hash at the "work" height (cycle_boundary - 8)
-    fn store_rotating_quorums_for_cycle(&mut self, work_block_hash: BlockHash) {
+    /// - `cycle_work_block_hash`: The work block hash for the cycle whose boundary we store under
+    /// - `quorum_source_hash`: The work block hash of the NEXT cycle, whose masternode list
+    ///   contains the committed quorums for the target cycle
+    fn store_rotating_quorums_for_cycle(
+        &mut self,
+        cycle_work_block_hash: BlockHash,
+        quorum_source_hash: BlockHash,
+    ) {
         // Calculate the cycle boundary from the work block
-        let Some(work_block_height) = self.block_container.get_height(&work_block_hash) else {
+        let Some(work_block_height) = self.block_container.get_height(&cycle_work_block_hash)
+        else {
             return;
         };
 
@@ -457,9 +466,13 @@ impl MasternodeListEngine {
             return;
         }
 
-        // Look up the masternode list at the work block height
-        // The masternode list at this height should have all active rotating quorums
-        let Some(mn_list) = self.masternode_lists.get(&work_block_height) else {
+        // Get the height of the quorum source (next cycle's work block)
+        let Some(source_height) = self.block_container.get_height(&quorum_source_hash) else {
+            return;
+        };
+
+        // The masternode list at the next cycle's work block has the target cycle's quorums
+        let Some(mn_list) = self.masternode_lists.get(&source_height) else {
             return;
         };
 
@@ -702,9 +715,9 @@ impl MasternodeListEngine {
         let mut mn_list_diff_at_h_minus_c = mn_list_diff_at_h_minus_c;
         Self::inject_cached_chainlock_signature(&mut mn_list_diff_at_h_minus_c, cached_chainlocks);
         let maybe_sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
-        // Capture work block hash before diff is consumed (only needed for quorum_validation)
+        let work_block_hash_h = mn_list_diff_h.block_hash;
         #[cfg(feature = "quorum_validation")]
-        let work_block_hash = mn_list_diff_h.block_hash;
+        let work_block_hash = work_block_hash_h;
         let mut mn_list_diff_h = mn_list_diff_h;
         Self::inject_cached_chainlock_signature(&mut mn_list_diff_h, cached_chainlocks);
         let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
@@ -722,14 +735,22 @@ impl MasternodeListEngine {
         let maybe_sigmtip =
             self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
 
-        // Store rotating quorums for historical cycles from the masternode lists
-        // This must happen after diffs are applied so the masternode lists have all quorums
+        // Store rotating quorums for historical cycles from the masternode lists.
+        // The masternode list at a work block (cycle_base - 8) contains the quorums committed
+        // during the PREVIOUS cycle. To get the correct quorums for cycle N, we use the
+        // masternode list from cycle N+1's work block as the quorum source.
         if let Some(hash) = work_block_hash_h_minus_4c {
-            self.store_rotating_quorums_for_cycle(hash);
+            self.store_rotating_quorums_for_cycle(hash, work_block_hash_h_minus_3c);
         }
-        self.store_rotating_quorums_for_cycle(work_block_hash_h_minus_3c);
-        self.store_rotating_quorums_for_cycle(work_block_hash_h_minus_2c);
-        self.store_rotating_quorums_for_cycle(work_block_hash_h_minus_c);
+        self.store_rotating_quorums_for_cycle(
+            work_block_hash_h_minus_3c,
+            work_block_hash_h_minus_2c,
+        );
+        self.store_rotating_quorums_for_cycle(
+            work_block_hash_h_minus_2c,
+            work_block_hash_h_minus_c,
+        );
+        self.store_rotating_quorums_for_cycle(work_block_hash_h_minus_c, work_block_hash_h);
 
         // Calculate cycle boundary hash from work block (only needed for quorum_validation)
         #[cfg(feature = "quorum_validation")]
