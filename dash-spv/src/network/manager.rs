@@ -830,6 +830,8 @@ impl PeerNetworkManager {
                     }
                 }
 
+                if this.shutdown_token.is_cancelled() { break; }
+
                 // Send ping to all peers if needed
                 for (addr, peer) in this.pool.get_all_peers().await {
                     let mut peer_guard = peer.write().await;
@@ -882,6 +884,7 @@ impl PeerNetworkManager {
                         let mut dns_attempted = 0;
                         for addr in dns_peers.iter() {
                             if !this.pool.is_connected(addr).await && !this.pool.is_connecting(addr).await {
+                                if this.shutdown_token.is_cancelled() { break; }
                                 this.connect_to_peer(*addr).await;
                                 dns_attempted += 1;
                                 if dns_attempted >= needed {
