@@ -446,7 +446,11 @@ impl PeerNetworkManager {
                                 let response = addrv2_handler.build_addr_response().await;
                                 let mut peer_guard = peer.write().await;
                                 if let Err(e) = peer_guard.send_message(response).await {
-                                    tracing::error!("Failed to send addr response to {}: {}", addr, e);
+                                    tracing::error!(
+                                        "Failed to send addr response to {}: {}",
+                                        addr,
+                                        e
+                                    );
                                 }
                                 continue; // Don't forward GetAddr to client
                             }
@@ -590,7 +594,11 @@ impl PeerNetworkManager {
                             }
                             _ => {
                                 // Forward other messages to client
-                                tracing::trace!("Forwarding {:?} from {} to client", msg.cmd(), addr);
+                                tracing::trace!(
+                                    "Forwarding {:?} from {} to client",
+                                    msg.cmd(),
+                                    addr
+                                );
                             }
                         }
 
@@ -651,7 +659,10 @@ impl PeerNetworkManager {
                                             {
                                                 let block_hash = &error_msg
                                                     [hash_start + 6..hash_start + 6 + hash_end];
-                                                tracing::error!("FAILING BLOCK HASH: {}", block_hash);
+                                                tracing::error!(
+                                                    "FAILING BLOCK HASH: {}",
+                                                    block_hash
+                                                );
                                             }
                                         }
                                     } else if error_msg.contains("IO error") {
@@ -934,7 +945,10 @@ impl PeerNetworkManager {
                     addr
                 }
                 None => {
-                    tracing::warn!("No peers support compact filters, cannot send {}", message.cmd());
+                    tracing::warn!(
+                        "No peers support compact filters, cannot send {}",
+                        message.cmd()
+                    );
                     return Err(NetworkError::ProtocolError(
                         "No peers support compact filters".to_string(),
                     ));
@@ -1043,7 +1057,10 @@ impl PeerNetworkManager {
                 );
             }
             NetworkMessage::SendHeaders2 => {
-                tracing::info!("🤝 Sending SendHeaders2 to {} - requesting compressed headers", addr);
+                tracing::info!(
+                    "🤝 Sending SendHeaders2 to {} - requesting compressed headers",
+                    addr
+                );
             }
             _ => {
                 tracing::trace!("Sending {:?} to {}", message.cmd(), addr);

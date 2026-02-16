@@ -62,7 +62,6 @@ impl SyncManagerTaskContext {
             self.emit_sync_event(event);
         }
     }
-
 }
 
 #[async_trait]
@@ -209,7 +208,12 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         self.set_state(SyncState::WaitingForConnections);
         let progress = self.progress();
         let identifier = self.identifier();
-        tracing::warn!("{} {} network error, resetting to WaitingForConnections: {}", identifier, source, msg);
+        tracing::warn!(
+            "{} {} network error, resetting to WaitingForConnections: {}",
+            identifier,
+            source,
+            msg
+        );
         context.progress_sender.send(progress).ok();
         context.emit_sync_event(SyncEvent::ManagerError {
             manager: identifier,
@@ -609,8 +613,10 @@ mod tests {
 
         // Verify tick was called more than the error threshold (manager kept
         // running after the Network error and cooldown expired).
-        assert!(tick_count.load(Ordering::Relaxed) > 4,
-            "manager should keep ticking after Network error and cooldown");
+        assert!(
+            tick_count.load(Ordering::Relaxed) > 4,
+            "manager should keep ticking after Network error and cooldown"
+        );
 
         // Verify ManagerError event was emitted
         let mut found_error = false;
