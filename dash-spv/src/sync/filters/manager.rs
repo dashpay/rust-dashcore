@@ -416,14 +416,17 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // Phase 3: Create lookahead batches up to MAX_LOOKAHEAD_BATCHES
         events.extend(self.try_create_lookahead_batches().await?);
 
-        // If no active batches and all filters downloaded, check if we can transition to Synced
-        // Only emit SyncComplete if we've also reached the chain tip (target_height)
+        // If no active batches and all filters downloaded, emit FiltersSyncComplete.
+        // This handles both initial sync (Syncing → Synced transition) and incremental
+        // updates (already Synced, signal BlocksManager that no more blocks are coming).
         if self.active_batches.is_empty()
-            && self.state() == SyncState::Syncing
+            && matches!(self.state(), SyncState::Syncing | SyncState::Synced)
             && self.progress.current_height() >= self.progress.filter_header_tip_height()
             && self.progress.current_height() >= self.progress.target_height()
         {
-            self.set_state(SyncState::Synced);
+            if self.state() == SyncState::Syncing {
+                self.set_state(SyncState::Synced);
+            }
             tracing::info!("Filter sync complete at height {}", self.progress.current_height());
             events.push(SyncEvent::FiltersSyncComplete {
                 tip_height: self.progress.current_height(),
