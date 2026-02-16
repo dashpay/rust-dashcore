@@ -240,8 +240,14 @@ impl PeerNetworkManager {
         let message_dispatcher = self.message_dispatcher.clone();
         let network_event_sender = self.network_event_sender.clone();
 
-        // Spawn connection task
-        let mut tasks = self.tasks.lock().await;
+        // Spawn connection task — use select to avoid blocking on the lock during shutdown
+        let mut tasks = tokio::select! {
+            guard = self.tasks.lock() => guard,
+            _ = self.shutdown_token.cancelled() => {
+                self.pool.remove_peer(&addr).await;
+                return;
+            }
+        };
         tasks.spawn(async move {
             log::debug!("Attempting to connect to {}", addr);
 
@@ -1241,10 +1247,15 @@ impl PeerNetworkManager {
             log::warn!("Failed to save reputation data on shutdown: {}", e);
         }
 
-        // Wait for tasks to complete
-        let mut tasks = self.tasks.lock().await;
+        // Take tasks out of the mutex so we don't hold the lock while draining.
+        // This prevents a deadlock where a task (e.g. maintenance loop) tries to
+        // acquire self.tasks via connect_to_peer() while we hold the lock here.
+        let mut tasks = {
+            let mut guard = self.tasks.lock().await;
+            std::mem::take(&mut *guard)
+        };
         while let Some(result) = tasks.join_next().await {
-            if let Err(e) = result {
+            if let Err(e) = &result {
                 log::error!("Task join error: {}", e);
             }
         }
