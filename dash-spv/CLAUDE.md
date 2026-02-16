@@ -168,6 +168,9 @@ Use domain-specific error types:
 - **Built on**: `dashcore` library with Dash-specific features enabled
 - **Async runtime**: Tokio with full feature set
 
+### Logging Convention
+The project uses the `tracing` framework for structured logging. New code should use `tracing::` macros (`tracing::info!`, `tracing::debug!`, `tracing::warn!`, `tracing::error!`).
+
 ## Key Implementation Details
 
 ### Storage Architecture
