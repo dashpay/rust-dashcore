@@ -245,7 +245,15 @@ impl PeerNetworkManager {
         tasks.spawn(async move {
             log::debug!("Attempting to connect to {}", addr);
 
-            match Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network).await {
+            let connect_result = tokio::select! {
+                result = Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network) => result,
+                _ = shutdown_token.cancelled() => {
+                    log::debug!("Connection to {} cancelled by shutdown", addr);
+                    return;
+                }
+            };
+
+            match connect_result {
                 Ok(mut peer) => {
                     // Perform handshake
                     let mut handshake_manager =
