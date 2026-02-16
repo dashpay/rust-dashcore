@@ -212,12 +212,23 @@ pub enum SyncError {
 
     /// Network-related errors (e.g., connection failures, protocol errors).
     ///
-    /// **Important:** When returned from [`SyncManager::tick()`], this variant causes the
-    /// manager task loop to exit immediately. Only return it from `tick()` for fatal,
-    /// unrecoverable conditions (e.g., the request channel is closed). For transient
-    /// network issues use [`SyncError::Timeout`] or handle them with internal retry logic.
+    /// For transient network issues, use this variant or [`SyncError::Timeout`].
+    /// For fatal, unrecoverable conditions (e.g., request channel closed),
+    /// use [`SyncError::FatalNetwork`] instead.
     #[error("Network error: {0}")]
     Network(String),
+
+    /// Fatal network condition that causes the manager task loop to exit immediately.
+    ///
+    /// Unlike [`SyncError::Network`], which is logged and allows the loop to continue,
+    /// this variant signals an unrecoverable failure (e.g., the request channel is closed)
+    /// and causes the manager to stop permanently.
+    ///
+    /// **Consumer responsibility:** When this error occurs, [`SyncEvent::ManagerExited`]
+    /// is emitted and [`SyncState::Error`] is set on the affected manager's progress.
+    /// The consumer must restart the SPV client to recover the affected sync phase.
+    #[error("Fatal network error (manager exiting): {0}")]
+    FatalNetwork(String),
 
     /// Validation errors for data received during sync (e.g., invalid headers, invalid proofs)
     /// Use this for data validation errors, not state errors
@@ -245,7 +256,7 @@ impl SyncError {
             SyncError::Timeout(_) => "timeout",
             SyncError::Validation(_) => "validation",
             SyncError::MissingDependency(_) => "dependency",
-            SyncError::Network(_) => "network",
+            SyncError::Network(_) | SyncError::FatalNetwork(_) => "network",
             SyncError::Storage(_) => "storage",
             SyncError::Headers2DecompressionFailed(_) => "headers2",
             SyncError::MasternodeSyncFailed(_) => "masternode",

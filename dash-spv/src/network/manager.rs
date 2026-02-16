@@ -249,12 +249,12 @@ impl PeerNetworkManager {
             }
         };
         tasks.spawn(async move {
-            log::debug!("Attempting to connect to {}", addr);
+            tracing::debug!("Attempting to connect to {}", addr);
 
             let connect_result = tokio::select! {
                 result = Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network) => result,
                 _ = shutdown_token.cancelled() => {
-                    log::debug!("Connection to {} cancelled by shutdown", addr);
+                    tracing::debug!("Connection to {} cancelled by shutdown", addr);
                     pool.remove_peer(&addr).await;
                     return;
                 }
@@ -267,11 +267,11 @@ impl PeerNetworkManager {
                         HandshakeManager::new(network, mempool_strategy, user_agent);
                     match handshake_manager.perform_handshake(&mut peer).await {
                         Ok(_) => {
-                            log::info!("Successfully connected to {}", addr);
+                            tracing::info!("Successfully connected to {}", addr);
 
                             // Request addresses from the peer for discovery
                             if let Err(e) = peer.send_message(NetworkMessage::GetAddr).await {
-                                log::warn!("Failed to send GetAddr to {}: {}", addr, e);
+                                tracing::warn!("Failed to send GetAddr to {}: {}", addr, e);
                             }
 
                             // Record successful connection
@@ -279,7 +279,7 @@ impl PeerNetworkManager {
 
                             // Add to pool
                             if let Err(e) = pool.add_peer(addr, peer).await {
-                                log::error!("Failed to add peer to pool: {}", e);
+                                tracing::error!("Failed to add peer to pool: {}", e);
                                 return;
                             }
 
@@ -799,6 +799,7 @@ impl PeerNetworkManager {
                         if !this.pool.is_connected(addr).await
                             && !this.pool.is_connecting(addr).await
                         {
+                            if this.shutdown_token.is_cancelled() { break; }
                             log::info!("Reconnecting to exclusive peer: {}", addr);
                             this.connect_to_peer(*addr).await;
                         }
@@ -818,6 +819,7 @@ impl PeerNetworkManager {
                             if !this.pool.is_connected(&addr).await
                                 && !this.pool.is_connecting(&addr).await
                             {
+                                if this.shutdown_token.is_cancelled() { break; }
                                 this.connect_to_peer(addr).await;
                                 attempted += 1;
                                 if attempted >= needed {
@@ -1255,8 +1257,8 @@ impl PeerNetworkManager {
             std::mem::take(&mut *guard)
         };
         while let Some(result) = tasks.join_next().await {
-            if let Err(e) = &result {
-                log::error!("Task join error: {}", e);
+            if let Err(e) = result {
+                tracing::error!("Task join error: {}", e);
             }
         }
 
