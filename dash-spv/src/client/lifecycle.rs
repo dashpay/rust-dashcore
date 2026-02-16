@@ -193,9 +193,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         }
 
-        // Signal sync coordinator to stop manager tasks before disconnecting
-        // the network, so managers observe cancellation instead of channel errors.
-        self.sync_coordinator.signal_shutdown();
+        // Shut down sync coordinator: signals cancellation and waits for manager
+        // tasks to drain before we tear down the network and storage layers.
+        if let Err(e) = self.sync_coordinator.shutdown().await {
+            tracing::warn!("Error shutting down sync coordinator: {}", e);
+        }
 
         // Disconnect from network
         self.network.disconnect().await?;

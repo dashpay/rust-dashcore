@@ -245,16 +245,6 @@ where
         Ok(())
     }
 
-    /// Signal all manager tasks to stop without waiting for them to complete.
-    ///
-    /// Use this to initiate an early shutdown (e.g., before disconnecting the network)
-    /// so that manager tasks observe the cancellation promptly instead of hitting
-    /// channel-closed errors in their tick loops.
-    pub fn signal_shutdown(&self) {
-        tracing::info!("Signalling SyncCoordinator shutdown");
-        self.shutdown.cancel();
-    }
-
     /// Gracefully shutdown all manager tasks.
     pub async fn shutdown(&mut self) -> SyncResult<()> {
         tracing::info!("Shutting down SyncCoordinator");
