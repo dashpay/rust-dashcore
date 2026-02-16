@@ -193,6 +193,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         }
 
+        // Signal sync coordinator to stop manager tasks before disconnecting
+        // the network, so managers observe cancellation instead of channel errors.
+        self.sync_coordinator.signal_shutdown();
+
         // Disconnect from network
         self.network.disconnect().await?;
 

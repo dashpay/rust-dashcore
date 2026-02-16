@@ -309,6 +309,10 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                             }
                             self.try_emit_progress(progress_before, &context.progress_sender);
                         }
+                        Err(crate::error::SyncError::Network(ref msg)) => {
+                            tracing::warn!("{} tick network error, exiting: {}", identifier, msg);
+                            break;
+                        }
                         Err(e) => {
                             tracing::error!("{} tick error: {}", identifier, e);
                         }
@@ -446,5 +450,123 @@ mod tests {
 
         // Verify tick was called multiple times
         assert!(tick_count.load(Ordering::Relaxed) > 0);
+    }
+
+    /// Mock manager whose tick() returns SyncError::Network after a threshold.
+    struct NetworkErrorManager {
+        identifier: ManagerIdentifier,
+        state: SyncState,
+        tick_count: Arc<AtomicU32>,
+        error_after: u32,
+    }
+
+    impl std::fmt::Debug for NetworkErrorManager {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("NetworkErrorManager")
+                .field("identifier", &self.identifier)
+                .finish()
+        }
+    }
+
+    #[async_trait]
+    impl SyncManager for NetworkErrorManager {
+        fn identifier(&self) -> ManagerIdentifier {
+            self.identifier
+        }
+
+        fn state(&self) -> SyncState {
+            self.state
+        }
+
+        fn set_state(&mut self, state: SyncState) {
+            self.state = state;
+        }
+
+        fn wanted_message_types(&self) -> &'static [MessageType] {
+            &[]
+        }
+
+        async fn handle_message(
+            &mut self,
+            _msg: Message,
+            _requests: &RequestSender,
+        ) -> SyncResult<Vec<SyncEvent>> {
+            Ok(vec![])
+        }
+
+        async fn handle_sync_event(
+            &mut self,
+            _event: &SyncEvent,
+            _requests: &RequestSender,
+        ) -> SyncResult<Vec<SyncEvent>> {
+            Ok(vec![])
+        }
+
+        async fn tick(
+            &mut self,
+            _requests: &RequestSender,
+        ) -> SyncResult<Vec<SyncEvent>> {
+            let count = self.tick_count.fetch_add(1, Ordering::Relaxed);
+            if count >= self.error_after {
+                Err(crate::error::SyncError::Network("channel closed".into()))
+            } else {
+                Ok(vec![])
+            }
+        }
+
+        fn progress(&self) -> SyncManagerProgress {
+            let mut progress = BlockHeadersProgress::default();
+            progress.set_state(self.state);
+            SyncManagerProgress::BlockHeaders(progress)
+        }
+    }
+
+    /// Given a manager whose tick() returns SyncError::Network after a few calls,
+    /// When the task loop processes the error,
+    /// Then it exits promptly without requiring a shutdown signal.
+    #[tokio::test]
+    async fn test_manager_exits_on_tick_network_error() {
+        let tick_count = Arc::new(AtomicU32::new(0));
+
+        let manager = NetworkErrorManager {
+            identifier: ManagerIdentifier::BlockHeader,
+            state: SyncState::Initializing,
+            tick_count: tick_count.clone(),
+            error_after: 3,
+        };
+
+        // Create channels
+        let (_, message_receiver) = mpsc::unbounded_channel();
+        let sync_event_sender = broadcast::Sender::<SyncEvent>::new(100);
+        let network_event_sender = broadcast::Sender::<NetworkEvent>::new(100);
+        let (req_tx, _req_rx) = mpsc::unbounded_channel::<NetworkRequest>();
+        let requests = RequestSender::new(req_tx);
+        let shutdown = CancellationToken::new();
+        let (progress_sender, _progress_rx) = watch::channel(manager.progress());
+
+        let context = SyncManagerTaskContext {
+            message_receiver,
+            sync_event_sender,
+            network_event_receiver: network_event_sender.subscribe(),
+            requests,
+            shutdown: shutdown.clone(),
+            progress_sender,
+        };
+
+        // Spawn the task — it should exit on its own when tick returns Network error
+        let handle = tokio::spawn(async move { manager.run(context).await });
+
+        // Wait for the task to complete with a timeout (should be fast)
+        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("task should exit promptly on network error")
+            .unwrap();
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ManagerIdentifier::BlockHeader);
+
+        // Verify tick was called at least error_after + 1 times
+        // (the error-producing call counts too)
+        assert!(tick_count.load(Ordering::Relaxed) > 3);
     }
 }
