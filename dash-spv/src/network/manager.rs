@@ -1249,13 +1249,10 @@ impl PeerNetworkManager {
             log::warn!("Failed to save reputation data on shutdown: {}", e);
         }
 
-        // Take tasks out of the mutex so we don't hold the lock while draining.
-        // This prevents a deadlock where a task (e.g. maintenance loop) tries to
-        // acquire self.tasks via connect_to_peer() while we hold the lock here.
-        let mut tasks = {
-            let mut guard = self.tasks.lock().await;
-            std::mem::take(&mut *guard)
-        };
+        // Drain tasks while holding the lock.  connect_to_peer() already uses
+        // `select!` with the cancellation token when acquiring this lock, so no
+        // deadlock can occur once the shutdown token is cancelled above.
+        let mut tasks = self.tasks.lock().await;
         while let Some(result) = tasks.join_next().await {
             if let Err(e) = result {
                 tracing::error!("Task join error: {}", e);
