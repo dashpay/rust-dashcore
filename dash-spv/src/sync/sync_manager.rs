@@ -63,24 +63,6 @@ impl SyncManagerTaskContext {
         }
     }
 
-    /// Handle a fatal network error: log, update progress, and emit `ManagerError`.
-    ///
-    /// The caller must call `set_state(SyncState::WaitingForConnections)` before
-    /// this method so that `progress` reflects the reset state.
-    pub(super) fn handle_fatal_network_error(
-        &self,
-        manager: ManagerIdentifier,
-        source: &str,
-        progress: SyncManagerProgress,
-        msg: &str,
-    ) {
-        tracing::warn!("{} {} fatal network error, resetting to WaitingForConnections: {}", manager, source, msg);
-        self.progress_sender.send(progress).ok();
-        self.emit_sync_event(SyncEvent::ManagerError {
-            manager,
-            error: format!("Fatal network error ({}): {}", source, msg),
-        });
-    }
 }
 
 #[async_trait]
@@ -213,6 +195,28 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         }
     }
 
+    /// Reset to `WaitingForConnections`, report progress, and emit a `ManagerError` event.
+    ///
+    /// This bundles the state reset and error reporting into one call so that
+    /// `set_state` is always invoked before the progress snapshot — eliminating
+    /// the ordering bug where callers could forget to reset state first.
+    fn recover_from_network_error(
+        &mut self,
+        context: &SyncManagerTaskContext,
+        source: &str,
+        msg: &str,
+    ) {
+        self.set_state(SyncState::WaitingForConnections);
+        let progress = self.progress();
+        let identifier = self.identifier();
+        tracing::warn!("{} {} network error, resetting to WaitingForConnections: {}", identifier, source, msg);
+        context.progress_sender.send(progress).ok();
+        context.emit_sync_event(SyncEvent::ManagerError {
+            manager: identifier,
+            error: format!("Network error ({}): {}", source, msg),
+        });
+    }
+
     /// Run the manager task, processing messages, events, and periodic ticks.
     ///
     /// This consumes the manager and runs until shutdown is signaled.
@@ -231,6 +235,11 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
 
         // Tick interval for periodic housekeeping
         let mut tick_interval = interval(Duration::from_millis(100));
+
+        // Cooldown after a network-error recovery to avoid log/event flooding.
+        // While active, the periodic tick branch is skipped (message and event
+        // branches are externally driven and don't need throttling).
+        let mut network_error_cooldown: Option<tokio::time::Instant> = None;
 
         tracing::info!("{} task entering main loop", identifier);
 
@@ -254,9 +263,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                             }
                             self.try_emit_progress(progress_before, &context.progress_sender);
                         }
-                        Err(SyncError::FatalNetwork(ref msg)) => {
-                            self.set_state(SyncState::WaitingForConnections);
-                            context.handle_fatal_network_error(identifier, "message handler", self.progress(), msg);
+                        Err(SyncError::Network(ref msg)) => {
+                            self.recover_from_network_error(&context, "message handler", msg);
+                            network_error_cooldown = Some(tokio::time::Instant::now());
                             continue;
                         }
                         Err(e) => {
@@ -285,9 +294,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                     }
                                     self.try_emit_progress(progress_before, &context.progress_sender);
                                 }
-                                Err(SyncError::FatalNetwork(ref msg)) => {
-                                    self.set_state(SyncState::WaitingForConnections);
-                                    context.handle_fatal_network_error(identifier, "sync event handler", self.progress(), msg);
+                                Err(SyncError::Network(ref msg)) => {
+                                    self.recover_from_network_error(&context, "sync event handler", msg);
+                                    network_error_cooldown = Some(tokio::time::Instant::now());
                                     continue;
                                 }
                                 Err(e) => {
@@ -317,9 +326,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                     }
                                     self.try_emit_progress(progress_before, &context.progress_sender);
                                 }
-                                Err(SyncError::FatalNetwork(ref msg)) => {
-                                    self.set_state(SyncState::WaitingForConnections);
-                                    context.handle_fatal_network_error(identifier, "network event handler", self.progress(), msg);
+                                Err(SyncError::Network(ref msg)) => {
+                                    self.recover_from_network_error(&context, "network event handler", msg);
+                                    network_error_cooldown = Some(tokio::time::Instant::now());
                                     continue;
                                 }
                                 Err(e) => {
@@ -335,6 +344,16 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                 }
                 // Periodic tick for timeouts and housekeeping
                 _ = tick_interval.tick() => {
+                    // Skip tick processing while inside the network-error cooldown
+                    // window. Message and event branches are externally driven and
+                    // don't need this guard.
+                    if let Some(since) = network_error_cooldown {
+                        if since.elapsed() < Duration::from_secs(2) {
+                            continue;
+                        }
+                        network_error_cooldown = None;
+                    }
+
                     let progress_before = self.progress();
                     match self.tick(&context.requests).await {
                         Ok(events) => {
@@ -343,9 +362,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                             }
                             self.try_emit_progress(progress_before, &context.progress_sender);
                         }
-                        Err(SyncError::FatalNetwork(ref msg)) => {
-                            self.set_state(SyncState::WaitingForConnections);
-                            context.handle_fatal_network_error(identifier, "tick", self.progress(), msg);
+                        Err(SyncError::Network(ref msg)) => {
+                            self.recover_from_network_error(&context, "tick", msg);
+                            network_error_cooldown = Some(tokio::time::Instant::now());
                             continue;
                         }
                         Err(e) => {
@@ -483,7 +502,7 @@ mod tests {
         assert!(tick_count.load(Ordering::Relaxed) > 0);
     }
 
-    /// Mock manager whose tick() returns SyncError::FatalNetwork after a threshold.
+    /// Mock manager whose tick() returns SyncError::Network after a threshold.
     struct NetworkErrorManager {
         identifier: ManagerIdentifier,
         state: SyncState,
@@ -536,14 +555,14 @@ mod tests {
         async fn tick(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
             let count = self.tick_count.fetch_add(1, Ordering::Relaxed);
             if count >= self.error_after {
-                Err(SyncError::FatalNetwork("channel closed".into()))
+                Err(SyncError::Network("channel closed".into()))
             } else {
                 Ok(vec![])
             }
         }
     }
 
-    /// Given a manager whose tick() returns SyncError::FatalNetwork after a few calls,
+    /// Given a manager whose tick() returns SyncError::Network after a few calls,
     /// When the task loop processes the error,
     /// Then it resets to WaitingForConnections and keeps running.
     #[tokio::test]
@@ -578,18 +597,20 @@ mod tests {
         // Subscribe to sync events to verify ManagerError is emitted
         let mut event_rx = sync_event_sender.subscribe();
 
-        // Spawn the task — it should keep running after the FatalNetwork error
+        // Spawn the task — it should keep running after the Network error
         let handle = tokio::spawn(async move { manager.run(context).await });
 
-        // Wait long enough for the error to fire and several more ticks to occur
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait long enough for the error to fire (tick 3 at ~300ms) plus the
+        // 2-second cooldown, plus a few more ticks after cooldown expires.
+        tokio::time::sleep(Duration::from_millis(2800)).await;
 
         // Verify progress state is WaitingForConnections (not Error)
         assert_eq!(progress_rx.borrow().state(), SyncState::WaitingForConnections);
 
-        // Verify tick was called more than 4 times (manager kept running after the error)
+        // Verify tick was called more than the error threshold (manager kept
+        // running after the Network error and cooldown expired).
         assert!(tick_count.load(Ordering::Relaxed) > 4,
-            "manager should keep ticking after FatalNetwork error");
+            "manager should keep ticking after Network error and cooldown");
 
         // Verify ManagerError event was emitted
         let mut found_error = false;

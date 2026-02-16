@@ -212,20 +212,11 @@ pub enum SyncError {
 
     /// Network-related errors (e.g., connection failures, protocol errors).
     ///
-    /// For transient network issues, use this variant or [`SyncError::Timeout`].
-    /// For fatal, unrecoverable conditions (e.g., request channel closed),
-    /// use [`SyncError::FatalNetwork`] instead.
+    /// When returned from a `SyncManager` method, the default `run()` loop
+    /// resets the manager to `WaitingForConnections` and applies a cooldown
+    /// to prevent log/event flooding.
     #[error("Network error: {0}")]
     Network(String),
-
-    /// Fatal network condition that resets the manager to WaitingForConnections.
-    ///
-    /// Unlike [`SyncError::Network`], which is logged and allows the current
-    /// operation to continue, this variant signals an unrecoverable failure
-    /// for the current connection (e.g., the request channel is closed).
-    /// The manager resets to `WaitingForConnections` and waits for new peers.
-    #[error("Fatal network error: {0}")]
-    FatalNetwork(String),
 
     /// Validation errors for data received during sync (e.g., invalid headers, invalid proofs)
     /// Use this for data validation errors, not state errors
@@ -253,7 +244,7 @@ impl SyncError {
             SyncError::Timeout(_) => "timeout",
             SyncError::Validation(_) => "validation",
             SyncError::MissingDependency(_) => "dependency",
-            SyncError::Network(_) | SyncError::FatalNetwork(_) => "network",
+            SyncError::Network(_) => "network",
             SyncError::Storage(_) => "storage",
             SyncError::Headers2DecompressionFailed(_) => "headers2",
             SyncError::MasternodeSyncFailed(_) => "masternode",
