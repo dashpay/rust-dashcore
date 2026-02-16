@@ -210,7 +210,12 @@ pub enum SyncError {
     #[error("Timeout error: {0}")]
     Timeout(String),
 
-    /// Network-related errors (e.g., connection failures, protocol errors)
+    /// Network-related errors (e.g., connection failures, protocol errors).
+    ///
+    /// **Important:** When returned from [`SyncManager::tick()`], this variant causes the
+    /// manager task loop to exit immediately. Only return it from `tick()` for fatal,
+    /// unrecoverable conditions (e.g., the request channel is closed). For transient
+    /// network issues use [`SyncError::Timeout`] or handle them with internal retry logic.
     #[error("Network error: {0}")]
     Network(String),
 

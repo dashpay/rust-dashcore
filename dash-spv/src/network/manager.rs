@@ -249,6 +249,7 @@ impl PeerNetworkManager {
                 result = Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network) => result,
                 _ = shutdown_token.cancelled() => {
                     log::debug!("Connection to {} cancelled by shutdown", addr);
+                    pool.remove_peer(&addr).await;
                     return;
                 }
             };

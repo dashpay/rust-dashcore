@@ -1,4 +1,4 @@
-use crate::error::SyncResult;
+use crate::error::{SyncError, SyncResult};
 use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
@@ -309,8 +309,12 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                             }
                             self.try_emit_progress(progress_before, &context.progress_sender);
                         }
-                        Err(crate::error::SyncError::Network(ref msg)) => {
+                        Err(SyncError::Network(ref msg)) => {
                             tracing::warn!("{} tick network error, exiting: {}", identifier, msg);
+                            context.emit_sync_event(SyncEvent::ManagerError {
+                                manager: identifier,
+                                error: format!("Network error (exiting): {}", msg),
+                            });
                             break;
                         }
                         Err(e) => {
@@ -508,7 +512,7 @@ mod tests {
         ) -> SyncResult<Vec<SyncEvent>> {
             let count = self.tick_count.fetch_add(1, Ordering::Relaxed);
             if count >= self.error_after {
-                Err(crate::error::SyncError::Network("channel closed".into()))
+                Err(SyncError::Network("channel closed".into()))
             } else {
                 Ok(vec![])
             }
