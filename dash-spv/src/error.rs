@@ -218,16 +218,13 @@ pub enum SyncError {
     #[error("Network error: {0}")]
     Network(String),
 
-    /// Fatal network condition that causes the manager task loop to exit immediately.
+    /// Fatal network condition that resets the manager to WaitingForConnections.
     ///
-    /// Unlike [`SyncError::Network`], which is logged and allows the loop to continue,
-    /// this variant signals an unrecoverable failure (e.g., the request channel is closed)
-    /// and causes the manager to stop permanently.
-    ///
-    /// **Consumer responsibility:** When this error occurs, [`SyncEvent::ManagerExited`]
-    /// is emitted and [`SyncState::Error`] is set on the affected manager's progress.
-    /// The consumer must restart the SPV client to recover the affected sync phase.
-    #[error("Fatal network error (manager exiting): {0}")]
+    /// Unlike [`SyncError::Network`], which is logged and allows the current
+    /// operation to continue, this variant signals an unrecoverable failure
+    /// for the current connection (e.g., the request channel is closed).
+    /// The manager resets to `WaitingForConnections` and waits for new peers.
+    #[error("Fatal network error: {0}")]
     FatalNetwork(String),
 
     /// Validation errors for data received during sync (e.g., invalid headers, invalid proofs)

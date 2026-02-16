@@ -63,27 +63,22 @@ impl SyncManagerTaskContext {
         }
     }
 
-    /// Handle a fatal network error: log, update progress to Error state, and
-    /// emit both `ManagerError` and `ManagerExited` events.
+    /// Handle a fatal network error: log, update progress, and emit `ManagerError`.
     ///
-    /// The caller must call `set_state(SyncState::Error)` before this method
-    /// so that `progress` reflects the error state.
-    pub(super) fn handle_fatal_exit(
+    /// The caller must call `set_state(SyncState::WaitingForConnections)` before
+    /// this method so that `progress` reflects the reset state.
+    pub(super) fn handle_fatal_network_error(
         &self,
         manager: ManagerIdentifier,
         source: &str,
         progress: SyncManagerProgress,
         msg: &str,
     ) {
-        tracing::warn!("{} {} fatal network error, exiting: {}", manager, source, msg);
+        tracing::warn!("{} {} fatal network error, resetting to WaitingForConnections: {}", manager, source, msg);
         self.progress_sender.send(progress).ok();
         self.emit_sync_event(SyncEvent::ManagerError {
             manager,
-            error: format!("Fatal network error (exiting): {}", msg),
-        });
-        self.emit_sync_event(SyncEvent::ManagerExited {
-            manager,
-            error: format!("Fatal network error: {}", msg),
+            error: format!("Fatal network error ({}): {}", source, msg),
         });
     }
 }
@@ -260,9 +255,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                             self.try_emit_progress(progress_before, &context.progress_sender);
                         }
                         Err(SyncError::FatalNetwork(ref msg)) => {
-                            self.set_state(SyncState::Error);
-                            context.handle_fatal_exit(identifier, "message handler", self.progress(), msg);
-                            break;
+                            self.set_state(SyncState::WaitingForConnections);
+                            context.handle_fatal_network_error(identifier, "message handler", self.progress(), msg);
+                            continue;
                         }
                         Err(e) => {
                             tracing::error!("{} error handling message: {}", identifier, e);
@@ -291,9 +286,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                     self.try_emit_progress(progress_before, &context.progress_sender);
                                 }
                                 Err(SyncError::FatalNetwork(ref msg)) => {
-                                    self.set_state(SyncState::Error);
-                                    context.handle_fatal_exit(identifier, "sync event handler", self.progress(), msg);
-                                    break;
+                                    self.set_state(SyncState::WaitingForConnections);
+                                    context.handle_fatal_network_error(identifier, "sync event handler", self.progress(), msg);
+                                    continue;
                                 }
                                 Err(e) => {
                                     tracing::error!("{} error handling event: {}", identifier, e);
@@ -323,9 +318,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                     self.try_emit_progress(progress_before, &context.progress_sender);
                                 }
                                 Err(SyncError::FatalNetwork(ref msg)) => {
-                                    self.set_state(SyncState::Error);
-                                    context.handle_fatal_exit(identifier, "network event handler", self.progress(), msg);
-                                    break;
+                                    self.set_state(SyncState::WaitingForConnections);
+                                    context.handle_fatal_network_error(identifier, "network event handler", self.progress(), msg);
+                                    continue;
                                 }
                                 Err(e) => {
                                     tracing::error!("{} error handling network event: {}", identifier, e);
@@ -349,9 +344,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                             self.try_emit_progress(progress_before, &context.progress_sender);
                         }
                         Err(SyncError::FatalNetwork(ref msg)) => {
-                            self.set_state(SyncState::Error);
-                            context.handle_fatal_exit(identifier, "tick", self.progress(), msg);
-                            break;
+                            self.set_state(SyncState::WaitingForConnections);
+                            context.handle_fatal_network_error(identifier, "tick", self.progress(), msg);
+                            continue;
                         }
                         Err(e) => {
                             tracing::error!("{} tick error: {}", identifier, e);
@@ -550,9 +545,9 @@ mod tests {
 
     /// Given a manager whose tick() returns SyncError::FatalNetwork after a few calls,
     /// When the task loop processes the error,
-    /// Then it exits promptly without requiring a shutdown signal.
+    /// Then it resets to WaitingForConnections and keeps running.
     #[tokio::test]
-    async fn test_manager_exits_on_tick_network_error() {
+    async fn test_manager_resets_on_fatal_network_error() {
         let tick_count = Arc::new(AtomicU32::new(0));
 
         let manager = NetworkErrorManager {
@@ -580,35 +575,41 @@ mod tests {
             progress_sender,
         };
 
-        // Subscribe to sync events to verify ManagerExited is emitted
+        // Subscribe to sync events to verify ManagerError is emitted
         let mut event_rx = sync_event_sender.subscribe();
 
-        // Spawn the task — it should exit on its own when tick returns Network error
+        // Spawn the task — it should keep running after the FatalNetwork error
         let handle = tokio::spawn(async move { manager.run(context).await });
 
-        // Wait for the task to complete with a timeout (should be fast)
+        // Wait long enough for the error to fire and several more ticks to occur
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify progress state is WaitingForConnections (not Error)
+        assert_eq!(progress_rx.borrow().state(), SyncState::WaitingForConnections);
+
+        // Verify tick was called more than 4 times (manager kept running after the error)
+        assert!(tick_count.load(Ordering::Relaxed) > 4,
+            "manager should keep ticking after FatalNetwork error");
+
+        // Verify ManagerError event was emitted
+        let mut found_error = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if matches!(event, SyncEvent::ManagerError { .. }) {
+                found_error = true;
+                break;
+            }
+        }
+        assert!(found_error, "ManagerError event should have been emitted");
+
+        // Shut down the manager via the shutdown token
+        shutdown.cancel();
+
         let result = tokio::time::timeout(Duration::from_secs(2), handle)
             .await
-            .expect("task should exit promptly on network error")
+            .expect("task should exit after shutdown signal")
             .unwrap();
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ManagerIdentifier::BlockHeader);
-
-        // Verify tick was called exactly 4 times: indices 0,1,2 succeed, index 3 returns error
-        assert_eq!(tick_count.load(Ordering::Relaxed), 4);
-
-        // Verify progress state is Error after fatal network exit
-        assert_eq!(progress_rx.borrow().state(), SyncState::Error);
-
-        // Verify ManagerExited event was emitted
-        let mut found_exited = false;
-        while let Ok(event) = event_rx.try_recv() {
-            if matches!(event, SyncEvent::ManagerExited { .. }) {
-                found_exited = true;
-                break;
-            }
-        }
-        assert!(found_exited, "ManagerExited event should have been emitted");
     }
 }

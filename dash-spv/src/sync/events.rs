@@ -109,9 +109,7 @@ pub enum SyncEvent {
         height: u32,
     },
 
-    /// A manager encountered a non-fatal error (logged, loop continues).
-    ///
-    /// For fatal errors that cause the manager to exit, see [`SyncEvent::ManagerExited`].
+    /// A manager encountered an error during sync.
     ///
     /// Emitted by: Any manager
     /// Consumed by: Coordinator (for logging/monitoring)
@@ -119,20 +117,6 @@ pub enum SyncEvent {
         /// Which manager encountered the error
         manager: ManagerIdentifier,
         /// Error description
-        error: String,
-    },
-
-    /// A manager task has exited due to a fatal error and will not restart.
-    ///
-    /// This is a **critical event** that consumers MUST handle. The affected sync
-    /// phase has stopped permanently. The client should be restarted to recover.
-    ///
-    /// Emitted by: Any manager (on `SyncError::FatalNetwork`)
-    /// Consumer action required: Restart the SPV client or take corrective action.
-    ManagerExited {
-        /// Which manager exited
-        manager: ManagerIdentifier,
-        /// Reason for exit
         error: String,
     },
 
@@ -233,13 +217,6 @@ impl SyncEvent {
                 ..
             } => {
                 format!("ManagerError({}, {})", manager, error)
-            }
-            SyncEvent::ManagerExited {
-                manager,
-                error,
-                ..
-            } => {
-                format!("ManagerExited({}, {})", manager, error)
             }
             SyncEvent::ChainLockReceived {
                 chain_lock,

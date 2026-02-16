@@ -26,13 +26,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Subscribe to sync events from the sync coordinator.
-    ///
-    /// **Important:** Consumers MUST monitor for [`SyncEvent::ManagerExited`] events.
-    /// When a manager exits due to a fatal network error, it will not restart
-    /// automatically. The consumer should restart the SPV client to recover.
-    ///
-    /// The overall sync state (via [`Self::subscribe_progress`] / [`Self::progress`])
-    /// will transition to [`SyncState::Error`] when any manager exits fatally.
     pub fn subscribe_sync_events(&self) -> broadcast::Receiver<SyncEvent> {
         self.sync_coordinator.subscribe_events()
     }
