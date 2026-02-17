@@ -13,10 +13,6 @@ use async_trait::async_trait;
 /// and communicates with other managers via events. Managers progress independently and
 /// catch up to each other as events flow between them.
 use std::time::Duration;
-
-/// Cooldown period after a network-error recovery before tick processing resumes.
-/// Prevents log/event flooding when the network is persistently down.
-const NETWORK_ERROR_COOLDOWN: Duration = Duration::from_secs(2);
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch;
@@ -237,11 +233,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         // Tick interval for periodic housekeeping
         let mut tick_interval = interval(Duration::from_millis(100));
 
-        // Cooldown after a network-error recovery to avoid log/event flooding.
-        // While active, the periodic tick branch is skipped (message and event
-        // branches are externally driven and don't need throttling).
-        let mut network_error_cooldown: Option<tokio::time::Instant> = None;
-
         tracing::info!("{} task entering main loop", identifier);
 
         loop {
@@ -266,8 +257,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         }
                         Err(SyncError::Network(ref msg)) => {
                             self.recover_from_network_error(&context, "message handler", msg);
-                            network_error_cooldown = Some(tokio::time::Instant::now());
-                            continue;
                         }
                         Err(e) => {
                             tracing::error!("{} error handling message: {}", identifier, e);
@@ -297,8 +286,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                 }
                                 Err(SyncError::Network(ref msg)) => {
                                     self.recover_from_network_error(&context, "sync event handler", msg);
-                                    network_error_cooldown = Some(tokio::time::Instant::now());
-                                    continue;
                                 }
                                 Err(e) => {
                                     tracing::error!("{} error handling event: {}", identifier, e);
@@ -329,8 +316,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                 }
                                 Err(SyncError::Network(ref msg)) => {
                                     self.recover_from_network_error(&context, "network event handler", msg);
-                                    network_error_cooldown = Some(tokio::time::Instant::now());
-                                    continue;
                                 }
                                 Err(e) => {
                                     tracing::error!("{} error handling network event: {}", identifier, e);
@@ -345,16 +330,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                 }
                 // Periodic tick for timeouts and housekeeping
                 _ = tick_interval.tick() => {
-                    // Skip tick processing while inside the network-error cooldown
-                    // window. Message and event branches are externally driven and
-                    // don't need this guard.
-                    if let Some(since) = network_error_cooldown {
-                        if since.elapsed() < NETWORK_ERROR_COOLDOWN {
-                            continue;
-                        }
-                        network_error_cooldown = None;
-                    }
-
                     let progress_before = self.progress();
                     match self.tick(&context.requests).await {
                         Ok(events) => {
@@ -365,8 +340,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         }
                         Err(SyncError::Network(ref msg)) => {
                             self.recover_from_network_error(&context, "tick", msg);
-                            network_error_cooldown = Some(tokio::time::Instant::now());
-                            continue;
                         }
                         Err(e) => {
                             tracing::error!("{} tick error: {}", identifier, e);
@@ -605,18 +578,18 @@ mod tests {
         // Spawn the task — it should keep running after the Network error
         let handle = tokio::spawn(async move { manager.run(context).await });
 
-        // Wait long enough for the error to fire (tick 3 at ~300ms) plus the
-        // 2-second cooldown, plus a few more ticks after cooldown expires.
-        tokio::time::sleep(Duration::from_millis(2800)).await;
+        // Wait long enough for the error to fire (tick 3 at ~300ms) plus a
+        // few more ticks so we can verify the loop keeps running.
+        tokio::time::sleep(Duration::from_millis(600)).await;
 
         // State stays at WaitingForConnections (set by initialize(), not changed by error recovery)
         assert_eq!(progress_rx.borrow().state(), SyncState::WaitingForConnections);
 
         // Verify tick was called more than the error threshold (manager kept
-        // running after the Network error and cooldown expired).
+        // running after the Network error).
         assert!(
             tick_count.load(Ordering::Relaxed) > 4,
-            "manager should keep ticking after Network error and cooldown"
+            "manager should keep ticking after Network error"
         );
 
         // Verify ManagerError event was emitted
