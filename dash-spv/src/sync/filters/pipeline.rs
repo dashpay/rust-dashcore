@@ -106,13 +106,14 @@ impl FiltersPipeline {
         while current <= target_height {
             self.coordinator.enqueue([current]);
             let batch_end = (current + FILTER_BATCH_SIZE - 1).min(target_height);
+            self.batch_trackers.insert(current, BatchTracker::new(batch_end));
             current = batch_end + 1;
         }
     }
 
     /// Extend the target height without resetting pipeline state.
     ///
-    /// Queues additional batches from the old target to the new target.
+    /// Queues additional batches from the old target boundary to the new target.
     pub(super) fn extend_target(&mut self, new_target: u32) {
         if new_target <= self.target_height {
             return;
@@ -126,6 +127,7 @@ impl FiltersPipeline {
         while current <= new_target {
             self.coordinator.enqueue([current]);
             let batch_end = (current + FILTER_BATCH_SIZE - 1).min(new_target);
+            self.batch_trackers.insert(current, BatchTracker::new(batch_end));
             current = batch_end + 1;
         }
     }
@@ -145,7 +147,15 @@ impl FiltersPipeline {
         let mut sent = 0;
 
         for start_height in start_heights {
-            let batch_end = (start_height + FILTER_BATCH_SIZE - 1).min(self.target_height);
+            let batch_end = match self.batch_trackers.get(&start_height) {
+                Some(tracker) => tracker.end_height(),
+                None => {
+                    return Err(SyncError::InvalidState(format!(
+                        "missing batch tracker for start_height {}",
+                        start_height
+                    )));
+                }
+            };
 
             // Get stop hash for this batch
             let stop_hash = storage
@@ -158,9 +168,7 @@ impl FiltersPipeline {
 
             requests.request_filters(start_height, stop_hash)?;
 
-            // Track in coordinator and batch tracker (reuse existing tracker if present)
             self.coordinator.mark_sent(&[start_height]);
-            self.batch_trackers.entry(start_height).or_insert_with(|| BatchTracker::new(batch_end));
 
             tracing::debug!(
                 "Sent GetCFilters: {} to {} ({} active batches)",
@@ -295,6 +303,23 @@ mod tests {
         }
     }
 
+    /// Create a pipeline with max_concurrent=2 for testing deferred sends.
+    fn create_pipeline_with_low_concurrency() -> FiltersPipeline {
+        FiltersPipeline {
+            coordinator: DownloadCoordinator::new(
+                DownloadConfig::default()
+                    .with_max_concurrent(2)
+                    .with_timeout(FILTER_TIMEOUT)
+                    .with_max_retries(FILTERS_MAX_RETRIES),
+            ),
+            batch_trackers: HashMap::new(),
+            completed_batches: BTreeSet::new(),
+            target_height: 0,
+            filters_received: 0,
+            highest_received: 0,
+        }
+    }
+
     /// Create a test request sender with its receiver.
     fn create_test_request_sender(
     ) -> (RequestSender, tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>) {
@@ -367,15 +392,16 @@ mod tests {
         pipeline.coordinator.mark_sent(&[0]);
         pipeline.filters_received = 50;
 
-        // Init should clear everything
+        // Init should clear old state and set up new batches
         pipeline.init(200, 300);
 
-        assert!(pipeline.batch_trackers.is_empty());
         assert!(pipeline.completed_batches.is_empty());
         assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.filters_received, 0);
         // 1 batch queued for heights 200-300
         assert_eq!(pipeline.coordinator.pending_count(), 1);
+        assert_eq!(pipeline.batch_trackers.len(), 1);
+        assert_eq!(pipeline.batch_trackers.get(&200).unwrap().end_height(), 300);
         assert_eq!(pipeline.target_height, 300);
     }
 
@@ -391,6 +417,45 @@ mod tests {
         pipeline.extend_target(200);
 
         assert_eq!(pipeline.target_height, 200);
+    }
+
+    #[tokio::test]
+    async fn test_extend_target_contiguous_batches() {
+        // init's last batch is truncated (3000-3500), extend_target fills from 3501.
+        // Verify all batches are contiguous after sending.
+        let headers = Header::dummy_batch(0..6000);
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        storage.store_headers(&headers).await.unwrap();
+
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.init(0, 3500);
+        pipeline.extend_target(5000);
+
+        let (sender, _rx) = create_test_request_sender();
+        pipeline.send_pending(&sender, &storage).await.unwrap();
+
+        let mut ranges: Vec<(u32, u32)> = pipeline
+            .batch_trackers
+            .iter()
+            .map(|(&start, tracker)| (start, tracker.end_height()))
+            .collect();
+        ranges.sort_by_key(|&(start, _)| start);
+
+        // Verify contiguous: 0-999, 1000-1999, 2000-2999, 3000-3500, 3501-4500, 4501-5000
+        for window in ranges.windows(2) {
+            assert_eq!(
+                window[0].1 + 1,
+                window[1].0,
+                "gap or overlap between batches: {}-{} and {}-{}",
+                window[0].0,
+                window[0].1,
+                window[1].0,
+                window[1].1
+            );
+        }
+        assert_eq!(ranges[3], (3000, 3500));
+        assert_eq!(ranges[4], (3501, 4500));
     }
 
     #[test]
@@ -744,12 +809,10 @@ mod tests {
 
         let count = pipeline.send_pending(&sender, &storage).await.unwrap();
 
-        // Should respect MAX_CONCURRENT_FILTER_BATCHES (20)
         // 25 batches needed, but only 20 can be in-flight at once
         assert_eq!(count, MAX_CONCURRENT_FILTER_BATCHES);
         assert_eq!(pipeline.coordinator.active_count(), MAX_CONCURRENT_FILTER_BATCHES);
-        assert_eq!(pipeline.batch_trackers.len(), MAX_CONCURRENT_FILTER_BATCHES);
-        // 5 batches still pending
+        assert_eq!(pipeline.batch_trackers.len(), 25);
         assert_eq!(pipeline.coordinator.pending_count(), 5);
     }
 
@@ -918,5 +981,43 @@ mod tests {
             .insert(FilterMatchKey::new(0, BlockHash::all_zeros()), BlockFilter::new(&[0x01]));
 
         assert_eq!(batch.filters().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_deferred_batch_keeps_end_height_after_extend() {
+        // init(0, 2500) creates 3 batches but only 2 can be sent (max concurrent=2).
+        // The boundary batch (2000-2500) stays queued. After extend_target changes
+        // target_height to 4000, the deferred batch must still use end_height=2500.
+        let headers = Header::dummy_batch(0..5000);
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        storage.store_headers(&headers).await.unwrap();
+
+        let mut pipeline = create_pipeline_with_low_concurrency();
+        pipeline.init(0, 2500);
+        assert_eq!(pipeline.coordinator.pending_count(), 3); // 0, 1000, 2000
+
+        let (sender, _rx) = create_test_request_sender();
+
+        // Only 2 batches sent, batch 2000 stays queued
+        pipeline.send_pending(&sender, &storage).await.unwrap();
+        assert_eq!(pipeline.coordinator.active_count(), 2);
+        assert_eq!(pipeline.coordinator.pending_count(), 1);
+
+        // Extend target — batch 2000's tracker must keep end_height=2500
+        pipeline.extend_target(4000);
+
+        // Complete batch 0 to free a slot, then send deferred batch
+        for h in 0..1000 {
+            let hash = headers[h as usize].block_hash();
+            pipeline.receive_with_data(h, hash, &dummy_filter_data(h));
+        }
+        pipeline.send_pending(&sender, &storage).await.unwrap();
+
+        assert_eq!(
+            pipeline.batch_trackers.get(&2000).unwrap().end_height(),
+            2500,
+            "deferred batch should use its original end height"
+        );
     }
 }
