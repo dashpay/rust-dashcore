@@ -39,10 +39,11 @@ impl<
 
     async fn initialize(&mut self) -> SyncResult<()> {
         let wallet = self.wallet.read().await;
-        let synced_height = wallet.synced_height();
+        let committed_height = wallet.filter_committed_height();
         drop(wallet);
 
-        self.progress.update_current_height(synced_height);
+        self.committed_height = committed_height;
+        self.progress.update_current_height(committed_height);
         self.set_state(SyncState::WaitingForConnections);
 
         tracing::info!(
