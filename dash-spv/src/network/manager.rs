@@ -883,8 +883,11 @@ impl PeerNetworkManager {
                                 dns_interval.reset();
                                 this.maintenance_tick().await;
                             }
-                            Err(error) => {
-                                tracing::error!("Network event error: {}", error);
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                log::warn!("Network event receiver lagged by {} messages", n);
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                log::error!("Network event channel closed");
                                 break;
                             }
                         }
