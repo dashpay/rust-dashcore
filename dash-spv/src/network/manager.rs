@@ -826,6 +826,8 @@ impl PeerNetworkManager {
             }
         }
 
+        if self.shutdown_token.is_cancelled() { return; }
+
         // Send ping to all peers if needed
         for (addr, peer) in self.pool.get_all_peers().await {
             let mut peer_guard = peer.write().await;
