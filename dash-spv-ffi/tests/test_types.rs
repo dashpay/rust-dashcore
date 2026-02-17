@@ -65,7 +65,8 @@ mod tests {
 
         let mut filters = FiltersProgress::default();
         filters.set_state(SyncState::WaitForEvents);
-        filters.update_current_height(120);
+        filters.update_stored_height(150);
+        filters.update_committed_height(120);
         filters.update_target_height(200);
         filters.update_filter_header_tip_height(150);
         filters.add_downloaded(40);
@@ -138,7 +139,8 @@ mod tests {
         unsafe {
             let filters = &*ffi_progress.filters;
             assert_eq!(filters.state, FFISyncState::WaitForEvents);
-            assert_eq!(filters.current_height, 120);
+            assert_eq!(filters.stored_height, 150);
+            assert_eq!(filters.committed_height, 120);
             assert_eq!(filters.target_height, 200);
             assert_eq!(filters.filter_header_tip_height, 150);
             assert_eq!(filters.downloaded, 40);

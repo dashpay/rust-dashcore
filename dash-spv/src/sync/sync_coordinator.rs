@@ -416,7 +416,7 @@ mod tests {
         // Create filters progress at 25%
         let mut filters_progress = FiltersProgress::default();
         filters_progress.set_state(SyncState::Syncing);
-        filters_progress.update_current_height(250);
+        filters_progress.update_committed_height(250);
         filters_progress.update_target_height(1000);
         filters_progress.add_downloaded(250);
         progress.update_filters(filters_progress);

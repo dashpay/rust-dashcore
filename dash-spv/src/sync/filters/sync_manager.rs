@@ -42,13 +42,16 @@ impl<
         let committed_height = wallet.filter_committed_height();
         drop(wallet);
 
-        self.committed_height = committed_height;
-        self.progress.update_current_height(committed_height);
+        let stored_height = self.filter_storage.read().await.filter_tip_height().await?;
+
+        self.progress.update_committed_height(committed_height);
+        self.progress.update_stored_height(stored_height);
         self.set_state(SyncState::WaitingForConnections);
 
         tracing::info!(
-            "FiltersManager initialized at height {}, waiting for filter headers",
-            self.progress.current_height()
+            "FiltersManager initialized (committed={}, stored={}), waiting for filter headers",
+            committed_height,
+            stored_height,
         );
 
         Ok(())
@@ -64,10 +67,10 @@ impl<
         // This handles restart where filters are persisted but wallet state isn't
         let stored_filters_tip = self.filter_storage.read().await.filter_tip_height().await?;
 
-        if stored_filters_tip > self.progress.current_height() {
+        if stored_filters_tip > self.progress.committed_height() {
             tracing::info!(
                 "FiltersManager: wallet at height {}, stored filters at {} - starting rescan of stored filters",
-                self.progress.current_height(),
+                self.progress.committed_height(),
                 stored_filters_tip
             );
             // Set filter header tip to stored filters tip - we only scan what's already stored
@@ -80,14 +83,14 @@ impl<
         }
 
         // Already at or beyond stored filters tip - check if fully synced
-        if stored_filters_tip > 0 && stored_filters_tip == self.progress.current_height() {
+        if stored_filters_tip > 0 && stored_filters_tip == self.progress.committed_height() {
             self.progress.update_filter_header_tip_height(stored_filters_tip);
             // Only emit SyncComplete if we've also reached the chain tip
-            if self.progress.current_height() >= self.progress.target_height() {
+            if self.progress.committed_height() >= self.progress.target_height() {
                 self.set_state(SyncState::Synced);
                 tracing::info!(
                     "FiltersManager: already synced at height {}",
-                    self.progress.current_height()
+                    self.progress.committed_height()
                 );
                 return Ok(vec![SyncEvent::FiltersSyncComplete {
                     tip_height: stored_filters_tip,

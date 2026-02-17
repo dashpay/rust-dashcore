@@ -131,7 +131,8 @@ impl From<&FilterHeadersProgress> for FFIFilterHeadersProgress {
 #[derive(Debug, Clone, Default)]
 pub struct FFIFiltersProgress {
     pub state: FFISyncState,
-    pub current_height: u32,
+    pub committed_height: u32,
+    pub stored_height: u32,
     pub target_height: u32,
     pub filter_header_tip_height: u32,
     pub downloaded: u32,
@@ -145,7 +146,8 @@ impl From<&FiltersProgress> for FFIFiltersProgress {
     fn from(progress: &FiltersProgress) -> Self {
         FFIFiltersProgress {
             state: progress.state().into(),
-            current_height: progress.current_height(),
+            committed_height: progress.committed_height(),
+            stored_height: progress.stored_height(),
             target_height: progress.target_height(),
             filter_header_tip_height: progress.filter_header_tip_height(),
             downloaded: progress.downloaded(),
