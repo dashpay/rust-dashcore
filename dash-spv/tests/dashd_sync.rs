@@ -5,6 +5,7 @@
 use dash_spv::client::interface::DashSpvClientCommand;
 use dash_spv::network::NetworkEvent;
 use dash_spv::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
+use dash_spv::sync::ProgressPercentage;
 use dash_spv::test_utils::{copy_dir, DashCoreNode, DashdTestContext};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
@@ -252,7 +253,7 @@ async fn wait_for_sync(
                 let current_height = update.headers().unwrap().current_height();
                 let filters_height = update.filters()
                     .ok()
-                    .map(|f| f.current_height())
+                    .map(|f| f.committed_height())
                     .unwrap_or(current_height);
                 if update.is_synced() && current_height >= target_height
                     && filters_height >= target_height
