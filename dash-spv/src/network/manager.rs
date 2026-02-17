@@ -165,7 +165,7 @@ impl PeerNetworkManager {
         } else {
             // Load saved peers from disk
             let saved_peers = self.peer_store.load_peers().await.unwrap_or_else(|e| {
-                log::warn!("Failed to load peers: {}", e);
+                tracing::warn!("Failed to load peers: {}", e);
                 Vec::new()
             });
             peer_addresses.extend(saved_peers);
