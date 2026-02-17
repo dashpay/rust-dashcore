@@ -100,6 +100,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
     }
 
+    /// Returns true if there is no in-flight processing state.
+    fn is_idle(&self) -> bool {
+        self.active_batches.is_empty()
+            && self.blocks_remaining.is_empty()
+            && self.filters_matched.is_empty()
+            && self.pending_batches.is_empty()
+            && self.filter_pipeline.is_idle()
+    }
+
     /// Clear all in-flight processing state. Called on peer disconnect when
     /// in-flight filter batches and block tracking become invalid.
     pub(super) fn clear_in_flight_state(&mut self) {
@@ -133,11 +142,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         Ok(filters)
     }
 
-    /// Start or resume filter download.
+    /// Initialize the filter download state and begin downloading from the current position.
     pub(super) async fn start_download(
         &mut self,
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
+        debug_assert!(self.is_idle(), "manager should have no in-flight state on start");
+
         self.set_state(SyncState::Syncing);
         // Use filter_committed_height for restart recovery instead of
         // synced_height, which advances per-block and may exceed committed scan progress.
@@ -185,59 +196,26 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             scan_start
         };
 
-        // Initialize storage tracking
-        // If we have pending batches from a previous run, continue from their boundaries
-        // instead of recalculating from storage (which might not reflect in-flight batches)
-        if !self.pending_batches.is_empty() {
-            let first_pending = self.pending_batches.first().unwrap().start_height();
-            tracing::info!(
-                "Resuming with {} pending batches, next_batch_to_store staying at {} (first pending: {})",
-                self.pending_batches.len(),
-                self.next_batch_to_store,
-                first_pending
-            );
-            // Don't reset next_batch_to_store - keep the existing value
-        } else {
-            tracing::info!(
-                "Initializing next_batch_to_store to {} (stored_filters_tip={}, scan_start={})",
-                download_start,
-                stored_filters_tip,
-                scan_start
-            );
-            self.next_batch_to_store = download_start;
-        }
-
+        self.next_batch_to_store = download_start;
         self.processing_height = scan_start;
 
-        // Initialize download pipeline for all remaining filters
-        if download_start <= self.progress.filter_header_tip_height() {
-            // Only reinitialize if pipeline is empty - avoid losing in-flight batches
-            if self.filter_pipeline.active_count() == 0 && self.pending_batches.is_empty() {
-                self.filter_pipeline.init(download_start, self.progress.filter_header_tip_height());
-                tracing::info!(
-                    "Starting filter download from {} to {} (batch-based processing)",
-                    download_start,
-                    self.progress.filter_header_tip_height()
-                );
-            } else {
-                // Extend target without resetting state - batches still in flight
-                self.filter_pipeline.extend_target(self.progress.filter_header_tip_height());
-                tracing::info!(
-                    "Resuming filter download to {} (active batches: {}, pending: {})",
-                    self.progress.filter_header_tip_height(),
-                    self.filter_pipeline.active_count(),
-                    self.pending_batches.len()
-                );
-            }
+        tracing::info!(
+            "Starting filter download (scan_start={}, download_start={}, stored_filters_tip={}, target={})",
+            scan_start,
+            download_start,
+            stored_filters_tip,
+            self.progress.filter_header_tip_height()
+        );
 
+        // Initialize download pipeline for remaining filters
+        if download_start <= self.progress.filter_header_tip_height() {
+            self.filter_pipeline.init(download_start, self.progress.filter_header_tip_height());
             let header_storage = self.header_storage.read().await;
             self.filter_pipeline.send_pending(requests, &*header_storage).await?;
             drop(header_storage);
         } else {
-            // No new filters to download - initialize pipeline to a "complete" state
-            // so it doesn't try to download from its default start height
+            // No new filters to download, scanning stored filters only
             self.filter_pipeline.init(download_start, download_start.saturating_sub(1));
-            tracing::info!("Rescan mode: no new filters to download, scanning stored filters only");
         }
 
         // Initialize the first processing batch
@@ -924,6 +902,47 @@ mod tests {
         // Verify batch association
         assert_eq!(manager.blocks_remaining.get(&hash1), Some(&(100, 0)));
         assert_eq!(manager.blocks_remaining.get(&hash2), Some(&(5100, 5000)));
+    }
+
+    #[tokio::test]
+    async fn test_is_idle() {
+        let mut manager = create_test_manager().await;
+        let hash = dashcore::block::Header::dummy(0).block_hash();
+
+        // Fresh manager is idle
+        assert!(manager.is_idle());
+
+        // Test each involved field separately
+        manager.active_batches.insert(0, FiltersBatch::new(0, 999, HashMap::new()));
+        assert!(!manager.is_idle());
+        manager.active_batches.clear();
+
+        manager.blocks_remaining.insert(hash, (0, 0));
+        assert!(!manager.is_idle());
+        manager.blocks_remaining.clear();
+
+        manager.filters_matched.insert(hash);
+        assert!(!manager.is_idle());
+        manager.filters_matched.clear();
+
+        manager.pending_batches.insert(FiltersBatch::new(0, 999, HashMap::new()));
+        assert!(!manager.is_idle());
+        manager.pending_batches.clear();
+
+        manager.filter_pipeline.init(0, 999);
+        assert!(!manager.is_idle());
+        manager.filter_pipeline = FiltersPipeline::new();
+
+        // Populate all fields, then clear_in_flight_state restores idleness
+        manager.active_batches.insert(0, FiltersBatch::new(0, 999, HashMap::new()));
+        manager.blocks_remaining.insert(hash, (0, 0));
+        manager.filters_matched.insert(hash);
+        manager.pending_batches.insert(FiltersBatch::new(1000, 1999, HashMap::new()));
+        manager.filter_pipeline.init(2000, 2999);
+        assert!(!manager.is_idle());
+
+        manager.clear_in_flight_state();
+        assert!(manager.is_idle());
     }
 
     #[tokio::test]

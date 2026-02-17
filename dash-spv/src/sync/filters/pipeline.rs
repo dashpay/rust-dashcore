@@ -80,9 +80,9 @@ impl FiltersPipeline {
         }
     }
 
-    /// Get the number of active batches.
-    pub(super) fn active_count(&self) -> usize {
-        self.coordinator.active_count()
+    /// Returns true if the pipeline has no in-flight or pending work.
+    pub(super) fn is_idle(&self) -> bool {
+        self.coordinator.active_count() == 0 && self.coordinator.pending_count() == 0
     }
 
     /// Take completed batches with their buffered filter data for processing.
@@ -315,7 +315,7 @@ mod tests {
     fn test_pipeline_new() {
         let pipeline = FiltersPipeline::new();
 
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
         assert!(pipeline.batch_trackers.is_empty());
         assert!(pipeline.completed_batches.is_empty());
         assert_eq!(pipeline.target_height, 0);
@@ -324,11 +324,23 @@ mod tests {
     }
 
     #[test]
+    fn test_is_idle() {
+        let mut pipeline = FiltersPipeline::new();
+        assert!(pipeline.is_idle());
+
+        pipeline.init(0, 999);
+        assert!(!pipeline.is_idle());
+    }
+
+    #[test]
     fn test_pipeline_default_trait() {
         let default_pipeline = FiltersPipeline::default();
         let new_pipeline = FiltersPipeline::new();
 
-        assert_eq!(default_pipeline.active_count(), new_pipeline.active_count());
+        assert_eq!(
+            default_pipeline.coordinator.active_count(),
+            new_pipeline.coordinator.active_count()
+        );
         assert_eq!(default_pipeline.target_height, new_pipeline.target_height);
     }
 
@@ -360,7 +372,7 @@ mod tests {
 
         assert!(pipeline.batch_trackers.is_empty());
         assert!(pipeline.completed_batches.is_empty());
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.filters_received, 0);
         // 1 batch queued for heights 200-300
         assert_eq!(pipeline.coordinator.pending_count(), 1);
@@ -609,7 +621,7 @@ mod tests {
         assert_eq!(timed_out, vec![0]);
         // Batch should be re-queued in coordinator's pending queue
         assert_eq!(pipeline.coordinator.pending_count(), 1);
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
     }
 
     #[test]
@@ -660,7 +672,7 @@ mod tests {
         pipeline.batch_trackers.insert(2000, BatchTracker::new(2999));
         pipeline.coordinator.mark_sent(&[0, 1000, 2000]);
 
-        assert_eq!(pipeline.active_count(), 3);
+        assert_eq!(pipeline.coordinator.active_count(), 3);
         assert_eq!(pipeline.coordinator.pending_count(), 0);
 
         // Wait for timeout
@@ -672,7 +684,7 @@ mod tests {
 
         // All 3 batches should be in the pending queue, not duplicated
         assert_eq!(pipeline.coordinator.pending_count(), 3);
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
 
         // Take pending items - should get exactly 3, not more
         let pending = pipeline.coordinator.take_pending(10);
@@ -701,7 +713,7 @@ mod tests {
         let count = pipeline.send_pending(&sender, &storage).await.unwrap();
 
         assert_eq!(count, 1);
-        assert_eq!(pipeline.active_count(), 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
         assert!(pipeline.batch_trackers.contains_key(&0));
         // No more pending since the single batch was sent
         assert_eq!(pipeline.coordinator.pending_count(), 0);
@@ -735,7 +747,7 @@ mod tests {
         // Should respect MAX_CONCURRENT_FILTER_BATCHES (20)
         // 25 batches needed, but only 20 can be in-flight at once
         assert_eq!(count, MAX_CONCURRENT_FILTER_BATCHES);
-        assert_eq!(pipeline.active_count(), MAX_CONCURRENT_FILTER_BATCHES);
+        assert_eq!(pipeline.coordinator.active_count(), MAX_CONCURRENT_FILTER_BATCHES);
         assert_eq!(pipeline.batch_trackers.len(), MAX_CONCURRENT_FILTER_BATCHES);
         // 5 batches still pending
         assert_eq!(pipeline.coordinator.pending_count(), 5);
@@ -783,7 +795,7 @@ mod tests {
 
         // Should send all 3 batches: 0-999, 1000-1999, 2000-2500
         assert_eq!(count, 3);
-        assert_eq!(pipeline.active_count(), 3);
+        assert_eq!(pipeline.coordinator.active_count(), 3);
         assert_eq!(pipeline.coordinator.pending_count(), 0);
     }
 
@@ -827,7 +839,7 @@ mod tests {
         // Send request
         let sent = pipeline.send_pending(&sender, &storage).await.unwrap();
         assert_eq!(sent, 1);
-        assert_eq!(pipeline.active_count(), 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
 
         // Receive all filters
         for h in 0..=99 {
@@ -836,7 +848,7 @@ mod tests {
         }
 
         // Batch should be complete
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.completed_batches.len(), 1);
         assert_eq!(pipeline.filters_received, 100);
         assert_eq!(pipeline.highest_received, 99);
@@ -861,7 +873,7 @@ mod tests {
 
         // Send initial request
         pipeline.send_pending(&sender, &storage).await.unwrap();
-        assert_eq!(pipeline.active_count(), 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
         assert_eq!(pipeline.coordinator.pending_count(), 0);
 
         // Wait for timeout
@@ -871,14 +883,14 @@ mod tests {
         let timed_out = pipeline.handle_timeouts();
         assert_eq!(timed_out.len(), 1);
         assert_eq!(pipeline.coordinator.pending_count(), 1);
-        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.active_count(), 0);
 
         // Tracker should still exist for late arrivals
         assert!(pipeline.batch_trackers.contains_key(&0));
 
         // Can retry by sending again
         pipeline.send_pending(&sender, &storage).await.unwrap();
-        assert_eq!(pipeline.active_count(), 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
 
         // Existing tracker is reused (not replaced)
         assert!(pipeline.batch_trackers.contains_key(&0));
