@@ -763,7 +763,8 @@ impl Peer {
     }
 
     /// Clean up old pending pings that haven't received responses.
-    pub fn cleanup_old_pings(&mut self) {
+    /// Returns `true` if any pings expired.
+    pub fn has_expired_pings(&mut self) -> bool {
         const PING_TIMEOUT: Duration = Duration::from_secs(60); // 1 minute timeout for pings
 
         let now = SystemTime::now();
@@ -775,10 +776,13 @@ impl Peer {
             }
         }
 
+        let has_expired = !expired_nonces.is_empty();
         for nonce in expired_nonces {
             self.pending_pings.remove(&nonce);
             tracing::warn!("Ping timeout for {} with nonce {}", self.address, nonce);
         }
+
+        has_expired
     }
 
     /// Get ping/pong statistics.
