@@ -419,19 +419,17 @@ mod tests {
         fn identifier(&self) -> ManagerIdentifier {
             self.identifier
         }
+
         fn state(&self) -> SyncState {
             self.state
         }
+
         fn set_state(&mut self, state: SyncState) {
             self.state = state;
         }
+
         fn wanted_message_types(&self) -> &'static [MessageType] {
             &[]
-        }
-        fn progress(&self) -> SyncManagerProgress {
-            let mut progress = BlockHeadersProgress::default();
-            progress.set_state(self.state);
-            SyncManagerProgress::BlockHeaders(progress)
         }
 
         async fn handle_message(
@@ -455,6 +453,12 @@ mod tests {
         async fn tick(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
             self.tick_count.fetch_add(1, Ordering::Relaxed);
             Ok(vec![])
+        }
+
+        fn progress(&self) -> SyncManagerProgress {
+            let mut progress = BlockHeadersProgress::default();
+            progress.set_state(self.state);
+            SyncManagerProgress::BlockHeaders(progress)
         }
     }
 

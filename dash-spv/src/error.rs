@@ -211,10 +211,6 @@ pub enum SyncError {
     Timeout(String),
 
     /// Network-related errors (e.g., connection failures, protocol errors).
-    ///
-    /// When returned from a `SyncManager` method, the default `run()` loop
-    /// resets the manager to `WaitingForConnections` and applies a cooldown
-    /// to prevent log/event flooding.
     #[error("Network error: {0}")]
     Network(String),
 
