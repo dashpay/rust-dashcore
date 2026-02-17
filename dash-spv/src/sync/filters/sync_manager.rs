@@ -42,6 +42,7 @@ impl<
         let committed_height = wallet.filter_committed_height();
         drop(wallet);
 
+        self.committed_height = committed_height;
         self.progress.update_current_height(committed_height);
         self.set_state(SyncState::WaitingForConnections);
 
