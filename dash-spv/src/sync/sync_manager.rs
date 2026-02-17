@@ -212,7 +212,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         self.set_state(SyncState::WaitingForConnections);
         let progress = self.progress();
         let identifier = self.identifier();
-        tracing::warn!(
+        log::warn!(
             "{} {} network error, resetting to WaitingForConnections: {}",
             identifier,
             source,
