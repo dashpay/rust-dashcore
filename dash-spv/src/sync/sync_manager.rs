@@ -198,26 +198,19 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         }
     }
 
-    /// Reset to `WaitingForConnections`, report progress, and emit a `ManagerError` event.
+    /// Log a network error and emit a `ManagerError` event.
     ///
-    /// This bundles the state reset and error reporting into one call so that
-    /// `set_state` is always invoked before the progress snapshot — eliminating
-    /// the ordering bug where callers could forget to reset state first.
+    /// State is intentionally left unchanged: the `PeersUpdated` event path
+    /// handles the transition to `WaitingForConnections` when all peers are lost.
     fn recover_from_network_error(
         &mut self,
         context: &SyncManagerTaskContext,
         source: &str,
         msg: &str,
     ) {
-        self.set_state(SyncState::WaitingForConnections);
-        let progress = self.progress();
         let identifier = self.identifier();
-        log::warn!(
-            "{} {} network error, resetting to WaitingForConnections: {}",
-            identifier,
-            source,
-            msg
-        );
+        log::warn!("{} {} network error: {}", identifier, source, msg);
+        let progress = self.progress();
         context.progress_sender.send(progress).ok();
         context.emit_sync_event(SyncEvent::ManagerError {
             manager: identifier,
@@ -576,7 +569,7 @@ mod tests {
 
     /// Given a manager whose tick() returns SyncError::Network after a few calls,
     /// When the task loop processes the error,
-    /// Then it resets to WaitingForConnections and keeps running.
+    /// Then it stays in its current state and keeps running.
     #[tokio::test]
     async fn test_manager_resets_on_fatal_network_error() {
         let tick_count = Arc::new(AtomicU32::new(0));
@@ -616,7 +609,7 @@ mod tests {
         // 2-second cooldown, plus a few more ticks after cooldown expires.
         tokio::time::sleep(Duration::from_millis(2800)).await;
 
-        // Verify progress state is WaitingForConnections (not Error)
+        // State stays at WaitingForConnections (set by initialize(), not changed by error recovery)
         assert_eq!(progress_rx.borrow().state(), SyncState::WaitingForConnections);
 
         // Verify tick was called more than the error threshold (manager kept
