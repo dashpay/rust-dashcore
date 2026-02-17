@@ -13,6 +13,10 @@ use async_trait::async_trait;
 /// and communicates with other managers via events. Managers progress independently and
 /// catch up to each other as events flow between them.
 use std::time::Duration;
+
+/// Cooldown period after a network-error recovery before tick processing resumes.
+/// Prevents log/event flooding when the network is persistently down.
+const NETWORK_ERROR_COOLDOWN: Duration = Duration::from_secs(2);
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch;
@@ -352,7 +356,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                     // window. Message and event branches are externally driven and
                     // don't need this guard.
                     if let Some(since) = network_error_cooldown {
-                        if since.elapsed() < Duration::from_secs(2) {
+                        if since.elapsed() < NETWORK_ERROR_COOLDOWN {
                             continue;
                         }
                         network_error_cooldown = None;
