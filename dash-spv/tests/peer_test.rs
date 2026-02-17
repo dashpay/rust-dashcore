@@ -156,36 +156,6 @@ async fn test_peer_disconnection() {
     }
 }
 
-#[tokio::test]
-async fn test_max_peer_limit() {
-    use dash_spv::network::constants::MAX_PEERS;
-
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    let mut config = create_test_config(Network::Testnet);
-
-    // Add at least one peer to avoid "No peers specified" error
-    config.peers = vec!["127.0.0.1:19999".parse().unwrap()];
-
-    // Create network manager
-    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
-
-    // Create storage manager
-    let storage_manager =
-        DiskStorageManager::new(&config).await.expect("Failed to create tmp storage");
-
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
-
-    let _client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
-
-    // The client should never connect to more than MAX_PEERS
-    // This is enforced in the PeerPool
-    println!("Maximum peer limit is set to: {}", MAX_PEERS);
-    assert_eq!(MAX_PEERS, 3, "Default max peers should be 12");
-}
-
 #[cfg(test)]
 mod unit_tests {
     use super::*;

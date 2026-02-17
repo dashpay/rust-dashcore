@@ -198,7 +198,7 @@ mod tests {
 
             // Basic consistency checks
             assert!(
-                headers.current_height <= filter_headers.target_height
+                headers.tip_height <= filter_headers.target_height
                     || filter_headers.current_height == 0
             );
             // headers_downloaded is u64, always >= 0

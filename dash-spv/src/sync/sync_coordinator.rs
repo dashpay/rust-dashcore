@@ -17,6 +17,7 @@ use crate::network::NetworkManager;
 use crate::storage::{
     BlockHeaderStorage, BlockStorage, FilterHeaderStorage, FilterStorage, MetadataStorage,
 };
+use crate::sync::progress::ProgressPercentage;
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager,
@@ -407,7 +408,7 @@ mod tests {
         // Create headers progress at 50%
         let mut headers_progress = BlockHeadersProgress::default();
         headers_progress.set_state(SyncState::Syncing);
-        headers_progress.update_current_height(500);
+        headers_progress.update_tip_height(500);
         headers_progress.update_target_height(1000);
         headers_progress.add_processed(500);
         progress.update_headers(headers_progress);

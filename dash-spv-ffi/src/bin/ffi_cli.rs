@@ -213,7 +213,7 @@ extern "C" fn on_progress_update(progress: *const FFISyncProgress, _user_data: *
 
     if !p.headers.is_null() {
         let h = unsafe { &*p.headers };
-        print!("headers:{}/{} ", h.current_height + h.buffered, h.target_height);
+        print!("headers:{}/{} ", h.tip_height + h.buffered, h.target_height);
     }
     if !p.filter_headers.is_null() {
         let fh = unsafe { &*p.filter_headers };
