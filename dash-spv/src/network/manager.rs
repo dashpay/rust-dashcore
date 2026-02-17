@@ -863,7 +863,8 @@ impl PeerNetworkManager {
         let mut tasks = self.tasks.lock().await;
         tasks.spawn(async move {
             // Periodic DNS discovery check (only active in non-exclusive mode)
-            let mut dns_interval = time::interval_at(Instant::now() + DNS_DISCOVERY_DELAY, DNS_DISCOVERY_DELAY);
+            let mut dns_interval =
+                time::interval_at(Instant::now() + DNS_DISCOVERY_DELAY, DNS_DISCOVERY_DELAY);
             // Periodic reconnection check (active in both modes)
             let mut maintenance_interval = time::interval(MAINTENANCE_INTERVAL);
 
