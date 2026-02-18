@@ -494,7 +494,7 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
  *
  * Workflow:
  * 1. Configure event callbacks before calling `run()`
- * 2. Call `run()` - it returns immediately after spawning background sync threads
+ * 2. Call `run()` - it returns immediately after spawning background tasks
  * 3. Receive notifications via callbacks as sync progresses
  * 4. Call `stop()` when done
  *
@@ -587,13 +587,13 @@ struct FFISyncProgress *dash_spv_ffi_client_get_manager_sync_progress(struct FFI
 /**
  * Set sync event callbacks for push-based event notifications.
  *
- * The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+ * The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
  * Call this before calling run().
  *
  * # Safety
  * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
  * - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
- * - Callbacks must be thread-safe as they may be called from a background thread.
+ * - Callbacks must be thread-safe as they may be called from a background task.
  */
 
 int32_t dash_spv_ffi_client_set_sync_event_callbacks(struct FFIDashSpvClient *client,
@@ -611,13 +611,13 @@ int32_t dash_spv_ffi_client_set_sync_event_callbacks(struct FFIDashSpvClient *cl
 /**
  * Set network event callbacks for push-based event notifications.
  *
- * The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+ * The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
  * Call this before calling run().
  *
  * # Safety
  * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
  * - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
- * - Callbacks must be thread-safe as they may be called from a background thread.
+ * - Callbacks must be thread-safe as they may be called from a background task.
  */
 
 int32_t dash_spv_ffi_client_set_network_event_callbacks(struct FFIDashSpvClient *client,
@@ -635,13 +635,13 @@ int32_t dash_spv_ffi_client_set_network_event_callbacks(struct FFIDashSpvClient 
 /**
  * Set wallet event callbacks for push-based event notifications.
  *
- * The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+ * The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
  * Call this before calling run().
  *
  * # Safety
  * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
  * - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
- * - Callbacks must be thread-safe as they may be called from a background thread.
+ * - Callbacks must be thread-safe as they may be called from a background task.
  */
 
 int32_t dash_spv_ffi_client_set_wallet_event_callbacks(struct FFIDashSpvClient *client,
@@ -659,13 +659,13 @@ int32_t dash_spv_ffi_client_set_wallet_event_callbacks(struct FFIDashSpvClient *
 /**
  * Set progress callback for sync progress updates.
  *
- * The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+ * The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
  * Call this before calling run().
  *
  * # Safety
  * - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
  * - The `callback` struct and its `user_data` must remain valid until the callback is cleared.
- * - The callback must be thread-safe as it may be called from a background thread.
+ * - The callback must be thread-safe as it may be called from a background task.
  */
 
 int32_t dash_spv_ffi_client_set_progress_callback(struct FFIDashSpvClient *client,

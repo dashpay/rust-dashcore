@@ -10,102 +10,95 @@ use dash_spv::storage::DiskStorageManager;
 use dash_spv::DashSpvClient;
 
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-use tokio::runtime::Handle;
 use tokio::runtime::Runtime;
 use tokio::sync::{broadcast, watch};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// Spawns a monitoring thread for broadcast-based events (sync, network, wallet).
-///
-/// Returns a thread handle that monitors the receiver and dispatches events to callbacks.
+/// Spawns a tokio task that monitors a broadcast channel and dispatches events to callbacks.
 fn spawn_broadcast_monitor<E, C, F>(
     name: &'static str,
     receiver: broadcast::Receiver<E>,
     callbacks: Arc<Mutex<Option<C>>>,
     shutdown: CancellationToken,
-    rt: Handle,
+    rt: &Runtime,
     dispatch_fn: F,
 ) -> JoinHandle<()>
 where
     E: Clone + Send + 'static,
-    C: Send + 'static,
+    C: Clone + Send + 'static,
     F: Fn(&C, &E) + Send + 'static,
 {
     let mut receiver = receiver;
-    std::thread::spawn(move || {
-        rt.block_on(async move {
-            tracing::debug!("{} monitoring thread started", name);
-            loop {
-                tokio::select! {
-                    result = receiver.recv() => {
-                        match result {
-                            Ok(event) => {
-                                let guard = callbacks.lock().unwrap();
-                                if let Some(ref cb) = *guard {
-                                    dispatch_fn(cb, &event);
-                                }
+    rt.spawn(async move {
+        tracing::debug!("{} monitoring task started", name);
+        loop {
+            tokio::select! {
+                result = receiver.recv() => {
+                    match result {
+                        Ok(event) => {
+                            let cb = callbacks.lock().unwrap().clone();
+                            if let Some(ref cb) = cb {
+                                dispatch_fn(cb, &event);
                             }
-                            Err(broadcast::error::RecvError::Closed) => break,
-                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
                         }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     }
-                    _ = shutdown.cancelled() => break,
                 }
+                _ = shutdown.cancelled() => break,
             }
-            tracing::debug!("{} monitoring thread exiting", name);
-        });
+        }
+        tracing::debug!("{} monitoring task exiting", name);
     })
 }
 
-/// Spawns a monitoring thread for watch-based progress updates.
+/// Spawns a tokio task that monitors a watch channel for progress updates.
 ///
 /// Sends the initial progress value, then monitors for changes.
 fn spawn_progress_monitor<P, C, F>(
     receiver: watch::Receiver<P>,
     callbacks: Arc<Mutex<Option<C>>>,
     shutdown: CancellationToken,
-    rt: Handle,
+    rt: &Runtime,
     dispatch_fn: F,
 ) -> JoinHandle<()>
 where
     P: Clone + Send + Sync + 'static,
-    C: Send + 'static,
+    C: Clone + Send + 'static,
     F: Fn(&C, &P) + Send + 'static,
 {
     let mut receiver = receiver;
-    std::thread::spawn(move || {
-        rt.block_on(async move {
-            tracing::debug!("Progress monitoring thread started");
+    rt.spawn(async move {
+        tracing::debug!("Progress monitoring task started");
 
-            // Send initial progress
-            {
-                let progress = receiver.borrow_and_update().clone();
-                let guard = callbacks.lock().unwrap();
-                if let Some(ref cb) = *guard {
-                    dispatch_fn(cb, &progress);
-                }
+        // Send initial progress
+        {
+            let progress = receiver.borrow_and_update().clone();
+            let cb = callbacks.lock().unwrap().clone();
+            if let Some(ref cb) = cb {
+                dispatch_fn(cb, &progress);
             }
+        }
 
-            loop {
-                tokio::select! {
-                    result = receiver.changed() => {
-                        match result {
-                            Ok(()) => {
-                                let progress = receiver.borrow_and_update().clone();
-                                let guard = callbacks.lock().unwrap();
-                                if let Some(ref cb) = *guard {
-                                    dispatch_fn(cb, &progress);
-                                }
+        loop {
+            tokio::select! {
+                result = receiver.changed() => {
+                    match result {
+                        Ok(()) => {
+                            let progress = receiver.borrow_and_update().clone();
+                            let cb = callbacks.lock().unwrap().clone();
+                            if let Some(ref cb) = cb {
+                                dispatch_fn(cb, &progress);
                             }
-                            Err(_) => break,
                         }
+                        Err(_) => break,
                     }
-                    _ = shutdown.cancelled() => break,
                 }
+                _ = shutdown.cancelled() => break,
             }
-            tracing::debug!("Progress monitoring thread exiting");
-        });
+        }
+        tracing::debug!("Progress monitoring task exiting");
     })
 }
 
@@ -121,7 +114,7 @@ type InnerClient = DashSpvClient<
 pub struct FFIDashSpvClient {
     pub(crate) inner: InnerClient,
     pub(crate) runtime: Arc<Runtime>,
-    active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    active_tasks: Mutex<Vec<JoinHandle<()>>>,
     shutdown_token: CancellationToken,
     sync_event_callbacks: Arc<Mutex<Option<FFISyncEventCallbacks>>>,
     network_event_callbacks: Arc<Mutex<Option<FFINetworkEventCallbacks>>>,
@@ -180,7 +173,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
             let ffi_client = FFIDashSpvClient {
                 inner: client,
                 runtime,
-                active_threads: Arc::new(Mutex::new(Vec::new())),
+                active_tasks: Mutex::new(Vec::new()),
                 shutdown_token: CancellationToken::new(),
                 sync_event_callbacks: Arc::new(Mutex::new(None)),
                 network_event_callbacks: Arc::new(Mutex::new(None)),
@@ -197,24 +190,30 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 }
 
 impl FFIDashSpvClient {
-    fn join_active_threads(&self) {
-        let handles = {
-            let mut guard = self.active_threads.lock().unwrap();
+    /// Abort all active monitoring tasks and wait for them to finish.
+    fn cancel_active_tasks(&self) {
+        let tasks = {
+            let mut guard = self.active_tasks.lock().unwrap();
             std::mem::take(&mut *guard)
         };
 
-        for handle in handles {
-            if let Err(e) = handle.join() {
-                tracing::error!("Failed to join active thread during cleanup: {:?}", e);
-            }
+        for task in &tasks {
+            task.abort();
         }
+
+        // Wait for all tasks to finish
+        self.runtime.block_on(async {
+            for task in tasks {
+                let _ = task.await;
+            }
+        });
     }
 }
 
 fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
     client.shutdown_token.cancel();
 
-    client.join_active_threads();
+    client.cancel_active_tasks();
 
     let result = client.runtime.block_on(async { client.inner.stop().await });
 
@@ -299,7 +298,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 ///
 /// Workflow:
 /// 1. Configure event callbacks before calling `run()`
-/// 2. Call `run()` - it returns immediately after spawning background sync threads
+/// 2. Call `run()` - it returns immediately after spawning background tasks
 /// 3. Receive notifications via callbacks as sync progresses
 /// 4. Call `stop()` when done
 ///
@@ -327,10 +326,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
     tracing::info!("dash_spv_ffi_client_run: client started, setting up event monitoring");
 
-    let runtime_handle = client.runtime.handle().clone();
     let shutdown_token = client.shutdown_token.clone();
 
-    // Subscribe to events before spawning the sync thread
+    // Subscribe to events before spawning tasks
     let (sync_event_rx, network_event_rx, progress_rx, wallet_event_rx) =
         client.runtime.block_on(async {
             let wallet_rx = client.inner.wallet().read().await.subscribe_events();
@@ -342,76 +340,67 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
             )
         });
 
-    // Spawn event monitoring threads for each callback type that is set
-    let rt = client.runtime.handle().clone();
+    // Spawn event monitoring tasks for each callback type that is set
+    let mut tasks = client.active_tasks.lock().unwrap();
 
     if client.sync_event_callbacks.lock().unwrap().is_some() {
-        let handle = spawn_broadcast_monitor(
+        tasks.push(spawn_broadcast_monitor(
             "Sync event",
             sync_event_rx.resubscribe(),
             client.sync_event_callbacks.clone(),
             shutdown_token.clone(),
-            rt.clone(),
+            &client.runtime,
             |cb, event| cb.dispatch(event),
-        );
-        client.active_threads.lock().unwrap().push(handle);
+        ));
     }
 
     if client.network_event_callbacks.lock().unwrap().is_some() {
-        let handle = spawn_broadcast_monitor(
+        tasks.push(spawn_broadcast_monitor(
             "Network event",
             network_event_rx.resubscribe(),
             client.network_event_callbacks.clone(),
             shutdown_token.clone(),
-            rt.clone(),
+            &client.runtime,
             |cb, event| cb.dispatch(event),
-        );
-        client.active_threads.lock().unwrap().push(handle);
+        ));
     }
 
     if client.progress_callback.lock().unwrap().is_some() {
-        let handle = spawn_progress_monitor(
+        tasks.push(spawn_progress_monitor(
             progress_rx.clone(),
             client.progress_callback.clone(),
             shutdown_token.clone(),
-            rt.clone(),
+            &client.runtime,
             |cb, progress| cb.dispatch(progress),
-        );
-        client.active_threads.lock().unwrap().push(handle);
+        ));
     }
 
     if client.wallet_event_callbacks.lock().unwrap().is_some() {
-        let handle = spawn_broadcast_monitor(
+        tasks.push(spawn_broadcast_monitor(
             "Wallet event",
             wallet_event_rx.resubscribe(),
             client.wallet_event_callbacks.clone(),
             shutdown_token.clone(),
-            rt.clone(),
+            &client.runtime,
             |cb, event| cb.dispatch(event),
-        );
-        client.active_threads.lock().unwrap().push(handle);
+        ));
     }
 
-    tracing::info!("dash_spv_ffi_client_run: spawning sync thread");
-
+    // Spawn the sync monitoring task
     let spv_client = client.inner.clone();
+    tasks.push(client.runtime.spawn(async move {
+        tracing::debug!("Sync task: starting monitor_network");
 
-    let sync_handle = std::thread::spawn(move || {
-        runtime_handle.block_on(async move {
-            tracing::debug!("Sync thread: starting monitor_network");
+        if let Err(e) = spv_client.monitor_network(shutdown_token).await {
+            tracing::error!("Sync task: sync error: {}", e);
+        }
 
-            if let Err(e) = spv_client.monitor_network(shutdown_token).await {
-                tracing::error!("Sync thread: sync error: {}", e);
-            }
+        tracing::debug!("Sync task: exiting");
+    }));
 
-            tracing::debug!("Sync thread: exiting");
-        });
-    });
+    drop(tasks);
 
-    // Store thread handle for cleanup
-    client.active_threads.lock().unwrap().push(sync_handle);
-
-    tracing::info!("dash_spv_ffi_client_run: sync thread spawned, returning");
+    tracing::info!("dash_spv_ffi_client_run: background tasks spawned, returning");
 
     FFIErrorCode::Success as i32
 }
@@ -490,7 +479,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
     if !client.is_null() {
         let client = Box::from_raw(client);
 
-        // Cancel shutdown token to stop all threads
+        // Cancel shutdown token to stop all tasks
         client.shutdown_token.cancel();
 
         // Stop the SPV client
@@ -498,19 +487,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
             let _ = client.inner.stop().await;
         });
 
-        // Join all active threads to ensure clean shutdown
-        let threads = {
-            let mut threads_guard = client.active_threads.lock().unwrap();
-            std::mem::take(&mut *threads_guard)
-        };
+        // Abort and await all active tasks
+        client.cancel_active_tasks();
 
-        for handle in threads {
-            if let Err(e) = handle.join() {
-                tracing::error!("Failed to join thread during cleanup: {:?}", e);
-            }
-        }
-
-        tracing::info!("✅ FFI client destroyed and all threads cleaned up");
+        tracing::info!("✅ FFI client destroyed and all tasks cleaned up");
     }
 }
 
@@ -585,13 +565,13 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_manager_free(manager: *mut FFIWalle
 
 /// Set sync event callbacks for push-based event notifications.
 ///
-/// The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+/// The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
 /// Call this before calling run().
 ///
 /// # Safety
 /// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
 /// - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
-/// - Callbacks must be thread-safe as they may be called from a background thread.
+/// - Callbacks must be thread-safe as they may be called from a background task.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_set_sync_event_callbacks(
     client: *mut FFIDashSpvClient,
@@ -623,13 +603,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_sync_event_callbacks(
 
 /// Set network event callbacks for push-based event notifications.
 ///
-/// The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+/// The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
 /// Call this before calling run().
 ///
 /// # Safety
 /// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
 /// - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
-/// - Callbacks must be thread-safe as they may be called from a background thread.
+/// - Callbacks must be thread-safe as they may be called from a background task.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_set_network_event_callbacks(
     client: *mut FFIDashSpvClient,
@@ -661,13 +641,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_network_event_callbacks(
 
 /// Set wallet event callbacks for push-based event notifications.
 ///
-/// The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+/// The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
 /// Call this before calling run().
 ///
 /// # Safety
 /// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
 /// - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
-/// - Callbacks must be thread-safe as they may be called from a background thread.
+/// - Callbacks must be thread-safe as they may be called from a background task.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_set_wallet_event_callbacks(
     client: *mut FFIDashSpvClient,
@@ -699,13 +679,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_wallet_event_callbacks(
 
 /// Set progress callback for sync progress updates.
 ///
-/// The monitoring thread is spawned when `dash_spv_ffi_client_run` is called.
+/// The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
 /// Call this before calling run().
 ///
 /// # Safety
 /// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
 /// - The `callback` struct and its `user_data` must remain valid until the callback is cleared.
-/// - The callback must be thread-safe as it may be called from a background thread.
+/// - The callback must be thread-safe as it may be called from a background task.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_set_progress_callback(
     client: *mut FFIDashSpvClient,

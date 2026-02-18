@@ -56,6 +56,7 @@ pub type OnProgressUpdateCallback =
 
 /// Progress callback configuration.
 #[repr(C)]
+#[derive(Clone)]
 pub struct FFIProgressCallback {
     /// Callback function for progress updates.
     pub on_progress: OnProgressUpdateCallback,
@@ -218,6 +219,7 @@ pub type OnSyncCompleteCallback = Option<extern "C" fn(header_tip: u32, user_dat
 /// borrowed and only valid for the duration of the callback invocation.
 /// Callers must memcpy/duplicate any data they need to retain.
 #[repr(C)]
+#[derive(Clone)]
 pub struct FFISyncEventCallbacks {
     pub on_sync_start: OnSyncStartCallback,
     pub on_block_headers_stored: OnBlockHeadersStoredCallback,
@@ -448,6 +450,7 @@ pub type OnPeersUpdatedCallback =
 /// borrowed and only valid for the duration of the callback invocation.
 /// Callers must copy any data they need to retain.
 #[repr(C)]
+#[derive(Clone)]
 pub struct FFINetworkEventCallbacks {
     pub on_peer_connected: OnPeerConnectedCallback,
     pub on_peer_disconnected: OnPeerDisconnectedCallback,
@@ -549,6 +552,7 @@ pub type OnBalanceUpdatedCallback = Option<
 /// are borrowed and only valid for the duration of the callback invocation.
 /// Callers must copy any data they need to retain.
 #[repr(C)]
+#[derive(Clone)]
 pub struct FFIWalletEventCallbacks {
     pub on_transaction_received: OnTransactionReceivedCallback,
     pub on_balance_updated: OnBalanceUpdatedCallback,
