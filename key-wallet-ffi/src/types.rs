@@ -176,10 +176,6 @@ pub enum FFIAccountType {
     IdentityTopUpNotBoundToIdentity = 5,
     /// Identity invitation funding
     IdentityInvitation = 6,
-    /// Asset lock address top-up funding (subfeature 4)
-    AssetLockAddressTopUp = 14,
-    /// Asset lock shielded address top-up funding (subfeature 5)
-    AssetLockShieldedAddressTopUp = 15,
     /// Provider voting keys (DIP-3) - Path: m/9'/5'/3'/1'/\[key_index\]
     ProviderVotingKeys = 7,
     /// Provider owner keys (DIP-3) - Path: m/9'/5'/3'/2'/\[key_index\]
@@ -194,6 +190,10 @@ pub enum FFIAccountType {
     DashpayExternalAccount = 12,
     /// Platform Payment address (DIP-17) - Path: m/9'/5'/17'/account'/key_class'/index
     PlatformPayment = 13,
+    /// Asset lock address top-up funding (subfeature 4)
+    AssetLockAddressTopUp = 14,
+    /// Asset lock shielded address top-up funding (subfeature 5)
+    AssetLockShieldedAddressTopUp = 15,
 }
 
 impl FFIAccountType {
