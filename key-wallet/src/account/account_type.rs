@@ -53,10 +53,10 @@ pub enum AccountType {
     IdentityTopUpNotBoundToIdentity,
     /// Identity invitation funding
     IdentityInvitation,
-    /// Identity address top-up funding (subfeature 4)
+    /// Asset lock address top-up funding (subfeature 4)
     /// Path: m/9'/coinType'/5'/4'/index'
     AssetLockAddressTopUp,
-    /// Identity shielded address top-up funding (subfeature 5)
+    /// Asset lock shielded address top-up funding (subfeature 5)
     /// Path: m/9'/coinType'/5'/5'/index'
     AssetLockShieldedAddressTopUp,
     /// Provider voting keys (DIP-3)
