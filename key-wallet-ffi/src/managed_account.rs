@@ -244,6 +244,12 @@ pub unsafe extern "C" fn managed_wallet_get_account(
                 managed_collection.identity_topup_not_bound.as_ref()
             }
             AccountType::IdentityInvitation => managed_collection.identity_invitation.as_ref(),
+            AccountType::AssetLockAddressTopUp => {
+                managed_collection.asset_lock_address_topup.as_ref()
+            }
+            AccountType::AssetLockShieldedAddressTopUp => {
+                managed_collection.asset_lock_shielded_address_topup.as_ref()
+            }
             AccountType::ProviderVotingKeys => managed_collection.provider_voting_keys.as_ref(),
             AccountType::ProviderOwnerKeys => managed_collection.provider_owner_keys.as_ref(),
             AccountType::ProviderOperatorKeys => managed_collection.provider_operator_keys.as_ref(),
@@ -555,6 +561,8 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
             FFIAccountType::IdentityTopUpNotBoundToIdentity
         }
         AccountType::IdentityInvitation => FFIAccountType::IdentityInvitation,
+        AccountType::AssetLockAddressTopUp => FFIAccountType::AssetLockAddressTopUp,
+        AccountType::AssetLockShieldedAddressTopUp => FFIAccountType::AssetLockShieldedAddressTopUp,
         AccountType::ProviderVotingKeys => FFIAccountType::ProviderVotingKeys,
         AccountType::ProviderOwnerKeys => FFIAccountType::ProviderOwnerKeys,
         AccountType::ProviderOperatorKeys => FFIAccountType::ProviderOperatorKeys,
@@ -1023,6 +1031,12 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
                     addresses,
                 } => addresses,
                 ManagedAccountType::IdentityInvitation {
+                    addresses,
+                } => addresses,
+                ManagedAccountType::AssetLockAddressTopUp {
+                    addresses,
+                } => addresses,
+                ManagedAccountType::AssetLockShieldedAddressTopUp {
                     addresses,
                 } => addresses,
                 ManagedAccountType::ProviderVotingKeys {

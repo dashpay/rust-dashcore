@@ -159,8 +159,9 @@ impl PeerPool {
         self.peer_count().await < TARGET_PEERS
     }
 
-    /// Clean up disconnected peers
-    pub async fn cleanup_disconnected(&self) {
+    /// Remove unhealthy peers and return their addresses so the caller can
+    /// emit the appropriate network events.
+    pub async fn remove_unhealthy(&self) -> Vec<SocketAddr> {
         let peers = self.peers.read().await;
         let mut unhealthy = Vec::new();
 
@@ -179,14 +180,10 @@ impl PeerPool {
         // Remove unhealthy connections
         if !unhealthy.is_empty() {
             let mut peers = self.peers.write().await;
-            for addr in unhealthy {
-                peers.remove(&addr);
-                log::warn!(
-                    "Cleaned up unhealthy peer: {} (marked unhealthy by health check)",
-                    addr
-                );
-            }
+            unhealthy.retain(|addr| peers.remove(addr).is_some());
         }
+
+        unhealthy
     }
 }
 

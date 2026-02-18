@@ -45,6 +45,10 @@ fn get_managed_account_by_type<'a>(
             collection.identity_topup_not_bound.as_ref()
         }
         AccountType::IdentityInvitation => collection.identity_invitation.as_ref(),
+        AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_ref(),
+        AccountType::AssetLockShieldedAddressTopUp => {
+            collection.asset_lock_shielded_address_topup.as_ref()
+        }
         AccountType::ProviderVotingKeys => collection.provider_voting_keys.as_ref(),
         AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_ref(),
         AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_ref(),
@@ -94,6 +98,10 @@ fn get_managed_account_by_type_mut<'a>(
             collection.identity_topup_not_bound.as_mut()
         }
         AccountType::IdentityInvitation => collection.identity_invitation.as_mut(),
+        AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_mut(),
+        AccountType::AssetLockShieldedAddressTopUp => {
+            collection.asset_lock_shielded_address_topup.as_mut()
+        }
         AccountType::ProviderVotingKeys => collection.provider_voting_keys.as_mut(),
         AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_mut(),
         AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_mut(),
@@ -733,6 +741,20 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         }
         if !found {
             if let Some(account) = &mut collection.identity_invitation {
+                if account.mark_address_used(&address) {
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            if let Some(account) = &mut collection.asset_lock_address_topup {
+                if account.mark_address_used(&address) {
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            if let Some(account) = &mut collection.asset_lock_shielded_address_topup {
                 if account.mark_address_used(&address) {
                     found = true;
                 }

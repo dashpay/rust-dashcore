@@ -8,8 +8,10 @@ use std::time::Instant;
 pub struct FiltersProgress {
     /// Current sync state.
     state: SyncState,
-    /// Tip height of the filter storage.
-    current_height: u32,
+    /// Height up to which all filter batches have been fully committed to wallet.
+    committed_height: u32,
+    /// Tip height of the filter storage (how far filters have been downloaded/stored).
+    stored_height: u32,
     /// Target height (peer's best height). Used for progress display.
     target_height: u32,
     /// The tip height of the filter header storage (the download limit for filters).
@@ -29,7 +31,8 @@ impl Default for FiltersProgress {
     fn default() -> Self {
         Self {
             state: Default::default(),
-            current_height: 0,
+            committed_height: 0,
+            stored_height: 0,
             target_height: 0,
             filter_header_tip_height: 0,
             downloaded: 0,
@@ -44,6 +47,16 @@ impl FiltersProgress {
     /// Get the current sync state.
     pub fn state(&self) -> SyncState {
         self.state
+    }
+
+    /// Get the committed height (all batches up to this height fully processed).
+    pub fn committed_height(&self) -> u32 {
+        self.committed_height
+    }
+
+    /// Get the stored height (tip of filter storage).
+    pub fn stored_height(&self) -> u32 {
+        self.stored_height
     }
 
     /// Get the filter header tip height (the download limit for filters).
@@ -77,9 +90,15 @@ impl FiltersProgress {
         self.bump_last_activity();
     }
 
-    /// Update the current height (last successfully processed height).
-    pub fn update_current_height(&mut self, height: u32) {
-        self.current_height = height;
+    /// Update the committed height (all batches up to this height fully processed).
+    pub fn update_committed_height(&mut self, height: u32) {
+        self.committed_height = height;
+        self.bump_last_activity();
+    }
+
+    /// Update the stored height (tip of filter storage).
+    pub fn update_stored_height(&mut self, height: u32) {
+        self.stored_height = height;
         self.bump_last_activity();
     }
 
@@ -127,11 +146,12 @@ impl fmt::Display for FiltersProgress {
         let pct = self.percentage() * 100.0;
         write!(
             f,
-            "{:?} {}/{} ({:.1}%) downloaded: {}, processed: {}, matched: {}, last_activity: {}s",
+            "{:?} {}/{} ({:.1}%) stored:{}, downloaded: {}, processed: {}, matched: {}, last_activity: {}s",
             self.state,
-            self.current_height,
+            self.committed_height,
             self.target_height,
             pct,
+            self.stored_height,
             self.downloaded,
             self.processed,
             self.matched,
@@ -145,6 +165,6 @@ impl ProgressPercentage for FiltersProgress {
         self.target_height
     }
     fn current_height(&self) -> u32 {
-        self.current_height
+        self.committed_height
     }
 }

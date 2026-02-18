@@ -85,7 +85,8 @@ typedef struct FFIFilterHeadersProgress {
  */
 typedef struct FFIFiltersProgress {
   enum FFISyncState state;
-  uint32_t current_height;
+  uint32_t committed_height;
+  uint32_t stored_height;
   uint32_t target_height;
   uint32_t filter_header_tip_height;
   uint32_t downloaded;

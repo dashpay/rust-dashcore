@@ -319,6 +319,7 @@ impl PeerNetworkManager {
                         }
                         Err(e) => {
                             log::warn!("Handshake failed with {}: {}", addr, e);
+                            // Only clears connecting set. Peer was never added, so no count/event needed.
                             pool.remove_peer(&addr).await;
                             // Update reputation for handshake failure
                             reputation_manager
@@ -335,6 +336,7 @@ impl PeerNetworkManager {
                 }
                 Err(e) => {
                     log::debug!("Failed to connect to {}: {}", addr, e);
+                    // Only clears connecting set. Peer was never added, so no count/event needed.
                     pool.remove_peer(&addr).await;
                     // Minor reputation penalty for connection failure
                     reputation_manager
@@ -347,6 +349,45 @@ impl PeerNetworkManager {
                 }
             }
         });
+    }
+
+    /// Decrement the connected count and emit PeerDisconnected / PeersUpdated events.
+    async fn notify_peer_removed(
+        pool: &PeerPool,
+        addr: &SocketAddr,
+        connected_peer_count: &AtomicUsize,
+        network_event_sender: &broadcast::Sender<NetworkEvent>,
+    ) {
+        let sub_result =
+            connected_peer_count
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_sub(1));
+        if sub_result.is_err() {
+            log::warn!("Peer count already zero when removing {}", addr);
+        }
+        let count = connected_peer_count.load(Ordering::Relaxed);
+        let addresses = pool.get_connected_addresses().await;
+        let best_height = pool.get_best_height().await;
+        let _ = network_event_sender.send(NetworkEvent::PeerDisconnected {
+            address: *addr,
+        });
+        let _ = network_event_sender.send(NetworkEvent::PeersUpdated {
+            connected_count: count,
+            addresses,
+            best_height,
+        });
+    }
+
+    /// Remove a peer from the pool, decrement the connected count, and emit
+    /// PeerDisconnected / PeersUpdated events.
+    async fn remove_peer_and_notify(
+        pool: &PeerPool,
+        addr: &SocketAddr,
+        connected_peer_count: &AtomicUsize,
+        network_event_sender: &broadcast::Sender<NetworkEvent>,
+    ) {
+        if pool.remove_peer(addr).await.is_some() {
+            Self::notify_peer_removed(pool, addr, connected_peer_count, network_event_sender).await;
+        }
     }
 
     /// Start reading messages from a peer
@@ -679,26 +720,15 @@ impl PeerNetworkManager {
                 }
             }
 
-            // Remove from pool
+            // Remove from pool and notify consumers
             log::warn!("Disconnecting from {} (peer reader loop ended)", addr);
-            let removed = pool.remove_peer(&addr).await;
-            if removed.is_some() {
-                // Decrement connected peer counter when a peer is removed
-                connected_peer_count.fetch_sub(1, Ordering::Relaxed);
-
-                // Emit peer disconnected event
-                let count = connected_peer_count.load(Ordering::Relaxed);
-                let addresses = pool.get_connected_addresses().await;
-                let best_height = pool.get_best_height().await;
-                let _ = network_event_sender.send(NetworkEvent::PeerDisconnected {
-                    address: addr,
-                });
-                let _ = network_event_sender.send(NetworkEvent::PeersUpdated {
-                    connected_count: count,
-                    addresses,
-                    best_height,
-                });
-            }
+            Self::remove_peer_and_notify(
+                &pool,
+                &addr,
+                &connected_peer_count,
+                &network_event_sender,
+            )
+            .await;
 
             headers2_disabled.lock().await.remove(&addr);
 
@@ -777,8 +807,19 @@ impl PeerNetworkManager {
     }
 
     async fn maintenance_tick(&self) {
-        // Clean up disconnected peers
-        self.pool.cleanup_disconnected().await;
+        // Remove peers that the reader loop failed to clean up.
+        // This should not trigger under normal operation.
+        let unhealthy = self.pool.remove_unhealthy().await;
+        for addr in &unhealthy {
+            log::warn!("Maintenance removed stale peer {} - reader loop missed cleanup", addr);
+            Self::notify_peer_removed(
+                &self.pool,
+                addr,
+                &self.connected_peer_count,
+                &self.network_event_sender,
+            )
+            .await;
+        }
 
         let count = self.pool.peer_count().await;
         log::debug!("Connected peers: {}", count);
@@ -886,7 +927,7 @@ impl PeerNetworkManager {
                 time::interval_at(Instant::now() + DNS_DISCOVERY_DELAY, DNS_DISCOVERY_DELAY);
             // Periodic reconnection check (active in both modes)
             let mut maintenance_interval = time::interval(MAINTENANCE_INTERVAL);
-
+            let mut network_events = this.network_event_sender.subscribe();
             while !this.shutdown_token.is_cancelled() {
                 tokio::select! {
                     _ = maintenance_interval.tick() => {
@@ -895,6 +936,19 @@ impl PeerNetworkManager {
                     }
                     _ = dns_interval.tick(), if !this.exclusive_mode => {
                         this.dns_fallback_tick().await;
+                    }
+                    event = network_events.recv() => {
+                        match event {
+                            Ok(event) => {
+                                log::debug!("Network event in maintenance loop: {}", event.description());
+                                dns_interval.reset();
+                                this.maintenance_tick().await;
+                            }
+                            Err(error) => {
+                                tracing::error!("Network event error: {}", error);
+                                break;
+                            }
+                        }
                     }
                     _ = this.shutdown_token.cancelled() => {
                         log::info!("Maintenance loop shutting down");
@@ -1201,8 +1255,13 @@ impl PeerNetworkManager {
     pub async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Disconnecting peer {} - reason: {}", addr, reason);
 
-        // Remove the peer
-        self.pool.remove_peer(addr).await;
+        Self::remove_peer_and_notify(
+            &self.pool,
+            addr,
+            &self.connected_peer_count,
+            &self.network_event_sender,
+        )
+        .await;
 
         Ok(())
     }

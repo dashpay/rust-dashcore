@@ -549,6 +549,12 @@ impl Wallet {
         // Identity top-up not bound to identity
         self.add_account(AccountType::IdentityTopUpNotBoundToIdentity, None)?;
 
+        // Asset lock address top-up
+        self.add_account(AccountType::AssetLockAddressTopUp, None)?;
+
+        // Asset lock shielded address top-up
+        self.add_account(AccountType::AssetLockShieldedAddressTopUp, None)?;
+
         // Provider keys accounts
         self.add_account(AccountType::ProviderVotingKeys, None)?;
         self.add_account(AccountType::ProviderOwnerKeys, None)?;
@@ -570,6 +576,12 @@ impl Wallet {
 
         // Identity top-up not bound to identity
         self.add_account_with_passphrase(AccountType::IdentityTopUpNotBoundToIdentity, passphrase)?;
+
+        // Asset lock address top-up
+        self.add_account_with_passphrase(AccountType::AssetLockAddressTopUp, passphrase)?;
+
+        // Asset lock shielded address top-up
+        self.add_account_with_passphrase(AccountType::AssetLockShieldedAddressTopUp, passphrase)?;
 
         // Provider keys accounts
         self.add_account_with_passphrase(AccountType::ProviderVotingKeys, passphrase)?;
@@ -821,6 +833,12 @@ impl Wallet {
             }
             crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityInvitation => {
                 coll.identity_invitation.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::AssetLockAddressTopUp => {
+                coll.asset_lock_address_topup.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::AssetLockShieldedAddressTopUp => {
+                coll.asset_lock_shielded_address_topup.as_ref().map(|a| a.account_xpub)
             }
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys => {
                 coll.provider_voting_keys.as_ref().map(|a| a.account_xpub)

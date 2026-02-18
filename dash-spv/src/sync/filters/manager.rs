@@ -64,8 +64,6 @@ pub struct FiltersManager<
     // === Multi-batch processing state ===
     /// Active batches being processed (keyed by start_height).
     pub(super) active_batches: BTreeMap<u32, FiltersBatch>,
-    /// Height that has been committed to wallet (all blocks up to this height processed).
-    committed_height: u32,
     /// Current block height being processed (for progress tracking).
     processing_height: u32,
     /// Blocks remaining that need to be processed.
@@ -96,11 +94,20 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             next_batch_to_store: 0,
             // Multi-batch processing
             active_batches: BTreeMap::new(),
-            committed_height: 0,
             processing_height: 0,
             blocks_remaining: BTreeMap::new(),
             filters_matched: HashSet::new(),
         }
+    }
+
+    /// Clear all in-flight processing state. Called on peer disconnect when
+    /// in-flight filter batches and block tracking become invalid.
+    pub(super) fn clear_in_flight_state(&mut self) {
+        self.active_batches.clear();
+        self.blocks_remaining.clear();
+        self.filters_matched.clear();
+        self.pending_batches.clear();
+        self.filter_pipeline = FiltersPipeline::new();
     }
 
     async fn load_filters(
@@ -132,10 +139,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
         self.set_state(SyncState::Syncing);
-        // Get wallet state
-        let (wallet_birth_height, wallet_synced_height) = {
+        // Use filter_committed_height for restart recovery instead of
+        // synced_height, which advances per-block and may exceed committed scan progress.
+        let (wallet_birth_height, wallet_committed_height) = {
             let wallet = self.wallet.read().await;
-            (wallet.earliest_required_height().await, wallet.synced_height())
+            (wallet.earliest_required_height().await, wallet.filter_committed_height())
         };
 
         // Get stored filters tip
@@ -147,8 +155,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         // Calculate scan start (where we need to start processing)
         // Must be at least header_start_height for checkpoint-based sync
-        let scan_start = if wallet_synced_height > 0 {
-            wallet_birth_height.max(wallet_synced_height + 1)
+        let scan_start = if wallet_committed_height > 0 {
+            wallet_birth_height.max(wallet_committed_height + 1)
         } else {
             wallet_birth_height
         }
@@ -158,11 +166,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         if scan_start > self.progress.filter_header_tip_height() {
             // Only emit FiltersSyncComplete if we've also reached the chain tip
             // This prevents premature sync complete while filter headers are still syncing
-            if self.progress.current_height() >= self.progress.target_height() {
+            if self.progress.committed_height() >= self.progress.target_height() {
                 self.set_state(SyncState::Synced);
                 tracing::info!("Filters already synced to {}", self.progress.target_height());
                 return Ok(vec![SyncEvent::FiltersSyncComplete {
-                    tip_height: self.progress.current_height(),
+                    tip_height: self.progress.committed_height(),
                 }]);
             }
             // Caught up to available filter headers but chain tip not reached yet
@@ -244,8 +252,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 scan_start,
                 end_height
             );
-            // Update current_height to reflect stored filters are available
-            self.progress.update_current_height(stored_filters_tip);
+            // Update stored_height to reflect stored filters are available
+            self.progress.update_stored_height(stored_filters_tip);
             self.load_filters(scan_start, end_height).await?
         } else {
             HashMap::new()
@@ -256,17 +264,17 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             batch.mark_verified();
         }
         self.active_batches.insert(scan_start, batch);
-        self.committed_height = scan_start.saturating_sub(1);
+        self.progress.update_committed_height(scan_start.saturating_sub(1));
 
         // Only scan if all filters for the batch are already loaded
-        if self.progress.current_height() >= batch_end {
+        if self.progress.stored_height() >= batch_end {
             self.scan_batch(scan_start).await
         } else {
             tracing::debug!(
-                "Initial batch {}-{}: waiting for filters (current_height={})",
+                "Initial batch {}-{}: waiting for filters (stored_height={})",
                 scan_start,
                 batch_end,
-                self.progress.current_height()
+                self.progress.stored_height()
             );
             Ok(vec![])
         }
@@ -385,7 +393,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             }
 
             self.progress.add_processed(batch.end_height() - batch.start_height() + 1);
-            self.progress.update_current_height(batch.end_height());
+            self.progress.update_stored_height(batch.end_height());
             self.next_batch_to_store = batch.end_height() + 1;
         }
 
@@ -393,8 +401,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // This is called only when batches complete, not on every filter
         if !events.is_empty() {
             tracing::debug!(
-                "Calling try_process_batch after storing batches (current_height={}, target_height={})",
-                self.progress.current_height(),
+                "Calling try_process_batch after storing batches (stored_height={}, target_height={})",
+                self.progress.stored_height(),
                 self.progress.target_height()
             );
             events.extend(self.try_process_batch().await?);
@@ -417,17 +425,20 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // Phase 3: Create lookahead batches up to MAX_LOOKAHEAD_BATCHES
         events.extend(self.try_create_lookahead_batches().await?);
 
-        // If no active batches and all filters downloaded, check if we can transition to Synced
-        // Only emit SyncComplete if we've also reached the chain tip (target_height)
+        // If no active batches and all filters downloaded, emit FiltersSyncComplete.
+        // This handles both initial sync (Syncing → Synced transition) and incremental
+        // updates (already Synced, signal BlocksManager that no more blocks are coming).
         if self.active_batches.is_empty()
-            && self.state() == SyncState::Syncing
-            && self.progress.current_height() >= self.progress.filter_header_tip_height()
-            && self.progress.current_height() >= self.progress.target_height()
+            && matches!(self.state(), SyncState::Syncing | SyncState::Synced)
+            && self.progress.committed_height() >= self.progress.filter_header_tip_height()
+            && self.progress.committed_height() >= self.progress.target_height()
         {
-            self.set_state(SyncState::Synced);
-            tracing::info!("Filter sync complete at height {}", self.progress.current_height());
+            if self.state() == SyncState::Syncing {
+                self.set_state(SyncState::Synced);
+            }
+            tracing::info!("Filter sync complete at height {}", self.progress.committed_height());
             events.push(SyncEvent::FiltersSyncComplete {
-                tip_height: self.progress.current_height(),
+                tip_height: self.progress.committed_height(),
             });
         }
 
@@ -495,15 +506,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
             // Commit this batch
             let batch = self.active_batches.remove(&batch_start).unwrap();
-            self.committed_height = batch.end_height();
-            self.wallet.write().await.update_synced_height(batch.end_height());
-            self.processing_height = batch.end_height() + 1;
+            let end = batch.end_height();
+            if end > self.progress.committed_height() {
+                self.progress.update_committed_height(end);
+                self.wallet.write().await.update_filter_committed_height(end);
+            }
+            self.processing_height = end + 1;
 
             tracing::info!(
                 "Committed batch {}-{}, committed_height now {}",
                 batch.start_height(),
                 batch.end_height(),
-                self.committed_height
+                self.progress.committed_height()
             );
         }
 
@@ -519,7 +533,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             .active_batches
             .iter()
             .filter(|(_, batch)| {
-                !batch.scanned() && self.progress.current_height() >= batch.end_height()
+                !batch.scanned() && self.progress.stored_height() >= batch.end_height()
             })
             .map(|(&start, _)| start)
             .collect();
@@ -559,7 +573,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             );
 
             // Load available filters into the new batch
-            let available_end = self.progress.current_height().min(next_end);
+            let available_end = self.progress.stored_height().min(next_end);
             let filters = if next_start <= available_end {
                 self.load_filters(next_start, available_end).await?
             } else {
@@ -567,13 +581,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             };
 
             let mut batch = FiltersBatch::new(next_start, next_end, filters);
-            if self.progress.current_height() >= next_end {
+            if self.progress.stored_height() >= next_end {
                 batch.mark_verified();
             }
             self.active_batches.insert(next_start, batch);
 
             // Scan immediately if filters are available
-            if self.progress.current_height() >= next_end {
+            if self.progress.stored_height() >= next_end {
                 events.extend(self.scan_batch(next_start).await?);
             }
         }
@@ -729,7 +743,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         match self.state() {
             SyncState::Syncing | SyncState::Synced
-                if self.progress.current_height() < self.progress.filter_header_tip_height() =>
+                if self.progress.stored_height() < self.progress.filter_header_tip_height() =>
             {
                 self.filter_pipeline.extend_target(tip_height);
                 {
@@ -743,7 +757,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 }
             }
             SyncState::WaitingForConnections | SyncState::WaitForEvents
-                if self.progress.current_height() < self.progress.filter_header_tip_height() =>
+                if self.progress.stored_height() < self.progress.filter_header_tip_height() =>
             {
                 return self.start_download(requests).await;
             }
@@ -802,7 +816,7 @@ mod tests {
     async fn test_filters_manager_progress() {
         let mut manager = create_test_manager().await;
         manager.set_state(SyncState::Syncing);
-        manager.progress.update_current_height(500);
+        manager.progress.update_stored_height(500);
         manager.progress.update_target_height(1000);
         manager.progress.add_processed(350);
         manager.progress.add_downloaded(250);
@@ -812,7 +826,7 @@ mod tests {
         let progress = manager_ref.progress();
         if let SyncManagerProgress::Filters(progress) = progress {
             assert_eq!(progress.state(), SyncState::Syncing);
-            assert_eq!(progress.current_height(), 500);
+            assert_eq!(progress.stored_height(), 500);
             assert_eq!(progress.target_height(), 1000);
             assert_eq!(progress.processed(), 350);
             assert_eq!(progress.downloaded(), 250);
@@ -867,7 +881,7 @@ mod tests {
         // Commit should work
         manager.try_commit_batches().await.unwrap();
         assert_eq!(manager.active_batches.len(), 0);
-        assert_eq!(manager.committed_height, 4999);
+        assert_eq!(manager.progress.committed_height(), 4999);
     }
 
     #[tokio::test]
@@ -892,7 +906,7 @@ mod tests {
         // Commit should commit both in order
         manager.try_commit_batches().await.unwrap();
         assert_eq!(manager.active_batches.len(), 0);
-        assert_eq!(manager.committed_height, 9999); // Both committed
+        assert_eq!(manager.progress.committed_height(), 9999); // Both committed
     }
 
     #[tokio::test]

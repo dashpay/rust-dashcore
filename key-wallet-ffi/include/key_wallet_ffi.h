@@ -92,6 +92,14 @@ typedef enum {
      Platform Payment address (DIP-17) - Path: m/9'/5'/17'/account'/key_class'/index
      */
     PLATFORM_PAYMENT = 13,
+    /*
+     Asset lock address top-up funding (subfeature 4)
+     */
+    ASSET_LOCK_ADDRESS_TOP_UP = 14,
+    /*
+     Asset lock shielded address top-up funding (subfeature 5)
+     */
+    ASSET_LOCK_SHIELDED_ADDRESS_TOP_UP = 15,
 } FFIAccountType;
 
 /*

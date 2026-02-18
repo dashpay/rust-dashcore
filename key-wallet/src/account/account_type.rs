@@ -53,6 +53,12 @@ pub enum AccountType {
     IdentityTopUpNotBoundToIdentity,
     /// Identity invitation funding
     IdentityInvitation,
+    /// Asset lock address top-up funding (subfeature 4)
+    /// Path: m/9'/coinType'/5'/4'/index'
+    AssetLockAddressTopUp,
+    /// Asset lock shielded address top-up funding (subfeature 5)
+    /// Path: m/9'/coinType'/5'/5'/index'
+    AssetLockShieldedAddressTopUp,
     /// Provider voting keys (DIP-3)
     /// Path: `m/9'/5'/3'/1'/[key_index]`
     ProviderVotingKeys,
@@ -119,6 +125,10 @@ impl TryFrom<AccountType> for AccountTypeToCheck {
                 Ok(AccountTypeToCheck::IdentityTopUpNotBound)
             }
             AccountType::IdentityInvitation => Ok(AccountTypeToCheck::IdentityInvitation),
+            AccountType::AssetLockAddressTopUp => Ok(AccountTypeToCheck::AssetLockAddressTopUp),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                Ok(AccountTypeToCheck::AssetLockShieldedAddressTopUp)
+            }
             AccountType::ProviderVotingKeys => Ok(AccountTypeToCheck::ProviderVotingKeys),
             AccountType::ProviderOwnerKeys => Ok(AccountTypeToCheck::ProviderOwnerKeys),
             AccountType::ProviderOperatorKeys => Ok(AccountTypeToCheck::ProviderOperatorKeys),
@@ -170,6 +180,8 @@ impl AccountType {
             }
             | Self::IdentityTopUpNotBoundToIdentity
             | Self::IdentityInvitation
+            | Self::AssetLockAddressTopUp
+            | Self::AssetLockShieldedAddressTopUp
             | Self::ProviderVotingKeys
             | Self::ProviderOwnerKeys
             | Self::ProviderOperatorKeys
@@ -213,6 +225,12 @@ impl AccountType {
             Self::IdentityInvitation {
                 ..
             } => DerivationPathReference::BlockchainIdentityCreditInvitationFunding,
+            Self::AssetLockAddressTopUp {
+                ..
+            } => DerivationPathReference::BlockchainAssetLockAddressTopupFunding,
+            Self::AssetLockShieldedAddressTopUp {
+                ..
+            } => DerivationPathReference::BlockchainAssetLockShieldedAddressTopupFunding,
             Self::ProviderVotingKeys {
                 ..
             } => DerivationPathReference::ProviderVotingKeys,
@@ -330,6 +348,32 @@ impl AccountType {
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_TESTNET))
+                    }
+                    _ => Err(crate::error::Error::InvalidNetwork),
+                }
+            }
+            Self::AssetLockAddressTopUp => {
+                // Base path without index - actual key index added when deriving
+                match network {
+                    Network::Dash => {
+                        Ok(DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET))
+                    }
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        Ok(DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET))
+                    }
+                    _ => Err(crate::error::Error::InvalidNetwork),
+                }
+            }
+            Self::AssetLockShieldedAddressTopUp => {
+                // Base path without index - actual key index added when deriving
+                match network {
+                    Network::Dash => Ok(DerivationPath::from(
+                        crate::dip9::ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
+                    )),
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        Ok(DerivationPath::from(
+                            crate::dip9::ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
+                        ))
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
                 }

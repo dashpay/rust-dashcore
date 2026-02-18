@@ -221,7 +221,7 @@ extern "C" fn on_progress_update(progress: *const FFISyncProgress, _user_data: *
     }
     if !p.filters.is_null() {
         let f = unsafe { &*p.filters };
-        print!("filters:{}/{} ", f.current_height, f.target_height);
+        print!("filters:{}/{} stored: {} ", f.committed_height, f.target_height, f.stored_height);
     }
     if !p.blocks.is_null() {
         let f = unsafe { &*p.blocks };

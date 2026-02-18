@@ -235,6 +235,14 @@ impl ManagedCoreAccount {
                 addresses,
                 ..
             }
+            | ManagedAccountType::AssetLockAddressTopUp {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::AssetLockShieldedAddressTopUp {
+                addresses,
+                ..
+            }
             | ManagedAccountType::ProviderVotingKeys {
                 addresses,
                 ..
@@ -610,6 +618,14 @@ impl ManagedCoreAccount {
                 addresses,
                 ..
             }
+            | ManagedAccountType::AssetLockAddressTopUp {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::AssetLockShieldedAddressTopUp {
+                addresses,
+                ..
+            }
             | ManagedAccountType::ProviderVotingKeys {
                 addresses,
                 ..
@@ -696,6 +712,14 @@ impl ManagedCoreAccount {
                 ..
             }
             | ManagedAccountType::IdentityInvitation {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::AssetLockAddressTopUp {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::AssetLockShieldedAddressTopUp {
                 addresses,
                 ..
             }
@@ -925,6 +949,14 @@ impl ManagedCoreAccount {
                 ..
             }
             | ManagedAccountType::IdentityInvitation {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::AssetLockAddressTopUp {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::AssetLockShieldedAddressTopUp {
                 addresses,
                 ..
             }

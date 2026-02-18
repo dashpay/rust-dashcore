@@ -133,6 +133,17 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
     }
 
+    fn filter_committed_height(&self) -> CoreBlockHeight {
+        self.filter_committed_height
+    }
+
+    fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
+        self.filter_committed_height = height;
+        if height > self.synced_height {
+            self.update_synced_height(height);
+        }
+    }
+
     async fn describe(&self) -> String {
         let wallet_count = self.wallet_infos.len();
         if wallet_count == 0 {

@@ -34,6 +34,8 @@ use secp256k1::{self, Secp256k1, XOnlyPublicKey};
 use serde;
 
 use crate::dip9::{
+    ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET, ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET,
+    ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET, ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
     COINJOIN_PATH_MAINNET, COINJOIN_PATH_TESTNET, DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET,
     IDENTITY_AUTHENTICATION_PATH_MAINNET, IDENTITY_AUTHENTICATION_PATH_TESTNET,
     IDENTITY_INVITATION_PATH_MAINNET, IDENTITY_INVITATION_PATH_TESTNET,
@@ -1083,6 +1085,30 @@ impl DerivationPath {
         let mut root_derivation_path: DerivationPath = match network {
             Network::Dash => IDENTITY_INVITATION_PATH_MAINNET,
             _ => IDENTITY_INVITATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Hardened {
+            index,
+        }]);
+        root_derivation_path
+    }
+
+    pub fn asset_lock_address_top_up_path(network: Network, index: u32) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET,
+            _ => ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Hardened {
+            index,
+        }]);
+        root_derivation_path
+    }
+
+    pub fn asset_lock_shielded_address_top_up_path(network: Network, index: u32) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
+            _ => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
         }
         .into();
         root_derivation_path.0.extend(&[ChildNumber::Hardened {
@@ -2615,6 +2641,24 @@ mod tests {
     fn test_identity_invitation_path() {
         let path = DerivationPath::identity_invitation_path(Network::Dash, 15);
         assert_eq!(path.to_string(), "m/9'/5'/5'/3'/15'");
+    }
+
+    #[test]
+    fn test_asset_lock_address_top_up_path() {
+        let path = DerivationPath::asset_lock_address_top_up_path(Network::Dash, 7);
+        assert_eq!(path.to_string(), "m/9'/5'/5'/4'/7'");
+
+        let path = DerivationPath::asset_lock_address_top_up_path(Network::Testnet, 0);
+        assert_eq!(path.to_string(), "m/9'/1'/5'/4'/0'");
+    }
+
+    #[test]
+    fn test_asset_lock_shielded_address_top_up_path() {
+        let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Dash, 3);
+        assert_eq!(path.to_string(), "m/9'/5'/5'/5'/3'");
+
+        let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Testnet, 1);
+        assert_eq!(path.to_string(), "m/9'/1'/5'/5'/1'");
     }
 
     #[test]
