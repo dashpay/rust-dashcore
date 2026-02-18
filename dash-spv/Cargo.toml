@@ -51,6 +51,10 @@ indexmap = "2.0"
 # Parallelization
 rayon = "1.11"
 
+# Test utilities (optional)
+tempfile = { version = "3.0", optional = true }
+dashcore-rpc = { path = "../rpc-client", optional = true }
+
 # DNS (trust-dns-resolver was renamed to hickory_resolver)
 hickory-resolver = "0.25"
 
@@ -81,4 +85,4 @@ name = "dash_spv"
 path = "src/lib.rs"
 
 [features]
-test-utils = []
+test-utils = ["dashcore/test-utils", "dep:tempfile", "dep:dashcore-rpc"]
