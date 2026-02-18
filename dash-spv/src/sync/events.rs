@@ -109,7 +109,7 @@ pub enum SyncEvent {
         height: u32,
     },
 
-    /// A manager encountered an error during sync.
+    /// A manager encountered a recoverable error.
     ///
     /// Emitted by: Any manager
     /// Consumed by: Coordinator (for logging/monitoring)

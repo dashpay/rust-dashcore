@@ -210,7 +210,7 @@ pub enum SyncError {
     #[error("Timeout error: {0}")]
     Timeout(String),
 
-    /// Network-related errors (e.g., connection failures, protocol errors).
+    /// Network-related errors (e.g., connection failures, protocol errors)
     #[error("Network error: {0}")]
     Network(String),
 
