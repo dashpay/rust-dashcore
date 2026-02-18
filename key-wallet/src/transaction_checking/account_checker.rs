@@ -84,6 +84,14 @@ pub enum CoreAccountTypeMatch {
     IdentityInvitation {
         involved_addresses: Vec<AddressInfo>,
     },
+    /// Asset lock address top-up account (no index)
+    AssetLockAddressTopUp {
+        involved_addresses: Vec<AddressInfo>,
+    },
+    /// Asset lock shielded address top-up account (no index)
+    AssetLockShieldedAddressTopUp {
+        involved_addresses: Vec<AddressInfo>,
+    },
     /// Provider voting keys account (no index)
     ProviderVotingKeys {
         involved_addresses: Vec<AddressInfo>,
@@ -145,6 +153,12 @@ impl CoreAccountTypeMatch {
                 involved_addresses,
             }
             | CoreAccountTypeMatch::IdentityInvitation {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::AssetLockAddressTopUp {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
                 involved_addresses,
             }
             | CoreAccountTypeMatch::ProviderVotingKeys {
@@ -225,6 +239,12 @@ impl CoreAccountTypeMatch {
             CoreAccountTypeMatch::IdentityInvitation {
                 ..
             } => AccountTypeToCheck::IdentityInvitation,
+            CoreAccountTypeMatch::AssetLockAddressTopUp {
+                ..
+            } => AccountTypeToCheck::AssetLockAddressTopUp,
+            CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                ..
+            } => AccountTypeToCheck::AssetLockShieldedAddressTopUp,
             CoreAccountTypeMatch::ProviderVotingKeys {
                 ..
             } => AccountTypeToCheck::ProviderVotingKeys,
@@ -325,6 +345,18 @@ impl ManagedAccountCollection {
                 .collect(),
             AccountTypeToCheck::IdentityInvitation => self
                 .identity_invitation
+                .as_ref()
+                .and_then(|account| account.check_asset_lock_transaction_for_match(tx, None))
+                .into_iter()
+                .collect(),
+            AccountTypeToCheck::AssetLockAddressTopUp => self
+                .asset_lock_address_topup
+                .as_ref()
+                .and_then(|account| account.check_asset_lock_transaction_for_match(tx, None))
+                .into_iter()
+                .collect(),
+            AccountTypeToCheck::AssetLockShieldedAddressTopUp => self
+                .asset_lock_shielded_address_topup
                 .as_ref()
                 .and_then(|account| account.check_asset_lock_transaction_for_match(tx, None))
                 .into_iter()
@@ -598,6 +630,16 @@ impl ManagedCoreAccount {
                 } => CoreAccountTypeMatch::IdentityInvitation {
                     involved_addresses: involved_other_addresses,
                 },
+                ManagedAccountType::AssetLockAddressTopUp {
+                    ..
+                } => CoreAccountTypeMatch::AssetLockAddressTopUp {
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::AssetLockShieldedAddressTopUp {
+                    ..
+                } => CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                    involved_addresses: involved_other_addresses,
+                },
                 ManagedAccountType::ProviderVotingKeys {
                     ..
                 } => CoreAccountTypeMatch::ProviderVotingKeys {
@@ -701,6 +743,16 @@ impl ManagedCoreAccount {
                     ManagedAccountType::IdentityInvitation {
                         ..
                     } => CoreAccountTypeMatch::IdentityInvitation {
+                        involved_addresses,
+                    },
+                    ManagedAccountType::AssetLockAddressTopUp {
+                        ..
+                    } => CoreAccountTypeMatch::AssetLockAddressTopUp {
+                        involved_addresses,
+                    },
+                    ManagedAccountType::AssetLockShieldedAddressTopUp {
+                        ..
+                    } => CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
                         involved_addresses,
                     },
                     _ => {
@@ -948,6 +1000,22 @@ impl ManagedCoreAccount {
         if let Some(account) = &collection.identity_invitation {
             if account.contains_address(address) {
                 return Some((AccountTypeToCheck::IdentityInvitation, None));
+            }
+        }
+
+        // Check asset lock address top-up
+        if let Some(asset_lock_address_topup) = &collection.asset_lock_address_topup {
+            if asset_lock_address_topup.contains_address(address) {
+                return Some((AccountTypeToCheck::AssetLockAddressTopUp, None));
+            }
+        }
+
+        // Check asset lock shielded address top-up
+        if let Some(asset_lock_shielded_address_topup) =
+            &collection.asset_lock_shielded_address_topup
+        {
+            if asset_lock_shielded_address_topup.contains_address(address) {
+                return Some((AccountTypeToCheck::AssetLockShieldedAddressTopUp, None));
             }
         }
 

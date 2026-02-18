@@ -65,6 +65,14 @@ typedef enum {
      */
     IDENTITY_INVITATION = 6,
     /*
+     Asset lock address top-up funding (subfeature 4)
+     */
+    ASSET_LOCK_ADDRESS_TOP_UP = 14,
+    /*
+     Asset lock shielded address top-up funding (subfeature 5)
+     */
+    ASSET_LOCK_SHIELDED_ADDRESS_TOP_UP = 15,
+    /*
      Provider voting keys (DIP-3) - Path: m/9'/5'/3'/1'/\[key_index\]
      */
     PROVIDER_VOTING_KEYS = 7,

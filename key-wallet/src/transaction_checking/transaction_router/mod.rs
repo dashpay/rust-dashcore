@@ -115,6 +115,8 @@ impl TransactionRouter {
                 AccountTypeToCheck::IdentityTopUp,
                 AccountTypeToCheck::IdentityTopUpNotBound,
                 AccountTypeToCheck::IdentityInvitation,
+                AccountTypeToCheck::AssetLockAddressTopUp,
+                AccountTypeToCheck::AssetLockShieldedAddressTopUp,
             ],
             TransactionType::AssetUnlock => {
                 vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
@@ -175,6 +177,8 @@ pub enum AccountTypeToCheck {
     IdentityTopUp,
     IdentityTopUpNotBound,
     IdentityInvitation,
+    AssetLockAddressTopUp,
+    AssetLockShieldedAddressTopUp,
     ProviderVotingKeys,
     ProviderOwnerKeys,
     ProviderOperatorKeys,
@@ -224,6 +228,12 @@ impl TryFrom<ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => Ok(AccountTypeToCheck::IdentityInvitation),
+            ManagedAccountType::AssetLockAddressTopUp {
+                ..
+            } => Ok(AccountTypeToCheck::AssetLockAddressTopUp),
+            ManagedAccountType::AssetLockShieldedAddressTopUp {
+                ..
+            } => Ok(AccountTypeToCheck::AssetLockShieldedAddressTopUp),
             ManagedAccountType::ProviderVotingKeys {
                 ..
             } => Ok(AccountTypeToCheck::ProviderVotingKeys),
@@ -283,6 +293,12 @@ impl TryFrom<&ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => Ok(AccountTypeToCheck::IdentityInvitation),
+            ManagedAccountType::AssetLockAddressTopUp {
+                ..
+            } => Ok(AccountTypeToCheck::AssetLockAddressTopUp),
+            ManagedAccountType::AssetLockShieldedAddressTopUp {
+                ..
+            } => Ok(AccountTypeToCheck::AssetLockShieldedAddressTopUp),
             ManagedAccountType::ProviderVotingKeys {
                 ..
             } => Ok(AccountTypeToCheck::ProviderVotingKeys),

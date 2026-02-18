@@ -58,6 +58,10 @@ pub struct AccountCollection {
     pub identity_topup_not_bound: Option<Account>,
     /// Identity invitation account (optional)
     pub identity_invitation: Option<Account>,
+    /// Asset lock address top-up account (optional)
+    pub asset_lock_address_topup: Option<Account>,
+    /// Asset lock shielded address top-up account (optional)
+    pub asset_lock_shielded_address_topup: Option<Account>,
     /// Provider voting keys (optional)
     pub provider_voting_keys: Option<Account>,
     /// Provider owner keys (optional)
@@ -87,6 +91,8 @@ impl AccountCollection {
             identity_topup: BTreeMap::new(),
             identity_topup_not_bound: None,
             identity_invitation: None,
+            asset_lock_address_topup: None,
+            asset_lock_shielded_address_topup: None,
             provider_voting_keys: None,
             provider_owner_keys: None,
             #[cfg(feature = "bls")]
@@ -134,6 +140,12 @@ impl AccountCollection {
             }
             AccountType::IdentityInvitation => {
                 self.identity_invitation = Some(account);
+            }
+            AccountType::AssetLockAddressTopUp => {
+                self.asset_lock_address_topup = Some(account);
+            }
+            AccountType::AssetLockShieldedAddressTopUp => {
+                self.asset_lock_shielded_address_topup = Some(account);
             }
             AccountType::ProviderVotingKeys => {
                 self.provider_voting_keys = Some(account);
@@ -230,6 +242,10 @@ impl AccountCollection {
             } => self.identity_topup.contains_key(registration_index),
             AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.is_some(),
             AccountType::IdentityInvitation => self.identity_invitation.is_some(),
+            AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.is_some(),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                self.asset_lock_shielded_address_topup.is_some()
+            }
             AccountType::ProviderVotingKeys => self.provider_voting_keys.is_some(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.is_some(),
             #[cfg(feature = "bls")]
@@ -299,6 +315,10 @@ impl AccountCollection {
             } => self.identity_topup.get(&registration_index),
             AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_ref(),
             AccountType::IdentityInvitation => self.identity_invitation.as_ref(),
+            AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_ref(),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                self.asset_lock_shielded_address_topup.as_ref()
+            }
             AccountType::ProviderVotingKeys => self.provider_voting_keys.as_ref(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_ref(),
             AccountType::ProviderOperatorKeys => None, // BLSAccount, use bls_account_of_type
@@ -362,6 +382,10 @@ impl AccountCollection {
             } => self.identity_topup.get_mut(&registration_index),
             AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_mut(),
             AccountType::IdentityInvitation => self.identity_invitation.as_mut(),
+            AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_mut(),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                self.asset_lock_shielded_address_topup.as_mut()
+            }
             AccountType::ProviderVotingKeys => self.provider_voting_keys.as_mut(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_mut(),
             AccountType::ProviderOperatorKeys => None, // BLSAccount, use bls_account_of_type_mut
@@ -425,6 +449,14 @@ impl AccountCollection {
             accounts.push(account);
         }
 
+        if let Some(account) = &self.asset_lock_address_topup {
+            accounts.push(account);
+        }
+
+        if let Some(account) = &self.asset_lock_shielded_address_topup {
+            accounts.push(account);
+        }
+
         if let Some(account) = &self.provider_voting_keys {
             accounts.push(account);
         }
@@ -462,6 +494,14 @@ impl AccountCollection {
         }
 
         if let Some(account) = &mut self.identity_invitation {
+            accounts.push(account);
+        }
+
+        if let Some(account) = &mut self.asset_lock_address_topup {
+            accounts.push(account);
+        }
+
+        if let Some(account) = &mut self.asset_lock_shielded_address_topup {
             accounts.push(account);
         }
 
@@ -565,6 +605,8 @@ impl AccountCollection {
             && self.identity_topup.is_empty()
             && self.identity_topup_not_bound.is_none()
             && self.identity_invitation.is_none()
+            && self.asset_lock_address_topup.is_none()
+            && self.asset_lock_shielded_address_topup.is_none()
             && self.provider_voting_keys.is_none()
             && self.provider_owner_keys.is_none();
 
@@ -590,6 +632,8 @@ impl AccountCollection {
         self.identity_topup.clear();
         self.identity_topup_not_bound = None;
         self.identity_invitation = None;
+        self.asset_lock_address_topup = None;
+        self.asset_lock_shielded_address_topup = None;
         self.provider_voting_keys = None;
         self.provider_owner_keys = None;
         #[cfg(feature = "bls")]

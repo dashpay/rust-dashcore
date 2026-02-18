@@ -50,6 +50,12 @@ macro_rules! get_by_account_type_match_impl {
             CoreAccountTypeMatch::IdentityInvitation {
                 ..
             } => $self.identity_invitation.$as_opt(),
+            CoreAccountTypeMatch::AssetLockAddressTopUp {
+                ..
+            } => $self.asset_lock_address_topup.$as_opt(),
+            CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                ..
+            } => $self.asset_lock_shielded_address_topup.$as_opt(),
             CoreAccountTypeMatch::ProviderVotingKeys {
                 ..
             } => $self.provider_voting_keys.$as_opt(),
@@ -120,6 +126,10 @@ pub struct ManagedAccountCollection {
     pub identity_topup_not_bound: Option<ManagedCoreAccount>,
     /// Identity invitation account (optional)
     pub identity_invitation: Option<ManagedCoreAccount>,
+    /// Asset lock address top-up account (optional)
+    pub asset_lock_address_topup: Option<ManagedCoreAccount>,
+    /// Asset lock shielded address top-up account (optional)
+    pub asset_lock_shielded_address_topup: Option<ManagedCoreAccount>,
     /// Provider voting keys (optional)
     pub provider_voting_keys: Option<ManagedCoreAccount>,
     /// Provider owner keys (optional)
@@ -148,6 +158,8 @@ impl ManagedAccountCollection {
             identity_topup: BTreeMap::new(),
             identity_topup_not_bound: None,
             identity_invitation: None,
+            asset_lock_address_topup: None,
+            asset_lock_shielded_address_topup: None,
             provider_voting_keys: None,
             provider_owner_keys: None,
             provider_operator_keys: None,
@@ -192,6 +204,12 @@ impl ManagedAccountCollection {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => self.identity_invitation.is_some(),
+            ManagedAccountType::AssetLockAddressTopUp {
+                ..
+            } => self.asset_lock_address_topup.is_some(),
+            ManagedAccountType::AssetLockShieldedAddressTopUp {
+                ..
+            } => self.asset_lock_shielded_address_topup.is_some(),
             ManagedAccountType::ProviderVotingKeys {
                 ..
             } => self.provider_voting_keys.is_some(),
@@ -290,6 +308,16 @@ impl ManagedAccountCollection {
                 ..
             } => {
                 self.identity_invitation = Some(account);
+            }
+            ManagedAccountType::AssetLockAddressTopUp {
+                ..
+            } => {
+                self.asset_lock_address_topup = Some(account);
+            }
+            ManagedAccountType::AssetLockShieldedAddressTopUp {
+                ..
+            } => {
+                self.asset_lock_shielded_address_topup = Some(account);
             }
             ManagedAccountType::ProviderVotingKeys {
                 ..
@@ -407,6 +435,18 @@ impl ManagedAccountCollection {
         if let Some(account) = &account_collection.identity_invitation {
             if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
                 managed_collection.identity_invitation = Some(managed_account);
+            }
+        }
+
+        if let Some(account) = &account_collection.asset_lock_address_topup {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.asset_lock_address_topup = Some(managed_account);
+            }
+        }
+
+        if let Some(account) = &account_collection.asset_lock_shielded_address_topup {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.asset_lock_shielded_address_topup = Some(managed_account);
             }
         }
 
@@ -622,6 +662,30 @@ impl ManagedAccountCollection {
                     key_source,
                 )?;
                 ManagedAccountType::IdentityInvitation {
+                    addresses,
+                }
+            }
+            AccountType::AssetLockAddressTopUp => {
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                ManagedAccountType::AssetLockAddressTopUp {
+                    addresses,
+                }
+            }
+            AccountType::AssetLockShieldedAddressTopUp => {
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                ManagedAccountType::AssetLockShieldedAddressTopUp {
                     addresses,
                 }
             }
@@ -898,6 +962,14 @@ impl ManagedAccountCollection {
             accounts.push(account);
         }
 
+        if let Some(account) = &self.asset_lock_address_topup {
+            accounts.push(account);
+        }
+
+        if let Some(account) = &self.asset_lock_shielded_address_topup {
+            accounts.push(account);
+        }
+
         if let Some(account) = &self.provider_voting_keys {
             accounts.push(account);
         }
@@ -946,6 +1018,14 @@ impl ManagedAccountCollection {
         }
 
         if let Some(account) = &mut self.identity_invitation {
+            accounts.push(account);
+        }
+
+        if let Some(account) = &mut self.asset_lock_address_topup {
+            accounts.push(account);
+        }
+
+        if let Some(account) = &mut self.asset_lock_shielded_address_topup {
             accounts.push(account);
         }
 
@@ -1005,6 +1085,8 @@ impl ManagedAccountCollection {
             && self.identity_topup.is_empty()
             && self.identity_topup_not_bound.is_none()
             && self.identity_invitation.is_none()
+            && self.asset_lock_address_topup.is_none()
+            && self.asset_lock_shielded_address_topup.is_none()
             && self.provider_voting_keys.is_none()
             && self.provider_owner_keys.is_none()
             && self.provider_operator_keys.is_none()
@@ -1023,6 +1105,8 @@ impl ManagedAccountCollection {
         self.identity_topup.clear();
         self.identity_topup_not_bound = None;
         self.identity_invitation = None;
+        self.asset_lock_address_topup = None;
+        self.asset_lock_shielded_address_topup = None;
         self.provider_voting_keys = None;
         self.provider_owner_keys = None;
         self.provider_operator_keys = None;

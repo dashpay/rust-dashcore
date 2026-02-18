@@ -348,6 +348,40 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
+                CoreAccountTypeMatch::AssetLockAddressTopUp {
+                    involved_addresses,
+                } => {
+                    let ffi_match = FFIAccountMatch {
+                        account_type: 14, // AssetLockAddressTopUp
+                        account_index: 0,
+                        registration_index: 0,
+                        received: account_match.received,
+                        sent: account_match.sent,
+                        external_addresses_count: involved_addresses.len() as c_uint,
+                        internal_addresses_count: 0,
+                        has_external_addresses: !involved_addresses.is_empty(),
+                        has_internal_addresses: false,
+                    };
+                    ffi_accounts.push(ffi_match);
+                    continue;
+                }
+                CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                    involved_addresses,
+                } => {
+                    let ffi_match = FFIAccountMatch {
+                        account_type: 15, // AssetLockShieldedAddressTopUp
+                        account_index: 0,
+                        registration_index: 0,
+                        received: account_match.received,
+                        sent: account_match.sent,
+                        external_addresses_count: involved_addresses.len() as c_uint,
+                        internal_addresses_count: 0,
+                        has_external_addresses: !involved_addresses.is_empty(),
+                        has_internal_addresses: false,
+                    };
+                    ffi_accounts.push(ffi_match);
+                    continue;
+                }
                 CoreAccountTypeMatch::ProviderVotingKeys {
                     involved_addresses,
                 } => {

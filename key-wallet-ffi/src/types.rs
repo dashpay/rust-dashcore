@@ -176,6 +176,10 @@ pub enum FFIAccountType {
     IdentityTopUpNotBoundToIdentity = 5,
     /// Identity invitation funding
     IdentityInvitation = 6,
+    /// Asset lock address top-up funding (subfeature 4)
+    AssetLockAddressTopUp = 14,
+    /// Asset lock shielded address top-up funding (subfeature 5)
+    AssetLockShieldedAddressTopUp = 15,
     /// Provider voting keys (DIP-3) - Path: m/9'/5'/3'/1'/\[key_index\]
     ProviderVotingKeys = 7,
     /// Provider owner keys (DIP-3) - Path: m/9'/5'/3'/2'/\[key_index\]
@@ -220,6 +224,10 @@ impl FFIAccountType {
                 key_wallet::AccountType::IdentityTopUpNotBoundToIdentity
             }
             FFIAccountType::IdentityInvitation => key_wallet::AccountType::IdentityInvitation,
+            FFIAccountType::AssetLockAddressTopUp => key_wallet::AccountType::AssetLockAddressTopUp,
+            FFIAccountType::AssetLockShieldedAddressTopUp => {
+                key_wallet::AccountType::AssetLockShieldedAddressTopUp
+            }
             FFIAccountType::ProviderVotingKeys => key_wallet::AccountType::ProviderVotingKeys,
             FFIAccountType::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
             FFIAccountType::ProviderOperatorKeys => key_wallet::AccountType::ProviderOperatorKeys,
@@ -298,6 +306,12 @@ impl FFIAccountType {
             }
             key_wallet::AccountType::IdentityInvitation => {
                 (FFIAccountType::IdentityInvitation, 0, None)
+            }
+            key_wallet::AccountType::AssetLockAddressTopUp => {
+                (FFIAccountType::AssetLockAddressTopUp, 0, None)
+            }
+            key_wallet::AccountType::AssetLockShieldedAddressTopUp => {
+                (FFIAccountType::AssetLockShieldedAddressTopUp, 0, None)
             }
             key_wallet::AccountType::ProviderVotingKeys => {
                 (FFIAccountType::ProviderVotingKeys, 0, None)
