@@ -1,5 +1,5 @@
 // Note: Many tests in this file are marked with #[ignore] because they call
-// dash_spv_ffi_client_start() which hangs indefinitely when using regtest
+// dash_spv_ffi_client_run() which hangs indefinitely when using regtest
 // network with no configured peers. These tests should be run with a proper
 // test network setup or mocked networking layer.
 
@@ -72,14 +72,14 @@ mod tests {
             assert!(!client.is_null());
 
             // Start
-            let _result = dash_spv_ffi_client_start(client);
+            let _result = dash_spv_ffi_client_run(client);
             // May fail in test environment, but should handle gracefully
 
             // Stop
             let _result = dash_spv_ffi_client_stop(client);
 
             // Restart
-            let _result = dash_spv_ffi_client_start(client);
+            let _result = dash_spv_ffi_client_run(client);
             let _result = dash_spv_ffi_client_stop(client);
 
             dash_spv_ffi_client_destroy(client);
@@ -98,7 +98,7 @@ mod tests {
 
             // Start a sync operation in background
             // Start sync (non-blocking)
-            dash_spv_ffi_client_start(client);
+            dash_spv_ffi_client_run(client);
 
             // Immediately destroy client (should handle pending operations)
             dash_spv_ffi_client_destroy(client);
@@ -121,7 +121,7 @@ mod tests {
             assert!(!client.is_null());
 
             // Try to start (should handle no peers gracefully)
-            let _result = dash_spv_ffi_client_start(client);
+            let _result = dash_spv_ffi_client_run(client);
 
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);
@@ -164,7 +164,7 @@ mod tests {
         unsafe {
             // Test all client operations with null
             assert_eq!(
-                dash_spv_ffi_client_start(std::ptr::null_mut()),
+                dash_spv_ffi_client_run(std::ptr::null_mut()),
                 FFIErrorCode::NullPointer as i32
             );
 

@@ -33,10 +33,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the SPV client with all components
     let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
 
-    // Start the client
-    println!("Starting SPV client...");
-    client.start().await?;
-
     // The wallet will automatically be notified of:
     // - New blocks via process_block()
     // - Mempool transactions via process_mempool_transaction()

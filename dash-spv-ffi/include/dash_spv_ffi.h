@@ -469,14 +469,6 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
 ;
 
 /**
- * Start the SPV client.
- *
- * # Safety
- * - `client` must be a valid, non-null pointer to a created client.
- */
- int32_t dash_spv_ffi_client_start(struct FFIDashSpvClient *client) ;
-
-/**
  * Stop the SPV client.
  *
  * # Safety
@@ -487,16 +479,13 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
 /**
  * Start the SPV client and begin syncing in the background.
  *
- * This is the streamlined entry point that combines `start()` and continuous monitoring
- * into a single non-blocking call. Use event callbacks (set via `set_sync_event_callbacks`,
- * `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive notifications
- * about sync progress, peer connections, and wallet activity.
+ * Subscribes to events, spawns monitoring threads, then spawns a background
+ * thread that calls `run()` (which handles start + sync loop + stop internally).
+ * Returns immediately after spawning.
  *
- * Workflow:
- * 1. Configure event callbacks before calling `run()`
- * 2. Call `run()` - it returns immediately after spawning background tasks
- * 3. Receive notifications via callbacks as sync progresses
- * 4. Call `stop()` when done
+ * Use event callbacks (set via `set_sync_event_callbacks`,
+ * `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive
+ * notifications. Configure callbacks before calling `run()`.
  *
  * # Safety
  * - `client` must be a valid, non-null pointer to a created client.

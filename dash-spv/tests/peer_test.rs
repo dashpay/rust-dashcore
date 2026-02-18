@@ -6,6 +6,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 use tokio::time;
+use tokio_util::sync::CancellationToken;
 
 use dash_spv::client::{ClientConfig, DashSpvClient};
 use dash_spv::network::PeerNetworkManager;
@@ -47,8 +48,10 @@ async fn test_peer_connection() {
     let client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
 
-    // Start the client
-    client.start().await.unwrap();
+    let token = CancellationToken::new();
+    let cancel = token.clone();
+    let run_client = client.clone();
+    let handle = tokio::spawn(async move { run_client.run(token).await });
 
     // Give it time to connect to peers
     time::sleep(Duration::from_secs(5)).await;
@@ -57,8 +60,8 @@ async fn test_peer_connection() {
     let peer_count = client.peer_count().await;
     assert!(peer_count > 0, "Should have connected to at least one peer");
 
-    // Stop the client
-    client.stop().await.unwrap();
+    cancel.cancel();
+    let _ = handle.await;
 }
 
 #[tokio::test]
@@ -83,13 +86,18 @@ async fn test_peer_persistence() {
             .await
             .unwrap();
 
-        client.start().await.unwrap();
+        let token = CancellationToken::new();
+        let cancel = token.clone();
+        let run_client = client.clone();
+        let handle = tokio::spawn(async move { run_client.run(token).await });
+
         time::sleep(Duration::from_secs(5)).await;
 
         let peer_count = client.peer_count().await;
         assert!(peer_count > 0, "Should have connected to peers");
 
-        client.stop().await.unwrap();
+        cancel.cancel();
+        let _ = handle.await;
     }
 
     // Second run: should load saved peers
@@ -107,8 +115,11 @@ async fn test_peer_persistence() {
             DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
 
         // Should connect faster due to saved peers
+        let token = CancellationToken::new();
+        let cancel = token.clone();
+        let run_client = client.clone();
         let start = tokio::time::Instant::now();
-        client.start().await.unwrap();
+        let handle = tokio::spawn(async move { run_client.run(token).await });
 
         // Wait for connection but with shorter timeout
         time::sleep(Duration::from_secs(3)).await;
@@ -119,7 +130,8 @@ async fn test_peer_persistence() {
         let elapsed = start.elapsed();
         println!("Connected to {} peers in {:?} (using saved peers)", peer_count, elapsed);
 
-        client.stop().await.unwrap();
+        cancel.cancel();
+        let _ = handle.await;
     }
 }
 

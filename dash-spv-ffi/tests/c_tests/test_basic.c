@@ -228,7 +228,7 @@ void test_null_pointer_handling() {
 
     // Client functions
     TEST_ASSERT(dash_spv_ffi_client_new(NULL) == NULL);
-    TEST_ASSERT(dash_spv_ffi_client_start(NULL) == FFIErrorCode_NullPointer);
+    TEST_ASSERT(dash_spv_ffi_client_run(NULL) == FFIErrorCode_NullPointer);
     TEST_ASSERT(dash_spv_ffi_client_stop(NULL) == FFIErrorCode_NullPointer);
 
     // Destruction functions (should handle NULL gracefully)

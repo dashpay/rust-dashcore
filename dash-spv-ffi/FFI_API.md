@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 49
+**Total Functions**: 48
 
 ## Table of Contents
 
@@ -22,13 +22,12 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 ### Client Management
 
-Functions: 4
+Functions: 3
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_destroy` | Destroy the client and free associated resources | client |
 | `dash_spv_ffi_client_new` | Create a new SPV client and return an opaque pointer | client |
-| `dash_spv_ffi_client_start` | Start the SPV client | client |
 | `dash_spv_ffi_client_stop` | Stop the SPV client | client |
 
 ### Configuration
@@ -163,22 +162,6 @@ Create a new SPV client and return an opaque pointer.  # Safety - `config` must 
 
 **Safety:**
 - `config` must be a valid, non-null pointer for the duration of the call. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_start`
-
-```c
-dash_spv_ffi_client_start(client: *mut FFIDashSpvClient) -> i32
-```
-
-**Description:**
-Start the SPV client.  # Safety - `client` must be a valid, non-null pointer to a created client.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to a created client.
 
 **Module:** `client`
 
@@ -791,7 +774,7 @@ dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) -> i32
 ```
 
 **Description:**
-Start the SPV client and begin syncing in the background.  This is the streamlined entry point that combines `start()` and continuous monitoring into a single non-blocking call. Use event callbacks (set via `set_sync_event_callbacks`, `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive notifications about sync progress, peer connections, and wallet activity.  Workflow: 1. Configure event callbacks before calling `run()` 2. Call `run()` - it returns immediately after spawning background tasks 3. Receive notifications via callbacks as sync progresses 4. Call `stop()` when done  # Safety - `client` must be a valid, non-null pointer to a created client.  # Returns 0 on success, error code on failure.
+Start the SPV client and begin syncing in the background.  Subscribes to events, spawns monitoring threads, then spawns a background thread that calls `run()` (which handles start + sync loop + stop internally). Returns immediately after spawning.  Use event callbacks (set via `set_sync_event_callbacks`, `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive notifications. Configure callbacks before calling `run()`.  # Safety - `client` must be a valid, non-null pointer to a created client.  # Returns 0 on success, error code on failure.
 
 **Safety:**
 - `client` must be a valid, non-null pointer to a created client.
@@ -946,8 +929,8 @@ FFIClientConfig* config = dash_spv_ffi_config_testnet();
 // Create client
 FFIDashSpvClient* client = dash_spv_ffi_client_new(config);
 
-// Start the client
-int32_t result = dash_spv_ffi_client_start(client);
+// Start the client and begin syncing
+int32_t result = dash_spv_ffi_client_run(client);
 if (result != 0) {
     const char* error = dash_spv_ffi_get_last_error();
     // Handle error

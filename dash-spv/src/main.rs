@@ -323,14 +323,20 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
         }
     };
 
-    if let Err(e) = client.start().await {
-        eprintln!("Failed to start SPV client: {}", e);
-        process::exit(1);
-    }
-
-    tracing::info!("SPV client started successfully");
-
     let shutdown_token = CancellationToken::new();
+    let ctrl_c_token = shutdown_token.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result.ok();
+                tracing::debug!("Shutdown signal received");
+            }
+            _ = ctrl_c_token.cancelled() => {
+                tracing::debug!("Shutdown token cancelled");
+            }
+        }
+        ctrl_c_token.cancel();
+    });
 
     client.run(shutdown_token).await?;
 

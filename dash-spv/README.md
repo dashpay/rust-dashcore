@@ -58,14 +58,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ClientConfig::mainnet()
         .with_storage_path("/path/to/data".into());
 
-    // Create and start client
-    let mut client = DashSpvClient::new(config).await?;
-    client.start().await?;
-
-    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    // Create and run the client
+    let client = DashSpvClient::new(config).await?;
     let shutdown_token = CancellationToken::new();
-
-    client.run(command_receiver, shutdown_token).await?;
+    client.run(shutdown_token).await?;
     
     Ok(())
 }

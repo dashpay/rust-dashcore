@@ -38,9 +38,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the client
     let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
 
-    // Start the client
-    client.start().await?;
-
     println!("Starting synchronization with filter support...");
     println!("Watching address: {:?}", watch_address);
 

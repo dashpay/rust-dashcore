@@ -1,7 +1,7 @@
 //! Sync coordination and orchestration.
 
 use super::DashSpvClient;
-use crate::error::{Result, SpvError};
+use crate::error::Result;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncProgress;
@@ -17,16 +17,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.sync_coordinator.lock().await.progress().clone()
     }
 
-    /// Run continuous monitoring for new blocks, ChainLocks, InstantLocks, etc.
+    /// Start the client and run the monitoring loop until the token is cancelled.
     ///
-    /// This is the sole network message receiver to prevent race conditions.
-    /// All sync operations coordinate through this monitoring loop.
-    pub async fn monitor_network(&self, token: CancellationToken) -> Result<()> {
-        let running = self.running.read().await;
-        if !*running {
-            return Err(SpvError::Config("Client not running".to_string()));
-        }
-        drop(running);
+    /// Calls `start()` internally, runs continuous network monitoring for new
+    /// blocks, ChainLocks, InstantLocks, etc., and calls `stop()` before returning.
+    /// The caller is responsible for cancelling the token (e.g. on ctrl-c).
+    pub async fn run(&self, token: CancellationToken) -> Result<()> {
+        self.start().await?;
 
         tracing::info!("Starting continuous network monitoring...");
 
@@ -59,39 +56,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         }
 
-        // Shutdown the sync coordinator
-        if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
-            tracing::warn!("Error shutting down sync coordinator: {}", e);
-        }
-
-        Ok(())
-    }
-
-    /// Run the client: spawns the monitoring loop and a ctrl-c handler.
-    pub async fn run(&self, shutdown_token: CancellationToken) -> Result<()> {
-        let client_token = shutdown_token.clone();
-        let client = self.clone();
-
-        let client_task = tokio::spawn(async move {
-            let result = client.monitor_network(client_token).await;
-            if let Err(e) = &result {
-                tracing::error!("Error running client: {}", e);
-            }
-            if let Err(e) = client.stop().await {
-                tracing::error!("Error stopping client: {}", e);
-            }
-            result
-        });
-
-        let shutdown_task = tokio::spawn(async move {
-            if let Err(e) = tokio::signal::ctrl_c().await {
-                tracing::error!("Error waiting for ctrl_c: {}", e);
-            }
-            tracing::debug!("Shutdown signal received");
-            shutdown_token.cancel();
-        });
-
-        let (client_result, _) = tokio::join!(client_task, shutdown_task);
-        client_result.map_err(|e| SpvError::General(format!("client_task panicked: {e}")))?
+        self.stop().await
     }
 }

@@ -56,7 +56,7 @@ mod tests {
             let client = dash_spv_ffi_client_new(config);
 
             // Note: Start/stop may fail in test environment without network
-            let _result = dash_spv_ffi_client_start(client);
+            let _result = dash_spv_ffi_client_run(client);
             let _result = dash_spv_ffi_client_stop(client);
 
             dash_spv_ffi_client_destroy(client);
@@ -68,7 +68,7 @@ mod tests {
     #[serial]
     fn test_client_null_checks() {
         unsafe {
-            let result = dash_spv_ffi_client_start(std::ptr::null_mut());
+            let result = dash_spv_ffi_client_run(std::ptr::null_mut());
             assert_eq!(result, FFIErrorCode::NullPointer as i32);
 
             let result = dash_spv_ffi_client_stop(std::ptr::null_mut());

@@ -114,7 +114,7 @@ mod tests {
             println!("Testing callback thread safety with concurrent invocations");
 
             // Start the client
-            let start_result = dash_spv_ffi_client_start(client);
+            let start_result = dash_spv_ffi_client_run(client);
             assert_eq!(start_result, 0);
             thread::sleep(Duration::from_millis(100));
 

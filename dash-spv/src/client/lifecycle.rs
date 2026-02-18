@@ -124,7 +124,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Start the SPV client.
-    pub async fn start(&self) -> Result<()> {
+    pub(super) async fn start(&self) -> Result<()> {
         {
             let running = self.running.read().await;
             if *running {

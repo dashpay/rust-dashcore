@@ -250,27 +250,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
     }
 }
 
-/// Start the SPV client.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to a created client.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-
-    let result = client.runtime.block_on(async { client.inner.start().await });
-
-    match result {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
 /// Stop the SPV client.
 ///
 /// # Safety
@@ -291,16 +270,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 
 /// Start the SPV client and begin syncing in the background.
 ///
-/// This is the streamlined entry point that combines `start()` and continuous monitoring
-/// into a single non-blocking call. Use event callbacks (set via `set_sync_event_callbacks`,
-/// `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive notifications
-/// about sync progress, peer connections, and wallet activity.
+/// Subscribes to events, spawns monitoring threads, then spawns a background
+/// thread that calls `run()` (which handles start + sync loop + stop internally).
+/// Returns immediately after spawning.
 ///
-/// Workflow:
-/// 1. Configure event callbacks before calling `run()`
-/// 2. Call `run()` - it returns immediately after spawning background tasks
-/// 3. Receive notifications via callbacks as sync progresses
-/// 4. Call `stop()` when done
+/// Use event callbacks (set via `set_sync_event_callbacks`,
+/// `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive
+/// notifications. Configure callbacks before calling `run()`.
 ///
 /// # Safety
 /// - `client` must be a valid, non-null pointer to a created client.
@@ -313,18 +289,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
     let client = &(*client);
 
-    tracing::info!("dash_spv_ffi_client_run: starting client");
-
-    // Start the client first
-    let start_result = client.runtime.block_on(async { client.inner.start().await });
-
-    if let Err(e) = start_result {
-        tracing::error!("dash_spv_ffi_client_run: start failed: {}", e);
-        set_last_error(&e.to_string());
-        return FFIErrorCode::from(e) as i32;
-    }
-
-    tracing::info!("dash_spv_ffi_client_run: client started, setting up event monitoring");
+    tracing::info!("dash_spv_ffi_client_run: setting up event monitoring");
 
     let shutdown_token = client.shutdown_token.clone();
 
@@ -389,10 +354,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
     // Spawn the sync monitoring task
     let spv_client = client.inner.clone();
     tasks.push(client.runtime.spawn(async move {
-        tracing::debug!("Sync task: starting monitor_network");
+        tracing::debug!("Sync task: starting run");
 
-        if let Err(e) = spv_client.monitor_network(shutdown_token).await {
-            tracing::error!("Sync task: sync error: {}", e);
+        if let Err(e) = spv_client.run(shutdown_token).await {
+            tracing::error!("Sync task: error: {}", e);
         }
 
         tracing::debug!("Sync task: exiting");

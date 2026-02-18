@@ -3,8 +3,10 @@
 //! These tests validate end-to-end wallet operations through the SPVWalletManager.
 
 use std::sync::Arc;
+use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
@@ -18,7 +20,9 @@ async fn create_test_client(
     let config = ClientConfig::testnet()
         .without_filters()
         .with_storage_path(TempDir::new().unwrap().path())
-        .without_masternodes();
+        .without_masternodes()
+        // Ensure DNS discovery isn't used since it's causing flakiness in CI and not needed for these tests.
+        .with_restrict_to_configured_peers(true);
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
@@ -42,23 +46,27 @@ async fn test_spv_client_creation() {
 }
 
 #[tokio::test]
-async fn test_spv_client_start_stop() {
-    // Test starting and stopping the client
+async fn test_spv_client_run_stop() {
     let client = create_test_client().await;
 
-    // Start the client
-    client.start().await.unwrap();
+    let token = CancellationToken::new();
+    let cancel = token.clone();
 
-    // Verify client is running
-    let running = client.is_running().await;
-    assert!(running);
+    let run_client = client.clone();
+    let handle = tokio::spawn(async move { run_client.run(token).await });
 
-    // Stop the client
-    client.stop().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !client.is_running().await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("client failed to start");
 
-    // Verify client is stopped
-    let running = client.is_running().await;
-    assert!(!running);
+    cancel.cancel();
+    handle.await.unwrap().unwrap();
+
+    assert!(!client.is_running().await);
 }
 
 #[tokio::test]

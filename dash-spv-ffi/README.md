@@ -60,8 +60,8 @@ if (client == NULL) {
     // Handle error
 }
 
-// Start the client
-if (dash_spv_ffi_client_start(client) != 0) {
+// Start the client and begin syncing in the background
+if (dash_spv_ffi_client_run(client) != 0) {
     // Handle error
 }
 
@@ -88,7 +88,7 @@ dash_spv_ffi_config_destroy(config);
 ### Client Operations
 
 - `dash_spv_ffi_client_new(config)` - Create new client
-- `dash_spv_ffi_client_start(client)` - Start the client
+- `dash_spv_ffi_client_run(client)` - Start the client and begin syncing in the background
 - `dash_spv_ffi_client_stop(client)` - Stop the client
 - `dash_spv_ffi_client_get_sync_progress(client)` - Get sync progress
 - `dash_spv_ffi_client_get_stats(client)` - Get client statistics
