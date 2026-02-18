@@ -111,20 +111,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let storage = Arc::new(Mutex::new(storage));
 
         Ok(Self {
-            config,
-            network,
+            config: Arc::new(RwLock::new(config)),
+            network: Arc::new(Mutex::new(network)),
             storage,
             wallet,
             masternode_engine,
-            sync_coordinator,
+            sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
             running: Arc::new(RwLock::new(false)),
             mempool_state,
-            mempool_filter: None,
+            mempool_filter: Arc::new(RwLock::new(None)),
         })
     }
 
     /// Start the SPV client.
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&self) -> Result<()> {
         {
             let running = self.running.read().await;
             if *running {
@@ -135,19 +135,23 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Load wallet data from storage
         self.load_wallet_data().await?;
 
+        let config = self.config.read().await;
+
         // Initialize mempool filter if mempool tracking is enabled
-        if self.config.enable_mempool_tracking {
+        if config.enable_mempool_tracking {
             // TODO: Get monitored addresses from wallet
-            self.mempool_filter = Some(Arc::new(MempoolFilter::new(
-                self.config.mempool_strategy,
-                self.config.max_mempool_transactions,
+            let filter = Arc::new(MempoolFilter::new(
+                config.mempool_strategy,
+                config.max_mempool_transactions,
                 self.mempool_state.clone(),
                 HashSet::new(), // Will be populated from wallet's monitored addresses
-                self.config.network,
-            )));
+                config.network,
+            ));
+
+            *self.mempool_filter.write().await = Some(filter);
 
             // Load mempool state from storage if persistence is enabled
-            if self.config.persist_mempool {
+            if config.persist_mempool {
                 if let Some(state) = self
                     .storage
                     .lock()
@@ -161,18 +165,23 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         }
 
+        // Drop config before calling methods that also read it
+        drop(config);
+
         // Initialize genesis block if not already present
         self.initialize_genesis_block().await?;
 
         // Start all sync tasks before connecting to the network to make sure initial connection
         // events are handled correctly in the sync coordinator.
-        if let Err(e) = self.sync_coordinator.start(&mut self.network).await {
+        if let Err(e) =
+            self.sync_coordinator.lock().await.start(&mut *self.network.lock().await).await
+        {
             tracing::error!("Failed to start sync coordinator: {}", e);
             return Err(SpvError::Sync(e));
         }
 
         // Connect to network
-        self.network.connect().await?;
+        self.network.lock().await.connect().await?;
 
         // Only mark as running after all startup operations succeed
         {
@@ -184,7 +193,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Stop the SPV client.
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&self) -> Result<()> {
         // Check if already stopped
         {
             let running = self.running.read().await;
@@ -195,12 +204,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Shut down sync coordinator: signals cancellation and waits for manager
         // tasks to drain before we tear down the network and storage layers.
-        if let Err(e) = self.sync_coordinator.shutdown().await {
+        if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
             log::warn!("Error shutting down sync coordinator: {}", e);
         }
 
         // Disconnect from network
-        self.network.disconnect().await?;
+        self.network.lock().await.disconnect().await?;
 
         // Shutdown storage to ensure all data is persisted
         {
@@ -217,12 +226,14 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Shutdown the SPV client (alias for stop).
-    pub async fn shutdown(&mut self) -> Result<()> {
+    pub async fn shutdown(&self) -> Result<()> {
         self.stop().await
     }
 
     /// Initialize genesis block or checkpoint.
-    pub(super) async fn initialize_genesis_block(&mut self) -> Result<()> {
+    pub(super) async fn initialize_genesis_block(&self) -> Result<()> {
+        let config = self.config.read().await;
+
         // Check if we already have any headers in storage
         let current_tip = {
             let storage = self.storage.lock().await;
@@ -236,9 +247,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Check if we should use a checkpoint instead of genesis
-        if let Some(start_height) = self.config.start_from_height {
+        if let Some(start_height) = config.start_from_height {
             // Get checkpoints for this network
-            let checkpoints = match self.config.network {
+            let checkpoints = match config.network {
                 dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
                 dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
                 _ => vec![],
@@ -307,20 +318,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Get the genesis block hash for this network
-        let genesis_hash = self
-            .config
+        let genesis_hash = config
             .network
             .known_genesis_block_hash()
             .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
 
         tracing::info!(
             "Initializing genesis block for network {:?}: {}",
-            self.config.network,
+            config.network,
             genesis_hash
         );
 
-        let genesis_header =
-            dashcore::blockdata::constants::genesis_block(self.config.network).header;
+        let genesis_header = dashcore::blockdata::constants::genesis_block(config.network).header;
 
         // Verify the header produces the expected genesis hash
         let calculated_hash = genesis_header.block_hash();

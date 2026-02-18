@@ -75,22 +75,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
 
     // Get the client reference
     let client = &*client;
-
-    // Access the inner client through the mutex
-    let inner_guard = match client.inner.lock() {
-        Ok(guard) => guard,
-        Err(_) => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Failed to lock client mutex");
-        }
-    };
-
-    // Get the SPV client
-    let spv_client = match inner_guard.as_ref() {
-        Some(client) => client,
-        None => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Client not initialized");
-        }
-    };
+    let spv_client = &client.inner;
 
     // Read the quorum hash from the input pointer
     let quorum_hash_bytes = std::slice::from_raw_parts(quorum_hash, 32);
@@ -193,28 +178,15 @@ pub unsafe extern "C" fn ffi_dash_spv_get_platform_activation_height(
     // Get the client reference
     let client = &*client;
 
-    // Access the inner client through the mutex
-    let inner_guard = match client.inner.lock() {
-        Ok(guard) => guard,
-        Err(_) => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Failed to lock client mutex");
-        }
-    };
-
     // Get the network from the client config
-    let height = match inner_guard.as_ref() {
-        Some(spv_client) => {
-            // Platform activation heights per network
-            match spv_client.network() {
-                dashcore::Network::Dash => 1_888_888, // Mainnet (placeholder - needs verification)
-                dashcore::Network::Testnet => 1_289_520, // Testnet confirmed height
-                dashcore::Network::Devnet => 1,       // Devnet starts immediately
-                _ => 0,                               // Unknown network
-            }
-        }
-        None => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Client not initialized");
-        }
+    let network = client.runtime.block_on(async { client.inner.network().await });
+
+    // Platform activation heights per network
+    let height = match network {
+        dashcore::Network::Dash => 1_888_888, // Mainnet (placeholder - needs verification)
+        dashcore::Network::Testnet => 1_289_520, // Testnet confirmed height
+        dashcore::Network::Devnet => 1,       // Devnet starts immediately
+        _ => 0,                               // Unknown network
     };
 
     // Set the output value

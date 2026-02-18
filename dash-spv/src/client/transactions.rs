@@ -11,8 +11,8 @@ use super::DashSpvClient;
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Broadcast a transaction to all connected peers.
     pub async fn broadcast_transaction(&self, tx: &dashcore::Transaction) -> Result<()> {
-        let network = self
-            .network
+        let network_guard = self.network.lock().await;
+        let network = network_guard
             .as_any()
             .downcast_ref::<crate::network::manager::PeerNetworkManager>()
             .ok_or_else(|| {

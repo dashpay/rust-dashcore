@@ -25,6 +25,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     ) -> Result<crate::types::MempoolBalance> {
         let _wallet = self.wallet.read().await;
         let mempool_state = self.mempool_state.read().await;
+        let config = self.config.read().await;
 
         let mut pending = 0i64;
         let mut pending_instant = 0i64;
@@ -48,7 +49,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 // Check outputs to this address (incoming funds)
                 for output in &tx.transaction.output {
                     if let Ok(out_addr) =
-                        dashcore::Address::from_script(&output.script_pubkey, self.config.network)
+                        dashcore::Address::from_script(&output.script_pubkey, config.network)
                     {
                         if &out_addr == address {
                             address_balance_change += output.value as i64;
@@ -118,16 +119,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Update mempool filter with wallet's monitored addresses.
     #[allow(dead_code)]
-    pub(super) async fn update_mempool_filter(&mut self) {
+    pub(super) async fn update_mempool_filter(&self) {
+        let config = self.config.read().await;
         // TODO: Get monitored addresses from wallet
         // For now, create empty filter until wallet integration is complete
-        self.mempool_filter = Some(Arc::new(MempoolFilter::new(
-            self.config.mempool_strategy,
-            self.config.max_mempool_transactions,
+        let filter = Arc::new(MempoolFilter::new(
+            config.mempool_strategy,
+            config.max_mempool_transactions,
             self.mempool_state.clone(),
             HashSet::new(), // Will be populated from wallet's monitored addresses
-            self.config.network,
-        )));
+            config.network,
+        ));
+        *self.mempool_filter.write().await = Some(filter);
         tracing::info!("Updated mempool filter (wallet integration pending)");
     }
 }

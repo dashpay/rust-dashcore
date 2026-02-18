@@ -10,7 +10,6 @@ use dash_spv::storage::DiskStorageManager;
 use dash_spv::DashSpvClient;
 use dash_spv::Hash;
 
-use futures::future::{AbortHandle, Abortable};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tokio::runtime::Handle;
@@ -111,7 +110,7 @@ where
     })
 }
 
-/// FFIDashSpvClient structure
+/// FFI wrapper around `DashSpvClient`.
 type InnerClient = DashSpvClient<
     key_wallet_manager::wallet_manager::WalletManager<
         key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
@@ -119,10 +118,9 @@ type InnerClient = DashSpvClient<
     dash_spv::network::PeerNetworkManager,
     DiskStorageManager,
 >;
-type SharedClient = Arc<Mutex<Option<InnerClient>>>;
 
 pub struct FFIDashSpvClient {
-    pub(crate) inner: SharedClient,
+    pub(crate) inner: InnerClient,
     pub(crate) runtime: Arc<Runtime>,
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     shutdown_token: CancellationToken,
@@ -181,7 +179,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     match client_result {
         Ok(client) => {
             let ffi_client = FFIDashSpvClient {
-                inner: Arc::new(Mutex::new(Some(client))),
+                inner: client,
                 runtime,
                 active_threads: Arc::new(Mutex::new(Vec::new())),
                 shutdown_token: CancellationToken::new(),
@@ -200,15 +198,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 }
 
 impl FFIDashSpvClient {
-    /// Helper method to run async code using the client's runtime
-    pub fn run_async<F, Fut, T>(&self, f: F) -> T
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = T>,
-    {
-        self.runtime.block_on(f())
-    }
-
     fn join_active_threads(&self) {
         let handles = {
             let mut guard = self.active_threads.lock().unwrap();
@@ -228,24 +217,7 @@ fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::S
 
     client.join_active_threads();
 
-    let inner = client.inner.clone();
-    let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.stop().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
+    let result = client.runtime.block_on(async { client.inner.stop().await });
 
     client.shutdown_token = CancellationToken::new();
 
@@ -269,25 +241,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
     let client = &(*client);
     let new_config = (&*config).clone_inner();
 
-    let result = client.runtime.block_on(async {
-        // Take client without holding the lock across await
-        let mut spv_client = {
-            let mut guard = client.inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-
-        let res = spv_client.update_config(new_config).await;
-
-        // Put client back
-        let mut guard = client.inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
+    let result = client.runtime.block_on(async { client.inner.update_config(new_config).await });
 
     match result {
         Ok(()) => FFIErrorCode::Success as i32,
@@ -307,25 +261,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
     null_check!(client);
 
     let client = &(*client);
-    let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(client) => client,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.start().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
+    let result = client.runtime.block_on(async { client.inner.start().await });
 
     match result {
         Ok(()) => FFIErrorCode::Success as i32,
@@ -381,24 +318,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
     tracing::info!("dash_spv_ffi_client_run: starting client");
 
     // Start the client first
-    let inner = client.inner.clone();
-    let start_result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.start().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
-    });
+    let start_result = client.runtime.block_on(async { client.inner.start().await });
 
     if let Err(e) = start_result {
         tracing::error!("dash_spv_ffi_client_run: start failed: {}", e);
@@ -408,32 +328,20 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
     tracing::info!("dash_spv_ffi_client_run: client started, setting up event monitoring");
 
-    // Get event subscriptions before taking the client for the sync thread.
-    // The sync thread needs exclusive access, so we must subscribe first.
-    let inner = client.inner.clone();
     let runtime_handle = client.runtime.handle().clone();
     let shutdown_token = client.shutdown_token.clone();
 
-    let (sync_event_rx, network_event_rx, progress_rx, wallet_event_rx) = {
-        let guard = inner.lock().unwrap();
-        match guard.as_ref() {
-            Some(c) => {
-                // Get wallet event subscription using blocking_read since subscribe_events is on WalletManager
-                let wallet_rx = c.wallet().blocking_read().subscribe_events();
-                (
-                    c.subscribe_sync_events(),
-                    c.subscribe_network_events(),
-                    c.subscribe_progress(),
-                    wallet_rx,
-                )
-            }
-            None => {
-                tracing::error!("dash_spv_ffi_client_run: client not available for subscriptions");
-                set_last_error("Client not available");
-                return FFIErrorCode::RuntimeError as i32;
-            }
-        }
-    };
+    // Subscribe to events before spawning the sync thread
+    let (sync_event_rx, network_event_rx, progress_rx, wallet_event_rx) =
+        client.runtime.block_on(async {
+            let wallet_rx = client.inner.wallet().read().await.subscribe_events();
+            (
+                client.inner.subscribe_sync_events().await,
+                client.inner.subscribe_network_events().await,
+                client.inner.subscribe_progress().await,
+                wallet_rx,
+            )
+        });
 
     // Spawn event monitoring threads for each callback type that is set
     let rt = client.runtime.handle().clone();
@@ -487,62 +395,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
     tracing::info!("dash_spv_ffi_client_run: spawning sync thread");
 
-    // Now take the client for the sync thread
-    let spv_client = {
-        let mut guard = inner.lock().unwrap();
-        match guard.take() {
-            Some(c) => c,
-            None => {
-                tracing::error!("dash_spv_ffi_client_run: client not available for sync thread");
-                set_last_error("Client not available");
-                return FFIErrorCode::RuntimeError as i32;
-            }
-        }
-    };
+    let spv_client = client.inner.clone();
 
     let sync_handle = std::thread::spawn(move || {
         runtime_handle.block_on(async move {
-            tracing::debug!("Sync thread: starting");
+            tracing::debug!("Sync thread: starting monitor_network");
 
-            let mut spv_client = spv_client;
-
-            tracing::debug!("Sync thread: got client, starting monitor_network");
-
-            let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
-            let run_token = shutdown_token.clone();
-            let (abort_handle, abort_registration) = AbortHandle::new_pair();
-
-            let mut monitor_future = Box::pin(Abortable::new(
-                spv_client.monitor_network(command_receiver, run_token),
-                abort_registration,
-            ));
-
-            let result = tokio::select! {
-                res = &mut monitor_future => match res {
-                    Ok(inner) => inner,
-                    Err(_) => Ok(()),
-                },
-                _ = shutdown_token.cancelled() => {
-                    tracing::debug!("Sync thread: shutdown requested");
-                    abort_handle.abort();
-                    match monitor_future.as_mut().await {
-                        Ok(inner) => inner,
-                        Err(_) => Ok(()),
-                    }
-                }
-            };
-
-            drop(monitor_future);
-
-            if let Err(e) = result {
+            if let Err(e) = spv_client.monitor_network(shutdown_token).await {
                 tracing::error!("Sync thread: sync error: {}", e);
             }
-
-            tracing::debug!("Sync thread: putting client back");
-
-            // Put client back
-            let mut guard = inner.lock().unwrap();
-            *guard = Some(spv_client);
 
             tracing::debug!("Sync thread: exiting");
         });
@@ -594,33 +455,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
     null_check!(client, std::ptr::null_mut());
 
     let client = &(*client);
-    let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                        "Client not initialized".to_string(),
-                    )))
-                }
-            }
-        };
-        let res = spv_client.sync_progress();
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        Ok(res)
-    });
+    let progress = client.runtime.block_on(async { client.inner.sync_progress().await });
 
-    match result {
-        Ok(progress) => Box::into_raw(Box::new(FFISyncProgress::from(progress))),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            std::ptr::null_mut()
-        }
-    }
+    Box::into_raw(Box::new(FFISyncProgress::from(progress)))
 }
 
 /// Get the current manager-based sync progress.
@@ -637,30 +475,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_manager_sync_progress(
     null_check!(client, std::ptr::null_mut());
 
     let client = &(*client);
-    let inner = client.inner.clone();
 
-    // Access client under lock and clone the progress
-    let result: Result<FFISyncProgress, dash_spv::SpvError> = {
-        let guard = inner.lock().unwrap();
-        match guard.as_ref() {
-            Some(spv_client) => {
-                // Clone the progress since we need it after releasing the lock
-                let new_progress = spv_client.progress().clone();
-                Ok(FFISyncProgress::from(new_progress))
-            }
-            None => Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            ))),
-        }
-    };
+    let progress = client.runtime.block_on(async { client.inner.progress().await });
 
-    match result {
-        Ok(progress) => Box::into_raw(Box::new(progress)),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            std::ptr::null_mut()
-        }
-    }
+    Box::into_raw(Box::new(FFISyncProgress::from(progress)))
 }
 
 /// Get the current chain tip hash (32 bytes) if available.
@@ -680,38 +498,19 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_hash(
     }
 
     let client = &(*client);
-    let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-        let tip = spv_client.tip_hash().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        Ok(tip)
-    });
+    let tip = client.runtime.block_on(async { client.inner.tip_hash().await });
 
-    match result {
-        Ok(Some(hash)) => {
+    match tip {
+        Some(hash) => {
             let bytes = hash.to_byte_array();
             // SAFETY: out_hash points to a buffer with at least 32 bytes
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_hash, 32);
             FFIErrorCode::Success as i32
         }
-        Ok(None) => {
+        None => {
             set_last_error("No tip hash available");
             FFIErrorCode::StorageError as i32
-        }
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
         }
     }
 }
@@ -733,34 +532,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_height(
     }
 
     let client = &(*client);
-    let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-        let height = spv_client.tip_height().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        Ok(height)
-    });
+    let height = client.runtime.block_on(async { client.inner.tip_height().await });
 
-    match result {
-        Ok(height) => {
-            *out_height = height;
-            FFIErrorCode::Success as i32
-        }
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
+    *out_height = height;
+    FFIErrorCode::Success as i32
 }
 
 /// Clear all persisted SPV storage (headers, filters, metadata, sync state).
@@ -772,28 +548,14 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
     null_check!(client);
 
     let client = &(*client);
-    let inner = client.inner.clone();
 
     let result = client.runtime.block_on(async {
-        let mut spv_client = {
-            let mut guard = inner.lock().unwrap();
-            match guard.take() {
-                Some(c) => c,
-                None => {
-                    return Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
-                }
-            }
-        };
-
         // Try to stop before clearing to ensure no in-flight writes race the wipe.
-        if let Err(e) = spv_client.stop().await {
+        if let Err(e) = client.inner.stop().await {
             tracing::warn!("Failed to stop client before clearing storage: {}", e);
         }
 
-        let res = spv_client.clear_storage().await;
-        let mut guard = inner.lock().unwrap();
-        *guard = Some(spv_client);
-        res
+        client.inner.clear_storage().await
     });
 
     match result {
@@ -819,14 +581,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
 
         // Stop the SPV client
         client.runtime.block_on(async {
-            if let Some(mut spv_client) = {
-                let mut guard = client.inner.lock().unwrap();
-                guard.take()
-            } {
-                let _ = spv_client.stop().await;
-                let mut guard = client.inner.lock().unwrap();
-                *guard = Some(spv_client);
-            }
+            let _ = client.inner.stop().await;
         });
 
         // Join all active threads to ensure clean shutdown
@@ -881,21 +636,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_wallet_manager(
     null_check!(client, std::ptr::null_mut());
 
     let client = &*client;
-    let inner = client.inner.lock().unwrap();
 
-    if let Some(ref spv_client) = *inner {
-        // Clone the Arc to the wallet manager
-        let wallet_arc = spv_client.wallet().clone();
-        let runtime = client.runtime.clone();
+    // Clone the Arc to the wallet manager
+    let wallet_arc = client.inner.wallet().clone();
+    let runtime = client.runtime.clone();
 
-        // Create the FFIWalletManager with the cloned Arc
-        let manager = KeyWalletFFIWalletManager::from_arc(wallet_arc, runtime);
+    // Create the FFIWalletManager with the cloned Arc
+    let manager = KeyWalletFFIWalletManager::from_arc(wallet_arc, runtime);
 
-        Box::into_raw(Box::new(manager)) as *mut FFIWalletManager
-    } else {
-        set_last_error("Client not initialized");
-        std::ptr::null_mut()
-    }
+    Box::into_raw(Box::new(manager)) as *mut FFIWalletManager
 }
 
 /// Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.

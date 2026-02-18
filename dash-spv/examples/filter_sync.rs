@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the client
-    let mut client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
+    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
 
     // Start the client
     client.start().await?;
@@ -44,10 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting synchronization with filter support...");
     println!("Watching address: {:?}", watch_address);
 
-    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let shutdown_token = CancellationToken::new();
 
-    client.run(command_receiver, shutdown_token).await?;
+    client.run(shutdown_token).await?;
 
     println!("Done!");
     Ok(())

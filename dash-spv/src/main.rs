@@ -309,20 +309,19 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
-    let mut client =
-        match DashSpvClient::<
-            WalletManager<ManagedWalletInfo>,
-            dash_spv::network::manager::PeerNetworkManager,
-            S,
-        >::new(config.clone(), network_manager, storage_manager, wallet.clone())
-        .await
-        {
-            Ok(client) => client,
-            Err(e) => {
-                eprintln!("Failed to create SPV client: {}", e);
-                process::exit(1);
-            }
-        };
+    let client = match DashSpvClient::<
+        WalletManager<ManagedWalletInfo>,
+        dash_spv::network::manager::PeerNetworkManager,
+        S,
+    >::new(config.clone(), network_manager, storage_manager, wallet.clone())
+    .await
+    {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("Failed to create SPV client: {}", e);
+            process::exit(1);
+        }
+    };
 
     if let Err(e) = client.start().await {
         eprintln!("Failed to start SPV client: {}", e);
@@ -331,10 +330,9 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
 
     tracing::info!("SPV client started successfully");
 
-    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let shutdown_token = CancellationToken::new();
 
-    client.run(command_receiver, shutdown_token).await?;
+    client.run(shutdown_token).await?;
 
     Ok(())
 }

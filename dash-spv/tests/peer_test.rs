@@ -44,7 +44,7 @@ async fn test_peer_connection() {
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    let mut client =
+    let client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
 
     // Start the client
@@ -54,7 +54,7 @@ async fn test_peer_connection() {
     time::sleep(Duration::from_secs(5)).await;
 
     // Check that we have connected to at least one peer
-    let peer_count = client.peer_count();
+    let peer_count = client.peer_count().await;
     assert!(peer_count > 0, "Should have connected to at least one peer");
 
     // Stop the client
@@ -79,15 +79,14 @@ async fn test_peer_persistence() {
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let mut client =
-            DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet)
-                .await
-                .unwrap();
+        let client = DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet)
+            .await
+            .unwrap();
 
         client.start().await.unwrap();
         time::sleep(Duration::from_secs(5)).await;
 
-        let peer_count = client.peer_count();
+        let peer_count = client.peer_count().await;
         assert!(peer_count > 0, "Should have connected to peers");
 
         client.stop().await.unwrap();
@@ -104,7 +103,7 @@ async fn test_peer_persistence() {
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let mut client =
+        let client =
             DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
 
         // Should connect faster due to saved peers
@@ -114,7 +113,7 @@ async fn test_peer_persistence() {
         // Wait for connection but with shorter timeout
         time::sleep(Duration::from_secs(3)).await;
 
-        let peer_count = client.peer_count();
+        let peer_count = client.peer_count().await;
         assert!(peer_count > 0, "Should have connected using saved peers");
 
         let elapsed = start.elapsed();

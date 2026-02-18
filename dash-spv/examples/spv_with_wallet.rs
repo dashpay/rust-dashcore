@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client with all components
-    let mut client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
+    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
 
     // Start the client
     println!("Starting SPV client...");
@@ -43,10 +43,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - Reorgs via handle_reorg()
     // - Compact filter checks via check_compact_filter()
 
-    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let shutdown_token = CancellationToken::new();
 
-    client.run(command_receiver, shutdown_token).await?;
+    client.run(shutdown_token).await?;
 
     println!("Done!");
     Ok(())

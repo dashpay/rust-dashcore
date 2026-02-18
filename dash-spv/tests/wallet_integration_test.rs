@@ -38,13 +38,13 @@ async fn test_spv_client_creation() {
     let client = create_test_client().await;
 
     // Verify client is created
-    assert_eq!(client.network(), Network::Testnet);
+    assert_eq!(client.network().await, Network::Testnet);
 }
 
 #[tokio::test]
 async fn test_spv_client_start_stop() {
     // Test starting and stopping the client
-    let mut client = create_test_client().await;
+    let client = create_test_client().await;
 
     // Start the client
     client.start().await.unwrap();

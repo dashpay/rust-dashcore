@@ -14,7 +14,6 @@
 //! - `queries.rs` - Peer, masternode, and balance queries
 //! - `transactions.rs` - Transaction operations (e.g., broadcast)
 //! - `sync_coordinator.rs` - Sync orchestration and network monitoring
-//! - `interface.rs` - Client interface trait
 //!
 //! ## Lock Ordering
 //!
@@ -26,7 +25,6 @@
 //! Never acquire locks in reverse order or deadlock will occur!
 
 pub mod config;
-pub mod interface;
 
 mod core;
 mod events;

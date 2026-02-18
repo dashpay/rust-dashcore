@@ -24,6 +24,15 @@ use crate::sync::SyncCoordinator;
 use crate::types::MempoolState;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
+pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
+    PersistentBlockHeaderStorage,
+    PersistentFilterHeaderStorage,
+    PersistentFilterStorage,
+    PersistentBlockStorage,
+    PersistentMetadataStorage,
+    W,
+>;
+
 /// Main Dash SPV client with generic trait-based architecture.
 ///
 /// # Generic Design Philosophy
@@ -96,23 +105,32 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 ///
 /// The generic design is an intentional, beneficial architectural choice for a library.
 pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
-    pub(super) config: ClientConfig,
-    pub(super) network: N,
+    pub(super) config: Arc<RwLock<ClientConfig>>,
+    pub(super) network: Arc<Mutex<N>>,
     pub(super) storage: Arc<Mutex<S>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
     pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
-    pub(super) sync_coordinator: SyncCoordinator<
-        PersistentBlockHeaderStorage,
-        PersistentFilterHeaderStorage,
-        PersistentFilterStorage,
-        PersistentBlockStorage,
-        PersistentMetadataStorage,
-        W,
-    >,
+    pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
     pub(super) running: Arc<RwLock<bool>>,
     pub(super) mempool_state: Arc<RwLock<MempoolState>>,
-    pub(super) mempool_filter: Option<Arc<MempoolFilter>>,
+    pub(super) mempool_filter: Arc<RwLock<Option<Arc<MempoolFilter>>>>,
+}
+
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpvClient<W, N, S> {
+    fn clone(&self) -> Self {
+        Self {
+            config: Arc::clone(&self.config),
+            network: Arc::clone(&self.network),
+            storage: Arc::clone(&self.storage),
+            wallet: Arc::clone(&self.wallet),
+            masternode_engine: self.masternode_engine.clone(),
+            sync_coordinator: Arc::clone(&self.sync_coordinator),
+            running: Arc::clone(&self.running),
+            mempool_state: Arc::clone(&self.mempool_state),
+            mempool_filter: Arc::clone(&self.mempool_filter),
+        }
+    }
 }
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
@@ -124,8 +142,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Get the network configuration.
-    pub fn network(&self) -> dashcore::Network {
-        self.config.network
+    pub async fn network(&self) -> dashcore::Network {
+        self.config.read().await.network
     }
 
     /// Get access to storage manager (requires locking).
@@ -154,7 +172,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     // ============ Storage Operations ============
 
     /// Clear all persisted storage (headers, filters, state, sync state) and reset in-memory state.
-    pub async fn clear_storage(&mut self) -> Result<()> {
+    pub async fn clear_storage(&self) -> Result<()> {
         // Wipe on-disk persistence fully
         {
             let mut storage = self.storage.lock().await;
@@ -166,7 +184,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             let mut mempool_state = self.mempool_state.write().await;
             *mempool_state = MempoolState::default();
         }
-        self.mempool_filter = None;
+        *self.mempool_filter.write().await = None;
 
         Ok(())
     }
@@ -174,17 +192,19 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     // ============ Configuration ============
 
     /// Update the client configuration.
-    pub async fn update_config(&mut self, new_config: ClientConfig) -> Result<()> {
+    pub async fn update_config(&self, new_config: ClientConfig) -> Result<()> {
         // Validate new configuration
         new_config.validate().map_err(SpvError::Config)?;
 
+        let mut config = self.config.write().await;
+
         // Ensure network hasn't changed
-        if new_config.network != self.config.network {
+        if new_config.network != config.network {
             return Err(SpvError::Config("Cannot change network on running client".to_string()));
         }
 
         // Update configuration
-        self.config = new_config;
+        *config = new_config;
 
         Ok(())
     }
