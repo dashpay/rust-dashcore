@@ -314,16 +314,11 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             }
         };
 
-        // Serialize the transaction
         let serialized = consensus::serialize(&transaction);
         let size = serialized.len();
 
-        // Allocate memory for the result
-        let bytes = Vec::<u8>::with_capacity(size).into_boxed_slice();
-        let tx_bytes = Box::into_raw(bytes) as *mut u8;
-
-        // Copy the serialized transaction
-        ptr::copy_nonoverlapping(serialized.as_ptr(), tx_bytes, size);
+        let boxed = serialized.into_boxed_slice();
+        let tx_bytes = Box::into_raw(boxed) as *mut u8;
 
         *tx_bytes_out = tx_bytes;
         *tx_len_out = size;
