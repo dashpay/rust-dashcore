@@ -403,7 +403,7 @@ int32_t dash_spv_ffi_client_start_sync_with_progress(struct FFIDashSpvClient *cl
  * # Returns
  * Returns 0 on success, or an error code on failure.
  */
- int32_t dash_spv_ffi_client_cancel_sync(struct FFIDashSpvClient *client) ;
+ int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client) ;
 
 /**
  * Get the current sync progress snapshot.

@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 54
+**Total Functions**: 48
 
 ## Table of Contents
 
@@ -55,11 +55,10 @@ Functions: 16
 
 ### Synchronization
 
-Functions: 7
+Functions: 6
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_cancel_sync` | Cancels the sync operation | client |
 | `dash_spv_ffi_client_clear_sync_event_callbacks` | Clear sync event callbacks | client |
 | `dash_spv_ffi_client_get_manager_sync_progress` | Get the current manager-based sync progress | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
@@ -106,19 +105,14 @@ Functions: 1
 
 ### Utility Functions
 
-Functions: 18
+Functions: 13
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_block_headers_progress_destroy` | Destroy an `FFIBlockHeadersProgress` object | types |
 | `dash_spv_ffi_blocks_progress_destroy` | Destroy an `FFIBlocksProgress` object | types |
 | `dash_spv_ffi_chainlock_progress_destroy` | Destroy an `FFIChainLockProgress` object | types |
-| `dash_spv_ffi_checkpoint_before_height` | Get the last checkpoint at or before a given height | checkpoints |
-| `dash_spv_ffi_checkpoint_before_timestamp` | Get the last checkpoint at or before a given UNIX timestamp (seconds) | checkpoints |
-| `dash_spv_ffi_checkpoint_latest` | Get the latest checkpoint for the given network | checkpoints |
 | `dash_spv_ffi_client_clear_storage` | Clear all persisted SPV storage (headers, filters, metadata, sync state) | client |
-| `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
-| `dash_spv_ffi_client_get_tip_height` | Get the current chain tip height (absolute) | client |
 | `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an... | client |
 | `dash_spv_ffi_client_run` | Start the SPV client and begin syncing in the background | client |
 | `dash_spv_ffi_filter_headers_progress_destroy` | Destroy an `FFIFilterHeadersProgress` object | types |
@@ -439,22 +433,6 @@ dash_spv_ffi_config_testnet() -> *mut FFIClientConfig
 
 ### Synchronization - Detailed
 
-#### `dash_spv_ffi_client_cancel_sync`
-
-```c
-dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpvClient) -> i32
-```
-
-**Description:**
-Cancels the sync operation.  This stops the SPV client, clears callbacks, and joins active threads so the sync operation halts immediately.  # Safety The client pointer must be valid and non-null.  # Returns Returns 0 on success, or an error code on failure.
-
-**Safety:**
-The client pointer must be valid and non-null.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_client_clear_sync_event_callbacks`
 
 ```c
@@ -747,54 +725,6 @@ Destroy an `FFIChainLockProgress` object.  # Safety - `progress` must be a point
 
 ---
 
-#### `dash_spv_ffi_checkpoint_before_height`
-
-```c
-dash_spv_ffi_checkpoint_before_height(network: FFINetwork, height: u32, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
-```
-
-**Description:**
-Get the last checkpoint at or before a given height.  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Safety:**
-- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Module:** `checkpoints`
-
----
-
-#### `dash_spv_ffi_checkpoint_before_timestamp`
-
-```c
-dash_spv_ffi_checkpoint_before_timestamp(network: FFINetwork, timestamp: u32, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
-```
-
-**Description:**
-Get the last checkpoint at or before a given UNIX timestamp (seconds).  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Safety:**
-- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Module:** `checkpoints`
-
----
-
-#### `dash_spv_ffi_checkpoint_latest`
-
-```c
-dash_spv_ffi_checkpoint_latest(network: FFINetwork, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
-```
-
-**Description:**
-Get the latest checkpoint for the given network.  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Safety:**
-- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Module:** `checkpoints`
-
----
-
 #### `dash_spv_ffi_client_clear_storage`
 
 ```c
@@ -806,38 +736,6 @@ Clear all persisted SPV storage (headers, filters, metadata, sync state).  # Saf
 
 **Safety:**
 - `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_get_tip_hash`
-
-```c
-dash_spv_ffi_client_get_tip_hash(client: *mut FFIDashSpvClient, out_hash: *mut u8,) -> i32
-```
-
-**Description:**
-Get the current chain tip hash (32 bytes) if available.  # Safety - `client` must be a valid, non-null pointer. - `out_hash` must be a valid pointer to a 32-byte buffer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer. - `out_hash` must be a valid pointer to a 32-byte buffer.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_get_tip_height`
-
-```c
-dash_spv_ffi_client_get_tip_height(client: *mut FFIDashSpvClient, out_height: *mut u32,) -> i32
-```
-
-**Description:**
-Get the current chain tip height (absolute).  # Safety - `client` must be a valid, non-null pointer. - `out_height` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer. - `out_height` must be a valid, non-null pointer.
 
 **Module:** `client`
 

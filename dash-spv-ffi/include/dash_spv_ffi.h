@@ -447,47 +447,6 @@ extern "C" {
 #endif // __cplusplus
 
 /**
- * Get the latest checkpoint for the given network.
- *
- * # Safety
- * - `out_height` must be a valid pointer to a `u32`.
- * - `out_hash` must point to at least 32 writable bytes.
- */
-
-int32_t dash_spv_ffi_checkpoint_latest(FFINetwork network,
-                                       uint32_t *out_height,
-                                       uint8_t *out_hash)
-;
-
-/**
- * Get the last checkpoint at or before a given height.
- *
- * # Safety
- * - `out_height` must be a valid pointer to a `u32`.
- * - `out_hash` must point to at least 32 writable bytes.
- */
-
-int32_t dash_spv_ffi_checkpoint_before_height(FFINetwork network,
-                                              uint32_t height,
-                                              uint32_t *out_height,
-                                              uint8_t *out_hash)
-;
-
-/**
- * Get the last checkpoint at or before a given UNIX timestamp (seconds).
- *
- * # Safety
- * - `out_height` must be a valid pointer to a `u32`.
- * - `out_hash` must point to at least 32 writable bytes.
- */
-
-int32_t dash_spv_ffi_checkpoint_before_timestamp(FFINetwork network,
-                                                 uint32_t timestamp,
-                                                 uint32_t *out_height,
-                                                 uint8_t *out_hash)
-;
-
-/**
  * Create a new SPV client and return an opaque pointer.
  *
  * # Safety
@@ -548,20 +507,6 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
  int32_t dash_spv_ffi_client_run(struct FFIDashSpvClient *client) ;
 
 /**
- * Cancels the sync operation.
- *
- * This stops the SPV client, clears callbacks, and joins active threads so the sync
- * operation halts immediately.
- *
- * # Safety
- * The client pointer must be valid and non-null.
- *
- * # Returns
- * Returns 0 on success, or an error code on failure.
- */
- int32_t dash_spv_ffi_client_cancel_sync(struct FFIDashSpvClient *client) ;
-
-/**
  * Get the current sync progress snapshot.
  *
  * # Safety
@@ -581,24 +526,6 @@ int32_t dash_spv_ffi_client_update_config(struct FFIDashSpvClient *client,
 
 struct FFISyncProgress *dash_spv_ffi_client_get_manager_sync_progress(struct FFIDashSpvClient *client)
 ;
-
-/**
- * Get the current chain tip hash (32 bytes) if available.
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- * - `out_hash` must be a valid pointer to a 32-byte buffer.
- */
- int32_t dash_spv_ffi_client_get_tip_hash(struct FFIDashSpvClient *client, uint8_t *out_hash) ;
-
-/**
- * Get the current chain tip height (absolute).
- *
- * # Safety
- * - `client` must be a valid, non-null pointer.
- * - `out_height` must be a valid, non-null pointer.
- */
- int32_t dash_spv_ffi_client_get_tip_height(struct FFIDashSpvClient *client, uint32_t *out_height) ;
 
 /**
  * Clear all persisted SPV storage (headers, filters, metadata, sync state).

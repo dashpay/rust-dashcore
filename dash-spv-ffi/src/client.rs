@@ -8,7 +8,6 @@ use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
 
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::DashSpvClient;
-use dash_spv::Hash;
 
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -417,33 +416,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
     FFIErrorCode::Success as i32
 }
 
-// Filter header progress updates are included in the detailed sync progress callback.
-
-/// Cancels the sync operation.
-///
-/// This stops the SPV client, clears callbacks, and joins active threads so the sync
-/// operation halts immediately.
-///
-/// # Safety
-/// The client pointer must be valid and non-null.
-///
-/// # Returns
-/// Returns 0 on success, or an error code on failure.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpvClient) -> i32 {
-    null_check!(client);
-
-    let client = &mut (*client);
-
-    match stop_client_internal(client) {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
-}
-
 /// Get the current sync progress snapshot.
 ///
 /// # Safety
@@ -479,64 +451,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_manager_sync_progress(
     let progress = client.runtime.block_on(async { client.inner.progress().await });
 
     Box::into_raw(Box::new(FFISyncProgress::from(progress)))
-}
-
-/// Get the current chain tip hash (32 bytes) if available.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-/// - `out_hash` must be a valid pointer to a 32-byte buffer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_hash(
-    client: *mut FFIDashSpvClient,
-    out_hash: *mut u8,
-) -> i32 {
-    null_check!(client);
-    if out_hash.is_null() {
-        set_last_error("Null out_hash pointer");
-        return FFIErrorCode::NullPointer as i32;
-    }
-
-    let client = &(*client);
-
-    let tip = client.runtime.block_on(async { client.inner.tip_hash().await });
-
-    match tip {
-        Some(hash) => {
-            let bytes = hash.to_byte_array();
-            // SAFETY: out_hash points to a buffer with at least 32 bytes
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_hash, 32);
-            FFIErrorCode::Success as i32
-        }
-        None => {
-            set_last_error("No tip hash available");
-            FFIErrorCode::StorageError as i32
-        }
-    }
-}
-
-/// Get the current chain tip height (absolute).
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-/// - `out_height` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_tip_height(
-    client: *mut FFIDashSpvClient,
-    out_height: *mut u32,
-) -> i32 {
-    null_check!(client);
-    if out_height.is_null() {
-        set_last_error("Null out_height pointer");
-        return FFIErrorCode::NullPointer as i32;
-    }
-
-    let client = &(*client);
-
-    let height = client.runtime.block_on(async { client.inner.tip_height().await });
-
-    *out_height = height;
-    FFIErrorCode::Success as i32
 }
 
 /// Clear all persisted SPV storage (headers, filters, metadata, sync state).
