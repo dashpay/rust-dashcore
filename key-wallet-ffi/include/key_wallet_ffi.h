@@ -3501,53 +3501,6 @@ bool mnemonic_to_seed(const char *mnemonic,
  void mnemonic_free(char *mnemonic) ;
 
 /*
- Build a transaction (unsigned)
-
- This creates an unsigned transaction. Use wallet_sign_transaction to sign it afterward.
- For a combined build+sign operation, use wallet_build_and_sign_transaction.
-
- # Safety
-
- - `wallet` must be a valid pointer to an FFIWallet
- - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements
- - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer
- - `tx_len_out` must be a valid pointer to store the transaction length
- - `error` must be a valid pointer to an FFIError
- - The returned transaction bytes must be freed with `transaction_bytes_free`
- */
-
-bool wallet_build_transaction(FFIWallet *wallet,
-                              unsigned int account_index,
-                              const FFITxOutput *outputs,
-                              size_t outputs_count,
-                              uint64_t fee_per_kb,
-                              uint8_t **tx_bytes_out,
-                              size_t *tx_len_out,
-                              FFIError *error)
-;
-
-/*
- Sign a transaction
-
- # Safety
-
- - `wallet` must be a valid pointer to an FFIWallet
- - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
- - `signed_tx_out` must be a valid pointer to store the signed transaction bytes pointer
- - `signed_len_out` must be a valid pointer to store the signed transaction length
- - `error` must be a valid pointer to an FFIError
- - The returned signed transaction bytes must be freed with `transaction_bytes_free`
- */
-
-bool wallet_sign_transaction(const FFIWallet *wallet,
-                             const uint8_t *tx_bytes,
-                             size_t tx_len,
-                             uint8_t **signed_tx_out,
-                             size_t *signed_len_out,
-                             FFIError *error)
-;
-
-/*
  Build and sign a transaction using the wallet's managed info
 
  This is the recommended way to build transactions. It handles:
