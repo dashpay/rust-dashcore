@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 261
+**Total Functions**: 259
 
 ## Table of Contents
 
@@ -69,7 +69,7 @@ Functions: 19
 
 ### Wallet Operations
 
-Functions: 65
+Functions: 63
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -109,7 +109,6 @@ Functions: 65
 | `wallet_add_dashpay_receiving_account` | Add a DashPay receiving funds account  # Safety - `wallet` must be a valid... | wallet |
 | `wallet_add_platform_payment_account` | Add a Platform Payment account (DIP-17) to the wallet  Platform Payment... | wallet |
 | `wallet_build_and_sign_transaction` | Build and sign a transaction using the wallet's managed info  This is the... | transaction |
-| `wallet_build_transaction` | Build a transaction (unsigned)  This creates an unsigned transaction | transaction |
 | `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  #... | transaction |
 | `wallet_create_from_mnemonic` | Create a new wallet from mnemonic (backward compatibility - single network) ... | wallet |
 | `wallet_create_from_mnemonic_with_options` | Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must... | wallet |
@@ -137,7 +136,6 @@ Functions: 65
 | `wallet_get_xpub` | Get extended public key for account  # Safety  - `wallet` must be a valid... | wallet |
 | `wallet_has_mnemonic` | Check if wallet has mnemonic  # Safety  - `wallet` must be a valid pointer... | wallet |
 | `wallet_is_watch_only` | Check if wallet is watch-only  # Safety  - `wallet` must be a valid pointer... | wallet |
-| `wallet_sign_transaction` | Sign a transaction  # Safety  - `wallet` must be a valid pointer to an... | transaction |
 
 ### Account Management
 
@@ -1286,30 +1284,14 @@ This function dereferences a raw pointer to FFIWallet. The caller must ensure th
 #### `wallet_build_and_sign_transaction`
 
 ```c
-wallet_build_and_sign_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_index: c_uint, outputs: *const FFITxOutput, outputs_count: usize, fee_per_kb: u64, current_height: u32, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, error: *mut FFIError,) -> bool
+wallet_build_and_sign_transaction(manager: *const FFIWalletManager, wallet: *const FFIWallet, account_index: u32, outputs: *const FFITxOutput, outputs_count: usize, fee_rate: FFIFeeRate, fee_out: *mut u64, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Build and sign a transaction using the wallet's managed info  This is the recommended way to build transactions. It handles: - UTXO selection using coin selection algorithms - Fee calculation - Change address generation - Transaction signing  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+Build and sign a transaction using the wallet's managed info  This is the recommended way to build transactions. It handles: - UTXO selection using coin selection algorithms - Fee calculation - Change address generation - Transaction signing  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `wallet` must be a valid pointer to an FFIWallet - `account_index` must be a valid BIP44 account index present in the wallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `fee_rate` must be a valid variant of FFIFeeRate - `fee_out` must be a valid, non-null pointer to a `u64`; on success it receives the calculated transaction fee in duffs - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
-
-**Module:** `transaction`
-
----
-
-#### `wallet_build_transaction`
-
-```c
-wallet_build_transaction(wallet: *mut FFIWallet, account_index: c_uint, outputs: *const FFITxOutput, outputs_count: usize, fee_per_kb: u64, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, error: *mut FFIError,) -> bool
-```
-
-**Description:**
-Build a transaction (unsigned)  This creates an unsigned transaction. Use wallet_sign_transaction to sign it afterward. For a combined build+sign operation, use wallet_build_and_sign_transaction.  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
-
-**Safety:**
-- `wallet` must be a valid pointer to an FFIWallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+- `manager` must be a valid pointer to an FFIWalletManager - `wallet` must be a valid pointer to an FFIWallet - `account_index` must be a valid BIP44 account index present in the wallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `fee_rate` must be a valid variant of FFIFeeRate - `fee_out` must be a valid, non-null pointer to a `u64`; on success it receives the calculated transaction fee in duffs - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
 
 **Module:** `transaction`
 
@@ -1744,22 +1726,6 @@ Check if wallet is watch-only  # Safety  - `wallet` must be a valid pointer to a
 - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet`
-
----
-
-#### `wallet_sign_transaction`
-
-```c
-wallet_sign_transaction(wallet: *const FFIWallet, tx_bytes: *const u8, tx_len: usize, signed_tx_out: *mut *mut u8, signed_len_out: *mut usize, error: *mut FFIError,) -> bool
-```
-
-**Description:**
-Sign a transaction  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `signed_tx_out` must be a valid pointer to store the signed transaction bytes pointer - `signed_len_out` must be a valid pointer to store the signed transaction length - `error` must be a valid pointer to an FFIError - The returned signed transaction bytes must be freed with `transaction_bytes_free`
-
-**Safety:**
-- `wallet` must be a valid pointer to an FFIWallet - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `signed_tx_out` must be a valid pointer to store the signed transaction bytes pointer - `signed_len_out` must be a valid pointer to store the signed transaction length - `error` must be a valid pointer to an FFIError - The returned signed transaction bytes must be freed with `transaction_bytes_free`
-
-**Module:** `transaction`
 
 ---
 
