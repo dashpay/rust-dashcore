@@ -1,28 +1,36 @@
-use crate::{wallet_interface::WalletInterface, BlockProcessingResult};
+use crate::{wallet_interface::WalletInterface, BlockProcessingResult, WalletEvent};
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction, Txid};
 use std::{collections::BTreeMap, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 // Type alias for transaction effects map
 type TransactionEffectsMap = Arc<Mutex<BTreeMap<Txid, (i64, Vec<String>)>>>;
 
-#[derive(Default)]
 pub struct MockWallet {
     processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
     processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
     // Map txid -> (net_amount, addresses)
     effects: TransactionEffectsMap,
     synced_height: CoreBlockHeight,
+    event_sender: broadcast::Sender<WalletEvent>,
+}
+
+impl Default for MockWallet {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockWallet {
     pub fn new() -> Self {
+        let (event_sender, _) = broadcast::channel(16);
         Self {
             processed_blocks: Arc::new(Mutex::new(Vec::new())),
             processed_transactions: Arc::new(Mutex::new(Vec::new())),
             effects: Arc::new(Mutex::new(BTreeMap::new())),
             synced_height: 0,
+            event_sender,
         }
     }
 
@@ -78,18 +86,30 @@ impl WalletInterface for MockWallet {
     fn update_synced_height(&mut self, height: CoreBlockHeight) {
         self.synced_height = height;
     }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
+        self.event_sender.subscribe()
+    }
 }
 
 /// Mock wallet that returns false for filter checks
-#[derive(Default)]
 pub struct NonMatchingMockWallet {
     synced_height: CoreBlockHeight,
+    event_sender: broadcast::Sender<WalletEvent>,
+}
+
+impl Default for NonMatchingMockWallet {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NonMatchingMockWallet {
     pub fn new() -> Self {
+        let (event_sender, _) = broadcast::channel(16);
         Self {
             synced_height: 0,
+            event_sender,
         }
     }
 }
@@ -112,6 +132,10 @@ impl WalletInterface for NonMatchingMockWallet {
 
     fn update_synced_height(&mut self, height: CoreBlockHeight) {
         self.synced_height = height;
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
+        self.event_sender.subscribe()
     }
 
     async fn describe(&self) -> String {

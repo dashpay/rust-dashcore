@@ -29,6 +29,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         let mut sync_coordinator_tick_interval = tokio::time::interval(SYNC_COORDINATOR_TICK_MS);
         let mut progress_updates = self.sync_coordinator.lock().await.subscribe_progress();
+        let mut wallet_events = self.wallet.read().await.subscribe_events();
 
         let error = loop {
             // Check if we should stop
@@ -48,6 +49,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         }
                         Err(_) => {
                             tracing::warn!("Progress channel closed.");
+                            break None
+                        }
+                    }
+                }
+                result = wallet_events.recv() => {
+                    match result {
+                        Ok(event) => {
+                            tracing::info!("Wallet event: {}", event.description());
+                            None
+                        }
+                        Err(e) => {
+                            tracing::warn!("Wallet events channel error: {e}");
                             break None
                         }
                     }

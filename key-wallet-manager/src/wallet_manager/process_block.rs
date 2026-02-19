@@ -1,4 +1,5 @@
 use crate::wallet_interface::{BlockProcessingResult, WalletInterface};
+use crate::WalletEvent;
 use crate::WalletManager;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -9,6 +10,7 @@ use dashcore::{Address, Block, Transaction};
 use key_wallet::transaction_checking::transaction_router::TransactionRouter;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use tokio::sync::broadcast;
 
 #[async_trait]
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletManager<T> {
@@ -121,7 +123,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             // Emit event if balance changed
             #[cfg(feature = "std")]
             if old_balance != new_balance {
-                let event = crate::WalletEvent::BalanceUpdated {
+                let event = WalletEvent::BalanceUpdated {
                     wallet_id: *wallet_id,
                     spendable: new_balance.spendable(),
                     unconfirmed: new_balance.unconfirmed(),
@@ -142,6 +144,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         if height > self.synced_height {
             self.update_synced_height(height);
         }
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
+        self.event_sender.subscribe()
     }
 
     async fn describe(&self) -> String {

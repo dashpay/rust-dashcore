@@ -2,11 +2,13 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
+use crate::WalletEvent;
 use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction, Txid};
+use tokio::sync::broadcast;
 
 /// Result of processing a block through the wallet
 #[derive(Debug, Default, Clone)]
@@ -89,6 +91,9 @@ pub trait WalletInterface: Send + Sync + 'static {
             self.update_synced_height(height);
         }
     }
+
+    /// Subscribe to wallet events (e.g. transactions received, balance changes).
+    fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent>;
 
     /// Provide a human-readable description of the wallet implementation.
     ///
