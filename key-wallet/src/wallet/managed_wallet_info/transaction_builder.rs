@@ -356,6 +356,26 @@ impl TransactionBuilder {
         self.build_internal()
     }
 
+    /// Calculates the transaction fee for the current number of outputs and inputs
+    pub fn calculate_fee(&self) -> u64 {
+        let fee_rate = self.fee_level.fee_rate();
+        let estimated_size = self.estimate_transaction_size(self.inputs.len(), self.outputs.len());
+        fee_rate.calculate_fee(estimated_size)
+    }
+
+    /// Calculates the transaction fee adding an extra output
+    ///
+    /// This is useful when you need to calculate the transaction fee to be
+    /// able to calculate the change amount to later add it as a new output.
+    /// Basically we are calculating the fee with that extra change output before
+    /// adding it
+    pub fn calculate_fee_with_extra_output(&self) -> u64 {
+        let fee_rate = self.fee_level.fee_rate();
+        let estimated_size =
+            self.estimate_transaction_size(self.inputs.len(), self.outputs.len() + 1);
+        fee_rate.calculate_fee(estimated_size)
+    }
+
     /// Internal build method that uses the stored special_payload
     fn build_internal(mut self) -> Result<Transaction, BuilderError> {
         if self.inputs.is_empty() {
@@ -412,10 +432,7 @@ impl TransactionBuilder {
 
         let mut tx_outputs = self.outputs.clone();
 
-        // Calculate fee
-        let fee_rate = self.fee_level.fee_rate();
-        let estimated_size = self.estimate_transaction_size(tx_inputs.len(), tx_outputs.len() + 1);
-        let fee = fee_rate.calculate_fee(estimated_size);
+        let fee = self.calculate_fee_with_extra_output();
 
         let change_amount = total_input.saturating_sub(total_output).saturating_sub(fee);
 
