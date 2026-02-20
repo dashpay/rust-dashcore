@@ -55,92 +55,6 @@ pub struct FFITxOutput {
     pub amount: u64,
 }
 
-/// Build a transaction (unsigned)
-///
-/// This creates an unsigned transaction. Use wallet_sign_transaction to sign it afterward.
-/// For a combined build+sign operation, use wallet_build_and_sign_transaction.
-///
-/// # Safety
-///
-/// - `wallet` must be a valid pointer to an FFIWallet
-/// - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements
-/// - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer
-/// - `tx_len_out` must be a valid pointer to store the transaction length
-/// - `error` must be a valid pointer to an FFIError
-/// - The returned transaction bytes must be freed with `transaction_bytes_free`
-#[no_mangle]
-pub unsafe extern "C" fn wallet_build_transaction(
-    wallet: *mut FFIWallet,
-    account_index: c_uint,
-    outputs: *const FFITxOutput,
-    outputs_count: usize,
-    fee_per_kb: u64,
-    tx_bytes_out: *mut *mut u8,
-    tx_len_out: *mut usize,
-    error: *mut FFIError,
-) -> bool {
-    if wallet.is_null() || outputs.is_null() || tx_bytes_out.is_null() || tx_len_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    unsafe {
-        let _wallet = &mut *wallet;
-        let _outputs_slice = slice::from_raw_parts(outputs, outputs_count);
-        let _account_index = account_index;
-        let _fee_per_kb = fee_per_kb;
-
-        // Note: This function creates unsigned transactions.
-        // A full implementation would require ManagedWalletInfo integration.
-        // For now, return an error directing users to the combined function.
-        FFIError::set_error(
-            error,
-            FFIErrorCode::WalletError,
-            "Use wallet_build_and_sign_transaction for transaction creation".to_string(),
-        );
-        false
-    }
-}
-
-/// Sign a transaction
-///
-/// # Safety
-///
-/// - `wallet` must be a valid pointer to an FFIWallet
-/// - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
-/// - `signed_tx_out` must be a valid pointer to store the signed transaction bytes pointer
-/// - `signed_len_out` must be a valid pointer to store the signed transaction length
-/// - `error` must be a valid pointer to an FFIError
-/// - The returned signed transaction bytes must be freed with `transaction_bytes_free`
-#[no_mangle]
-pub unsafe extern "C" fn wallet_sign_transaction(
-    wallet: *const FFIWallet,
-    tx_bytes: *const u8,
-    tx_len: usize,
-    signed_tx_out: *mut *mut u8,
-    signed_len_out: *mut usize,
-    error: *mut FFIError,
-) -> bool {
-    if wallet.is_null() || tx_bytes.is_null() || signed_tx_out.is_null() || signed_len_out.is_null()
-    {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    unsafe {
-        let _wallet = &*wallet;
-        let _tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
-
-        // Note: Transaction signing would require implementing wallet signing logic
-        FFIError::set_error(
-            error,
-            FFIErrorCode::WalletError,
-            "Transaction signing not yet implemented".to_string(),
-        );
-        false
-    }
-}
-
 /// Build and sign a transaction using the wallet's managed info
 ///
 /// This is the recommended way to build transactions. It handles:
@@ -1066,7 +980,3 @@ pub unsafe extern "C" fn address_to_pubkey_hash(
         Err(_) => -1,
     }
 }
-
-#[cfg(test)]
-#[path = "transaction_tests.rs"]
-mod transaction_tests;
