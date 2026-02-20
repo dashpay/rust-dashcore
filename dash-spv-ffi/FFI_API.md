@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 48
+**Total Functions**: 49
 
 ## Table of Contents
 
@@ -12,6 +12,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 - [Configuration](#configuration)
 - [Synchronization](#synchronization)
 - [Wallet Operations](#wallet-operations)
+- [Transaction Management](#transaction-management)
 - [Platform Integration](#platform-integration)
 - [Event Callbacks](#event-callbacks)
 - [Error Handling](#error-handling)
@@ -74,6 +75,14 @@ Functions: 2
 |----------|-------------|--------|
 | `dash_spv_ffi_client_clear_wallet_event_callbacks` | Clear wallet event callbacks | client |
 | `dash_spv_ffi_client_set_wallet_event_callbacks` | Set wallet event callbacks for push-based event notifications | client |
+
+### Transaction Management
+
+Functions: 1
+
+| Function | Description | Module |
+|----------|-------------|--------|
+| `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | client |
 
 ### Platform Integration
 
@@ -558,6 +567,24 @@ Set wallet event callbacks for push-based event notifications.  The monitoring t
 
 **Safety:**
 - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared. - Callbacks must be thread-safe as they may be called from a background task.
+
+**Module:** `client`
+
+---
+
+### Transaction Management - Detailed
+
+#### `dash_spv_ffi_client_broadcast_transaction`
+
+```c
+dash_spv_ffi_client_broadcast_transaction(client: *mut FFIDashSpvClient, tx_bytes: *const u8, length: usize,) -> i32
+```
+
+**Description:**
+Broadcasts a transaction to the Dash network via connected peers.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes
+
+**Safety:**
+- `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes
 
 **Module:** `client`
 

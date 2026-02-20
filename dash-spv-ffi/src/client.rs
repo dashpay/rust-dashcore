@@ -470,6 +470,47 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
     }
 }
 
+/// Broadcasts a transaction to the Dash network via connected peers.
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient
+/// - `tx_bytes` must be a valid, non-null pointer to the transaction data
+/// - `length` must be the length of the transaction data in bytes
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
+    client: *mut FFIDashSpvClient,
+    tx_bytes: *const u8,
+    length: usize,
+) -> i32 {
+    null_check!(client);
+    null_check!(tx_bytes);
+
+    let tx_bytes = std::slice::from_raw_parts(tx_bytes, length);
+
+    let tx = match dashcore::consensus::deserialize::<dashcore::Transaction>(tx_bytes) {
+        Ok(t) => t,
+        Err(e) => {
+            set_last_error(&format!("Invalid transaction: {}", e));
+            return FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    let client = &(*client);
+
+    let spv_client = client.inner.clone();
+
+    let result = client.runtime.block_on(async { spv_client.broadcast_transaction(&tx).await });
+
+    match result {
+        Ok(_) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&format!("Failed to broadcast transaction: {}", e));
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
 /// Destroy the client and free associated resources.
 ///
 /// # Safety
