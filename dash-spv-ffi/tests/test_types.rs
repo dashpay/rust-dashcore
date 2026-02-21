@@ -101,7 +101,7 @@ mod tests {
         progress.update_chainlocks(chainlocks);
 
         let mut instantsend = InstantSendProgress::default();
-        instantsend.set_state(SyncState::Initializing);
+        instantsend.set_state(SyncState::WaitForEvents);
         instantsend.update_pending(700);
         instantsend.add_valid(200);
         instantsend.add_invalid(15);
@@ -187,7 +187,7 @@ mod tests {
         assert!(!ffi_progress.instantsend.is_null());
         unsafe {
             let instantsend = &*ffi_progress.instantsend;
-            assert_eq!(instantsend.state, FFISyncState::Initializing);
+            assert_eq!(instantsend.state, FFISyncState::WaitForEvents);
             assert_eq!(instantsend.pending, 700);
             assert_eq!(instantsend.valid, 200);
             assert_eq!(instantsend.invalid, 15);

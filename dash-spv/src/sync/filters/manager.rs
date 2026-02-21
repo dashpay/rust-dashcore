@@ -797,7 +797,7 @@ mod tests {
     async fn test_filters_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::Filter);
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::CFilter]);
     }
 
@@ -984,7 +984,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_download_waits_when_filter_headers_insufficient() {
         let mut manager = create_test_manager().await;
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
 
         // Wallet committed to height 100, so scan_start will be 101
         manager.wallet.write().await.update_synced_height(100);
@@ -1004,7 +1004,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_download_transitions_to_syncing_when_filters_available() {
         let mut manager = create_test_manager().await;
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
 
         // Store headers so send_pending can resolve stop hashes
         let headers = dashcore::block::Header::dummy_batch(0..101);

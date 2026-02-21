@@ -10,9 +10,8 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SyncState {
     #[default]
-    Initializing,
-    WaitingForConnections,
     WaitForEvents,
+    WaitingForConnections,
     Syncing,
     Synced,
     Error,
@@ -41,7 +40,7 @@ impl SyncProgress {
     /// Get the overall sync state.
     ///
     /// Returns the most progressed state among all managers,
-    /// or Initializing if no managers have started.
+    /// or WaitForEvents if no managers have started.
     pub fn state(&self) -> SyncState {
         let states: Vec<SyncState> = [
             self.headers.as_ref().map(|h| h.state()),
@@ -55,19 +54,16 @@ impl SyncProgress {
         .collect();
 
         if states.is_empty() {
-            return SyncState::Initializing;
+            return SyncState::WaitForEvents;
         }
 
         // Return the "most progressed" state
-        // Priority: Error > Syncing > WaitForEvents > WaitingForConnections > Synced > Initializing
+        // Priority: Error > Syncing > WaitingForConnections > Synced > WaitForEvents
         if states.contains(&SyncState::Error) {
             return SyncState::Error;
         }
         if states.contains(&SyncState::Syncing) {
             return SyncState::Syncing;
-        }
-        if states.contains(&SyncState::WaitForEvents) {
-            return SyncState::WaitForEvents;
         }
         if states.contains(&SyncState::WaitingForConnections) {
             return SyncState::WaitingForConnections;
@@ -75,7 +71,7 @@ impl SyncProgress {
         if states.iter().all(|s| *s == SyncState::Synced) {
             return SyncState::Synced;
         }
-        SyncState::Initializing
+        SyncState::WaitForEvents
     }
 
     /// Check if all managers are idle (sync complete).
