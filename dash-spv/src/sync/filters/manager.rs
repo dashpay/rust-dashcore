@@ -786,7 +786,7 @@ mod tests {
     async fn test_filters_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::Filter);
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::CFilter]);
     }
 

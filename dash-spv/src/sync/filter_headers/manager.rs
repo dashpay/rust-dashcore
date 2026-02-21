@@ -250,7 +250,7 @@ mod tests {
     async fn test_filter_headers_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::FilterHeader);
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::CFHeaders]);
     }
 
@@ -265,7 +265,7 @@ mod tests {
         let manager_ref: &TestSyncManager = &manager;
         let progress = manager_ref.progress();
         if let SyncManagerProgress::FilterHeaders(progress) = progress {
-            assert_eq!(progress.state(), SyncState::Initializing);
+            assert_eq!(progress.state(), SyncState::WaitForEvents);
             assert_eq!(progress.current_height(), 500);
             assert_eq!(progress.target_height(), 2000);
             assert_eq!(progress.block_header_tip_height(), 1000);

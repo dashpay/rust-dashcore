@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn test_sync_progress_default() {
         let progress = SyncProgress::default();
-        assert_eq!(progress.state(), SyncState::Initializing);
+        assert_eq!(progress.state(), SyncState::WaitForEvents);
         assert!(!progress.is_synced());
         // Fields are None by default - getters return errors
         assert!(progress.headers().is_err());

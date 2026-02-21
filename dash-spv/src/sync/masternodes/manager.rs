@@ -231,7 +231,7 @@ mod tests {
     async fn test_masternode_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::Masternode);
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(
             manager.wanted_message_types(),
             vec![MessageType::MnListDiff, MessageType::QRInfo]

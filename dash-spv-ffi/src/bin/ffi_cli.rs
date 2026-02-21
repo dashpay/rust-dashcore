@@ -201,9 +201,8 @@ extern "C" fn on_progress_update(progress: *const FFISyncProgress, _user_data: *
     let p = unsafe { &*progress };
 
     let state_str = match p.state {
-        FFISyncState::Initializing => "Initializing",
-        FFISyncState::WaitingForConnections => "WaitingForConnections",
         FFISyncState::WaitForEvents => "WaitForEvents",
+        FFISyncState::WaitingForConnections => "WaitingForConnections",
         FFISyncState::Syncing => "Syncing",
         FFISyncState::Synced => "Synced",
         FFISyncState::Error => "Error",

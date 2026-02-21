@@ -236,7 +236,7 @@ mod tests {
     async fn test_block_headers_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::BlockHeader);
-        assert_eq!(manager.state(), SyncState::Initializing);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::Headers, MessageType::Inv]);
     }
 
@@ -249,7 +249,7 @@ mod tests {
 
         let progress = manager.progress();
         if let SyncManagerProgress::BlockHeaders(progress) = progress {
-            assert_eq!(progress.state(), SyncState::Initializing);
+            assert_eq!(progress.state(), SyncState::WaitForEvents);
             assert_eq!(progress.tip_height(), 100);
             assert_eq!(progress.target_height(), 200);
             assert_eq!(progress.processed(), 50);

@@ -20,12 +20,11 @@ namespace dash_spv_ffi {
  * SyncState exposed by the FFI as FFISyncState.
  */
 typedef enum FFISyncState {
-  Initializing = 0,
+  WaitForEvents = 0,
   WaitingForConnections = 1,
-  WaitForEvents = 2,
-  Syncing = 3,
-  Synced = 4,
-  Error = 5,
+  Syncing = 2,
+  Synced = 3,
+  Error = 4,
 } FFISyncState;
 
 /**

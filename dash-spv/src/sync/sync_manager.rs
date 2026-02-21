@@ -404,7 +404,7 @@ mod tests {
 
         let manager = MockManager {
             identifier: ManagerIdentifier::BlockHeader,
-            state: SyncState::Initializing,
+            state: SyncState::WaitForEvents,
             message_count: message_count.clone(),
             event_count: event_count.clone(),
             tick_count: tick_count.clone(),
