@@ -1,6 +1,7 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
 use crate::storage::BlockHeaderStorage;
+use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     BlockHeadersManager, ManagerIdentifier, ProgressPercentage, SyncEvent, SyncManager,
     SyncManagerProgress, SyncState,
@@ -55,10 +56,7 @@ impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
     }
 
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        if self.state() != SyncState::WaitingForConnections {
-            tracing::warn!("{} sync already started.", self.identifier());
-            return Ok(vec![]);
-        }
+        ensure_not_started(self.state(), self.identifier())?;
         self.progress.set_state(SyncState::Syncing);
 
         let tip = self.tip().await?;

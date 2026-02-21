@@ -3,6 +3,8 @@
 use std::io;
 use thiserror::Error;
 
+use crate::sync::ManagerIdentifier;
+
 /// Main error type for the Dash SPV client.
 #[derive(Debug, Error)]
 pub enum SpvError {
@@ -188,8 +190,8 @@ pub enum ValidationError {
 #[derive(Debug, Error)]
 pub enum SyncError {
     /// Indicates that a sync operation is already in progress
-    #[error("Sync already in progress")]
-    SyncInProgress,
+    #[error("{0} already started")]
+    SyncInProgress(ManagerIdentifier),
 
     /// Deprecated: Use specific error variants instead
     #[deprecated(note = "Use Network, Storage, Validation, or Timeout variants instead")]
@@ -236,7 +238,7 @@ impl SyncError {
     /// Returns a static string representing the error category based on the variant
     pub fn category(&self) -> &'static str {
         match self {
-            SyncError::SyncInProgress | SyncError::InvalidState(_) => "state",
+            SyncError::SyncInProgress(_) | SyncError::InvalidState(_) => "state",
             SyncError::Timeout(_) => "timeout",
             SyncError::Validation(_) => "validation",
             SyncError::MissingDependency(_) => "dependency",
@@ -334,7 +336,7 @@ mod tests {
         assert_eq!(SyncError::Storage("test".to_string()).category(), "storage");
 
         // Test existing variant categories
-        assert_eq!(SyncError::SyncInProgress.category(), "state");
+        assert_eq!(SyncError::SyncInProgress(ManagerIdentifier::BlockHeader).category(), "state");
         assert_eq!(SyncError::InvalidState("test".to_string()).category(), "state");
         assert_eq!(SyncError::MissingDependency("test".to_string()).category(), "dependency");
 

@@ -2,6 +2,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
 use crate::sync::progress::ProgressPercentage;
+use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     FiltersManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
@@ -63,10 +64,7 @@ impl<
     }
 
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        if self.state() != SyncState::WaitingForConnections {
-            tracing::warn!("{} sync already started.", self.identifier());
-            return Ok(vec![]);
-        }
+        ensure_not_started(self.state(), self.identifier())?;
 
         // Check if there are already stored filters we need to process
         // This handles restart where filters are persisted but wallet state isn't

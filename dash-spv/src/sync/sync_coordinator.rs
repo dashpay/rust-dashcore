@@ -185,7 +185,7 @@ where
         N: NetworkManager,
     {
         if !self.tasks.is_empty() {
-            return Err(SyncError::SyncInProgress);
+            return Err(SyncError::InvalidState("SyncCoordinator already started".to_string()));
         }
 
         tracing::info!("Starting sync managers in separate tasks");

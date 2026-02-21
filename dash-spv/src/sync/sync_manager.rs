@@ -7,6 +7,8 @@ use crate::sync::{
 };
 use async_trait::async_trait;
 
+use crate::SyncError;
+
 /// Contains a trait for event-driven sync managers.
 ///
 /// Each manager is responsible for a specific sync task (headers, filters, blocks, etc.)
@@ -64,6 +66,18 @@ impl SyncManagerTaskContext {
     }
 }
 
+/// Guard that verifies a manager has not already been started.
+pub(super) fn ensure_not_started(
+    state: SyncState,
+    identifier: ManagerIdentifier,
+) -> SyncResult<()> {
+    if state != SyncState::WaitingForConnections {
+        tracing::warn!("{} sync already started.", identifier);
+        return Err(SyncError::SyncInProgress(identifier));
+    }
+    Ok(())
+}
+
 #[async_trait]
 pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// Get the unique identifier for this manager.
@@ -100,11 +114,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// For example, BlockHeadersManager sends its first getheaders request here.
     /// The default implementation is for reactive managers that just wait for events.
     async fn start_sync(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        if !matches!(self.state(), SyncState::WaitingForConnections | SyncState::WaitForEvents) {
-            tracing::warn!("{} sync already started.", self.identifier());
-            return Ok(vec![]);
-        }
-
+        ensure_not_started(self.state(), self.identifier())?;
         self.set_state(SyncState::WaitForEvents);
         Ok(vec![SyncEvent::SyncStart {
             identifier: self.identifier(),

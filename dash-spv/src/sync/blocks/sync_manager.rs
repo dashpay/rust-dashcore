@@ -1,6 +1,7 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::{BlockHeaderStorage, BlockStorage};
+use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     BlocksManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
@@ -45,6 +46,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
     }
 
     async fn start_sync(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+        ensure_not_started(self.state(), self.identifier())?;
         // Check if filters already completed (event received before start_sync)
         if self.filters_sync_complete && self.pipeline.is_complete() {
             self.progress.set_state(SyncState::Synced);

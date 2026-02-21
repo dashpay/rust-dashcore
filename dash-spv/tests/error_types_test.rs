@@ -11,6 +11,7 @@ use dashcore_hashes::Hash;
 use std::io;
 
 use dash_spv::error::*;
+use dash_spv::sync::ManagerIdentifier;
 
 #[test]
 fn test_network_error_from_io_error() {
@@ -80,12 +81,12 @@ fn test_spv_error_from_validation_error() {
 
 #[test]
 fn test_spv_error_from_sync_error() {
-    let sync_err = SyncError::SyncInProgress;
+    let sync_err = SyncError::SyncInProgress(ManagerIdentifier::BlockHeader);
     let spv_err: SpvError = sync_err.into();
 
     match spv_err {
-        SpvError::Sync(SyncError::SyncInProgress) => {
-            assert_eq!(spv_err.to_string(), "Sync error: Sync already in progress");
+        SpvError::Sync(SyncError::SyncInProgress(_)) => {
+            assert_eq!(spv_err.to_string(), "Sync error: BlockHeader already started");
         }
         _ => panic!("Expected SpvError::Sync variant"),
     }
@@ -226,7 +227,11 @@ fn test_validation_error_variants() {
 #[test]
 fn test_sync_error_variants_and_categories() {
     let test_cases = vec![
-        (SyncError::SyncInProgress, "state", "Sync already in progress"),
+        (
+            SyncError::SyncInProgress(ManagerIdentifier::BlockHeader),
+            "state",
+            "BlockHeader already started",
+        ),
         (
             SyncError::InvalidState("Unexpected phase transition".to_string()),
             "state",
@@ -361,7 +366,7 @@ fn test_result_type_aliases() {
     }
 
     fn sync_operation() -> SyncResult<()> {
-        Err(SyncError::SyncInProgress)
+        Err(SyncError::SyncInProgress(ManagerIdentifier::BlockHeader))
     }
 
     fn wallet_operation() -> WalletResult<u64> {
