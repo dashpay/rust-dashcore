@@ -71,7 +71,7 @@ where
     M: MetadataStorage,
     W: WalletInterface + 'static,
 {
-    pub block_headers: Option<BlockHeadersManager<H>>,
+    pub block_headers: Option<BlockHeadersManager<H, M>>,
     pub filter_headers: Option<FilterHeadersManager<H, FH>>,
     pub filters: Option<FiltersManager<H, FH, F, W>>,
     pub blocks: Option<BlocksManager<H, B, W>>,

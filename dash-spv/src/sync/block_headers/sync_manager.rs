@@ -1,6 +1,6 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
-use crate::storage::BlockHeaderStorage;
+use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     BlockHeadersManager, ManagerIdentifier, ProgressPercentage, SyncEvent, SyncManager,
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 pub(super) const UNSOLICITED_HEADERS_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[async_trait]
-impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
+impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersManager<H, M> {
     fn identifier(&self) -> ManagerIdentifier {
         ManagerIdentifier::BlockHeader
     }
@@ -152,6 +152,8 @@ impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
         {
             if let Some(best_height) = best_height {
                 self.progress.update_target_height(*best_height);
+                let mut metadata_storage = self.metadata_storage.write().await;
+                metadata_storage.store_last_target_height(*best_height).await?;
             }
             if *connected_count == 0 {
                 self.stop_sync();

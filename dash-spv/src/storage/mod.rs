@@ -14,8 +14,14 @@ mod peers;
 mod segments;
 mod transactions;
 
+use crate::error::StorageResult;
+use crate::storage::lockfile::LockFile;
+use crate::storage::transactions::PersistentTransactionStorage;
+use crate::types::{HashedBlock, HashedBlockHeader, MempoolState, UnconfirmedTransaction};
+use crate::ClientConfig;
 use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Header as BlockHeader, Txid};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -23,12 +29,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-
-use crate::error::StorageResult;
-use crate::storage::lockfile::LockFile;
-use crate::storage::transactions::PersistentTransactionStorage;
-use crate::types::{HashedBlock, HashedBlockHeader, MempoolState, UnconfirmedTransaction};
-use crate::ClientConfig;
 
 pub use crate::storage::block_headers::{
     BlockHeaderStorage, BlockHeaderTip, PersistentBlockHeaderStorage,
@@ -433,6 +433,14 @@ impl metadata::MetadataStorage for DiskStorageManager {
 
     async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
         self.metadata.read().await.load_metadata(key).await
+    }
+
+    async fn store_last_target_height(&mut self, height: CoreBlockHeight) -> StorageResult<()> {
+        self.metadata.write().await.store_last_target_height(height).await
+    }
+
+    async fn load_last_target_height(&self) -> StorageResult<CoreBlockHeight> {
+        self.metadata.read().await.load_last_target_height().await
     }
 }
 

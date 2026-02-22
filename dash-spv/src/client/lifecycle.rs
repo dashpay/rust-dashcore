@@ -71,8 +71,14 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             _ => Vec::new(),
         };
         let checkpoint_manager = Arc::new(CheckpointManager::new(checkpoints));
-        managers.block_headers =
-            Some(BlockHeadersManager::new(storage.block_headers(), checkpoint_manager).await?);
+        managers.block_headers = Some(
+            BlockHeadersManager::new(
+                storage.block_headers(),
+                storage.metadata(),
+                checkpoint_manager,
+            )
+            .await?,
+        );
 
         if config.enable_filters {
             managers.filter_headers = Some(
