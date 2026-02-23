@@ -100,12 +100,21 @@ impl SyncProgress {
     }
 
     /// Get overall completion percentage (0.0 to 1.0).
+    ///
+    /// Only managers that are active contribute to the average.
     pub fn percentage(&self) -> f64 {
-        let percentages = [
-            self.headers.as_ref().map(|h| h.percentage()).unwrap_or(1.0),
-            self.filter_headers.as_ref().map(|f| f.percentage()).unwrap_or(1.0),
-            self.filters.as_ref().map(|f| f.percentage()).unwrap_or(1.0),
-        ];
+        let percentages: Vec<f64> = [
+            self.headers.as_ref().map(|h| h.percentage()),
+            self.filter_headers.as_ref().map(|f| f.percentage()),
+            self.filters.as_ref().map(|f| f.percentage()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        if percentages.is_empty() {
+            return 0.0;
+        }
         percentages.iter().sum::<f64>() / percentages.len() as f64
     }
 

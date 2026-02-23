@@ -381,7 +381,7 @@ fn update_progress_from_manager(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::{BlockHeadersProgress, FiltersProgress, SyncState};
+    use crate::sync::{BlockHeadersProgress, FilterHeadersProgress, FiltersProgress, SyncState};
 
     #[test]
     fn test_sync_progress_default() {
@@ -397,12 +397,12 @@ mod tests {
     #[test]
     fn test_sync_percentage_empty() {
         let progress = SyncProgress::default();
-        // Both headers and filters are None, so percentage defaults to 1.0
-        assert_eq!(progress.percentage(), 1.0);
+        // All fields are None, no active phases, so percentage is 0.0
+        assert_eq!(progress.percentage(), 0.0);
     }
 
     #[test]
-    fn test_sync_percentage() {
+    fn test_sync_percentage_headers_only() {
         let mut progress = SyncProgress::default();
 
         // Create headers progress at 50%
@@ -413,6 +413,30 @@ mod tests {
         headers_progress.add_processed(500);
         progress.update_headers(headers_progress);
 
+        // Only headers is active, so percentage = 0.5
+        assert_eq!(progress.percentage(), 0.5);
+    }
+
+    #[test]
+    fn test_sync_percentage_mixed() {
+        let mut progress = SyncProgress::default();
+
+        // Create headers progress at 75%
+        let mut headers_progress = BlockHeadersProgress::default();
+        headers_progress.set_state(SyncState::Syncing);
+        headers_progress.update_tip_height(750);
+        headers_progress.update_target_height(1000);
+        headers_progress.add_processed(750);
+        progress.update_headers(headers_progress);
+
+        // Create filter headers progress at 50%
+        let mut filter_headers_progress = FilterHeadersProgress::default();
+        filter_headers_progress.set_state(SyncState::Syncing);
+        filter_headers_progress.update_current_height(500);
+        filter_headers_progress.update_target_height(1000);
+        filter_headers_progress.add_processed(500);
+        progress.update_filter_headers(filter_headers_progress);
+
         // Create filters progress at 25%
         let mut filters_progress = FiltersProgress::default();
         filters_progress.set_state(SyncState::Syncing);
@@ -421,7 +445,7 @@ mod tests {
         filters_progress.add_downloaded(250);
         progress.update_filters(filters_progress);
 
-        // (0.5 + 1.0 + 0.25) / 3 = ~0.583 (filter_headers defaults to 1.0)
-        assert!((progress.percentage() - 0.583).abs() < 0.01);
+        // Headers 75%, filter headers 50%, filters 25%: (0.75 + 0.5 + 0.25) / 3 = 0.5
+        assert_eq!(progress.percentage(), 0.5);
     }
 }
