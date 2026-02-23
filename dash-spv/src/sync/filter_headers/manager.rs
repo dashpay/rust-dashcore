@@ -41,14 +41,30 @@ pub struct FilterHeadersManager<H: BlockHeaderStorage, FH: FilterHeaderStorage> 
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH> {
     /// Create a new filter headers manager with the given storage references.
-    pub fn new(header_storage: Arc<RwLock<H>>, filter_header_storage: Arc<RwLock<FH>>) -> Self {
-        Self {
-            progress: FilterHeadersProgress::default(),
+    pub async fn new(
+        header_storage: Arc<RwLock<H>>,
+        filter_header_storage: Arc<RwLock<FH>>,
+    ) -> SyncResult<Self> {
+        // Load current filter tip
+        let filter_tip =
+            filter_header_storage.read().await.get_filter_tip_height().await?.unwrap_or(0);
+
+        // Load block header tip for progress display
+        let header_tip =
+            header_storage.read().await.get_tip().await.map(|t| t.height()).unwrap_or(0);
+
+        let mut initial_progress = FilterHeadersProgress::default();
+        initial_progress.update_current_height(filter_tip);
+        initial_progress.update_target_height(header_tip);
+        initial_progress.update_block_header_tip_height(header_tip);
+
+        Ok(Self {
+            progress: initial_progress,
             header_storage,
             filter_header_storage,
             pipeline: FilterHeadersPipeline::default(),
             checkpoint_start_height: None,
-        }
+        })
     }
 
     /// Process a CFHeaders response - store headers and update state.
@@ -244,6 +260,8 @@ mod tests {
     async fn create_test_manager() -> TestFilterHeadersManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         FilterHeadersManager::new(storage.block_headers(), storage.filter_headers())
+            .await
+            .expect("Failed to create FilterHeadersManager")
     }
 
     #[tokio::test]

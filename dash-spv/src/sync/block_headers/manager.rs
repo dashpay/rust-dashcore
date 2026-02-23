@@ -52,13 +52,30 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for BlockHeadersManager<H> {
 
 impl<H: BlockHeaderStorage> BlockHeadersManager<H> {
     /// Create a new headers manager with the given storage and checkpoint manager.
-    pub fn new(header_storage: Arc<RwLock<H>>, checkpoint_manager: Arc<CheckpointManager>) -> Self {
-        Self {
-            progress: BlockHeadersProgress::default(),
+    pub async fn new(
+        header_storage: Arc<RwLock<H>>,
+        checkpoint_manager: Arc<CheckpointManager>,
+    ) -> SyncResult<Self> {
+        let tip = header_storage
+            .read()
+            .await
+            .get_tip()
+            .await
+            .ok_or_else(|| SyncError::MissingDependency("No tip in storage".to_string()))?;
+
+        let mut initial_progress = BlockHeadersProgress::default();
+        initial_progress.set_state(SyncState::WaitingForConnections);
+        initial_progress.update_tip_height(tip.height());
+        initial_progress.update_target_height(tip.height());
+
+        tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
+
+        Ok(Self {
+            progress: initial_progress,
             header_storage,
-            pipeline: HeadersPipeline::new(checkpoint_manager.clone()),
+            pipeline: HeadersPipeline::new(checkpoint_manager),
             pending_announcements: HashMap::new(),
-        }
+        })
     }
 
     pub(super) async fn tip(&self) -> SyncResult<BlockHeaderTip> {
@@ -227,16 +244,21 @@ mod tests {
     }
 
     async fn create_test_manager() -> TestBlockHeadersManager {
-        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        // Store a genesis header so the manager can initialize
+        let genesis = Header::dummy_batch(0..1);
+        storage.store_headers(&genesis).await.unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
         BlockHeadersManager::new(storage.block_headers(), checkpoint_manager)
+            .await
+            .expect("Failed to create BlockHeadersManager")
     }
 
     #[tokio::test]
     async fn test_block_headers_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::BlockHeader);
-        assert_eq!(manager.state(), SyncState::WaitForEvents);
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::Headers, MessageType::Inv]);
     }
 
@@ -249,7 +271,7 @@ mod tests {
 
         let progress = manager.progress();
         if let SyncManagerProgress::BlockHeaders(progress) = progress {
-            assert_eq!(progress.state(), SyncState::WaitForEvents);
+            assert_eq!(progress.state(), SyncState::WaitingForConnections);
             assert_eq!(progress.tip_height(), 100);
             assert_eq!(progress.target_height(), 200);
             assert_eq!(progress.processed(), 50);

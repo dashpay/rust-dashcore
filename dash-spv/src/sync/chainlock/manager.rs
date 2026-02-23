@@ -46,12 +46,12 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     /// Create a new ChainLock manager.
-    pub fn new(
+    pub async fn new(
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
         masternode_engine: Arc<RwLock<MasternodeListEngine>>,
     ) -> Self {
-        Self {
+        let mut manager = Self {
             progress: ChainLockProgress::default(),
             header_storage,
             metadata_storage,
@@ -59,7 +59,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             best_chainlock: None,
             requested_chainlocks: HashSet::new(),
             masternode_ready: false,
-        }
+        };
+
+        // TODO: Move load_best_chainlock() and save_best_chainlock() to MetadataStorage trait.
+        manager.load_best_chainlock().await;
+
+        manager
     }
 
     /// Notify the manager that masternode sync is complete.
@@ -257,7 +262,7 @@ mod tests {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let engine =
             Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
-        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine)
+        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
     }
 
     async fn create_test_manager_with_storage(
@@ -265,7 +270,7 @@ mod tests {
     ) -> TestChainLockManager {
         let engine =
             Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
-        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine)
+        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
     }
 
     fn create_test_chainlock(height: u32) -> ChainLock {
@@ -391,12 +396,9 @@ mod tests {
             manager.save_best_chainlock().await;
         }
 
-        // Load it back via a fresh manager sharing the same storage
+        // Fresh manager sharing the same storage should load the chainlock automatically
         {
-            let mut manager = create_test_manager_with_storage(&storage).await;
-            assert!(manager.best_chainlock().is_none());
-
-            manager.load_best_chainlock().await;
+            let manager = create_test_manager_with_storage(&storage).await;
 
             let restored = manager.best_chainlock().expect("chainlock should be restored");
             assert_eq!(restored.block_height, 42000);
@@ -420,14 +422,13 @@ mod tests {
         }
 
         // Create a new manager and call initialize (the SyncManager trait method)
-        let mut manager = create_test_manager_with_storage(&storage).await;
-        manager.initialize().await.unwrap();
+        let manager = create_test_manager_with_storage(&storage).await;
 
         let restored =
             manager.best_chainlock().expect("chainlock should be restored after initialize");
         assert_eq!(restored.block_height, 99999);
         assert_eq!(manager.progress.best_validated_height(), 99999);
-        assert_eq!(manager.state(), SyncState::WaitingForConnections);
+        assert_eq!(manager.state(), SyncState::WaitForEvents);
     }
 
     #[tokio::test]

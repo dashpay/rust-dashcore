@@ -43,13 +43,18 @@ pub struct BlocksManager<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterf
 
 impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H, B, W> {
     /// Create a new blocks manager with the given storage references.
-    pub fn new(
+    pub async fn new(
         wallet: Arc<RwLock<W>>,
         header_storage: Arc<RwLock<H>>,
         block_storage: Arc<RwLock<B>>,
     ) -> Self {
+        let synced_height = wallet.read().await.synced_height();
+
+        let mut initial_progress = BlocksProgress::default();
+        initial_progress.update_last_processed(synced_height);
+
         Self {
-            progress: BlocksProgress::default(),
+            progress: initial_progress,
             header_storage,
             block_storage,
             wallet,
@@ -170,7 +175,7 @@ mod tests {
     async fn create_test_manager() -> TestBlocksManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        BlocksManager::new(wallet, storage.block_headers(), storage.blocks())
+        BlocksManager::new(wallet, storage.block_headers(), storage.blocks()).await
     }
 
     #[tokio::test]

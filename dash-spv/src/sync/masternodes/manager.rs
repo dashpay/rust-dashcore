@@ -91,13 +91,27 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// Create a new masternode manager with the given header storage.
-    pub fn new(
+    pub async fn new(
         header_storage: Arc<RwLock<H>>,
         engine: Arc<RwLock<MasternodeListEngine>>,
         network: dashcore::Network,
     ) -> Self {
+        // Load current height from engine's masternode lists
+        let current_height =
+            engine.read().await.masternode_lists.keys().last().copied().unwrap_or(0);
+
+        // Load block header tip for progress display
+        let header_tip =
+            header_storage.read().await.get_tip().await.map(|t| t.height()).unwrap_or(0);
+
+        let mut initial_progress = MasternodesProgress::default();
+        initial_progress.update_current_height(current_height);
+        initial_progress.update_target_height(header_tip);
+        initial_progress.update_block_header_tip_height(header_tip);
+        initial_progress.set_state(SyncState::WaitingForConnections);
+
         Self {
-            progress: MasternodesProgress::default(),
+            progress: initial_progress,
             header_storage,
             engine,
             network,
@@ -224,14 +238,14 @@ mod tests {
         let engine = Arc::new(RwLock::new(MasternodeListEngine::default_for_network(
             dashcore::Network::Testnet,
         )));
-        MasternodesManager::new(storage.block_headers(), engine, dashcore::Network::Testnet)
+        MasternodesManager::new(storage.block_headers(), engine, dashcore::Network::Testnet).await
     }
 
     #[tokio::test]
     async fn test_masternode_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::Masternode);
-        assert_eq!(manager.state(), SyncState::WaitForEvents);
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert_eq!(
             manager.wanted_message_types(),
             vec![MessageType::MnListDiff, MessageType::QRInfo]

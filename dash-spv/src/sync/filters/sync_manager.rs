@@ -43,26 +43,6 @@ impl<
         self.clear_in_flight_state();
     }
 
-    async fn initialize(&mut self) -> SyncResult<()> {
-        let wallet = self.wallet.read().await;
-        let committed_height = wallet.filter_committed_height();
-        drop(wallet);
-
-        let stored_height = self.filter_storage.read().await.filter_tip_height().await?;
-
-        self.progress.update_committed_height(committed_height);
-        self.progress.update_stored_height(stored_height);
-        self.set_state(SyncState::WaitingForConnections);
-
-        tracing::info!(
-            "FiltersManager initialized (committed={}, stored={}), waiting for filter headers",
-            committed_height,
-            stored_height,
-        );
-
-        Ok(())
-    }
-
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
 

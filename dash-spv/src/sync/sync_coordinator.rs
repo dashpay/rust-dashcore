@@ -31,8 +31,8 @@ const DEFAULT_SYNC_EVENT_CAPACITY: usize = 10000;
 
 /// Macro to spawn a manager if present.
 macro_rules! spawn_manager {
-    ($self:expr, $field:ident, $network:expr) => {
-        if let Some(manager) = $self.managers.$field.take() {
+    ($self:expr, $manager:expr, $network:expr) => {
+        if let Some(manager) = $manager {
             let identifier = manager.identifier();
             let wanted_message_types = manager.wanted_message_types();
             let requests = $network.request_sender();
@@ -146,10 +146,21 @@ where
     W: WalletInterface + 'static,
 {
     /// Create a new coordinator with the given config.
-    ///
-    /// Managers are passed to `start()` when sync begins.
-    pub fn new(managers: Managers<H, FH, F, B, M, W>) -> Self {
-        let (progress_sender, progress_receiver) = watch::channel(SyncProgress::default());
+    pub(crate) async fn new(managers: Managers<H, FH, F, B, M, W>) -> Self {
+        let mut initial_progress = SyncProgress::default();
+
+        try_update_progress(managers.block_headers.as_ref(), &mut initial_progress);
+        try_update_progress(managers.filter_headers.as_ref(), &mut initial_progress);
+        try_update_progress(managers.filters.as_ref(), &mut initial_progress);
+        try_update_progress(managers.blocks.as_ref(), &mut initial_progress);
+        try_update_progress(managers.masternode.as_ref(), &mut initial_progress);
+        try_update_progress(managers.chainlock.as_ref(), &mut initial_progress);
+        try_update_progress(managers.instantsend.as_ref(), &mut initial_progress);
+
+        tracing::info!("Initial sync progress {}", initial_progress.clone());
+
+        let (progress_sender, progress_receiver) = watch::channel(initial_progress);
+
         Self {
             managers,
             progress_receivers: Vec::new(),
@@ -193,6 +204,15 @@ where
         // Record sync start time
         let sync_start_time = Instant::now();
         self.sync_start_time = Some(sync_start_time);
+
+        // Take managers for spawning
+        let block_headers = self.managers.block_headers.take();
+        let filter_headers = self.managers.filter_headers.take();
+        let filters = self.managers.filters.take();
+        let blocks = self.managers.blocks.take();
+        let masternode = self.managers.masternode.take();
+        let chainlock = self.managers.chainlock.take();
+        let instantsend = self.managers.instantsend.take();
 
         // Spawn each manager using the macro
         spawn_manager!(self, block_headers, network);
@@ -336,11 +356,10 @@ async fn run_progress_task(
     shutdown: CancellationToken,
     sync_start_time: Instant,
 ) {
-    let streams: Vec<_> =
-        receivers.into_iter().map(|rx| WatchStream::new(rx).map(move |p| p)).collect();
+    let streams: Vec<_> = receivers.into_iter().map(WatchStream::from_changes).collect();
 
     let mut merged = select_all(streams);
-    let mut progress = SyncProgress::default();
+    let mut progress = progress_sender.borrow().clone();
     let mut was_synced = false;
     let mut sync_cycle: u32 = 0;
     let mut cycle_start = sync_start_time;
@@ -383,6 +402,13 @@ fn update_progress_from_manager(
         SyncManagerProgress::Masternodes(m) => progress.update_masternodes(m),
         SyncManagerProgress::ChainLock(c) => progress.update_chainlocks(c),
         SyncManagerProgress::InstantSend(i) => progress.update_instantsend(i),
+    }
+}
+
+/// Try to merge progress from an optional manager into a SyncProgress.
+fn try_update_progress(manager: Option<&impl SyncManager>, sync_progress: &mut SyncProgress) {
+    if let Some(manager) = manager {
+        update_progress_from_manager(sync_progress, manager.progress());
     }
 }
 

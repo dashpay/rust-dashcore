@@ -6,7 +6,6 @@ use crate::sync::{
     BlockHeadersManager, ManagerIdentifier, ProgressPercentage, SyncEvent, SyncManager,
     SyncManagerProgress, SyncState,
 };
-use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::BlockHash;
@@ -35,24 +34,6 @@ impl<H: BlockHeaderStorage> SyncManager for BlockHeadersManager<H> {
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
         &[MessageType::Headers, MessageType::Inv]
-    }
-
-    async fn initialize(&mut self) -> SyncResult<()> {
-        let tip = self
-            .header_storage
-            .read()
-            .await
-            .get_tip()
-            .await
-            .ok_or_else(|| SyncError::MissingDependency("No tip in storage".to_string()))?;
-
-        self.progress.set_state(SyncState::WaitingForConnections);
-        self.progress.update_tip_height(tip.height());
-        self.progress.update_target_height(tip.height());
-
-        tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
-
-        Ok(())
     }
 
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {

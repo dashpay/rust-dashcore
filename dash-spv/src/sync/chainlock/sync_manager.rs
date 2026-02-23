@@ -26,13 +26,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
         &[MessageType::CLSig, MessageType::Inv]
     }
 
-    async fn initialize(&mut self) -> SyncResult<()> {
-        self.load_best_chainlock().await;
-        self.set_state(SyncState::WaitingForConnections);
-        tracing::info!("{} initialized", self.identifier());
-        Ok(())
-    }
-
     async fn handle_message(
         &mut self,
         msg: Message,

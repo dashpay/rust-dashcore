@@ -1013,7 +1013,6 @@ pub trait SyncManager: Send + Sync + Debug {
     fn state(&self) -> SyncState;
     fn wanted_message_types(&self) -> &'static [MessageType];
 
-    async fn initialize(&mut self) -> SyncResult<()>;
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
     async fn handle_message(&mut self, msg: Message, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
     async fn handle_sync_event(&mut self, event: &SyncEvent, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
