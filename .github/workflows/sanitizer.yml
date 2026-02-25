@@ -37,9 +37,8 @@ jobs:
       - name: Run tests with ASAN
         env:
           RUST_BACKTRACE: 1
-          RUSTFLAGS: "-Zsanitizer=address -Cdebuginfo=2"
-          ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
-          ASAN_OPTIONS: "symbolize=1"
+          RUSTFLAGS: "-Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes"
+          ASAN_OPTIONS: "symbolize=1:allow_addr2line=1"
           LSAN_OPTIONS: "fast_unwind_on_malloc=0"
         run: |
           # FFI crates (C interop)
