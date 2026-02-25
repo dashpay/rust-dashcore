@@ -82,6 +82,10 @@ impl TransactionBuilder {
         }
     }
 
+    pub fn outputs(&self) -> &Vec<TxOut> {
+        &self.outputs
+    }
+
     /// Add a UTXO input with optional private key for signing
     pub fn add_input(mut self, utxo: Utxo, key: Option<SecretKey>) -> Self {
         self.inputs.push((utxo, key));
@@ -330,32 +334,6 @@ impl TransactionBuilder {
         size
     }
 
-    /// Build the transaction
-    ///
-    /// Uses the special payload if one was set via `set_special_payload`
-    pub fn build(self) -> Result<Transaction, BuilderError> {
-        self.build_internal()
-    }
-
-    /// Build the transaction with an explicit special transaction payload
-    ///
-    /// This overrides any payload set via `set_special_payload`.
-    /// Supports Dash-specific transaction types like:
-    /// - ProRegTx (Provider Registration)
-    /// - ProUpServTx (Provider Update Service)
-    /// - ProUpRegTx (Provider Update Registrar)
-    /// - ProUpRevTx (Provider Update Revocation)
-    /// - CoinJoin transactions
-    /// - InstantSend transactions
-    /// - And other special transaction types
-    pub fn build_with_payload(
-        mut self,
-        payload: Option<TransactionPayload>,
-    ) -> Result<Transaction, BuilderError> {
-        self.special_payload = payload;
-        self.build_internal()
-    }
-
     /// Calculates the transaction fee for the current number of outputs and inputs
     pub fn calculate_fee(&self) -> u64 {
         let fee_rate = self.fee_level.fee_rate();
@@ -376,8 +354,8 @@ impl TransactionBuilder {
         fee_rate.calculate_fee(estimated_size)
     }
 
-    /// Internal build method that uses the stored special_payload
-    fn build_internal(mut self) -> Result<Transaction, BuilderError> {
+    /// Build the transaction
+    pub fn build(&mut self) -> Result<Transaction, BuilderError> {
         if self.inputs.is_empty() {
             return Err(BuilderError::NoInputs);
         }
@@ -468,7 +446,7 @@ impl TransactionBuilder {
             lock_time: self.lock_time,
             input: tx_inputs,
             output: tx_outputs,
-            special_transaction_payload: self.special_payload.take(),
+            special_transaction_payload: self.special_payload.clone(),
         };
 
         // Sign inputs if keys are provided
@@ -521,7 +499,9 @@ impl TransactionBuilder {
             platform_p2p_port,
             platform_http_port,
         };
-        self.build_with_payload(Some(TransactionPayload::ProviderRegistrationPayloadType(payload)))
+
+        self.set_special_payload(TransactionPayload::ProviderRegistrationPayloadType(payload))
+            .build()
     }
 
     /// Build a Provider Update Service Transaction (ProUpServTx)
@@ -558,7 +538,8 @@ impl TransactionBuilder {
             platform_http_port,
             payload_sig,
         };
-        self.build_with_payload(Some(TransactionPayload::ProviderUpdateServicePayloadType(payload)))
+        self.set_special_payload(TransactionPayload::ProviderUpdateServicePayloadType(payload))
+            .build()
     }
 
     /// Build a Provider Update Registrar Transaction (ProUpRegTx)
@@ -589,9 +570,8 @@ impl TransactionBuilder {
             inputs_hash,
             payload_sig,
         };
-        self.build_with_payload(Some(TransactionPayload::ProviderUpdateRegistrarPayloadType(
-            payload,
-        )))
+        self.set_special_payload(TransactionPayload::ProviderUpdateRegistrarPayloadType(payload))
+            .build()
     }
 
     /// Build a Provider Update Revocation Transaction (ProUpRevTx)
@@ -611,9 +591,8 @@ impl TransactionBuilder {
             inputs_hash,
             payload_sig,
         };
-        self.build_with_payload(Some(TransactionPayload::ProviderUpdateRevocationPayloadType(
-            payload,
-        )))
+        self.set_special_payload(TransactionPayload::ProviderUpdateRevocationPayloadType(payload))
+            .build()
     }
 
     /// Build a Coinbase Transaction
@@ -637,7 +616,7 @@ impl TransactionBuilder {
             best_cl_signature,
             asset_locked_amount,
         };
-        self.build_with_payload(Some(TransactionPayload::CoinbasePayloadType(payload)))
+        self.set_special_payload(TransactionPayload::CoinbasePayloadType(payload)).build()
     }
 
     /// Build an Asset Lock Transaction
@@ -648,7 +627,7 @@ impl TransactionBuilder {
             version: 0,
             credit_outputs,
         };
-        self.build_with_payload(Some(TransactionPayload::AssetLockPayloadType(payload)))
+        self.set_special_payload(TransactionPayload::AssetLockPayloadType(payload)).build()
     }
 
     /// Estimate transaction size in bytes
@@ -1093,52 +1072,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_with_payload_override() {
-        // Test that build_with_payload overrides set_special_payload
-        let utxo = Utxo::dummy(0, 100000, 100, false, true);
-        let destination = Address::dummy(Network::Testnet, 0);
-        let change = Address::dummy(Network::Testnet, 0);
-
-        let credit_outputs = vec![TxOut {
-            value: 50000,
-            script_pubkey: ScriptBuf::new(),
-        }];
-
-        let original_payload = AssetLockPayload {
-            version: 1,
-            credit_outputs: credit_outputs.clone(),
-        };
-
-        let override_payload = AssetLockPayload {
-            version: 2,
-            credit_outputs: vec![TxOut {
-                value: 75000,
-                script_pubkey: ScriptBuf::new(),
-            }],
-        };
-
-        let tx = TransactionBuilder::new()
-            .add_input(utxo, None)
-            .add_output(&destination, 30000)
-            .unwrap()
-            .set_change_address(change)
-            .set_special_payload(TransactionPayload::AssetLockPayloadType(original_payload))
-            .build_with_payload(Some(TransactionPayload::AssetLockPayloadType(override_payload)))
-            .unwrap();
-
-        // Should use the override payload
-        if let Some(TransactionPayload::AssetLockPayloadType(payload)) =
-            &tx.special_transaction_payload
-        {
-            assert_eq!(payload.version, 2);
-            assert_eq!(payload.credit_outputs.len(), 1);
-            assert_eq!(payload.credit_outputs[0].value, 75000);
-        } else {
-            panic!("Expected AssetLockPayload");
-        }
-    }
-
-    #[test]
     fn test_bip69_output_ordering() {
         // Test that outputs are sorted according to BIP-69
         let utxo = Utxo::dummy(0, 1000000, 100, false, true);
@@ -1299,7 +1232,7 @@ mod tests {
             .select_inputs(&utxos, SelectionStrategy::SmallestFirst, 200, |_| None);
 
         assert!(result.is_ok());
-        let builder = result.unwrap();
+        let mut builder = result.unwrap();
         let tx = builder.build().unwrap();
 
         // Should have selected enough inputs to cover output + fees for larger transaction

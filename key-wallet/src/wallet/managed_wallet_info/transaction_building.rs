@@ -306,7 +306,7 @@ mod tests {
             .require_network(Network::Testnet)
             .unwrap();
 
-        let builder = TransactionBuilder::new()
+        let mut builder = TransactionBuilder::new()
             .set_fee_level(FeeLevel::Normal)
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)
@@ -341,7 +341,7 @@ mod tests {
             .require_network(Network::Testnet)
             .unwrap();
 
-        let builder = TransactionBuilder::new()
+        let mut builder = TransactionBuilder::new()
             .set_fee_level(FeeLevel::Normal) // 1 duff per byte
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 500000)
@@ -399,7 +399,7 @@ mod tests {
             .require_network(Network::Testnet)
             .unwrap();
 
-        let builder = TransactionBuilder::new()
+        let mut builder = TransactionBuilder::new()
             .set_fee_level(FeeLevel::Normal)
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)

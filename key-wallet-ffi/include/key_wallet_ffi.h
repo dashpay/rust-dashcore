@@ -3511,22 +3511,26 @@ bool mnemonic_to_seed(const char *mnemonic,
 
  # Safety
 
- - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
+ - `manager` must be a valid pointer to an FFIWalletManager
  - `wallet` must be a valid pointer to an FFIWallet
+ - `account_index` must be a valid BIP44 account index present in the wallet
  - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements
+ - `fee_rate` must be a valid variant of FFIFeeRate
+ - `fee_out` must be a valid, non-null pointer to a `u64`; on success it receives the
+   calculated transaction fee in duffs
  - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer
  - `tx_len_out` must be a valid pointer to store the transaction length
  - `error` must be a valid pointer to an FFIError
  - The returned transaction bytes must be freed with `transaction_bytes_free`
  */
 
-bool wallet_build_and_sign_transaction(FFIManagedWalletInfo *managed_wallet,
+bool wallet_build_and_sign_transaction(const FFIWalletManager *manager,
                                        const FFIWallet *wallet,
-                                       unsigned int account_index,
+                                       uint32_t account_index,
                                        const FFITxOutput *outputs,
                                        size_t outputs_count,
                                        uint64_t fee_per_kb,
-                                       uint32_t current_height,
+                                       uint64_t *fee_out,
                                        uint8_t **tx_bytes_out,
                                        size_t *tx_len_out,
                                        FFIError *error)
