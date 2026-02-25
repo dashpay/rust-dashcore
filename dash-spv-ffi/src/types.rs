@@ -493,9 +493,7 @@ pub unsafe extern "C" fn dash_spv_ffi_instantsend_progress_destroy(
 /// # Safety
 /// - `progress` must be a pointer returned from this crate, or null.
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_manager_sync_progress_destroy(
-    progress: *mut FFISyncProgress,
-) {
+pub unsafe extern "C" fn dash_spv_ffi_sync_progress_destroy(progress: *mut FFISyncProgress) {
     if !progress.is_null() {
         let p = Box::from_raw(progress);
 

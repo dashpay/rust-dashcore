@@ -195,7 +195,7 @@ mod tests {
 
         // Cleanup all allocated memory
         unsafe {
-            dash_spv_ffi_manager_sync_progress_destroy(Box::into_raw(Box::new(ffi_progress)));
+            dash_spv_ffi_sync_progress_destroy(Box::into_raw(Box::new(ffi_progress)));
         }
     }
 }

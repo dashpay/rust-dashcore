@@ -6,7 +6,7 @@
 //! - `FFINetworkEventCallbacks` - Network manager events
 //! - `FFIWalletEventCallbacks` - Wallet manager events
 
-use crate::{dash_spv_ffi_manager_sync_progress_destroy, FFISyncProgress};
+use crate::{dash_spv_ffi_sync_progress_destroy, FFISyncProgress};
 use dashcore::hashes::Hash;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
@@ -93,7 +93,7 @@ impl FFIProgressCallback {
 
             // Clean up the progress and all its nested pointers
             unsafe {
-                dash_spv_ffi_manager_sync_progress_destroy(ptr);
+                dash_spv_ffi_sync_progress_destroy(ptr);
             }
         }
     }

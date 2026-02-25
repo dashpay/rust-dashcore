@@ -425,7 +425,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
 /// Get the current manager-based sync progress.
 ///
 /// Returns the new parallel sync system's progress with per-manager details.
-/// Use `dash_spv_ffi_manager_sync_progress_destroy` to free the returned struct.
+/// Use `dash_spv_ffi_sync_progress_destroy` to free the returned struct.
 ///
 /// # Safety
 /// - `client` must be a valid, non-null pointer.
@@ -532,17 +532,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
         client.cancel_active_tasks();
 
         tracing::info!("✅ FFI client destroyed and all tasks cleaned up");
-    }
-}
-
-/// Destroy a `FFISyncProgress` object returned by this crate.
-///
-/// # Safety
-/// - `progress` must be a pointer returned from this crate, or null.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_sync_progress_destroy(progress: *mut FFISyncProgress) {
-    if !progress.is_null() {
-        let _ = Box::from_raw(progress);
     }
 }
 
