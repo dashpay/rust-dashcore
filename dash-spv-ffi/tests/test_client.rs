@@ -4,14 +4,7 @@ mod tests {
     use key_wallet_ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
-    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
-
-    struct _TestCallbackData {
-        progress_called: Arc<Mutex<bool>>,
-        completion_called: Arc<Mutex<bool>>,
-        last_progress: Arc<Mutex<f64>>,
-    }
 
     fn create_test_config() -> (*mut FFIClientConfig, TempDir) {
         let temp_dir = TempDir::new().unwrap();
