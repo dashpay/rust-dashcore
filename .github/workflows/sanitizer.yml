@@ -36,6 +36,7 @@ jobs:
 
       - name: Run tests with ASAN
         env:
+          RUST_BACKTRACE: 1
           RUSTFLAGS: "-Zsanitizer=address -Cdebuginfo=2"
           ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
           ASAN_OPTIONS: "symbolize=1"
@@ -60,6 +61,7 @@ jobs:
 
       - name: Run tests with TSAN
         env:
+          RUST_BACKTRACE: 1
           RUSTFLAGS: "-Zsanitizer=thread -Cdebuginfo=2"
           TSAN_OPTIONS: "second_deadlock_stack=1"
         run: |
