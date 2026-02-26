@@ -234,6 +234,12 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         &[MessageType::MnListDiff, MessageType::QRInfo]
     }
 
+    fn clear_in_flight_state(&mut self) {
+        self.sync_state.clear_pending();
+        self.sync_state.qrinfo_retry_count = 0;
+        self.sync_state.chainlock_retry_after = None;
+    }
+
     async fn handle_message(
         &mut self,
         msg: Message,

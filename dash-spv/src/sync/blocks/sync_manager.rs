@@ -1,6 +1,7 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::{BlockHeaderStorage, BlockStorage};
+use crate::sync::blocks::pipeline::BlocksPipeline;
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     BlocksManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -45,8 +46,8 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         Ok(vec![])
     }
 
-    fn stop_sync(&mut self) {
-        self.progress.set_state(SyncState::WaitingForConnections);
+    fn clear_in_flight_state(&mut self) {
+        self.pipeline = BlocksPipeline::new();
         self.filters_sync_complete = false;
     }
 

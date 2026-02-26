@@ -57,7 +57,7 @@ pub struct FiltersManager<
     /// Pipeline for downloading filters.
     pub(super) filter_pipeline: FiltersPipeline,
     /// Completed batches waiting for verification and storage.
-    pending_batches: BTreeSet<FiltersBatch>,
+    pub(super) pending_batches: BTreeSet<FiltersBatch>,
     /// Next batch start height to store (for filter verification/storage).
     next_batch_to_store: u32,
 
@@ -70,7 +70,7 @@ pub struct FiltersManager<
     /// Maps block_hash -> (height, batch_start) for batch association.
     pub(super) blocks_remaining: BTreeMap<BlockHash, (u32, u32)>,
     /// Block hashes that have been matched and queued for download.
-    filters_matched: HashSet<BlockHash>,
+    pub(super) filters_matched: HashSet<BlockHash>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -117,16 +117,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             && self.filters_matched.is_empty()
             && self.pending_batches.is_empty()
             && self.filter_pipeline.is_idle()
-    }
-
-    /// Clear all in-flight processing state. Called on peer disconnect when
-    /// in-flight filter batches and block tracking become invalid.
-    pub(super) fn clear_in_flight_state(&mut self) {
-        self.active_batches.clear();
-        self.blocks_remaining.clear();
-        self.filters_matched.clear();
-        self.pending_batches.clear();
-        self.filter_pipeline = FiltersPipeline::new();
     }
 
     async fn load_filters(

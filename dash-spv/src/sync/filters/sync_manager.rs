@@ -1,6 +1,7 @@
 use crate::error::{SyncError, SyncResult};
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
+use crate::sync::filters::pipeline::FiltersPipeline;
 use crate::sync::progress::ProgressPercentage;
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
@@ -38,9 +39,12 @@ impl<
         &[MessageType::CFilter]
     }
 
-    fn stop_sync(&mut self) {
-        self.set_state(SyncState::WaitingForConnections);
-        self.clear_in_flight_state();
+    fn clear_in_flight_state(&mut self) {
+        self.active_batches.clear();
+        self.blocks_remaining.clear();
+        self.filters_matched.clear();
+        self.pending_batches.clear();
+        self.filter_pipeline = FiltersPipeline::new();
     }
 
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {

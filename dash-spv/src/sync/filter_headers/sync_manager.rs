@@ -1,6 +1,7 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage};
+use crate::sync::filter_headers::pipeline::FilterHeadersPipeline;
 use crate::sync::progress::ProgressPercentage;
 use crate::sync::{
     FilterHeadersManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -28,6 +29,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
         &[MessageType::CFHeaders]
+    }
+
+    fn clear_in_flight_state(&mut self) {
+        self.pipeline = FilterHeadersPipeline::default();
+        self.checkpoint_start_height = None;
     }
 
     async fn handle_message(

@@ -115,7 +115,12 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// Called when the network manager loses its peers.
     fn stop_sync(&mut self) {
         self.set_state(SyncState::WaitingForConnections);
+        self.clear_in_flight_state();
     }
+
+    /// Clear all in-flight requests, pipelines, and retry state.
+    /// Called on disconnect when pending network requests become invalid.
+    fn clear_in_flight_state(&mut self);
 
     /// Handle an incoming network message.
     ///
@@ -361,6 +366,8 @@ mod tests {
         fn wanted_message_types(&self) -> &'static [MessageType] {
             &[]
         }
+
+        fn clear_in_flight_state(&mut self) {}
 
         async fn handle_message(
             &mut self,

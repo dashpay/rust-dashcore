@@ -41,7 +41,7 @@ pub struct InstantLockEntry {
 
 /// Pending InstantLock awaiting validation with retry tracking.
 #[derive(Debug, Clone)]
-struct PendingInstantLock {
+pub(super) struct PendingInstantLock {
     /// The InstantLock data.
     instant_lock: InstantLock,
     /// Number of validation retry attempts.
@@ -63,7 +63,7 @@ pub struct InstantSendManager {
     /// InstantLocks indexed by txid.
     instantlocks: HashMap<Txid, InstantLockEntry>,
     /// Pending InstantLocks awaiting validation with retry tracking.
-    pending_instantlocks: Vec<PendingInstantLock>,
+    pub(super) pending_instantlocks: Vec<PendingInstantLock>,
 }
 
 impl InstantSendManager {

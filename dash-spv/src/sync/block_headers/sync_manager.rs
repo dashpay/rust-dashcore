@@ -1,6 +1,7 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
+use crate::sync::block_headers::pipeline::HeadersPipeline;
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     BlockHeadersManager, ManagerIdentifier, ProgressPercentage, SyncEvent, SyncManager,
@@ -34,6 +35,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
         &[MessageType::Headers, MessageType::Inv]
+    }
+
+    fn clear_in_flight_state(&mut self) {
+        let checkpoint_manager = self.pipeline.checkpoint_manager().clone();
+        self.pipeline = HeadersPipeline::new(checkpoint_manager);
+        self.pending_announcements.clear();
     }
 
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {

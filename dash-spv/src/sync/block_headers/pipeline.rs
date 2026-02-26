@@ -52,6 +52,11 @@ impl HeadersPipeline {
         }
     }
 
+    /// Get a reference to the checkpoint manager.
+    pub fn checkpoint_manager(&self) -> &Arc<CheckpointManager> {
+        &self.checkpoint_manager
+    }
+
     /// Initialize the pipeline for downloading from current_height to target_height.
     pub fn init(&mut self, current_height: u32, current_hash: BlockHash, target_height: u32) {
         self.segments.clear();

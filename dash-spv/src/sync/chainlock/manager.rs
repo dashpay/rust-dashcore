@@ -41,7 +41,7 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// ChainLock hashes that have been requested (to avoid duplicate requests).
     pub(super) requested_chainlocks: HashSet<ChainLockHash>,
     /// Whether masternode sync is complete and we can validate signatures.
-    masternode_ready: bool,
+    pub(super) masternode_ready: bool,
 }
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {

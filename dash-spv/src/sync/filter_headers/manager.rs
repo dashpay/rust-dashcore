@@ -36,7 +36,7 @@ pub struct FilterHeadersManager<H: BlockHeaderStorage, FH: FilterHeaderStorage> 
     /// Pipeline for downloading filter headers.
     pub(super) pipeline: FilterHeadersPipeline,
     /// Checkpoint start height - set when syncing from checkpoint to store prev header once.
-    checkpoint_start_height: Option<u32>,
+    pub(super) checkpoint_start_height: Option<u32>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH> {
