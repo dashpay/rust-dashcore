@@ -33,8 +33,6 @@ const BLOCKS_PER_REQUEST: usize = 8;
 pub(super) struct BlocksPipeline {
     /// Core download coordinator (handles pending, in-flight, timeouts).
     coordinator: DownloadCoordinator<BlockHash>,
-    /// Number of completed block downloads.
-    completed_count: u32,
     /// Heights queued or in-flight (waiting for download).
     pending_heights: BTreeSet<u32>,
     /// Downloaded blocks ready to process (height -> Block).
@@ -47,7 +45,6 @@ impl std::fmt::Debug for BlocksPipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlocksPipeline")
             .field("coordinator", &self.coordinator)
-            .field("completed_count", &self.completed_count)
             .field("pending_heights", &self.pending_heights.len())
             .field("downloaded", &self.downloaded.len())
             .finish()
@@ -70,7 +67,6 @@ impl BlocksPipeline {
                     .with_timeout(BLOCK_TIMEOUT)
                     .with_max_retries(BLOCK_MAX_RETRIES),
             ),
-            completed_count: 0,
             pending_heights: BTreeSet::new(),
             downloaded: BTreeMap::new(),
             hash_to_height: HashMap::new(),
@@ -145,14 +141,8 @@ impl BlocksPipeline {
         if let Some(height) = self.hash_to_height.remove(&hash) {
             self.pending_heights.remove(&height);
             self.downloaded.insert(height, block.clone());
-            self.completed_count += 1;
-            true
-        } else {
-            // Block was tracked by coordinator but not by height mapping.
-            // This can happen if queue() was used instead of queue_with_heights().
-            self.completed_count += 1;
-            true
         }
+        true
     }
 
     /// Take the next block that's safe to process in height order.
@@ -227,7 +217,6 @@ mod tests {
         let pipeline = BlocksPipeline::new();
         assert_eq!(pipeline.coordinator.pending_count(), 0);
         assert_eq!(pipeline.coordinator.active_count(), 0);
-        assert_eq!(pipeline.completed_count, 0);
         assert!(pipeline.is_complete());
     }
 
@@ -278,7 +267,6 @@ mod tests {
         // Receive block
         assert!(pipeline.receive_block(&block));
         assert_eq!(pipeline.coordinator.active_count(), 0);
-        assert_eq!(pipeline.completed_count, 1);
         assert_eq!(pipeline.downloaded.len(), 1);
         assert!(pipeline.pending_heights.is_empty());
         assert_eq!(pipeline.downloaded.get(&100).unwrap().block_hash(), hash);
@@ -290,7 +278,6 @@ mod tests {
         let block = make_test_block(1);
 
         assert!(!pipeline.receive_block(&block));
-        assert_eq!(pipeline.completed_count, 0);
         assert!(pipeline.downloaded.is_empty());
     }
 
@@ -323,7 +310,6 @@ mod tests {
                     .with_max_concurrent(MAX_CONCURRENT_BLOCK_DOWNLOADS)
                     .with_timeout(Duration::from_millis(10)),
             ),
-            completed_count: 0,
             pending_heights: BTreeSet::new(),
             downloaded: BTreeMap::new(),
             hash_to_height: HashMap::new(),
@@ -453,7 +439,6 @@ mod tests {
                     .with_timeout(Duration::from_millis(1))
                     .with_max_retries(2),
             ),
-            completed_count: 0,
             pending_heights: BTreeSet::new(),
             downloaded: BTreeMap::new(),
             hash_to_height: HashMap::new(),
@@ -505,13 +490,11 @@ mod tests {
         // First receive
         let result = pipeline.receive_block(&block);
         assert!(result);
-        assert_eq!(pipeline.completed_count, 1);
         assert_eq!(pipeline.downloaded.len(), 1);
 
         // Duplicate receive (not tracked anymore since already completed)
         let result = pipeline.receive_block(&block);
         assert!(!result);
-        assert_eq!(pipeline.completed_count, 1);
         assert_eq!(pipeline.downloaded.len(), 1);
     }
 }
