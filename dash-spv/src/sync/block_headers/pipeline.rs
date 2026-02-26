@@ -58,22 +58,17 @@ impl HeadersPipeline {
         self.next_to_store = 0;
         self.initialized = true;
 
-        // Get checkpoint heights and find which ones are relevant
-        let checkpoint_heights = self.checkpoint_manager.checkpoint_heights();
+        let checkpoints_needed =
+            self.checkpoint_manager.checkpoints_between(current_height, target_height);
 
         // Find checkpoints between current_height and target_height
-        let mut boundaries: Vec<(u32, BlockHash)> = Vec::new();
+        let mut boundaries = Vec::new();
 
         // Start from current position
         boundaries.push((current_height, current_hash));
 
-        // Add checkpoints that are above current_height
-        for &height in checkpoint_heights {
-            if height > current_height && height <= target_height {
-                if let Some(cp) = self.checkpoint_manager.get_checkpoint(height) {
-                    boundaries.push((height, cp.block_hash));
-                }
-            }
+        for checkpoint in checkpoints_needed {
+            boundaries.push((checkpoint.height(), *checkpoint.hash()));
         }
 
         // Sort by height
@@ -298,20 +293,10 @@ impl HeadersPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints};
     use tokio::sync::mpsc::unbounded_channel;
 
     use crate::network::{NetworkRequest, RequestSender};
     use crate::sync::block_headers::segment_state::SegmentState;
-
-    fn create_test_checkpoint_manager(is_testnet: bool) -> Arc<CheckpointManager> {
-        let checkpoints = if is_testnet {
-            testnet_checkpoints()
-        } else {
-            mainnet_checkpoints()
-        };
-        Arc::new(CheckpointManager::new(checkpoints))
-    }
 
     fn create_test_request_sender(
     ) -> (RequestSender, tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>) {
@@ -321,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_pipeline_new() {
-        let cm = create_test_checkpoint_manager(true);
+        let cm = Arc::new(CheckpointManager::new(dashcore::Network::Testnet));
         let pipeline = HeadersPipeline::new(cm);
 
         assert!(!pipeline.is_initialized());
@@ -330,12 +315,12 @@ mod tests {
 
     #[test]
     fn test_pipeline_init_testnet() {
-        let cm = create_test_checkpoint_manager(true);
+        let cm = Arc::new(CheckpointManager::new(dashcore::Network::Testnet));
         let mut pipeline = HeadersPipeline::new(cm.clone());
 
         // Get genesis hash for testnet
-        let genesis = cm.get_checkpoint(0).unwrap();
-        pipeline.init(0, genesis.block_hash, 1_200_000);
+        let cp = cm.last_checkpoint_before_height(0);
+        pipeline.init(cp.height(), *cp.hash(), 1_200_000);
 
         assert!(pipeline.is_initialized());
         // Should have segments: 0->500k, 500k->800k, 800k->1.1M, 1.1M->tip
@@ -344,12 +329,12 @@ mod tests {
 
     #[test]
     fn test_pipeline_init_from_middle() {
-        let cm = create_test_checkpoint_manager(true);
+        let cm = Arc::new(CheckpointManager::new(dashcore::Network::Testnet));
         let mut pipeline = HeadersPipeline::new(cm.clone());
 
         // Start from checkpoint 500k
-        let cp_500k = cm.get_checkpoint(500_000).unwrap();
-        pipeline.init(500_000, cp_500k.block_hash, 1_200_000);
+        let cp = cm.last_checkpoint_before_height(500_000);
+        pipeline.init(cp.height(), *cp.hash(), 1_200_000);
 
         // Should have fewer segments since we're starting from 500k
         assert!(pipeline.is_initialized());
@@ -359,11 +344,11 @@ mod tests {
 
     #[test]
     fn test_pipeline_send_pending() {
-        let cm = create_test_checkpoint_manager(true);
+        let cm = Arc::new(CheckpointManager::new(dashcore::Network::Testnet));
         let mut pipeline = HeadersPipeline::new(cm.clone());
 
-        let genesis = cm.get_checkpoint(0).unwrap();
-        pipeline.init(0, genesis.block_hash, 1_200_000);
+        let cp = cm.last_checkpoint_before_height(0);
+        pipeline.init(cp.height(), *cp.hash(), 1_200_000);
 
         let (sender, mut rx) = create_test_request_sender();
 
@@ -382,22 +367,22 @@ mod tests {
 
     #[test]
     fn test_pipeline_is_complete_initially() {
-        let cm = create_test_checkpoint_manager(true);
+        let cm = Arc::new(CheckpointManager::new(dashcore::Network::Testnet));
         let mut pipeline = HeadersPipeline::new(cm.clone());
 
-        let genesis = cm.get_checkpoint(0).unwrap();
-        pipeline.init(0, genesis.block_hash, 1_200_000);
+        let cp = cm.last_checkpoint_before_height(0);
+        pipeline.init(cp.height(), *cp.hash(), 1_200_000);
 
         assert!(!pipeline.is_complete());
     }
 
     #[test]
     fn test_take_ready_to_store_empty() {
-        let cm = create_test_checkpoint_manager(true);
+        let cm = Arc::new(CheckpointManager::new(dashcore::Network::Testnet));
         let mut pipeline = HeadersPipeline::new(cm.clone());
 
-        let genesis = cm.get_checkpoint(0).unwrap();
-        pipeline.init(0, genesis.block_hash, 1_200_000);
+        let cp = cm.last_checkpoint_before_height(0);
+        pipeline.init(cp.height(), *cp.hash(), 1_200_000);
 
         let ready = pipeline.take_ready_to_store();
         assert!(ready.is_empty());
@@ -415,7 +400,7 @@ mod tests {
         tip_seg.current_height = 1000;
         tip_seg.current_tip_hash = tip_hash;
 
-        let cm = create_test_checkpoint_manager(true);
+        let cm = Arc::new(CheckpointManager::new(dashcore::Network::Testnet));
         let mut pipeline = HeadersPipeline::new(cm);
         pipeline.initialized = true;
         pipeline.segments = vec![tip_seg];
@@ -449,7 +434,7 @@ mod tests {
         let segment_1 = SegmentState::new(1, 100, shared_hash, Some(200), None);
 
         // Build a pipeline with these two segments
-        let checkpoint_manager = create_test_checkpoint_manager(true);
+        let checkpoint_manager = Arc::new(CheckpointManager::new(dashcore::Network::Testnet));
         let mut pipeline = HeadersPipeline::new(checkpoint_manager);
         pipeline.initialized = true;
         pipeline.segments = vec![segment_0, segment_1];

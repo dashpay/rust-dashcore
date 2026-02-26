@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use super::{ClientConfig, DashSpvClient};
-use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
+use crate::chain::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
@@ -28,7 +28,6 @@ use crate::sync::{
 use crate::types::MempoolState;
 use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
-use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
@@ -61,12 +60,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             W,
         > = Managers::default();
 
-        let checkpoints = match config.network {
-            dashcore::Network::Dash => mainnet_checkpoints(),
-            dashcore::Network::Testnet => testnet_checkpoints(),
-            _ => Vec::new(),
-        };
-        let checkpoint_manager = Arc::new(CheckpointManager::new(checkpoints));
+        let checkpoint_manager = Arc::new(CheckpointManager::new(config.network));
         managers.block_headers =
             Some(BlockHeadersManager::new(storage.block_headers(), checkpoint_manager));
 
@@ -78,6 +72,14 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 storage.block_headers(),
                 storage.filter_headers(),
                 storage.filters(),
+            ));
+            let masternode_list_engine = masternode_engine
+                .clone()
+                .expect("Masternode list engine must exist if masternodes are enabled");
+            managers.chainlock = Some(ChainLockManager::new(
+                storage.block_headers(),
+                storage.metadata(),
+                masternode_list_engine.clone(),
             ));
             managers.blocks =
                 Some(BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()));
@@ -248,73 +250,19 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Check if we should use a checkpoint instead of genesis
         if let Some(start_height) = config.start_from_height {
-            // Get checkpoints for this network
-            let checkpoints = match config.network {
-                dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
-                dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
-                _ => vec![],
-            };
-
-            // Create checkpoint manager
-            let checkpoint_manager = crate::chain::checkpoints::CheckpointManager::new(checkpoints);
+            let checkpoint_manager = CheckpointManager::new(self.network().await);
 
             // Find the best checkpoint at or before the requested height
-            if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)
+            let cp = checkpoint_manager.last_checkpoint_before_height(start_height);
+
             {
-                if checkpoint.height > 0 {
-                    tracing::info!(
-                        "🚀 Starting sync from checkpoint at height {} instead of genesis (requested start height: {})",
-                        checkpoint.height,
-                        start_height
-                    );
-
-                    // Build header from checkpoint
-                    use dashcore::{
-                        block::{Header as BlockHeader, Version},
-                        pow::CompactTarget,
-                    };
-
-                    let checkpoint_header = BlockHeader {
-                        version: Version::from_consensus(536870912), // Version 0x20000000 is common for modern blocks
-                        prev_blockhash: checkpoint.prev_blockhash,
-                        merkle_root: checkpoint
-                            .merkle_root
-                            .map(|h| dashcore::TxMerkleNode::from_byte_array(*h.as_byte_array()))
-                            .unwrap_or_else(dashcore::TxMerkleNode::all_zeros),
-                        time: checkpoint.timestamp,
-                        bits: CompactTarget::from_consensus(
-                            checkpoint.target.to_compact_lossy().to_consensus(),
-                        ),
-                        nonce: checkpoint.nonce,
-                    };
-
-                    // Verify hash matches
-                    let calculated_hash = checkpoint_header.block_hash();
-                    if calculated_hash != checkpoint.block_hash {
-                        tracing::warn!(
-                            "Checkpoint header hash mismatch at height {}: expected {}, calculated {}",
-                            checkpoint.height,
-                            checkpoint.block_hash,
-                            calculated_hash
-                        );
-                    } else {
-                        {
-                            let mut storage = self.storage.lock().await;
-                            storage
-                                .store_headers_at_height(&[checkpoint_header], checkpoint.height)
-                                .await?;
-                        }
-
-                        tracing::info!(
-                            "✅ Initialized from checkpoint at height {}, skipping {} headers",
-                            checkpoint.height,
-                            checkpoint.height
-                        );
-
-                        return Ok(());
-                    }
-                }
+                let mut storage = self.storage.lock().await;
+                storage.store_headers_at_height(&[*cp.header()], cp.height()).await?;
             }
+
+            tracing::info!("🚀 Starting sync from checkpoint");
+
+            return Ok(());
         }
 
         // Get the genesis block hash for this network

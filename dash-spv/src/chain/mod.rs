@@ -8,11 +8,8 @@
 
 pub mod chain_tip;
 pub mod chain_work;
-pub mod checkpoints;
-
-#[cfg(test)]
-mod checkpoint_test;
+mod checkpoints;
 
 pub use chain_tip::{ChainTip, ChainTipManager};
 pub use chain_work::ChainWork;
-pub use checkpoints::{Checkpoint, CheckpointManager};
+pub(crate) use checkpoints::{Checkpoint, CheckpointManager};
