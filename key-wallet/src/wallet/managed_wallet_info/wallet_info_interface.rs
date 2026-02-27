@@ -6,17 +6,13 @@ use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::ManagedAccountTrait;
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::WalletTransactionChecker;
-use crate::wallet::managed_wallet_info::fee::FeeRate;
-use crate::wallet::managed_wallet_info::transaction_building::{
-    AccountTypePreference, TransactionError,
-};
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address as DashAddress, Address, Transaction, Txid};
+use dashcore::{Address as DashAddress, Transaction, Txid};
 
 /// Trait that wallet info types must implement to work with WalletManager
 pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccountOperations {
@@ -87,18 +83,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Get immature transactions
     fn immature_transactions(&self) -> Vec<Transaction>;
-
-    /// Create an unsigned payment transaction
-    #[allow(clippy::too_many_arguments)]
-    fn create_unsigned_payment_transaction(
-        &mut self,
-        wallet: &Wallet,
-        account_index: u32,
-        account_type_pref: Option<AccountTypePreference>,
-        recipients: Vec<(Address, u64)>,
-        fee_rate: FeeRate,
-        current_block_height: u32,
-    ) -> Result<Transaction, TransactionError>;
 
     /// Return the last fully processed height of the wallet.
     fn synced_height(&self) -> CoreBlockHeight;
@@ -237,26 +221,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
             }
         }
         transactions
-    }
-
-    fn create_unsigned_payment_transaction(
-        &mut self,
-        wallet: &Wallet,
-        account_index: u32,
-        account_type_pref: Option<AccountTypePreference>,
-        recipients: Vec<(Address, u64)>,
-        fee_rate: FeeRate,
-        current_block_height: u32,
-    ) -> Result<Transaction, TransactionError> {
-        self.create_unsigned_payment_transaction_internal(
-            wallet,
-            self.network,
-            account_index,
-            account_type_pref,
-            recipients,
-            fee_rate,
-            current_block_height,
-        )
     }
 
     fn update_synced_height(&mut self, current_height: u32) {

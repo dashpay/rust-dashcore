@@ -6,7 +6,6 @@
 
 mod matching;
 mod process_block;
-mod transaction_building;
 
 pub use crate::wallet_manager::matching::{check_compact_filters_for_addresses, FilterMatchKey};
 use alloc::collections::BTreeMap;
