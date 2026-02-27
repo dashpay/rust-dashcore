@@ -114,7 +114,6 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 
     unsafe {
         use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
-        use key_wallet::wallet::managed_wallet_info::fee::FeeLevel;
         use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
 
         let manager_ref = &*manager;
@@ -246,7 +245,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 
             tx_builder = tx_builder
                 .set_change_address(change_address)
-                .set_fee_level(FeeLevel::Custom(FeeRate::new(fee_per_kb)));
+                .set_fee_rate(FeeRate::new(fee_per_kb));
 
             // Get available UTXOs (collect owned UTXOs, not references)
             let utxos: Vec<key_wallet::Utxo> = managed_account.utxos.values().cloned().collect();

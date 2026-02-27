@@ -92,32 +92,6 @@ impl FeeRate {
     }
 }
 
-/// Fee estimation levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum FeeLevel {
-    /// Economy - slower confirmation
-    Economy,
-    /// Normal - standard confirmation
-    Normal,
-    /// Priority - faster confirmation
-    Priority,
-    /// Custom fee rate
-    Custom(FeeRate),
-}
-
-impl FeeLevel {
-    /// Get the fee rate for this level
-    pub fn fee_rate(&self) -> FeeRate {
-        match self {
-            Self::Economy => FeeRate::economy(),
-            Self::Normal => FeeRate::normal(),
-            Self::Priority => FeeRate::priority(),
-            Self::Custom(rate) => *rate,
-        }
-    }
-}
-
 /// Calculate the size of a transaction
 pub fn estimate_tx_size(num_inputs: usize, num_outputs: usize, has_change: bool) -> usize {
     // Base size: version (2) + type (2) + locktime (4) + varint counts
@@ -169,16 +143,6 @@ mod tests {
         let rate = FeeRate::from_sat_per_byte(5);
         assert_eq!(rate.as_sat_per_kb(), 5000);
         assert_eq!(rate.calculate_fee(1000), 5000);
-    }
-
-    #[test]
-    fn test_fee_levels() {
-        assert_eq!(FeeLevel::Economy.fee_rate().as_sat_per_kb(), 500);
-        assert_eq!(FeeLevel::Normal.fee_rate().as_sat_per_kb(), 1000);
-        assert_eq!(FeeLevel::Priority.fee_rate().as_sat_per_kb(), 2000);
-
-        let custom = FeeLevel::Custom(FeeRate::new(3000));
-        assert_eq!(custom.fee_rate().as_sat_per_kb(), 3000);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use super::{WalletError, WalletId, WalletManager};
 use dashcore::Transaction;
-use key_wallet::wallet::managed_wallet_info::fee::FeeLevel;
+use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
 use key_wallet::wallet::managed_wallet_info::transaction_building::{
     AccountTypePreference, TransactionError,
 };
@@ -21,7 +21,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         account_index: u32,
         account_type_pref: Option<AccountTypePreference>,
         recipients: Vec<(Address, u64)>,
-        fee_level: FeeLevel,
+        fee_rate: FeeRate,
         current_block_height: u32,
     ) -> Result<Transaction, WalletError> {
         // Get the wallet
@@ -38,7 +38,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 account_index,
                 account_type_pref,
                 recipients,
-                fee_level,
+                fee_rate,
                 current_block_height,
             )
             .map_err(|e| match e {

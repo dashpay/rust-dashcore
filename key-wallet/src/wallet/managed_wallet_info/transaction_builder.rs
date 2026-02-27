@@ -27,7 +27,7 @@ use secp256k1::{Message, Secp256k1, SecretKey};
 use std::net::SocketAddr;
 
 use crate::wallet::managed_wallet_info::coin_selection::{CoinSelector, SelectionStrategy};
-use crate::wallet::managed_wallet_info::fee::FeeLevel;
+use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::Utxo;
 
 /// Calculate varint size for a given number
@@ -52,8 +52,8 @@ pub struct TransactionBuilder {
     outputs: Vec<TxOut>,
     /// Change address
     change_address: Option<Address>,
-    /// Fee rate or level
-    fee_level: FeeLevel,
+    /// Fee rate (satoshis per kilobyte)
+    fee_rate: FeeRate,
     /// Lock time
     lock_time: u32,
     /// Transaction version
@@ -75,7 +75,7 @@ impl TransactionBuilder {
             inputs: Vec::new(),
             outputs: Vec::new(),
             change_address: None,
-            fee_level: FeeLevel::Normal,
+            fee_rate: FeeRate::normal(),
             lock_time: 0,
             version: 2, // Default to version 2 for Dash
             special_payload: None,
@@ -120,7 +120,7 @@ impl TransactionBuilder {
         let base_size = self.calculate_base_size();
         let input_size = 148; // Size per P2PKH input
 
-        let fee_rate = self.fee_level.fee_rate();
+        let fee_rate = self.fee_rate;
 
         // Use the CoinSelector with the proper size context
         let selector = CoinSelector::new(strategy);
@@ -193,9 +193,9 @@ impl TransactionBuilder {
         self
     }
 
-    /// Set the fee level
-    pub fn set_fee_level(mut self, level: FeeLevel) -> Self {
-        self.fee_level = level;
+    /// Set the fee rate
+    pub fn set_fee_rate(mut self, fee_rate: FeeRate) -> Self {
+        self.fee_rate = fee_rate;
         self
     }
 
@@ -336,7 +336,7 @@ impl TransactionBuilder {
 
     /// Calculates the transaction fee for the current number of outputs and inputs
     pub fn calculate_fee(&self) -> u64 {
-        let fee_rate = self.fee_level.fee_rate();
+        let fee_rate = self.fee_rate;
         let estimated_size = self.estimate_transaction_size(self.inputs.len(), self.outputs.len());
         fee_rate.calculate_fee(estimated_size)
     }
@@ -348,7 +348,7 @@ impl TransactionBuilder {
     /// Basically we are calculating the fee with that extra change output before
     /// adding it
     pub fn calculate_fee_with_extra_output(&self) -> u64 {
-        let fee_rate = self.fee_level.fee_rate();
+        let fee_rate = self.fee_rate;
         let estimated_size =
             self.estimate_transaction_size(self.inputs.len(), self.outputs.len() + 1);
         fee_rate.calculate_fee(estimated_size)
@@ -932,7 +932,7 @@ mod tests {
         let change_address = Address::dummy(Network::Testnet, 0);
 
         let builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)
             .unwrap()
@@ -966,7 +966,7 @@ mod tests {
         let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal) // 1 duff per byte
+            .set_fee_rate(FeeRate::normal()) // 1 duff per byte
             .set_change_address(change_address.clone())
             .add_inputs(utxos.into_iter().map(|u| (u, None)).collect())
             .add_output(&recipient_address, 500000)
@@ -993,7 +993,7 @@ mod tests {
         let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address.clone())
             .add_inputs(utxos.into_iter().map(|u| (u, None)).collect())
             .add_output(&recipient_address, 150000)
@@ -1088,7 +1088,7 @@ mod tests {
         let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address)
             .add_input(utxo, None)
             // Add outputs in non-sorted order
@@ -1158,7 +1158,7 @@ mod tests {
         let change = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change)
             // Add inputs in non-sorted order
             .add_input(utxo1.clone(), None)
@@ -1224,7 +1224,7 @@ mod tests {
         };
 
         let result = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
             .add_output(&recipient_address, 50000)

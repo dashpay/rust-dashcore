@@ -6,7 +6,7 @@ use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::ManagedAccountTrait;
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::WalletTransactionChecker;
-use crate::wallet::managed_wallet_info::fee::FeeLevel;
+use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_building::{
     AccountTypePreference, TransactionError,
 };
@@ -96,7 +96,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         account_index: u32,
         account_type_pref: Option<AccountTypePreference>,
         recipients: Vec<(Address, u64)>,
-        fee_level: FeeLevel,
+        fee_rate: FeeRate,
         current_block_height: u32,
     ) -> Result<Transaction, TransactionError>;
 
@@ -245,7 +245,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         account_index: u32,
         account_type_pref: Option<AccountTypePreference>,
         recipients: Vec<(Address, u64)>,
-        fee_level: FeeLevel,
+        fee_rate: FeeRate,
         current_block_height: u32,
     ) -> Result<Transaction, TransactionError> {
         self.create_unsigned_payment_transaction_internal(
@@ -254,7 +254,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
             account_index,
             account_type_pref,
             recipients,
-            fee_level,
+            fee_rate,
             current_block_height,
         )
     }

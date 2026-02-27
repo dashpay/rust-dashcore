@@ -1,9 +1,9 @@
 //! Transaction building functionality for managed wallets
 
 use super::coin_selection::{SelectionError, SelectionStrategy};
-use super::fee::FeeLevel;
 use super::transaction_builder::{BuilderError, TransactionBuilder};
 use super::ManagedWalletInfo;
+use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::{Address, Network, Wallet};
 use alloc::vec::Vec;
 use dashcore::Transaction;
@@ -46,7 +46,7 @@ impl ManagedWalletInfo {
         account_index: u32,
         account_type_pref: Option<AccountTypePreference>,
         recipients: Vec<(Address, u64)>,
-        fee_level: FeeLevel,
+        fee_rate: FeeRate,
         current_block_height: u32,
     ) -> Result<Transaction, TransactionError> {
         // Validate network consistency
@@ -131,7 +131,7 @@ impl ManagedWalletInfo {
 
         // Use TransactionBuilder to create the transaction
         let mut builder = TransactionBuilder::new()
-            .set_fee_level(fee_level)
+            .set_fee_rate(fee_rate)
             .set_change_address(change_address.clone());
 
         // Add outputs for recipients first
@@ -203,7 +203,7 @@ mod tests {
             .unwrap();
 
         let mut builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address.clone());
 
         // Add output
@@ -307,7 +307,7 @@ mod tests {
             .unwrap();
 
         let mut builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)
             .unwrap()
@@ -342,7 +342,7 @@ mod tests {
             .unwrap();
 
         let mut builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal) // 1 duff per byte
+            .set_fee_rate(FeeRate::normal()) // 1 duff per byte
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 500000)
             .unwrap()
@@ -376,7 +376,7 @@ mod tests {
             .unwrap();
 
         let result = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 1000000) // More than available
             .unwrap()
@@ -400,7 +400,7 @@ mod tests {
             .unwrap();
 
         let mut builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)
             .unwrap()
