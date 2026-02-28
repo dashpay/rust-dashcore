@@ -8,7 +8,9 @@ use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
 
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::DashSpvClient;
+use tracing::dispatcher::{get_default, set_default};
 
+use std::mem::{forget, take};
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 use tokio::sync::{broadcast, watch};
@@ -141,6 +143,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     if config.worker_threads > 0 {
         builder.worker_threads(config.worker_threads as usize);
     }
+
+    // Propagate the caller's tracing subscriber to worker threads so that
+    // thread-local subscribers (used by tests for per-test log isolation)
+    // capture logs from spawned async tasks.
+    let dispatch = get_default(|d| d.clone());
+    builder.on_thread_start(move || {
+        let guard = set_default(&dispatch);
+        forget(guard);
+    });
     let runtime = match builder.build() {
         Ok(rt) => Arc::new(rt),
         Err(e) => {
@@ -196,7 +207,7 @@ impl FFIDashSpvClient {
     fn cancel_active_tasks(&self) {
         let tasks = {
             let mut guard = self.active_tasks.lock().unwrap();
-            std::mem::take(&mut *guard)
+            take(&mut *guard)
         };
 
         for task in &tasks {

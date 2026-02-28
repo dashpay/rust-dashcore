@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local};
 use tracing::level_filters::LevelFilter;
+use tracing::subscriber::{set_default, DefaultGuard};
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -19,9 +20,11 @@ const ACTIVE_LOG_NAME: &str = "run.log";
 
 /// Guard that must be kept alive to ensure log flushing on shutdown.
 /// When this guard is dropped, all buffered log entries will be flushed.
+/// For thread-local logging (tests), also holds the subscriber scope guard.
 #[derive(Debug)]
 pub struct LoggingGuard {
     _worker_guard: Option<WorkerGuard>,
+    _default_guard: Option<DefaultGuard>,
 }
 
 /// Configuration for logging output.
@@ -33,6 +36,11 @@ pub struct LoggingConfig {
     pub console: bool,
     /// Optional file logging configuration.
     pub file: Option<LogFileConfig>,
+    /// Use a thread-local subscriber instead of the global one.
+    /// Allows multiple independent loggers in the same process (e.g. parallel tests).
+    /// Scoped to the calling thread by default. Worker threads need explicit dispatcher
+    /// propagation to participate.
+    pub thread_local: bool,
 }
 
 /// Configuration for log file output.
@@ -53,6 +61,7 @@ pub fn init_console_logging(level: LevelFilter) -> LoggingResult<LoggingGuard> {
         level: Some(level),
         console: true,
         file: None,
+        thread_local: false,
     })
 }
 
@@ -86,6 +95,7 @@ pub fn init_console_logging(level: LevelFilter) -> LoggingResult<LoggingGuard> {
 ///     level: Some(LevelFilter::INFO),
 ///     console: true,
 ///     file: None,
+///     thread_local: false,
 /// }).unwrap();
 ///
 /// // File logging only (CLI default)
@@ -96,6 +106,7 @@ pub fn init_console_logging(level: LevelFilter) -> LoggingResult<LoggingGuard> {
 ///         log_dir: PathBuf::from("/path/to/data/logs"),
 ///         max_files: 20,
 ///     }),
+///     thread_local: false,
 /// }).unwrap();
 /// ```
 pub fn init_logging(config: LoggingConfig) -> LoggingResult<LoggingGuard> {
@@ -103,6 +114,7 @@ pub fn init_logging(config: LoggingConfig) -> LoggingResult<LoggingGuard> {
     if !config.console && config.file.is_none() {
         return Ok(LoggingGuard {
             _worker_guard: None,
+            _default_guard: None,
         });
     }
 
@@ -131,15 +143,21 @@ pub fn init_logging(config: LoggingConfig) -> LoggingResult<LoggingGuard> {
         config.console.then(|| fmt::layer().with_target(true).with_thread_ids(false));
 
     // Combine layers and initialize
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(file_layer)
-        .with(console_layer)
-        .try_init()
-        .map_err(|e| LoggingError::SubscriberInit(e.to_string()))?;
+    let subscriber =
+        tracing_subscriber::registry().with(env_filter).with(file_layer).with(console_layer);
+
+    let default_guard = if config.thread_local {
+        // Thread-local subscriber — allows multiple independent loggers per process
+        Some(set_default(subscriber))
+    } else {
+        // Global subscriber — covers all threads, can only be set once
+        subscriber.try_init().map_err(|e| LoggingError::SubscriberInit(e.to_string()))?;
+        None
+    };
 
     Ok(LoggingGuard {
         _worker_guard: guard,
+        _default_guard: default_guard,
     })
 }
 
@@ -557,6 +575,7 @@ mod tests {
             level: Some(LevelFilter::INFO),
             console: false,
             file: None,
+            thread_local: false,
         });
 
         assert!(result.is_ok());
