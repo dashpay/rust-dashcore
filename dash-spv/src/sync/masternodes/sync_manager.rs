@@ -338,7 +338,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Track last processed block hash
                 let block_hash = qr_info.mn_list_diff_h.block_hash;
                 self.sync_state.known_block_hashes.insert(block_hash);
-                self.sync_state.last_qrinfo_block_hash = Some(block_hash);
+                self.sync_state.last_synced_block_hash = Some(block_hash);
 
                 self.progress.bump_last_activity();
 
@@ -410,8 +410,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 // Check if all responses received
                 if self.sync_state.mnlistdiff_pipeline.is_complete() {
-                    tracing::info!("All MnListDiff responses received");
-                    return self.verify_and_complete().await;
+                    return self.complete_pipeline().await;
                 }
             }
 
@@ -437,18 +436,28 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 self.progress.update_target_height(*tip_height);
             }
 
-            // If Synced but behind, trigger incremental update to catch up with new blocks
+            // If Synced but behind, update masternode list.
+            // QRInfo at cycle boundaries (rotating quorum composition changes),
+            // lightweight GetMnListDiff otherwise.
             if self.state() == SyncState::Synced
                 && self.progress.current_height() < self.progress.block_header_tip_height()
             {
-                tracing::debug!(
-                    "New headers stored (tip: {}), updating masternode list from {}",
-                    tip_height,
-                    self.progress.current_height()
-                );
-                self.sync_state.qrinfo_retry_count = 0;
-                self.sync_state.clear_pending();
-                return self.send_qrinfo_for_tip(requests).await;
+                if self.needs_qrinfo_update(*tip_height) {
+                    tracing::info!(
+                        "Cycle boundary crossed at tip {}, requesting QRInfo",
+                        tip_height,
+                    );
+                    self.sync_state.qrinfo_retry_count = 0;
+                    self.sync_state.clear_pending();
+                    return self.send_qrinfo_for_tip(requests).await;
+                } else if !self.sync_state.has_pending_requests() {
+                    tracing::debug!(
+                        "New headers stored (tip: {}), requesting incremental MnListDiff from {}",
+                        tip_height,
+                        self.progress.current_height()
+                    );
+                    return self.send_mnlistdiff_for_tip(requests).await;
+                }
             }
         }
 
@@ -555,8 +564,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
             // Check if complete after handling timeouts
             if self.sync_state.mnlistdiff_pipeline.is_complete() {
-                tracing::info!("MnListDiff pipeline complete");
-                return self.verify_and_complete().await;
+                return self.complete_pipeline().await;
             }
         }
 

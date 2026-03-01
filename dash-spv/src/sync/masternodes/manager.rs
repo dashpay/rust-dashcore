@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dashcore::network::constants::NetworkExt;
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use tokio::sync::RwLock;
 
@@ -17,7 +18,20 @@ use crate::network::RequestSender;
 use crate::storage::BlockHeaderStorage;
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::BlockHash;
+use dashcore_hashes::Hash;
 use std::collections::{BTreeSet, HashSet};
+
+/// What the MnListDiff pipeline is currently being used for.
+#[derive(Debug, Clone, Default)]
+pub(super) enum PipelineMode {
+    /// Post-QRInfo quorum validation diffs. Run full `verify_and_complete()` on completion.
+    #[default]
+    QuorumValidation,
+    /// Per-block incremental masternode list update. Skip quorum verification on completion.
+    Incremental {
+        target: BlockHash,
+    },
+}
 
 /// Sync state for masternode list synchronization.
 #[derive(Debug, Default)]
@@ -26,8 +40,8 @@ pub(super) struct MasternodeSyncState {
     pub(super) known_block_hashes: HashSet<BlockHash>,
     /// Heights where the engine has masternode lists (for chaining diffs).
     pub(super) known_mn_list_heights: BTreeSet<u32>,
-    /// Last successfully processed QRInfo block hash (for progressive sync).
-    pub(super) last_qrinfo_block_hash: Option<BlockHash>,
+    /// Last block hash we synced the masternode list to (base for both QRInfo and incremental diffs).
+    pub(super) last_synced_block_hash: Option<BlockHash>,
     /// Pipeline for MnListDiff requests.
     pub(super) mnlistdiff_pipeline: MnListDiffPipeline,
     /// Whether we are waiting for a QRInfo response.
@@ -39,6 +53,8 @@ pub(super) struct MasternodeSyncState {
     /// When to retry after a ChainLock unavailability error.
     /// The QRInfo response includes the current tip which may not have ChainLock yet.
     pub(super) chainlock_retry_after: Option<Instant>,
+    /// Controls pipeline completion behavior (quorum validation vs incremental update).
+    pipeline_mode: PipelineMode,
 }
 
 impl MasternodeSyncState {
@@ -54,6 +70,7 @@ impl MasternodeSyncState {
         self.mnlistdiff_pipeline.clear();
         self.waiting_for_qrinfo = false;
         self.qrinfo_wait_start = None;
+        self.pipeline_mode = PipelineMode::QuorumValidation;
     }
 
     fn start_waiting_for_qrinfo(&mut self) {
@@ -119,6 +136,47 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
     }
 
+    /// Check whether the tip crosses a rotating quorum cycle boundary relative to
+    /// our last synced height. Returns true when a full QRInfo is needed (first sync
+    /// or crossing an `isd_llmq_type` DKG interval boundary).
+    pub(super) fn needs_qrinfo_update(&self, tip_height: u32) -> bool {
+        let last = self.progress.current_height();
+        if last == 0 {
+            return true;
+        }
+        let interval = self.network.isd_llmq_type().params().dkg_params.interval;
+        tip_height / interval > last / interval
+    }
+
+    /// Send an incremental GetMnListDiff for the current tip.
+    pub(super) async fn send_mnlistdiff_for_tip(
+        &mut self,
+        requests: &RequestSender,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let storage = self.header_storage.read().await;
+        let tip = match storage.get_tip().await {
+            Some(tip) => tip,
+            None => return Ok(vec![]),
+        };
+        let tip_hash = *tip.hash();
+        drop(storage);
+
+        let base_hash = self
+            .sync_state
+            .last_synced_block_hash
+            .or_else(|| self.network.known_genesis_block_hash())
+            .unwrap_or_else(BlockHash::all_zeros);
+
+        self.sync_state.pipeline_mode = PipelineMode::Incremental {
+            target: tip_hash,
+        };
+        self.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base_hash, tip_hash)]);
+        self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+
+        tracing::debug!("Requesting incremental MnListDiff: {} -> {}", base_hash, tip_hash);
+        Ok(vec![])
+    }
+
     /// Send QRInfo request for the current tip.
     ///
     /// Called when BlockHeaderSyncComplete is received, ensuring we have all headers.
@@ -154,7 +212,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         // Add base hash
         let base_hash = self
             .sync_state
-            .last_qrinfo_block_hash
+            .last_synced_block_hash
             .or_else(|| self.network.known_genesis_block_hash());
         if let Some(hash) = base_hash {
             known_hashes.push(hash);
@@ -172,10 +230,39 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         Ok(vec![])
     }
 
-    /// Verify quorums and mark complete.
+    /// Handle pipeline completion by branching on the current pipeline mode.
     ///
-    /// For initial sync (state == Syncing), emits MasternodeStateUpdated and logs completion.
-    /// For incremental updates (state == Synced), updates quietly without events.
+    /// - `QuorumValidation`: run full quorum verification (post-QRInfo flow).
+    /// - `Incremental`: update progress and emit event without quorum verification.
+    pub(super) async fn complete_pipeline(&mut self) -> SyncResult<Vec<SyncEvent>> {
+        match &self.sync_state.pipeline_mode {
+            PipelineMode::QuorumValidation => {
+                tracing::info!("All MnListDiff responses received");
+                self.verify_and_complete().await
+            }
+            PipelineMode::Incremental {
+                target,
+            } => {
+                let target = *target;
+                self.sync_state.last_synced_block_hash = Some(target);
+                let engine = self.engine.read().await;
+                if let Some(&height) = engine.masternode_lists.keys().last() {
+                    drop(engine);
+                    self.progress.update_current_height(height);
+                    tracing::debug!("Incremental MnListDiff complete at height {}", height);
+                    return Ok(vec![SyncEvent::MasternodeStateUpdated {
+                        height,
+                    }]);
+                }
+                Ok(vec![])
+            }
+        }
+    }
+
+    /// Verify non-rotating quorums and finalize the post-QRInfo sync pipeline.
+    ///
+    /// Emits `MasternodeStateUpdated` on success. On initial sync, also transitions
+    /// state to `Synced`.
     pub(super) async fn verify_and_complete(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
         let is_initial_sync = self.state() == SyncState::Syncing;
@@ -268,5 +355,48 @@ mod tests {
         } else {
             panic!("Expected SyncManagerProgress::Masternodes");
         }
+    }
+
+    #[tokio::test]
+    async fn test_needs_qrinfo_when_never_synced() {
+        let manager = create_test_manager().await;
+        // current_height == 0 means we've never synced, always need QRInfo
+        assert!(manager.needs_qrinfo_update(1));
+        assert!(manager.needs_qrinfo_update(288));
+        assert!(manager.needs_qrinfo_update(1000));
+    }
+
+    #[tokio::test]
+    async fn test_needs_qrinfo_at_cycle_boundary() {
+        let mut manager = create_test_manager().await;
+        // isd_llmq_type for testnet is Llmqtype60_75 with interval 288
+        manager.progress.update_current_height(287);
+
+        // Tip at 288 crosses the cycle boundary (287/288 = 0, 288/288 = 1)
+        assert!(manager.needs_qrinfo_update(288));
+
+        // Multiple cycles ahead also triggers (100/288 = 0, 1000/288 = 3)
+        manager.progress.update_current_height(100);
+        assert!(manager.needs_qrinfo_update(1000));
+    }
+
+    #[tokio::test]
+    async fn test_skips_qrinfo_within_cycle() {
+        let mut manager = create_test_manager().await;
+        manager.progress.update_current_height(290);
+
+        // Tip within the same cycle (290/288 = 1, 300/288 = 1)
+        assert!(!manager.needs_qrinfo_update(300));
+        assert!(!manager.needs_qrinfo_update(575));
+    }
+
+    #[tokio::test]
+    async fn test_clear_pending_resets_pipeline_mode() {
+        let mut manager = create_test_manager().await;
+        manager.sync_state.pipeline_mode = PipelineMode::Incremental {
+            target: BlockHash::all_zeros(),
+        };
+        manager.sync_state.clear_pending();
+        assert!(matches!(manager.sync_state.pipeline_mode, PipelineMode::QuorumValidation));
     }
 }
