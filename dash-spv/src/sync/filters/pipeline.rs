@@ -29,9 +29,6 @@ const MAX_CONCURRENT_FILTER_BATCHES: usize = 20;
 /// Each batch requires 1000 individual filter messages, so allow plenty of time.
 const FILTER_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Maximum number of retries for CFilter requests.
-const FILTERS_MAX_RETRIES: u32 = 3;
-
 /// Pipeline for downloading compact block filters.
 ///
 /// Uses DownloadCoordinator<u32> for batch-level download mechanics,
@@ -69,8 +66,7 @@ impl FiltersPipeline {
             coordinator: DownloadCoordinator::new(
                 DownloadConfig::default()
                     .with_max_concurrent(MAX_CONCURRENT_FILTER_BATCHES)
-                    .with_timeout(FILTER_TIMEOUT)
-                    .with_max_retries(FILTERS_MAX_RETRIES),
+                    .with_timeout(FILTER_TIMEOUT),
             ),
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
@@ -250,20 +246,14 @@ impl FiltersPipeline {
     /// Check for timed out batches and handle retries.
     ///
     /// Returns batch starts that timed out and were re-queued.
-    /// Uses coordinator's retry mechanism to avoid duplicate requests.
-    /// Note: Does not remove batch trackers - keeps them to receive any late-arriving filters.
+    /// Note: Does not remove batch trackers — keeps them to receive any late-arriving filters.
     pub(super) fn handle_timeouts(&mut self) -> Vec<u32> {
         let mut timed_out_starts = Vec::new();
 
         for start in self.coordinator.check_timeouts() {
-            if self.coordinator.enqueue_retry(start) {
-                tracing::warn!("Filter batch at {} timed out, queued for retry", start);
-                timed_out_starts.push(start);
-            } else {
-                // Max retries exceeded - remove tracker, log error
-                tracing::error!("Filter batch at {} exceeded max retries, giving up", start);
-                self.batch_trackers.remove(&start);
-            }
+            self.coordinator.enqueue_retry(start);
+            tracing::warn!("Filter batch at {} timed out, queued for retry", start);
+            timed_out_starts.push(start);
         }
 
         timed_out_starts
@@ -291,9 +281,7 @@ mod tests {
     fn create_pipeline_with_short_timeout() -> FiltersPipeline {
         FiltersPipeline {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(3),
+                DownloadConfig::default().with_timeout(Duration::from_millis(1)),
             ),
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
@@ -307,10 +295,7 @@ mod tests {
     fn create_pipeline_with_low_concurrency() -> FiltersPipeline {
         FiltersPipeline {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(2)
-                    .with_timeout(FILTER_TIMEOUT)
-                    .with_max_retries(FILTERS_MAX_RETRIES),
+                DownloadConfig::default().with_max_concurrent(2).with_timeout(FILTER_TIMEOUT),
             ),
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
@@ -721,7 +706,6 @@ mod tests {
             coordinator: DownloadCoordinator::new(
                 DownloadConfig::default()
                     .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(3)
                     .with_max_concurrent(10),
             ),
             batch_trackers: HashMap::new(),

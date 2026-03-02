@@ -18,9 +18,6 @@ const MAX_CONCURRENT_MNLISTDIFF: usize = 20;
 /// Timeout for MnListDiff requests.
 const MNLISTDIFF_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Maximum number of retries for MnListDiff requests.
-const MNLISTDIFF_MAX_RETRIES: u32 = 3;
-
 /// Pipeline for downloading MnListDiff messages for quorum validation.
 ///
 /// Uses `DownloadCoordinator<BlockHash>` for request tracking (keyed by target block_hash),
@@ -46,8 +43,7 @@ impl MnListDiffPipeline {
             coordinator: DownloadCoordinator::new(
                 DownloadConfig::default()
                     .with_max_concurrent(MAX_CONCURRENT_MNLISTDIFF)
-                    .with_timeout(MNLISTDIFF_TIMEOUT)
-                    .with_max_retries(MNLISTDIFF_MAX_RETRIES),
+                    .with_timeout(MNLISTDIFF_TIMEOUT),
             ),
             base_hashes: HashMap::new(),
         }
@@ -134,37 +130,22 @@ impl MnListDiffPipeline {
     /// Requeue a received MnListDiff for retry.
     ///
     /// Removes from in-flight tracking and pushes back to the front of the
-    /// pending queue. Returns `true` if successfully requeued, `false` if
-    /// max retries were exceeded (in which case the request is dropped).
-    pub(super) fn requeue(&mut self, diff: &MnListDiff) -> bool {
+    /// pending queue.
+    pub(super) fn requeue(&mut self, diff: &MnListDiff) {
         let target_hash = diff.block_hash;
 
         // Remove from in-flight
         self.coordinator.receive(&target_hash);
 
         // Re-enqueue for retry
-        if self.coordinator.enqueue_retry(target_hash) {
-            tracing::debug!("Requeued MnListDiff for {} for retry", diff.block_hash);
-            true
-        } else {
-            tracing::warn!("MnListDiff for {} exceeded max retries, dropping", diff.block_hash);
-            self.base_hashes.remove(&target_hash);
-            false
-        }
+        self.coordinator.enqueue_retry(target_hash);
+        tracing::debug!("Requeued MnListDiff for {} for retry", diff.block_hash);
     }
 
-    /// Handle timeouts, re-queuing failed requests.
-    ///
-    /// Returns hashes that exceeded max retries and were dropped.
+    /// Handle timeouts, re-queuing timed out requests.
     pub(super) fn handle_timeouts(&mut self) {
         for target_hash in self.coordinator.check_timeouts() {
-            if !self.coordinator.enqueue_retry(target_hash) {
-                tracing::warn!(
-                    "MnListDiff request for {} exceeded max retries, dropping",
-                    target_hash
-                );
-                self.base_hashes.remove(&target_hash);
-            }
+            self.coordinator.enqueue_retry(target_hash);
         }
     }
 
@@ -321,9 +302,7 @@ mod tests {
 
         let mut pipeline = MnListDiffPipeline {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(0),
+                DownloadConfig::default().with_timeout(Duration::from_millis(1)),
             ),
             base_hashes: HashMap::new(),
         };
@@ -336,32 +315,7 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        pipeline.handle_timeouts();
-        assert!(pipeline.base_hashes.is_empty());
-    }
-
-    #[test]
-    fn test_handle_timeouts_with_retry() {
-        use std::time::Duration;
-
-        let mut pipeline = MnListDiffPipeline {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(3),
-            ),
-            base_hashes: HashMap::new(),
-        };
-
-        let base = BlockHash::from_byte_array([0x01; 32]);
-        let target = BlockHash::from_byte_array([0x02; 32]);
-
-        pipeline.base_hashes.insert(target, base);
-        pipeline.coordinator.mark_sent(&[target]);
-
-        std::thread::sleep(Duration::from_millis(5));
-
-        // First timeout should retry, not fail
+        // Timeout re-queues the request, base_hashes preserved
         pipeline.handle_timeouts();
         assert_eq!(pipeline.coordinator.pending_count(), 1);
         assert!(pipeline.base_hashes.contains_key(&target));
@@ -385,7 +339,7 @@ mod tests {
         let diff = create_test_diff(base, target);
 
         // Requeue should move from in-flight back to pending
-        assert!(pipeline.requeue(&diff));
+        pipeline.requeue(&diff);
         assert_eq!(pipeline.active_count(), 0);
         assert_eq!(pipeline.coordinator.pending_count(), 1);
         // base_hash mapping should be preserved for the retry
@@ -395,11 +349,8 @@ mod tests {
     }
 
     #[test]
-    fn test_requeue_drops_after_max_retries() {
-        let mut pipeline = MnListDiffPipeline {
-            coordinator: DownloadCoordinator::new(DownloadConfig::default().with_max_retries(0)),
-            base_hashes: HashMap::new(),
-        };
+    fn test_requeue_always_succeeds() {
+        let mut pipeline = MnListDiffPipeline::new();
 
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
@@ -409,9 +360,9 @@ mod tests {
 
         let diff = create_test_diff(base, target);
 
-        // With max_retries=0, requeue should fail and clean up
-        assert!(!pipeline.requeue(&diff));
-        assert!(!pipeline.base_hashes.contains_key(&target));
-        assert_eq!(pipeline.coordinator.pending_count(), 0);
+        // Requeue always succeeds
+        pipeline.requeue(&diff);
+        assert!(pipeline.base_hashes.contains_key(&target));
+        assert_eq!(pipeline.coordinator.pending_count(), 1);
     }
 }
