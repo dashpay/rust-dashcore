@@ -40,6 +40,27 @@ impl Header {
     pub fn dummy_batch(height_range: Range<u32>) -> Vec<Self> {
         height_range.map(Self::dummy).collect()
     }
+
+    /// Create a chain of headers where each header's `prev_blockhash` is the
+    /// actual `block_hash()` of the previous one. Uses an easy PoW target so
+    /// headers pass validation.
+    pub fn dummy_chain(count: usize, prev_blockhash: BlockHash) -> Vec<Self> {
+        let mut headers = Vec::with_capacity(count);
+        let mut prev = prev_blockhash;
+        for i in 0..count {
+            let header = Header {
+                version: Version::ONE,
+                prev_blockhash: prev,
+                merkle_root: TxMerkleNode::from_byte_array([0u8; 32]),
+                time: i as u32,
+                bits: CompactTarget::from_consensus(0x2100ffff),
+                nonce: i as u32,
+            };
+            prev = header.block_hash();
+            headers.push(header);
+        }
+        headers
+    }
 }
 
 impl BlockFilter {

@@ -192,6 +192,14 @@ impl HeadersPipeline {
             }
         }
 
+        // Check if these are duplicate headers from another peer. The first
+        // header's hash matches a segment's current tip, meaning we already have it.
+        let first_hash = headers[0].block_hash();
+        if self.segments.iter().any(|s| s.current_tip_hash == first_hash) {
+            tracing::debug!("Ignoring duplicate header {} from another peer", first_hash);
+            return Ok(None);
+        }
+
         tracing::warn!(
             "Received {} headers with prev_hash {} but no segment matched",
             headers.len(),
@@ -268,6 +276,26 @@ impl HeadersPipeline {
     /// Check if pipeline is initialized.
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+
+    /// Check if the tip segment is currently marked complete.
+    pub(super) fn is_tip_complete(&self) -> bool {
+        self.segments.iter().any(|s| s.target_height.is_none() && s.complete)
+    }
+
+    /// Mark the tip segment as complete.
+    pub(super) fn mark_tip_complete(&mut self) {
+        for segment in &mut self.segments {
+            if segment.target_height.is_none() && !segment.complete {
+                segment.complete = true;
+                tracing::debug!(
+                    "Tip segment {} marked complete at height {}",
+                    segment.segment_id,
+                    segment.current_height
+                );
+                break;
+            }
+        }
     }
 
     /// Reset the tip segment for continued syncing after initial sync completes.
@@ -474,5 +502,59 @@ mod tests {
         assert!(pipeline.segments[0].buffered_headers.is_empty());
         // Segment 1 should have the header
         assert_eq!(pipeline.segments[1].buffered_headers.len(), 1);
+    }
+
+    #[test]
+    fn test_duplicate_headers_from_another_peer_are_ignored() {
+        let tip_hash = BlockHash::dummy(50);
+
+        let mut tip_seg = SegmentState::new(0, 1000, tip_hash, None, None);
+        tip_seg.current_height = 1001;
+        // Simulate that we already received a header and advanced the tip
+        let mut first_header = Header::dummy(1);
+        first_header.prev_blockhash = tip_hash;
+        let new_tip_hash = first_header.block_hash();
+        tip_seg.current_tip_hash = new_tip_hash;
+
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.initialized = true;
+        pipeline.segments = vec![tip_seg];
+
+        // Another peer sends the same header (prev_blockhash is old tip, first
+        // header hash matches the segment's current tip)
+        let matched = pipeline.receive_headers(&[first_header]).unwrap();
+        assert_eq!(matched, None, "Duplicate headers should be silently ignored");
+        assert!(pipeline.segments[0].buffered_headers.is_empty());
+    }
+
+    #[test]
+    fn test_tip_complete_lifecycle() {
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.initialized = true;
+
+        // No tip segment → not complete
+        let checkpoint_seg = SegmentState::new(0, 0, BlockHash::dummy(0), Some(100), None);
+        pipeline.segments = vec![checkpoint_seg];
+        assert!(!pipeline.is_tip_complete());
+
+        // Add a complete tip segment
+        let mut tip_seg = SegmentState::new(1, 500, BlockHash::dummy(77), None, None);
+        tip_seg.complete = true;
+        pipeline.segments.push(tip_seg);
+        assert!(pipeline.is_tip_complete());
+
+        // mark_tip_complete is a no-op when already complete
+        pipeline.mark_tip_complete();
+        assert!(pipeline.is_tip_complete());
+
+        // Simulate receive_headers resetting the tip segment
+        pipeline.segments[1].complete = false;
+        assert!(!pipeline.is_tip_complete());
+
+        // mark_tip_complete restores the state after storing headers
+        pipeline.mark_tip_complete();
+        assert!(pipeline.is_tip_complete());
     }
 }

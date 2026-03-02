@@ -127,6 +127,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         }
 
         let was_syncing = self.state() == SyncState::Syncing;
+        let tip_was_complete = self.pipeline.is_tip_complete();
 
         // Route headers to the pipeline, validates checkpoint match.
         let matched = self.pipeline.receive_headers(headers)?;
@@ -138,10 +139,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             );
         }
 
-        // Send more requests if capacity available
-        let sent = self.pipeline.send_pending(requests)?;
-        if sent > 0 {
-            tracing::debug!("Pipeline sent {} more requests", sent);
+        // Send more requests during initial sync or active post-sync catch-up.
+        // Skip for unsolicited headers.
+        if was_syncing || !tip_was_complete {
+            let sent = self.pipeline.send_pending(requests)?;
+            if sent > 0 {
+                tracing::debug!("Pipeline sent {} more requests", sent);
+            }
         }
 
         // Process ready-to-store segments
@@ -174,6 +178,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                     tip_height: new_tip.height(),
                 });
             }
+        }
+
+        // After storing unsolicited post-sync headers, mark the tip complete so the next header goes through
+        // the clean reset path. Don't mark complete during active catch-up.
+        if !was_syncing && tip_was_complete && !events.is_empty() {
+            self.pipeline.mark_tip_complete();
         }
 
         if was_syncing && self.pipeline.is_complete() {
@@ -241,11 +251,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 mod tests {
     use super::*;
     use crate::chain::checkpoints::testnet_checkpoints;
-    use crate::network::MessageType;
+    use crate::network::{MessageType, NetworkRequest, RequestSender};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use tokio::sync::mpsc::unbounded_channel;
 
     type TestBlockHeadersManager =
         BlockHeadersManager<PersistentBlockHeaderStorage, PersistentMetadataStorage>;
@@ -297,5 +308,44 @@ mod tests {
         let manager = create_test_manager().await;
         assert!(!manager.pipeline.is_initialized());
         assert_eq!(manager.pipeline.segment_count(), 0);
+    }
+
+    fn create_test_request_sender(
+    ) -> (RequestSender, tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>) {
+        let (tx, rx) = unbounded_channel();
+        (RequestSender::new(tx), rx)
+    }
+
+    #[tokio::test]
+    async fn test_unsolicited_post_sync_header_does_not_trigger_get_headers() {
+        let mut manager = create_test_manager().await;
+        let tip = manager.tip().await.unwrap();
+        let tip_hash = *tip.hash();
+
+        // Simulate completed sync: pipeline initialized with tip segment marked complete
+        manager.pipeline.init(0, tip_hash, 0);
+        manager.pipeline.mark_tip_complete();
+        manager.progress.set_state(SyncState::Synced);
+
+        let (sender, mut rx) = create_test_request_sender();
+
+        let header = Header::dummy_chain(1, tip_hash).remove(0);
+
+        let events = manager.handle_headers_pipeline(&[header], &sender).await.unwrap();
+
+        // Header should have been stored
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            SyncEvent::BlockHeadersStored {
+                tip_height: 1
+            }
+        ));
+
+        // No GetHeaders request should have been sent
+        assert!(rx.try_recv().is_err());
+
+        // Tip segment marked complete again for the next unsolicited header
+        assert!(manager.pipeline.is_tip_complete());
     }
 }
