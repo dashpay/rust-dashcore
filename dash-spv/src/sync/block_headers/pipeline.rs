@@ -259,10 +259,13 @@ impl HeadersPipeline {
     }
 
     /// Check for timeouts in all segments.
-    pub fn handle_timeouts(&mut self) {
+    ///
+    /// Returns an error if any segment has exhausted its retries.
+    pub fn handle_timeouts(&mut self) -> SyncResult<()> {
         for segment in &mut self.segments {
-            segment.handle_timeouts();
+            segment.handle_timeouts()?;
         }
+        Ok(())
     }
 
     /// Check if pipeline is initialized.

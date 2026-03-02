@@ -103,7 +103,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
             return Ok(vec![]);
         }
 
-        self.pipeline.handle_timeouts();
+        self.pipeline.handle_timeouts()?;
 
         // During initial sync, send more requests and log progress
         if self.state() == SyncState::Syncing {

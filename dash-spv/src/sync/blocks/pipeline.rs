@@ -4,9 +4,8 @@
 //! Uses the generic DownloadCoordinator for core mechanics.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::time::Duration;
 
-use crate::error::SyncResult;
+use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
 use dashcore::blockdata::block::Block;
@@ -15,12 +14,6 @@ use key_wallet_manager::wallet_manager::FilterMatchKey;
 
 /// Maximum number of concurrent block downloads.
 const MAX_CONCURRENT_BLOCK_DOWNLOADS: usize = 20;
-
-/// Timeout for block downloads before retry.
-const BLOCK_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Maximum number of retries for block downloads.
-const BLOCK_MAX_RETRIES: u32 = 3;
 
 /// Maximum blocks per GetData request, kept a bit lower for better download distribution to multiple peers
 const BLOCKS_PER_REQUEST: usize = 8;
@@ -62,10 +55,7 @@ impl BlocksPipeline {
     pub(super) fn new() -> Self {
         Self {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(MAX_CONCURRENT_BLOCK_DOWNLOADS)
-                    .with_timeout(BLOCK_TIMEOUT)
-                    .with_max_retries(BLOCK_MAX_RETRIES),
+                DownloadConfig::default().with_max_concurrent(MAX_CONCURRENT_BLOCK_DOWNLOADS),
             ),
             pending_heights: BTreeSet::new(),
             downloaded: BTreeMap::new(),
@@ -174,20 +164,26 @@ impl BlocksPipeline {
 
     /// Check for timed out downloads and re-queue them.
     ///
-    /// Returns the list of timed out block hashes.
-    pub(super) fn handle_timeouts(&mut self) -> Vec<BlockHash> {
-        let timed_out = self.coordinator.check_and_retry_timeouts();
-
-        if !timed_out.is_empty() {
-            tracing::debug!("Re-queued {} timed out block downloads", timed_out.len());
+    /// Returns an error if any download has exhausted its retries.
+    pub(super) fn handle_timeouts(&mut self) -> SyncResult<()> {
+        for hash in self.coordinator.check_timeouts() {
+            if self.coordinator.enqueue_retry(hash) {
+                tracing::warn!("Block download {} timed out, queued for retry", hash);
+            } else {
+                return Err(SyncError::Timeout(format!(
+                    "Block download {} exceeded max retries",
+                    hash
+                )));
+            }
         }
-
-        timed_out
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use dashcore_hashes::Hash;
 
     use super::*;
@@ -324,10 +320,8 @@ mod tests {
         // Wait for timeout
         std::thread::sleep(Duration::from_millis(20));
 
-        let timed_out = pipeline.handle_timeouts();
+        pipeline.handle_timeouts().unwrap();
 
-        assert_eq!(timed_out.len(), 1);
-        assert_eq!(timed_out[0], hash);
         assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.coordinator.pending_count(), 1);
     }
@@ -450,10 +444,9 @@ mod tests {
         let hashes = pipeline.coordinator.take_pending(1);
         pipeline.coordinator.mark_sent(&hashes);
 
-        // First timeout - returns item (it's re-queued)
+        // First timeout - re-queued successfully
         std::thread::sleep(Duration::from_millis(5));
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 1);
+        pipeline.handle_timeouts().unwrap();
         assert_eq!(pipeline.coordinator.pending_count(), 1);
 
         // Re-send the retry
@@ -462,18 +455,17 @@ mod tests {
 
         // Second timeout - still re-queued
         std::thread::sleep(Duration::from_millis(5));
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 1);
+        pipeline.handle_timeouts().unwrap();
         assert_eq!(pipeline.coordinator.pending_count(), 1);
 
         // Re-send
         let items = pipeline.coordinator.take_pending(1);
         pipeline.coordinator.mark_sent(&items);
 
-        // Third timeout - exceeds max retries, NOT re-queued
+        // Third timeout - exceeds max retries, returns error
         std::thread::sleep(Duration::from_millis(5));
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 0);
+        let result = pipeline.handle_timeouts();
+        assert!(result.is_err());
         assert_eq!(pipeline.coordinator.pending_count(), 0);
     }
 

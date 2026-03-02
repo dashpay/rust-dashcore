@@ -4,9 +4,8 @@
 //! Uses DownloadCoordinator for request tracking with timeout and retry logic.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
-use crate::error::SyncResult;
+use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
 use dashcore::network::message_sml::MnListDiff;
@@ -14,12 +13,6 @@ use dashcore::BlockHash;
 
 /// Maximum concurrent MnListDiff requests.
 const MAX_CONCURRENT_MNLISTDIFF: usize = 20;
-
-/// Timeout for MnListDiff requests.
-const MNLISTDIFF_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Maximum number of retries for MnListDiff requests.
-const MNLISTDIFF_MAX_RETRIES: u32 = 3;
 
 /// Pipeline for downloading MnListDiff messages for quorum validation.
 ///
@@ -44,10 +37,7 @@ impl MnListDiffPipeline {
     pub(super) fn new() -> Self {
         Self {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(MAX_CONCURRENT_MNLISTDIFF)
-                    .with_timeout(MNLISTDIFF_TIMEOUT)
-                    .with_max_retries(MNLISTDIFF_MAX_RETRIES),
+                DownloadConfig::default().with_max_concurrent(MAX_CONCURRENT_MNLISTDIFF),
             ),
             base_hashes: HashMap::new(),
         }
@@ -155,17 +145,23 @@ impl MnListDiffPipeline {
 
     /// Handle timeouts, re-queuing failed requests.
     ///
-    /// Returns hashes that exceeded max retries and were dropped.
-    pub(super) fn handle_timeouts(&mut self) {
+    /// Returns an error if any request has exhausted its retries.
+    pub(super) fn handle_timeouts(&mut self) -> SyncResult<()> {
         for target_hash in self.coordinator.check_timeouts() {
-            if !self.coordinator.enqueue_retry(target_hash) {
+            if self.coordinator.enqueue_retry(target_hash) {
                 tracing::warn!(
-                    "MnListDiff request for {} exceeded max retries, dropping",
+                    "MnListDiff request for {} timed out, queued for retry",
                     target_hash
                 );
+            } else {
                 self.base_hashes.remove(&target_hash);
+                return Err(SyncError::Timeout(format!(
+                    "MnListDiff request for {} exceeded max retries",
+                    target_hash
+                )));
             }
         }
+        Ok(())
     }
 
     /// Check if pipeline has no pending work.
@@ -316,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_timeouts() {
+    fn test_handle_timeouts_exhaustion() {
         use std::time::Duration;
 
         let mut pipeline = MnListDiffPipeline {
@@ -336,7 +332,8 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        pipeline.handle_timeouts();
+        let result = pipeline.handle_timeouts();
+        assert!(result.is_err());
         assert!(pipeline.base_hashes.is_empty());
     }
 
@@ -361,8 +358,8 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        // First timeout should retry, not fail
-        pipeline.handle_timeouts();
+        // First timeout should retry successfully
+        pipeline.handle_timeouts().unwrap();
         assert_eq!(pipeline.coordinator.pending_count(), 1);
         assert!(pipeline.base_hashes.contains_key(&target));
     }

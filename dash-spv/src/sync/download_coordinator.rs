@@ -15,8 +15,10 @@ use std::time::{Duration, Instant};
 pub struct DownloadConfig {
     /// Maximum concurrent in-flight requests.
     max_concurrent: usize,
-    /// Timeout duration for requests.
+    /// Base timeout duration for first attempt.
     timeout: Duration,
+    /// Maximum timeout after backoff (caps exponential growth).
+    max_timeout: Duration,
     /// Maximum retry attempts before giving up.
     max_retries: u32,
 }
@@ -25,8 +27,9 @@ impl Default for DownloadConfig {
     fn default() -> Self {
         Self {
             max_concurrent: 10,
-            timeout: Duration::from_secs(30),
-            max_retries: 3,
+            timeout: Duration::from_secs(10),
+            max_timeout: Duration::from_secs(120),
+            max_retries: 6,
         }
     }
 }
@@ -38,13 +41,15 @@ impl DownloadConfig {
         self
     }
 
-    /// Create config with custom timeout.
+    /// Create config with custom base timeout.
+    #[cfg(test)]
     pub(crate) fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
     /// Create config with custom max retries.
+    #[cfg(test)]
     pub(crate) fn with_max_retries(mut self, max: u32) -> Self {
         self.max_retries = max;
         self
@@ -167,16 +172,29 @@ impl<K: Hash + Eq + Clone> DownloadCoordinator<K> {
         self.in_flight.contains_key(key)
     }
 
+    /// Compute the effective timeout for an item based on its retry count.
+    ///
+    /// Uses exponential backoff: `min(base_timeout * 2^retry_count, max_timeout)`.
+    fn effective_timeout(&self, key: &K) -> Duration {
+        let retries = self.retry_counts.get(key).copied().unwrap_or(0);
+        let multiplier = 1u32.checked_shl(retries).unwrap_or(u32::MAX);
+        let backed_off = self.config.timeout.saturating_mul(multiplier);
+        backed_off.min(self.config.max_timeout)
+    }
+
     /// Check for timed-out items.
     ///
     /// Returns items that have timed out. They are removed from in-flight tracking.
     /// Caller should call `enqueue_retry` for items that should be retried.
+    /// Each item's timeout is computed with exponential backoff based on its retry count.
     pub(crate) fn check_timeouts(&mut self) -> Vec<K> {
         let now = Instant::now();
         let timed_out: Vec<K> = self
             .in_flight
             .iter()
-            .filter(|(_, sent_time)| now.duration_since(**sent_time) > self.config.timeout)
+            .filter(|(key, sent_time)| {
+                now.duration_since(**sent_time) > self.effective_timeout(key)
+            })
             .map(|(key, _)| key.clone())
             .collect();
 
@@ -185,20 +203,10 @@ impl<K: Hash + Eq + Clone> DownloadCoordinator<K> {
         }
 
         if !timed_out.is_empty() {
-            tracing::debug!("{} items timed out after {:?}", timed_out.len(), self.config.timeout);
+            tracing::debug!("{} items timed out", timed_out.len());
         }
 
         timed_out
-    }
-
-    /// Check for timed-out items and re-enqueue them for retry.
-    ///
-    /// Combines `check_timeouts()` and `enqueue_retry()` in one call.
-    /// Returns only items that were successfully re-queued. Items that
-    /// exceeded their max retry count are excluded from the result.
-    pub(crate) fn check_and_retry_timeouts(&mut self) -> Vec<K> {
-        let timed_out = self.check_timeouts();
-        timed_out.into_iter().filter(|item| self.enqueue_retry(item.clone())).collect()
     }
 
     /// Check if the coordinator has no work (empty pending and in-flight).
@@ -319,7 +327,7 @@ mod tests {
     #[test]
     fn test_check_timeouts() {
         let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::new(
-            DownloadConfig::default().with_timeout(Duration::from_millis(10)),
+            DownloadConfig::default().with_timeout(Duration::from_millis(50)),
         );
 
         coord.mark_sent(&[1]);
@@ -329,8 +337,8 @@ mod tests {
         let timed_out = coord.check_timeouts();
         assert!(timed_out.is_empty());
 
-        // Wait for timeout
-        std::thread::sleep(Duration::from_millis(20));
+        // Wait well past timeout
+        std::thread::sleep(Duration::from_millis(200));
 
         let timed_out = coord.check_timeouts();
         assert_eq!(timed_out.len(), 2);
@@ -374,34 +382,6 @@ mod tests {
     }
 
     #[test]
-    fn test_check_and_retry_timeouts_excludes_exceeded_retries() {
-        let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::new(
-            DownloadConfig::default().with_timeout(Duration::from_millis(10)).with_max_retries(1),
-        );
-
-        // Send two items and let them time out
-        coord.mark_sent(&[1, 2]);
-        std::thread::sleep(Duration::from_millis(20));
-
-        // First round: both should be re-queued successfully
-        let requeued = coord.check_and_retry_timeouts();
-        assert_eq!(requeued.len(), 2);
-        assert!(requeued.contains(&1));
-        assert!(requeued.contains(&2));
-
-        // Drain pending and send again so they can time out a second time
-        let items = coord.take_pending(2);
-        coord.mark_sent(&items);
-        std::thread::sleep(Duration::from_millis(20));
-
-        // Second round: both have exceeded max_retries (1), so neither should be returned
-        let requeued = coord.check_and_retry_timeouts();
-        assert!(requeued.is_empty());
-        // Items should not have been re-added to pending
-        assert_eq!(coord.pending_count(), 0);
-    }
-
-    #[test]
     fn test_with_string_keys() {
         let mut coord: DownloadCoordinator<String> = DownloadCoordinator::default();
         coord.enqueue(["block_a".to_string(), "block_b".to_string()]);
@@ -411,5 +391,41 @@ mod tests {
 
         assert!(coord.receive(&"block_a".to_string()));
         assert!(!coord.receive(&"block_c".to_string()));
+    }
+
+    #[test]
+    fn test_default_config_values() {
+        let config = DownloadConfig::default();
+        assert_eq!(config.timeout, Duration::from_secs(10));
+        assert_eq!(config.max_timeout, Duration::from_secs(120));
+        assert_eq!(config.max_retries, 6);
+        assert_eq!(config.max_concurrent, 10);
+    }
+
+    #[test]
+    fn test_effective_timeout_scales_exponentially() {
+        let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::default();
+
+        // No retries yet: base timeout (10s)
+        assert_eq!(coord.effective_timeout(&1), Duration::from_secs(10));
+
+        // Build up retry counts via the public API
+        coord.enqueue_retry(1); // retry_count = 1
+        assert_eq!(coord.effective_timeout(&1), Duration::from_secs(20));
+
+        coord.enqueue_retry(1); // retry_count = 2
+        assert_eq!(coord.effective_timeout(&1), Duration::from_secs(40));
+
+        coord.enqueue_retry(1); // retry_count = 3
+        assert_eq!(coord.effective_timeout(&1), Duration::from_secs(80));
+
+        coord.enqueue_retry(1); // retry_count = 4
+        assert_eq!(coord.effective_timeout(&1), Duration::from_secs(120));
+
+        coord.enqueue_retry(1); // retry_count = 5
+        assert_eq!(coord.effective_timeout(&1), Duration::from_secs(120));
+
+        coord.enqueue_retry(1); // retry_count = 6 — hits max, rejected
+        assert_eq!(coord.effective_timeout(&1), Duration::from_secs(120));
     }
 }

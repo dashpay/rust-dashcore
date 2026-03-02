@@ -548,7 +548,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
         // Check for MnListDiff timeouts via pipeline
         if self.sync_state.mnlistdiff_pipeline.active_count() > 0 {
-            self.sync_state.mnlistdiff_pipeline.handle_timeouts();
+            self.sync_state.mnlistdiff_pipeline.handle_timeouts()?;
 
             // Send any re-queued requests
             self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;

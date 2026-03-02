@@ -3,10 +3,6 @@ use crate::network::RequestSender;
 use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
 use crate::types::HashedBlockHeader;
 use dashcore::{BlockHash, Header};
-use std::time::Duration;
-
-/// Timeout for header requests.
-const HEADERS_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// State for a single download segment between two checkpoints.
 #[derive(Debug)]
@@ -48,10 +44,7 @@ impl SegmentState {
             current_tip_hash: start_hash,
             current_height: start_height,
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(1) // Only 1 request at a time (sequential getheaders)
-                    .with_timeout(HEADERS_TIMEOUT)
-                    .with_max_retries(3),
+                DownloadConfig::default().with_max_concurrent(1), // Only 1 request at a time (sequential getheaders)
             ),
             buffered_headers: Vec::new(),
             complete: false,
@@ -183,17 +176,25 @@ impl SegmentState {
     }
 
     /// Check for timed out requests and handle retries.
-    pub(super) fn handle_timeouts(&mut self) {
+    ///
+    /// Returns an error if any request has exhausted its retries.
+    pub(super) fn handle_timeouts(&mut self) -> SyncResult<()> {
         let timed_out = self.coordinator.check_timeouts();
         for hash in timed_out {
-            tracing::warn!(
-                "Segment {}: request timed out for hash {}, will retry",
-                self.segment_id,
-                hash
-            );
-            // Re-enqueue for retry
-            self.coordinator.enqueue_retry(hash);
+            if self.coordinator.enqueue_retry(hash) {
+                tracing::warn!(
+                    "Segment {}: request timed out for hash {}, queued for retry",
+                    self.segment_id,
+                    hash
+                );
+            } else {
+                return Err(SyncError::Timeout(format!(
+                    "Segment {}: request for hash {} exceeded max retries",
+                    self.segment_id, hash
+                )));
+            }
         }
+        Ok(())
     }
 }
 

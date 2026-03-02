@@ -7,7 +7,6 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_filter::CFHeaders;
 use dashcore::BlockHash;
 use std::collections::HashMap;
-use std::time::Duration;
 
 use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
@@ -19,13 +18,6 @@ const FILTER_HEADERS_BATCH_SIZE: u32 = 2000;
 
 /// Maximum concurrent CFHeaders requests.
 const MAX_CONCURRENT_CFHEADERS_REQUESTS: usize = 10;
-
-/// Timeout for CFHeaders requests (shorter for faster retry on multi-peer).
-/// Timeout for CFHeaders requests. Single response but allow time for network latency.
-const FILTER_HEADERS_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// Maximum number of retries for CFHeaders requests.
-const FILTER_HEADERS_MAX_RETRIES: u32 = 3;
 
 /// Pipeline for downloading compact block filter headers.
 ///
@@ -56,10 +48,7 @@ impl FilterHeadersPipeline {
     pub(super) fn new() -> Self {
         Self {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(MAX_CONCURRENT_CFHEADERS_REQUESTS)
-                    .with_timeout(FILTER_HEADERS_TIMEOUT)
-                    .with_max_retries(FILTER_HEADERS_MAX_RETRIES),
+                DownloadConfig::default().with_max_concurrent(MAX_CONCURRENT_CFHEADERS_REQUESTS),
             ),
             batch_starts: HashMap::new(),
             buffered: HashMap::new(),
@@ -266,21 +255,17 @@ impl FilterHeadersPipeline {
 
     /// Re-enqueue timed out requests for retry.
     ///
-    /// Returns heights that exceeded max retries and were permanently dropped.
-    pub(super) fn handle_timeouts(&mut self) -> Vec<u32> {
-        let mut failed = Vec::new();
+    /// Returns an error if any batch has exhausted its retries.
+    pub(super) fn handle_timeouts(&mut self) -> SyncResult<()> {
         for stop_hash in self.coordinator.check_timeouts() {
-            if !self.coordinator.enqueue_retry(stop_hash) {
-                if let Some(start_height) = self.batch_starts.remove(&stop_hash) {
-                    tracing::warn!(
-                        "CFHeaders batch at height {} exceeded max retries, dropping",
-                        start_height
-                    );
-                    failed.push(start_height);
-                }
+            if self.coordinator.enqueue_retry(stop_hash) {
+                tracing::warn!("CFHeaders batch timed out, queued for retry");
+            } else {
+                self.batch_starts.remove(&stop_hash);
+                return Err(SyncError::Timeout("CFHeaders batch exceeded max retries".into()));
             }
         }
-        failed
+        Ok(())
     }
 }
 
@@ -418,8 +403,7 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let failed = pipeline.handle_timeouts();
-        assert!(failed.is_empty()); // First retry succeeds
+        pipeline.handle_timeouts().unwrap();
         assert_eq!(pipeline.coordinator.pending_count(), 1);
     }
 
@@ -445,8 +429,7 @@ mod tests {
         // First timeout + retry
         pipeline.coordinator.mark_sent(&[stop_hash]);
         std::thread::sleep(Duration::from_millis(5));
-        let failed = pipeline.handle_timeouts();
-        assert!(failed.is_empty());
+        pipeline.handle_timeouts().unwrap();
 
         // Re-send retry
         let items = pipeline.coordinator.take_pending(1);
@@ -454,8 +437,8 @@ mod tests {
 
         // Second timeout exceeds max
         std::thread::sleep(Duration::from_millis(5));
-        let failed = pipeline.handle_timeouts();
-        assert_eq!(failed, vec![100]);
+        let err = pipeline.handle_timeouts().unwrap_err();
+        assert!(matches!(err, SyncError::Timeout(_)));
     }
 
     #[test]
@@ -501,10 +484,7 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let mut failed = pipeline.handle_timeouts();
-        failed.sort();
-        assert_eq!(failed.len(), 2);
-        assert!(failed.contains(&1));
-        assert!(failed.contains(&2001));
+        let err = pipeline.handle_timeouts().unwrap_err();
+        assert!(matches!(err, SyncError::Timeout(_)));
     }
 }

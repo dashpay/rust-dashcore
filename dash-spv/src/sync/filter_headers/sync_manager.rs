@@ -160,18 +160,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     }
 
     async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        // Handle timed out requests
-        let failed = self.pipeline.handle_timeouts();
-        if !failed.is_empty() {
-            return Err(SyncError::Timeout(format!(
-                "CFHeaders batches exceeded max retries at heights: {:?}",
-                failed
-            )));
-        }
-
-        // Send pending requests (including retries)
+        self.pipeline.handle_timeouts()?;
         self.pipeline.send_pending(requests)?;
-
         Ok(vec![])
     }
 

@@ -312,6 +312,11 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         }
                         Err(e) => {
                             tracing::error!("{} tick error: {}", identifier, e);
+                            let error_event = SyncEvent::ManagerError {
+                                manager: identifier,
+                                error: e.to_string(),
+                            };
+                            context.emit_sync_event(error_event);
                         }
                     }
                 }
