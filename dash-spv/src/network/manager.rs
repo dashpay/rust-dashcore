@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::JoinSet;
 use tokio::time;
 
@@ -1068,54 +1068,7 @@ impl PeerNetworkManager {
             .find(|(a, _)| *a == selected_peer)
             .ok_or_else(|| NetworkError::ConnectionFailed("Selected peer not found".to_string()))?;
 
-        // Upgrade GetHeaders to GetHeaders2 if this specific peer supports it and not disabled
-        let peer_supports_headers2 = {
-            let peer_guard = peer.read().await;
-            peer_guard.can_request_headers2()
-        };
-        let message = match message {
-            NetworkMessage::GetHeaders(get_headers)
-                if !self.headers2_disabled.lock().await.contains(addr)
-                    && peer_supports_headers2 =>
-            {
-                log::debug!(
-                    "Upgrading GetHeaders to GetHeaders2 for peer {}: {:?}",
-                    addr,
-                    get_headers
-                );
-                NetworkMessage::GetHeaders2(get_headers)
-            }
-            other => other,
-        };
-        // Reduce verbosity for common sync messages
-        match &message {
-            NetworkMessage::GetHeaders(_)
-            | NetworkMessage::GetCFilters(_)
-            | NetworkMessage::GetCFHeaders(_) => {
-                log::debug!("Sending {} to {}", message.cmd(), addr);
-            }
-            NetworkMessage::GetHeaders2(gh2) => {
-                log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}",
-                    addr,
-                    gh2.version,
-                    gh2.locator_hashes.len(),
-                    gh2.locator_hashes.iter().take(2).collect::<Vec<_>>(),
-                    gh2.stop_hash
-                );
-            }
-            NetworkMessage::SendHeaders2 => {
-                log::info!("🤝 Sending SendHeaders2 to {} - requesting compressed headers", addr);
-            }
-            _ => {
-                log::trace!("Sending {:?} to {}", message.cmd(), addr);
-            }
-        }
-
-        let mut peer_guard = peer.write().await;
-        peer_guard
-            .send_message(message)
-            .await
-            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
+        self.send_message_to_peer(addr, peer, message).await
     }
 
     /// Send a message distributed across connected peers using round-robin selection.
@@ -1185,14 +1138,28 @@ impl PeerNetworkManager {
         let idx = self.round_robin_counter.fetch_add(1, Ordering::Relaxed) % selected_peers.len();
         let (addr, peer) = &selected_peers[idx];
 
-        // Upgrade GetHeaders to GetHeaders2 if peer supports it
+        log::debug!(
+            "Distributing {} request to peer {} (round-robin idx {})",
+            message.cmd(),
+            addr,
+            idx
+        );
+
+        self.send_message_to_peer(addr, peer, message).await
+    }
+
+    /// Send a message to the given peer.
+    /// For GetHeaders messages upgrade to GetHeaders2 if the peer supports it.
+    async fn send_message_to_peer(
+        &self,
+        addr: &SocketAddr,
+        peer: &Arc<RwLock<Peer>>,
+        message: NetworkMessage,
+    ) -> NetworkResult<()> {
         let message = match message {
             NetworkMessage::GetHeaders(get_headers) => {
-                let peer_supports_headers2 = {
-                    let peer_guard = peer.read().await;
-                    peer_guard.can_request_headers2()
-                };
-                if peer_supports_headers2 && !self.headers2_disabled.lock().await.contains(addr) {
+                let supports_headers2 = peer.read().await.can_request_headers2();
+                if supports_headers2 && !self.headers2_disabled.lock().await.contains(addr) {
                     log::debug!("Upgrading GetHeaders to GetHeaders2 for peer {}", addr);
                     NetworkMessage::GetHeaders2(get_headers)
                 } else {
@@ -1201,13 +1168,6 @@ impl PeerNetworkManager {
             }
             other => other,
         };
-
-        log::debug!(
-            "Distributing {} request to peer {} (round-robin idx {})",
-            message.cmd(),
-            addr,
-            idx
-        );
 
         let mut peer_guard = peer.write().await;
         peer_guard
