@@ -40,10 +40,5 @@ pub use dashcore::{OutPoint, TxIn, TxOut};
 
 // Export our high-level types
 pub use events::WalletEvent;
-pub use key_wallet::wallet::managed_wallet_info::coin_selection::{
-    CoinSelector, SelectionResult, SelectionStrategy,
-};
-pub use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
-pub use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
 pub use wallet_interface::BlockProcessingResult;
 pub use wallet_manager::{WalletError, WalletManager};

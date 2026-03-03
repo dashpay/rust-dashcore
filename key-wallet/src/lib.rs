@@ -46,6 +46,7 @@ pub mod managed_account;
 pub mod mnemonic;
 pub mod psbt;
 pub mod seed;
+pub mod transaction;
 pub mod transaction_checking;
 pub(crate) mod utils;
 pub mod utxo;

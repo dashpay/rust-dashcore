@@ -3,13 +3,9 @@
 //! This module contains the mutable metadata and information about a wallet
 //! that is managed separately from the core wallet structure.
 
-pub mod coin_selection;
-pub mod fee;
 pub mod helpers;
 pub mod managed_account_operations;
 pub mod managed_accounts;
-pub mod transaction_builder;
-pub mod transaction_building;
 pub mod wallet_info_interface;
 
 pub use managed_account_operations::ManagedAccountOperations;

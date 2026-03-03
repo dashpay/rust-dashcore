@@ -15,7 +15,6 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
 use key_wallet::account::AccountCollection;
 use key_wallet::transaction_checking::TransactionContext;
-use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
 use key_wallet::wallet::WalletType;
@@ -39,6 +38,19 @@ pub type WalletId = [u8; 32];
 
 /// Unique identifier for an account within a wallet
 pub type AccountId = u32;
+
+/// Account type preference for transaction building
+#[derive(Debug, Clone, Copy)]
+pub enum AccountTypePreference {
+    /// Use BIP44 account only
+    BIP44,
+    /// Use BIP32 account only
+    BIP32,
+    /// Prefer BIP44, fallback to BIP32
+    PreferBIP44,
+    /// Prefer BIP32, fallback to BIP44
+    PreferBIP32,
+}
 
 /// The actual account type that was used for address generation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -3,7 +3,7 @@
 //! This module provides various strategies for selecting UTXOs
 //! when building transactions.
 
-use crate::wallet::managed_wallet_info::fee::FeeRate;
+use crate::transaction::FeeRate;
 use crate::Utxo;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
@@ -119,7 +119,6 @@ impl CoinSelector {
         &self,
         utxos: I,
         target_amount: u64,
-        fee_rate: FeeRate,
         current_height: u32,
     ) -> Result<SelectionResult, SelectionError>
     where
