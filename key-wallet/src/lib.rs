@@ -69,7 +69,7 @@ pub use managed_account::managed_platform_account::ManagedPlatformAccount;
 pub use managed_account::platform_address::PlatformP2PKHAddress;
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
-pub use utxo::{Utxo, UtxoSet};
+pub use utxo::Utxo;
 pub use wallet::{balance::WalletCoreBalance, Wallet};
 
 /// Re-export commonly used types

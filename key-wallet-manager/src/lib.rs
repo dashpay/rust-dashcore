@@ -31,7 +31,7 @@ pub mod wallet_manager;
 // Re-export key-wallet types
 pub use key_wallet::{
     Account, AccountType, Address, AddressType, ChildNumber, DerivationPath, ExtendedPrivKey,
-    ExtendedPubKey, Mnemonic, Network, Utxo, UtxoSet, Wallet,
+    ExtendedPubKey, Mnemonic, Network, Utxo, Wallet,
 };
 
 // Re-export dashcore transaction types

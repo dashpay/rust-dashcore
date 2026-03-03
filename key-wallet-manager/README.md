@@ -146,28 +146,6 @@ let transaction = wallet_manager.send_transaction(
 )?;
 ```
 
-### UTXO Management
-
-Track unspent outputs:
-
-```rust
-use key_wallet_manager::{Utxo, UtxoSet};
-
-// Create UTXO set
-let mut utxo_set = UtxoSet::new();
-
-// Add UTXOs
-let utxo = Utxo::new(outpoint, txout, address, 100, false);
-utxo_set.add(utxo);
-
-// Query UTXOs
-let available = utxo_set.spendable(current_height);
-let total_value = utxo_set.total_balance();
-
-// Rollback transactions
-utxo_set.rollback_to_height(12345);
-```
-
 ### Coin Selection
 
 Choose optimal UTXOs for transactions:
@@ -343,7 +321,6 @@ match wallet_manager.send_transaction("wallet1", 0, recipients, FeeLevel::Normal
 
 ### Performance
 
-- **Reuse UTXOSet**: Don't recreate for each transaction
 - **Batch operations**: Group multiple recipients in single transaction
 - **Optimize coin selection**: Use appropriate strategy for your use case
 - **Cache address pools**: Avoid regenerating addresses unnecessarily
