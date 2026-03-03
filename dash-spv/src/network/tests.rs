@@ -37,3 +37,38 @@ mod pool_tests {
         // Verify pool limits indirectly through methods; avoid constant assertions
     }
 }
+
+#[cfg(test)]
+mod request_sender_tests {
+    use crate::network::{NetworkRequest, RequestSender};
+    use dashcore::network::message::NetworkMessage;
+    use tokio::sync::mpsc;
+
+    #[test]
+    fn test_send_message_to_peer_queues_correct_variant() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let sender = RequestSender::new(tx);
+        let addr = "192.168.1.1:9999".parse().unwrap();
+        let msg = NetworkMessage::Verack;
+
+        sender.send_message_to_peer(addr, msg).unwrap();
+
+        let request = rx.try_recv().unwrap();
+        let NetworkRequest::SendMessageToPeer(recv_addr, recv_msg) = request else {
+            panic!("Expected SendMessageToPeer variant");
+        };
+        assert_eq!(recv_addr, addr);
+        assert!(matches!(recv_msg, NetworkMessage::Verack));
+    }
+
+    #[test]
+    fn test_send_message_to_peer_returns_error_on_closed_channel() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let sender = RequestSender::new(tx);
+        drop(rx);
+
+        let addr = "192.168.1.1:9999".parse().unwrap();
+        let result = sender.send_message_to_peer(addr, NetworkMessage::Verack);
+        assert!(result.is_err());
+    }
+}

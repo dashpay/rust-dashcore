@@ -791,6 +791,15 @@ impl PeerNetworkManager {
                                     }
                                 });
                             }
+                            Some(NetworkRequest::SendMessageToPeer(addr, msg)) => {
+                                log::debug!("Request processor: sending {} to {}", msg.cmd(), addr);
+                                let this = this.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = this.send_to_specific_peer(addr, msg).await {
+                                        log::error!("Request processor: failed to send to {}: {}", addr, e);
+                                    }
+                                });
+                            }
                             None => {
                                 log::info!("Request processor: channel closed");
                                 break;
@@ -1146,6 +1155,18 @@ impl PeerNetworkManager {
         );
 
         self.send_message_to_peer(addr, peer, message).await
+    }
+
+    /// Send a message to a specific peer by address.
+    async fn send_to_specific_peer(
+        &self,
+        addr: SocketAddr,
+        message: NetworkMessage,
+    ) -> NetworkResult<()> {
+        let peer = self.pool.get_peer(&addr).await.ok_or_else(|| {
+            NetworkError::ConnectionFailed(format!("Peer {} not connected", addr))
+        })?;
+        self.send_message_to_peer(&addr, &peer, message).await
     }
 
     /// Send a message to the given peer.

@@ -43,8 +43,10 @@ const FILTER_TYPE_DEFAULT: u8 = 0;
 /// Request to send to network.
 #[derive(Debug)]
 pub enum NetworkRequest {
-    /// Send a message to the network.
+    /// Send a message to the network (distributed across peers).
     SendMessage(NetworkMessage),
+    /// Send a message to a specific peer by address.
+    SendMessageToPeer(SocketAddr, NetworkMessage),
 }
 
 /// Handle for managers to queue outgoing network requests.
@@ -68,6 +70,13 @@ impl RequestSender {
             .map_err(|e| NetworkError::ProtocolError(e.to_string()))
     }
 
+    /// Queue a message to be sent to a specific peer by address.
+    fn send_message_to_peer(&self, address: SocketAddr, msg: NetworkMessage) -> NetworkResult<()> {
+        self.tx
+            .send(NetworkRequest::SendMessageToPeer(address, msg))
+            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
     pub fn request_inventory(&self, inventory: Vec<Inventory>) -> NetworkResult<()> {
         self.send_message(NetworkMessage::GetData(inventory))
     }
@@ -77,6 +86,20 @@ impl RequestSender {
             vec![start_hash],
             BlockHash::all_zeros(),
         )))
+    }
+
+    pub fn request_block_headers_from_peer(
+        &self,
+        start_hash: BlockHash,
+        address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(
+            address,
+            NetworkMessage::GetHeaders(GetHeadersMessage::new(
+                vec![start_hash],
+                BlockHash::all_zeros(),
+            )),
+        )
     }
 
     pub fn request_filter_headers(
