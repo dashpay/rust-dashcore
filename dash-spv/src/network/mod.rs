@@ -97,6 +97,20 @@ impl RequestSender {
         )))
     }
 
+    pub fn request_block_headers_from_peer(
+        &self,
+        start_hash: BlockHash,
+        address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(
+            NetworkMessage::GetHeaders(GetHeadersMessage::new(
+                vec![start_hash],
+                BlockHash::all_zeros(),
+            )),
+            address,
+        )
+    }
+
     pub fn request_filter_headers(
         &self,
         start_height: u32,

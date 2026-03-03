@@ -41,6 +41,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         let checkpoint_manager = self.pipeline.checkpoint_manager().clone();
         self.pipeline = HeadersPipeline::new(checkpoint_manager);
         self.pending_announcements.clear();
+        self.announced_peers.clear();
     }
 
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
@@ -151,37 +152,61 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         event: &NetworkEvent,
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
-        if let NetworkEvent::PeersUpdated {
-            connected_count,
-            best_height,
-            ..
-        } = event
-        {
-            if let Some(best_height) = best_height {
-                self.progress.update_target_height(*best_height);
-                let mut metadata_storage = self.metadata_storage.write().await;
-                metadata_storage.store_last_target_height(*best_height).await?;
-            }
-            if *connected_count == 0 {
-                self.stop_sync();
-            } else if *connected_count > 0 {
-                if self.state() == SyncState::WaitingForConnections {
-                    return self.start_sync(requests).await;
+        match event {
+            NetworkEvent::PeerConnected {
+                address,
+            } => {
+                // When synced, send GetHeaders to new peers so Dash Core learns our tip
+                // and sends header announcements instead of inv. Skip when the
+                // pipeline has an active catch-up request to avoid the empty
+                // response prematurely completing the tip segment.
+                if self.state() == SyncState::Synced
+                    && self.pipeline.is_initialized()
+                    && !self.announced_peers.contains(address)
+                    && !self.pipeline.tip_segment_has_pending_request()
+                {
+                    let tip = self.tip().await?;
+                    tracing::info!("Announcing tip {} to new peer {}", tip.height(), address);
+                    requests.request_block_headers_from_peer(*tip.hash(), *address)?;
+                    self.announced_peers.insert(*address);
                 }
-                // When already synced but behind peer height, request missing headers
-                if self.state() == SyncState::Synced {
-                    if let Some(best_height) = best_height {
-                        if *best_height > self.progress.tip_height()
-                            && !self.pipeline.tip_segment_has_pending_request()
-                        {
-                            tracing::info!(
-                                "Peer height {} > our height {}, requesting headers to catch up",
-                                best_height,
-                                self.progress.tip_height()
-                            );
-                            // Reset tip segment and send requests via pipeline
-                            self.pipeline.reset_tip_segment();
-                            self.pipeline.send_pending(requests)?;
+            }
+            NetworkEvent::PeerDisconnected {
+                address,
+            } => {
+                self.announced_peers.remove(address);
+            }
+            NetworkEvent::PeersUpdated {
+                connected_count,
+                best_height,
+                ..
+            } => {
+                if let Some(best_height) = best_height {
+                    self.progress.update_target_height(*best_height);
+                    let mut metadata_storage = self.metadata_storage.write().await;
+                    metadata_storage.store_last_target_height(*best_height).await?;
+                }
+                if *connected_count == 0 {
+                    self.stop_sync();
+                } else if *connected_count > 0 {
+                    if self.state() == SyncState::WaitingForConnections {
+                        return self.start_sync(requests).await;
+                    }
+                    // When already synced but behind peer height, request missing headers
+                    if self.state() == SyncState::Synced {
+                        if let Some(best_height) = best_height {
+                            if *best_height > self.progress.tip_height()
+                                && !self.pipeline.tip_segment_has_pending_request()
+                            {
+                                tracing::info!(
+                                    "Peer height {} > our height {}, requesting headers to catch up",
+                                    best_height,
+                                    self.progress.tip_height()
+                                );
+                                // Reset tip segment and send requests via pipeline
+                                self.pipeline.reset_tip_segment();
+                                self.pipeline.send_pending(requests)?;
+                            }
                         }
                     }
                 }
