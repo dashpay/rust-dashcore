@@ -43,5 +43,8 @@ cobertura.xml
 *.tmp
 .tmp/
 
+# Python
+__pycache__/
+
 # Build scripts artifacts
 *.log
