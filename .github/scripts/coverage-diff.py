@@ -9,10 +9,9 @@ Posts results as a markdown report.
 import argparse
 import re
 import subprocess
-from pathlib import Path
 
 
-def parse_lcov(filepath):
+def parse_lcov(filepath, *, allow_missing=False):
     """Parse an LCOV file into {file: {line: hit_count}}.
 
     Normalizes paths to be repo-relative by stripping common CI workspace
@@ -39,7 +38,9 @@ def parse_lcov(filepath):
                 elif line == "end_of_record":
                     current_file = None
     except FileNotFoundError:
-        return {}
+        if allow_missing:
+            return {}
+        raise
 
     return coverage
 
@@ -87,18 +88,24 @@ def normalize_path(path):
 
 def is_production_file(filepath):
     """Return True if the file is production code (not test code)."""
-    parts = filepath.replace("\\", "/").split("/")
+    normalized = filepath.replace("\\", "/")
+    parts = normalized.split("/")
+    basename = parts[-1]
 
     # Exclude test files
     if any(p == "tests" for p in parts):
         return False
-    if filepath.endswith("_test.rs") or filepath.endswith("_tests.rs"):
+    if basename in {"tests.rs", "test_utils.rs"}:
+        return False
+    if normalized.endswith("_test.rs") or normalized.endswith("_tests.rs"):
+        return False
+    if any(p in {"test-utils", "test_utils"} for p in parts):
         return False
     # Exclude benchmark files
     if any(p == "benches" for p in parts):
         return False
 
-    return filepath.endswith(".rs")
+    return normalized.endswith(".rs")
 
 
 def detect_new_tests(base_ref):
@@ -150,12 +157,15 @@ def detect_new_tests(base_ref):
             saw_test_attr = True
             continue
 
-        if saw_test_attr and added.startswith("fn "):
-            fn_match = re.match(r"fn\s+(\w+)", added)
+        if saw_test_attr:
+            fn_match = re.match(
+                r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)",
+                added,
+            )
             if fn_match and current_file:
                 new_tests.append((current_file, fn_match.group(1)))
-            saw_test_attr = False
-            continue
+                saw_test_attr = False
+                continue
 
         # Reset if we see a non-empty, non-attribute line between #[test] and fn
         if saw_test_attr and added and not added.startswith("#[") and not added.startswith("//"):
@@ -386,10 +396,10 @@ def main():
     baseline_available = args.baseline_available.lower() == "true"
 
     # Parse coverage data
-    pr_coverage = parse_lcov(args.pr)
+    pr_coverage = parse_lcov(args.pr, allow_missing=False)
 
     if baseline_available:
-        baseline_coverage = parse_lcov(args.baseline)
+        baseline_coverage = parse_lcov(args.baseline, allow_missing=True)
     else:
         baseline_coverage = {}
 

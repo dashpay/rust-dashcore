@@ -12,6 +12,7 @@ on:
       - 'v[0-9]*.[0-9]*-dev'
 
 permissions:
+  contents: read
   pull-requests: write
 
 concurrency:
@@ -34,6 +35,9 @@ jobs:
               - '**/*.rs'
               - '**/Cargo.toml'
               - 'Cargo.lock'
+              - '.codecov.yml'
+              - '.github/workflows/coverage.yml'
+              - '.github/scripts/coverage-diff.py'
 
   coverage:
     name: Code Coverage
@@ -112,7 +116,7 @@ jobs:
             --output coverage-report.md
 
       - name: Post PR comment
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
