@@ -17,7 +17,7 @@ use dashcore_hashes::Hash;
 use secp256k1::Message;
 
 use crate::account::{ManagedAccountTrait, ManagedCoreAccount};
-use crate::transaction::coin_selection::{CoinSelector, SelectionError, SelectionStrategy};
+use crate::transaction::coin_selection::{SelectionError, UtxoSelector, UtxoSelectorStrategy};
 use crate::transaction::fee::FeeRate;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::ManagedWalletInfo;
@@ -63,7 +63,7 @@ pub struct TransactionBuilder {
 
     /// Fee rate (satoshis per kilobyte)
     fee_rate: FeeRate,
-    selection_strategy: SelectionStrategy,
+    selection_strategy: UtxoSelectorStrategy,
 
     /// Transaction we are building
     /// We pre-create the transaction and build it incrementally so we can easily calculate fees
@@ -90,7 +90,7 @@ impl TransactionBuilder {
             managed_account,
             account,
             fee_rate: FeeRate::normal(),
-            selection_strategy: SelectionStrategy::OptimalConsolidation,
+            selection_strategy: UtxoSelectorStrategy::OptimalConsolidation,
             transaction,
         }
     }
@@ -189,24 +189,23 @@ impl TransactionBuilder {
 
             // Select utxo that can afford the output sum + fee + DUST
             // By adding DUST we ensure the change always reaches the min required amount
-            let selection = CoinSelector::new(self.selection_strategy)
-                .select_coins(
-                    self.managed_account.utxos().values(),
+            let selection = UtxoSelector::new(self.selection_strategy)
+                .select(
                     total_output + current_fee + DUST,
+                    self.managed_account.utxos().values(),
                     self.managed_wallet.synced_height(),
                 )
                 .map_err(TransactionBuildingError::CoinSelection)?;
 
-            let selected_inputs = selection.selected;
-            let total_input: u64 = selected_inputs.iter().map(|utxo| utxo.value()).sum();
+            let total_input: u64 = selection.iter().map(|utxo| utxo.value()).sum();
 
             // Create transaction inputs from sorted inputs
             // Dash doesn't use RBF, so we use the standard sequence number
             let sequence = 0xffffffff;
 
-            transaction.input = selected_inputs
+            transaction.input = selection
                 .iter()
-                .map(|utxo| TxIn {
+                .map(|&utxo| TxIn {
                     previous_output: utxo.outpoint,
                     script_sig: ScriptBuf::new(),
                     sequence,
