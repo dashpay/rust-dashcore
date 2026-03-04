@@ -11,11 +11,33 @@
     <a href="https://crates.io/crates/dash"><img alt="Crate Info" src="https://img.shields.io/crates/v/dash.svg"/></a>
     <a href="https://github.com/dashevo/rust-dashcore/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
     <a href="https://github.com/dashevo/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashevo/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
+    <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/master"><img alt="Coverage (master)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/master/graph/badge.svg"/></a>
+    <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev"><img alt="Coverage (develop)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg"/></a>
     <a href="https://docs.rs"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-rust--dashcore-green"/></a>
     <a href="#minimum-supported-rust-version-msrv"><img alt="Rustc Version 1.89+" src="https://img.shields.io/badge/rustc-1.89%2B-lightgrey.svg"/></a>
     <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/dashevo/rust-dashcore">
   </p>
 </div>
+
+<details>
+<summary>Per-crate coverage</summary>
+
+| Crate | Coverage |
+|-------|----------|
+| dashcore | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dashcore)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dashcore) |
+| dashcore_hashes | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dashcore_hashes)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dashcore_hashes) |
+| dashcore-private | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dashcore-private)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dashcore-private) |
+| dash-network | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dash-network)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dash-network) |
+| dash-spv | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dash-spv)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dash-spv) |
+| key-wallet | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=key-wallet)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=key-wallet) |
+| key-wallet-manager | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=key-wallet-manager)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=key-wallet-manager) |
+| dash-network-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dash-network-ffi)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dash-network-ffi) |
+| dash-spv-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dash-spv-ffi)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dash-spv-ffi) |
+| key-wallet-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=key-wallet-ffi)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=key-wallet-ffi) |
+| dashcore-rpc | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dashcore-rpc)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dashcore-rpc) |
+| dashcore-rpc-json | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=dashcore-rpc-json)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=dashcore-rpc-json) |
+
+</details>
 
 For contributors: see CONTRIBUTING.md and AGENTS.md for branch policy and commands.
 

@@ -173,6 +173,10 @@ def run_group_tests(args):
 
     crates = groups[args.group] or []
     failed = []
+    coverage = getattr(args, "coverage", False)
+
+    if coverage:
+        github_output("crate_flags", ",".join(crates))
 
     for crate in crates:
         # Skip dash-fuzz on Windows
@@ -182,7 +186,10 @@ def run_group_tests(args):
 
         github_group_start(f"Testing {crate}")
 
-        cmd = ["cargo", "test", "-p", crate, "--all-features"]
+        if coverage:
+            cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
+        else:
+            cmd = ["cargo", "test", "-p", crate, "--all-features"]
         result = subprocess.run(cmd)
 
         github_group_end()
@@ -225,6 +232,11 @@ def main():
     run_group_parser = subparsers.add_parser("run-group", help="Run tests for a group")
     run_group_parser.add_argument("group", help="Group name")
     run_group_parser.add_argument("--os", default="ubuntu-latest", help="OS name")
+    run_group_parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Use cargo-llvm-cov for coverage collection",
+    )
 
     args = parser.parse_args()
 

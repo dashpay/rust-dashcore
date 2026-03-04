@@ -64,6 +64,8 @@ jobs:
     with:
       os: ubuntu-latest
       groups: ${{ needs.verify-execution.outputs.groups }}
+      coverage: true
+    secrets: inherit
 
   test-ubuntu-arm:
     name: Ubuntu ARM

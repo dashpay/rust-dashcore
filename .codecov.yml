@@ -1,0 +1,56 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
+    patch:
+      default:
+        target: auto
+        threshold: 2%
+
+
+comment:
+  layout: "diff, flags, files"
+  behavior: default
+  require_changes: true
+  show_carryforward_flags: true
+
+flag_management:
+  default_rules:
+    carryforward: true
+
+flags:
+  dashcore:
+    paths: [dash/src/]
+  dashcore_hashes:
+    paths: [hashes/src/]
+  dashcore-private:
+    paths: [internals/src/]
+  dash-network:
+    paths: [dash-network/src/]
+  dash-spv:
+    paths: [dash-spv/src/]
+  key-wallet:
+    paths: [key-wallet/src/]
+  key-wallet-manager:
+    paths: [key-wallet-manager/src/]
+  dash-network-ffi:
+    paths: [dash-network-ffi/src/]
+  dash-spv-ffi:
+    paths: [dash-spv-ffi/src/]
+  key-wallet-ffi:
+    paths: [key-wallet-ffi/src/]
+  dashcore-rpc:
+    paths: [rpc-client/src/]
+  dashcore-rpc-json:
+    paths: [rpc-json/src/]
+
+ignore:
+  - "**/tests/**"
+  - "**/tests.rs"
+  - "**/test_utils/**"
+  - "**/test_utils.rs"
+  - "**/examples/**"
+  - "fuzz/**"
+  - "contrib/**"

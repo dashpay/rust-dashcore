@@ -9,6 +9,10 @@ on:
       groups:
         required: true
         type: string
+      coverage:
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,9 +30,33 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: ${{ inputs.coverage && 'llvm-tools' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
+
+      - name: Install cargo-llvm-cov
+        if: inputs.coverage
+        uses: taiki-e/install-action@cargo-llvm-cov
+
       - run: pip install pyyaml
       - name: Run tests
-        run: python .github/scripts/ci_config.py run-group ${{ matrix.group }} --os ${{ inputs.os }}
+        id: tests
+        run: >
+          python .github/scripts/ci_config.py run-group ${{ matrix.group }}
+          --os ${{ inputs.os }}
+          ${{ inputs.coverage && '--coverage' || '' }}
+
+      - name: Generate coverage report
+        if: inputs.coverage
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        if: inputs.coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          flags: ${{ steps.tests.outputs.crate_flags }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
