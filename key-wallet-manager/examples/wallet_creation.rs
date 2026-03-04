@@ -7,11 +7,10 @@
 
 use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Network};
 use key_wallet_manager::wallet_interface::WalletInterface;
-use key_wallet_manager::wallet_manager::WalletManager;
+use key_wallet_manager::wallet_manager::{AccountTypePreference, WalletManager};
 
 fn main() {
     println!("=== Wallet Creation Example ===\n");

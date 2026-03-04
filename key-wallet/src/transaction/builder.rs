@@ -56,12 +56,12 @@ impl std::error::Error for TransactionBuildingError {}
 /// This builder implements BIP-69 (Lexicographical Indexing of Transaction Inputs and Outputs)
 /// to ensure deterministic ordering and improve privacy by preventing information leakage
 /// through predictable input/output ordering patterns.
-pub struct TransactionBuilder {
+pub struct TransactionBuilder<'a> {
     /// Sender account
-    managed_wallet: ManagedWalletInfo,
-    wallet: Wallet,
-    managed_account: ManagedCoreAccount,
-    account: Account,
+    managed_wallet: &'a ManagedWalletInfo,
+    wallet: &'a Wallet,
+    managed_account: &'a mut ManagedCoreAccount,
+    account: &'a Account,
 
     /// Fee rate (satoshis per kilobyte)
     fee_rate: FeeRate,
@@ -74,13 +74,13 @@ pub struct TransactionBuilder {
     special_transaction_payload: Option<TransactionPayload>,
 }
 
-impl TransactionBuilder {
+impl<'a> TransactionBuilder<'a> {
     /// Create a new transaction builder
     pub fn new(
-        managed_wallet: ManagedWalletInfo,
-        wallet: Wallet,
-        managed_account: ManagedCoreAccount,
-        account: Account,
+        managed_wallet: &'a ManagedWalletInfo,
+        wallet: &'a Wallet,
+        managed_account: &'a mut ManagedCoreAccount,
+        account: &'a Account,
     ) -> Self {
         Self {
             managed_wallet,
@@ -147,7 +147,7 @@ impl TransactionBuilder {
     }
 
     /// Build the transaction
-    pub fn build(mut self) -> Result<Transaction, TransactionBuildingError> {
+    pub fn build(self) -> Result<Transaction, TransactionBuildingError> {
         if self.outputs.is_empty() {
             return Err(TransactionBuildingError::NoOutputs);
         }

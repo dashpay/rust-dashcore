@@ -92,36 +92,6 @@ impl FeeRate {
     }
 }
 
-/// Calculate the size of a transaction
-pub fn estimate_tx_size(num_inputs: usize, num_outputs: usize, has_change: bool) -> usize {
-    // Base size: version (2) + type (2) + locktime (4) + varint counts
-    let mut size = 10;
-
-    // Inputs (P2PKH assumed: ~148 bytes each)
-    size += num_inputs * 148;
-
-    // Outputs (P2PKH assumed: ~34 bytes each)
-    size += num_outputs * 34;
-
-    // Change output if needed
-    if has_change {
-        size += 34;
-    }
-
-    size
-}
-
-/// Calculate the virtual size of a transaction (for fee calculation)
-pub fn estimate_tx_vsize(
-    num_inputs: usize,
-    num_outputs: usize,
-    has_change: bool,
-    _has_witness: bool, // For future SegWit support
-) -> usize {
-    // For non-SegWit transactions, vsize equals size
-    estimate_tx_size(num_inputs, num_outputs, has_change)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,16 +113,5 @@ mod tests {
         let rate = FeeRate::from_sat_per_byte(5);
         assert_eq!(rate.as_sat_per_kb(), 5000);
         assert_eq!(rate.calculate_fee(1000), 5000);
-    }
-
-    #[test]
-    fn test_tx_size_estimation() {
-        // 1 input, 1 output, no change
-        let size = estimate_tx_size(1, 1, false);
-        assert!(size > 180 && size < 200);
-
-        // 2 inputs, 2 outputs, with change
-        let size = estimate_tx_size(2, 2, true);
-        assert!(size > 400 && size < 450);
     }
 }

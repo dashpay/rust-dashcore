@@ -3525,7 +3525,7 @@ bool mnemonic_to_seed(const char *mnemonic,
  */
 
 bool wallet_build_and_sign_transaction(const FFIWalletManager *manager,
-                                       const FFIWallet *wallet,
+                                       const uint8_t *wallet_id,
                                        uint32_t account_index,
                                        const FFITxOutput *outputs,
                                        size_t outputs_count,

@@ -360,12 +360,10 @@ mod tests {
         ];
 
         let selector = UtxoSelector::new(UtxoSelectorStrategy::SmallestFirst);
-        let result = selector.select_coins(&utxos, 25000, FeeRate::new(1000), 200).unwrap();
+        let selected = selector.select(25000, &utxos, 200).unwrap();
 
         // The algorithm should select the smallest UTXOs first: 10k + 20k = 30k which covers 25k target
-        assert_eq!(result.selected.len(), 2); // Should select 10k + 20k
-        assert_eq!(result.total_value, 30000);
-        assert!(result.change_amount > 0);
+        assert_eq!(selected.len(), 2); // Should select 10k + 20k
     }
 
     #[test]
@@ -378,11 +376,9 @@ mod tests {
         ];
 
         let selector = UtxoSelector::new(UtxoSelectorStrategy::LargestFirst);
-        let result = selector.select_coins(&utxos, 25000, FeeRate::new(1000), 200).unwrap();
+        let selected = selector.select(25000, &utxos, 200).unwrap();
 
-        assert_eq!(result.selected.len(), 1); // Should select just 40k
-        assert_eq!(result.total_value, 40000);
-        assert!(result.change_amount > 0);
+        assert_eq!(selected.len(), 1); // Should select just 40k
     }
 
     #[test]
@@ -391,7 +387,7 @@ mod tests {
             vec![Utxo::dummy(0, 10000, 100, false, true), Utxo::dummy(0, 20000, 100, false, true)];
 
         let selector = UtxoSelector::new(UtxoSelectorStrategy::LargestFirst);
-        let result = selector.select_coins(&utxos, 50000, FeeRate::new(1000), 200);
+        let result = selector.select(50000, &utxos, 200);
 
         assert!(matches!(result, Err(SelectionError::InsufficientFunds { .. })));
     }
@@ -409,17 +405,14 @@ mod tests {
         ];
 
         let selector = UtxoSelector::new(UtxoSelectorStrategy::OptimalConsolidation);
-        let fee_rate = FeeRate::new(100); // Simpler fee rate
-        let result = selector.select_coins(&utxos, 1500, fee_rate, 200).unwrap();
+        let selected = selector.select(1500, &utxos, 200).unwrap();
 
         // OptimalConsolidation should work and produce a valid selection
-        assert!(!result.selected.is_empty());
-        assert!(result.total_value >= 1500 + result.estimated_fee);
-        assert_eq!(result.target_amount, 1500);
+        assert!(!selected.is_empty());
 
         // The strategy should prefer smaller UTXOs, so it should include
         // some of the smaller values
-        let selected_values: Vec<u64> = result.selected.iter().map(|u| u.value()).collect();
+        let selected_values: Vec<u64> = selected.iter().map(|&u| u.value()).collect();
         let has_small_utxos = selected_values.iter().any(|&v| v <= 500);
         assert!(has_small_utxos, "Should include at least one small UTXO for consolidation");
     }

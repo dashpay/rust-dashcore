@@ -2,15 +2,13 @@
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::ptr;
-use std::slice;
+use std::{ptr, slice};
 
 use dashcore::{
     consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
     ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
-use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use key_wallet_manager::FeeRate;
+use key_wallet::transaction::{FeeRate, TransactionBuilder};
 use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::error::{FFIError, FFIErrorCode};
@@ -81,7 +79,7 @@ pub struct FFITxOutput {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_build_and_sign_transaction(
     manager: *const FFIWalletManager,
-    wallet: *const FFIWallet,
+    wallet_id: *const u8,
     account_index: u32,
     outputs: *const FFITxOutput,
     outputs_count: usize,
@@ -93,7 +91,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 ) -> bool {
     // Validate inputs
     if manager.is_null()
-        || wallet.is_null()
+        || wallet_id.is_null()
         || outputs.is_null()
         || tx_bytes_out.is_null()
         || tx_len_out.is_null()
@@ -103,34 +101,28 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
         return false;
     }
 
-    if outputs_count == 0 {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "At least one output required".to_string(),
-        );
-        return false;
-    }
-
     unsafe {
-        use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
-        use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
-
         let manager_ref = &*manager;
-        let wallet_ref = &*wallet;
-        let network_rust = wallet_ref.inner().network;
+        let wallet_id = slice::from_raw_parts(wallet_id, 32).try_into().unwrap();
         let outputs_slice = slice::from_raw_parts(outputs, outputs_count);
 
         manager_ref.runtime.block_on(async {
             let mut manager = manager_ref.manager.write().await;
 
-            let managed_wallet = manager.get_wallet_info_mut(&wallet_ref.inner().wallet_id);
-
-            let Some(managed_wallet) = managed_wallet else {
+            let Some(managed_wallet) = manager.get_wallet_info_mut(wallet_id) else {
                 FFIError::set_error(
                     error,
                     FFIErrorCode::InvalidInput,
-                    "Could not obtain ManagedWalletInfo for the provided wallet".to_string(),
+                    format!("There is no wallet with id {:?}", wallet_id),
+                );
+                return false;
+            };
+
+            let Some(wallet) = manager.get_wallet(wallet_id) else {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    format!("There is no wallet with id {:?}", wallet_id),
                 );
                 return false;
             };
@@ -149,21 +141,21 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                     }
                 };
 
-            let wallet_account =
-                match wallet_ref.inner().accounts.standard_bip44_accounts.get(&account_index) {
-                    Some(account) => account,
-                    None => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::WalletError,
-                            format!("Wallet account {} not found", account_index),
-                        );
-                        return false;
-                    }
-                };
+            let wallet_account = match wallet.accounts.standard_bip44_accounts.get(&account_index) {
+                Some(account) => account,
+                None => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Wallet account {} not found", account_index),
+                    );
+                    return false;
+                }
+            };
 
             // Convert FFI outputs to Rust outputs
-            let mut tx_builder = TransactionBuilder::new();
+            let mut tx_builder =
+                TransactionBuilder::new(managed_wallet, wallet, managed_account, wallet_account);
 
             for output in outputs_slice {
                 if output.address.is_null() {
@@ -193,7 +185,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 let address = match dashcore::Address::from_str(address_str) {
                     Ok(addr) => {
                         // Verify network matches
-                        let addr_network = addr.require_network(network_rust).map_err(|e| {
+                        let addr_network = addr.require_network(wallet.network).map_err(|e| {
                             FFIError::set_error(
                                 error,
                                 FFIErrorCode::InvalidAddress,
@@ -229,93 +221,10 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 };
             }
 
-            // Get change address (next internal address)
-            let xpub = wallet_account.extended_public_key();
-            let change_address = match managed_account.next_change_address(Some(&xpub), true) {
-                Ok(addr) => addr,
-                Err(e) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("Failed to get change address: {}", e),
-                    );
-                    return false;
-                }
-            };
+            let fee_rate = FeeRate::new(fee_per_kb);
 
-            tx_builder = tx_builder
-                .set_change_address(change_address)
-                .set_fee_rate(FeeRate::new(fee_per_kb));
-
-            // Get available UTXOs (collect owned UTXOs, not references)
-            let utxos: Vec<key_wallet::Utxo> = managed_account.utxos.values().cloned().collect();
-
-            // Get the wallet's root extended private key for signing
-            use key_wallet::wallet::WalletType;
-
-            let root_xpriv = match &wallet_ref.inner().wallet_type {
-                WalletType::Mnemonic {
-                    root_extended_private_key,
-                    ..
-                } => root_extended_private_key,
-                WalletType::Seed {
-                    root_extended_private_key,
-                    ..
-                } => root_extended_private_key,
-                WalletType::ExtendedPrivKey(root_extended_private_key) => root_extended_private_key,
-                _ => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        "Cannot sign with watch-only wallet".to_string(),
-                    );
-                    return false;
-                }
-            };
-
-            // Build a map of address -> derivation path for all addresses in the account
-            use std::collections::HashMap;
-            let mut address_to_path: HashMap<dashcore::Address, key_wallet::DerivationPath> =
-                HashMap::new();
-
-            // Collect from all address pools (receive, change, etc.)
-            for pool in managed_account.account_type.address_pools() {
-                for addr_info in pool.addresses.values() {
-                    address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
-                }
-            }
-
-            // Select inputs and build transaction
-            let mut tx_builder_with_inputs = match tx_builder.select_inputs(
-                &utxos,
-                SelectionStrategy::BranchAndBound,
-                managed_wallet.synced_height(),
-                |utxo| {
-                    // Look up the derivation path for this UTXO's address
-                    let path = address_to_path.get(&utxo.address)?;
-
-                    // Convert root key to ExtendedPrivKey and derive the child key
-                    let root_ext_priv = root_xpriv.to_extended_priv_key(network_rust);
-                    let secp = secp256k1::Secp256k1::new();
-                    let derived_xpriv = root_ext_priv.derive_priv(&secp, path).ok()?;
-
-                    Some(derived_xpriv.private_key)
-                },
-            ) {
+            let transaction = match tx_builder.set_fee_rate(fee_rate).build() {
                 Ok(builder) => builder,
-                Err(e) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("Coin selection failed: {}", e),
-                    );
-                    return false;
-                }
-            };
-
-            // Build and sign the transaction
-            let transaction = match tx_builder_with_inputs.build() {
-                Ok(tx) => tx,
                 Err(e) => {
                     FFIError::set_error(
                         error,
@@ -324,19 +233,6 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                     );
                     return false;
                 }
-            };
-
-            // This is tricky, the transaction creation + fee calculation need a little
-            // bit of love to avoid this kind of logic.
-            //
-            // First, we need to know that TransactionBuilder may add an extra output for change
-            // to the final transaction but not to itself, with that knowledge, we can compare the
-            // number of outputs in the transaction with the number of outputs in the TransactionBuilder
-            // to then call the appropriate fee calculation method
-            *fee_out = if transaction.output.len() > tx_builder_with_inputs.outputs().len() {
-                tx_builder_with_inputs.calculate_fee_with_extra_output()
-            } else {
-                tx_builder_with_inputs.calculate_fee()
             };
 
             // Serialize the transaction
@@ -348,6 +244,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 
             *tx_bytes_out = tx_bytes;
             *tx_len_out = size;
+
+            *fee_out = fee_rate.calculate_fee(size);
 
             FFIError::set_success(error);
             true
