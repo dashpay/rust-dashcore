@@ -1,0 +1,72 @@
+codecov:
+  require_ci_to_pass: false
+
+ignore:
+  - "**/test_utils.rs"
+  - "**/test_utils/**"
+  - "**/tests.rs"
+  - "**/tests/**"
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
+
+component_management:
+  individual_components:
+    - component_id: dash-core
+      name: Dash Core
+      paths:
+        - dash/src/**
+
+    - component_id: hashes
+      name: Hashes
+      paths:
+        - hashes/src/**
+
+    - component_id: dash-spv
+      name: Dash SPV
+      paths:
+        - dash-spv/src/**
+
+    - component_id: dash-spv-ffi
+      name: Dash SPV FFI
+      paths:
+        - dash-spv-ffi/src/**
+
+    - component_id: key-wallet
+      name: Key Wallet
+      paths:
+        - key-wallet/src/**
+
+    - component_id: key-wallet-ffi
+      name: Key Wallet FFI
+      paths:
+        - key-wallet-ffi/src/**
+
+    - component_id: key-wallet-manager
+      name: Key Wallet Manager
+      paths:
+        - key-wallet-manager/src/**
+
+    - component_id: dash-network
+      name: Dash Network
+      paths:
+        - dash-network/src/**
+
+    - component_id: dash-network-ffi
+      name: Dash Network FFI
+      paths:
+        - dash-network-ffi/src/**
+
+    - component_id: rpc-client
+      name: RPC Client
+      paths:
+        - rpc-client/src/**
+
+    - component_id: rpc-json
+      name: RPC JSON
+      paths:
+        - rpc-json/src/**

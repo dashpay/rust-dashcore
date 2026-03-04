@@ -17,6 +17,29 @@
   </p>
 </div>
 
+| Branch | Tests | Coverage |
+|--------|-------|----------|
+| v0.42-dev | [![Tests](https://github.com/dashpay/rust-dashcore/actions/workflows/rust.yml/badge.svg?branch=v0.42-dev)](https://github.com/dashpay/rust-dashcore/actions) | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0)](https://codecov.io/gh/dashpay/rust-dashcore) |
+
+<details>
+<summary>Per-Crate Coverage</summary>
+
+| Crate | Coverage |
+|-------|----------|
+| dash | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=dash-core)](https://codecov.io/gh/dashpay/rust-dashcore/component/dash-core) |
+| hashes | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=hashes)](https://codecov.io/gh/dashpay/rust-dashcore/component/hashes) |
+| dash-spv | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=dash-spv)](https://codecov.io/gh/dashpay/rust-dashcore/component/dash-spv) |
+| dash-spv-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=dash-spv-ffi)](https://codecov.io/gh/dashpay/rust-dashcore/component/dash-spv-ffi) |
+| key-wallet | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=key-wallet)](https://codecov.io/gh/dashpay/rust-dashcore/component/key-wallet) |
+| key-wallet-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=key-wallet-ffi)](https://codecov.io/gh/dashpay/rust-dashcore/component/key-wallet-ffi) |
+| key-wallet-manager | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=key-wallet-manager)](https://codecov.io/gh/dashpay/rust-dashcore/component/key-wallet-manager) |
+| dash-network | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=dash-network)](https://codecov.io/gh/dashpay/rust-dashcore/component/dash-network) |
+| dash-network-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=dash-network-ffi)](https://codecov.io/gh/dashpay/rust-dashcore/component/dash-network-ffi) |
+| rpc-client | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=rpc-client)](https://codecov.io/gh/dashpay/rust-dashcore/component/rpc-client) |
+| rpc-json | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg?token=MG11Z9I7F0&component=rpc-json)](https://codecov.io/gh/dashpay/rust-dashcore/component/rpc-json) |
+
+</details>
+
 For contributors: see CONTRIBUTING.md and AGENTS.md for branch policy and commands.
 
 [Documentation](https://dashcore.readme.io/docs)
