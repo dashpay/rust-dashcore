@@ -49,11 +49,11 @@ jobs:
           ${{ inputs.coverage && '--coverage' || '' }}
 
       - name: Generate coverage report
-        if: inputs.coverage
+        if: inputs.coverage && steps.tests.outputs.crate_flags
         run: cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
-        if: inputs.coverage
+        if: inputs.coverage && steps.tests.outputs.crate_flags
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info

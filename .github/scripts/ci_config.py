@@ -174,9 +174,10 @@ def run_group_tests(args):
     crates = groups[args.group] or []
     failed = []
     coverage = getattr(args, "coverage", False)
+    no_coverage = config.get("no_coverage", []) or []
 
-    if coverage:
-        github_output("crate_flags", ",".join(crates))
+    if coverage and args.group not in no_coverage:
+        github_output("crate_flags", args.group)
 
     for crate in crates:
         # Skip dash-fuzz on Windows
@@ -186,7 +187,7 @@ def run_group_tests(args):
 
         github_group_start(f"Testing {crate}")
 
-        if coverage:
+        if coverage and args.group not in no_coverage:
             cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
         else:
             cmd = ["cargo", "test", "-p", crate, "--all-features"]

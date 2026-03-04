@@ -9,7 +9,6 @@ coverage:
         target: auto
         threshold: 2%
 
-
 comment:
   layout: "diff, flags, files"
   behavior: default
@@ -21,30 +20,28 @@ flag_management:
     carryforward: true
 
 flags:
-  dashcore:
-    paths: [dash/src/]
-  dashcore_hashes:
-    paths: [hashes/src/]
-  dashcore-private:
-    paths: [internals/src/]
-  dash-network:
-    paths: [dash-network/src/]
-  dash-spv:
-    paths: [dash-spv/src/]
-  key-wallet:
-    paths: [key-wallet/src/]
-  key-wallet-manager:
-    paths: [key-wallet-manager/src/]
-  dash-network-ffi:
-    paths: [dash-network-ffi/src/]
-  dash-spv-ffi:
-    paths: [dash-spv-ffi/src/]
-  key-wallet-ffi:
-    paths: [key-wallet-ffi/src/]
-  dashcore-rpc:
-    paths: [rpc-client/src/]
-  dashcore-rpc-json:
-    paths: [rpc-json/src/]
+  core:
+    paths:
+      - dash/src/
+      - hashes/src/
+      - internals/src/
+      - dash-network/src/
+  spv:
+    paths:
+      - dash-spv/src/
+  wallet:
+    paths:
+      - key-wallet/src/
+      - key-wallet-manager/src/
+  ffi:
+    paths:
+      - dash-network-ffi/src/
+      - dash-spv-ffi/src/
+      - key-wallet-ffi/src/
+  rpc:
+    paths:
+      - rpc-client/src/
+      - rpc-json/src/
 
 ignore:
   - "**/tests/**"
