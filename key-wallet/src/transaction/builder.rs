@@ -6,22 +6,23 @@
 use alloc::vec::Vec;
 use core::fmt;
 use dashcore::consensus::Encodable;
+use std::collections::HashMap;
 
-use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
+use dashcore::blockdata::script::{Builder, PushBytes};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
 use dashcore::Address;
 use dashcore::{TxIn, TxOut};
 use dashcore_hashes::Hash;
-use secp256k1::Message;
+use secp256k1::{Message, Secp256k1};
 
 use crate::account::{ManagedAccountTrait, ManagedCoreAccount};
 use crate::transaction::coin_selection::{SelectionError, UtxoSelector, UtxoSelectorStrategy};
 use crate::transaction::fee::FeeRate;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use crate::wallet::ManagedWalletInfo;
-use crate::Account;
+use crate::wallet::{ManagedWalletInfo, WalletType};
+use crate::{Account, DerivationPath, Utxo, Wallet};
 
 /// Errors that can occur during transaction building
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +59,7 @@ impl std::error::Error for TransactionBuildingError {}
 pub struct TransactionBuilder {
     /// Sender account
     managed_wallet: ManagedWalletInfo,
+    wallet: Wallet,
     managed_account: ManagedCoreAccount,
     account: Account,
 
@@ -65,33 +67,34 @@ pub struct TransactionBuilder {
     fee_rate: FeeRate,
     selection_strategy: UtxoSelectorStrategy,
 
-    /// Transaction we are building
-    /// We pre-create the transaction and build it incrementally so we can easily calculate fees
-    /// and add/change outputs without needing to rebuild the entire transaction from scratch.
-    transaction: Transaction,
+    /// Transaction fields
+    version: u16,
+    lock_time: u32,
+    outputs: Vec<TxOut>,
+    special_transaction_payload: Option<TransactionPayload>,
 }
 
 impl TransactionBuilder {
     /// Create a new transaction builder
     pub fn new(
         managed_wallet: ManagedWalletInfo,
+        wallet: Wallet,
         managed_account: ManagedCoreAccount,
         account: Account,
     ) -> Self {
-        let transaction = Transaction {
-            version: 2,
-            lock_time: 0,
-            input: Vec::new(),
-            output: Vec::new(),
-            special_transaction_payload: None,
-        };
         Self {
             managed_wallet,
+            wallet,
             managed_account,
             account,
+
             fee_rate: FeeRate::normal(),
             selection_strategy: UtxoSelectorStrategy::OptimalConsolidation,
-            transaction,
+
+            version: 2,
+            lock_time: 0,
+            outputs: Vec::new(),
+            special_transaction_payload: None,
         }
     }
 
@@ -112,7 +115,7 @@ impl TransactionBuilder {
         }
 
         let script_pubkey = address.script_pubkey();
-        self.transaction.output.push(TxOut {
+        self.outputs.push(TxOut {
             value: amount,
             script_pubkey,
         });
@@ -127,40 +130,45 @@ impl TransactionBuilder {
 
     /// Set the lock time
     pub fn set_lock_time(mut self, lock_time: u32) -> Self {
-        self.transaction.lock_time = lock_time;
+        self.lock_time = lock_time;
         self
     }
 
     /// Set the transaction version
     pub fn set_version(mut self, version: u16) -> Self {
-        self.transaction.version = version;
+        self.version = version;
         self
     }
 
     /// Set the special transaction payload
     pub fn set_special_payload(mut self, payload: TransactionPayload) -> Self {
-        self.transaction.special_transaction_payload = Some(payload);
+        self.special_transaction_payload = Some(payload);
         self
     }
 
     /// Build the transaction
     pub fn build(mut self) -> Result<Transaction, TransactionBuildingError> {
-        if self.transaction.output.is_empty() {
+        if self.outputs.is_empty() {
             return Err(TransactionBuildingError::NoOutputs);
         }
 
-        let total_output: u64 = self.transaction.output.iter().map(|out| out.value).sum();
+        let total_output: u64 = self.outputs.iter().map(|out| out.value).sum();
 
-        if total_output == 0 && self.transaction.special_transaction_payload.is_none() {
+        if total_output == 0 && self.special_transaction_payload.is_none() {
             return Err(TransactionBuildingError::ZeroValueOutputs);
         }
+
+        let mut tx = Transaction {
+            version: self.version.clone(),
+            lock_time: self.lock_time.clone(),
+            input: Vec::new(),
+            output: self.outputs.clone(),
+            special_transaction_payload: self.special_transaction_payload.clone(),
+        };
 
         // the coin selection logic is hard to follow so read carefully
         // First we add a dummy output for the change,
         // we are about to build the transaction by approximation
-        //
-        // TODO: Move this to coin selection so we dont have to reselect
-        let transaction = &mut self.transaction;
 
         {
             let account_xpub = &self.account.account_xpub;
@@ -169,7 +177,7 @@ impl TransactionBuilder {
                 .next_change_address(Some(account_xpub), true)
                 .map_err(|e| TransactionBuildingError::AccountError(e.to_string()))?;
             let change_script = change_addr.script_pubkey();
-            transaction.output.push(TxOut {
+            tx.output.push(TxOut {
                 value: 0,
                 script_pubkey: change_script,
             });
@@ -178,7 +186,7 @@ impl TransactionBuilder {
         // we calculate the current fee for the current state of the transaction (no inputs yet)
         let mut current_fee = {
             let mut buff = Vec::new();
-            transaction.consensus_encode(&mut buff);
+            tx.consensus_encode(&mut buff).expect("The writer cannot fail");
             self.fee_rate.calculate_fee(buff.len())
         };
 
@@ -199,38 +207,22 @@ impl TransactionBuilder {
 
             let total_input: u64 = selection.iter().map(|utxo| utxo.value()).sum();
 
-            // Create transaction inputs from sorted inputs
-            // Dash doesn't use RBF, so we use the standard sequence number
-            let sequence = 0xffffffff;
-
-            transaction.input = selection
-                .iter()
-                .map(|&utxo| TxIn {
-                    previous_output: utxo.outpoint,
-                    script_sig: ScriptBuf::new(),
-                    sequence,
-                    witness: dashcore::blockdata::witness::Witness::new(),
-                })
-                .collect();
+            self.add_signed_inputs(&mut tx, &selection)?;
 
             // Here we recalculate the fee with the new inputs inside the transaction
             current_fee = {
                 let mut buff = Vec::new();
-                transaction.consensus_encode(&mut buff);
+                tx.consensus_encode(&mut buff).expect("The writer cannot fail");
                 self.fee_rate.calculate_fee(buff.len())
             };
 
             // Check the inputs obtained are enough, if not, execute the loop again, but this time
             // with the current_fee updated with the new min number of inputs. This ensures next
             // iteration selects the same inputs + new ones to pay for the new fee
-
-            // TODO: This logic can run forever bcs we dont check if there are more inputs available
-            // than the selected. We can easily check here that (utxos.len() > inputs.len()) but
-            // this logic is planned to be moved to CoinSelector
             if total_input >= total_output + current_fee + DUST {
                 // We added the change output as the last one, just update it with the correct amount
                 let change_amount = total_input - total_output - current_fee;
-                let change_output = transaction
+                let change_output = tx
                     .output
                     .last_mut()
                     .expect("Transaction is expect to have more than one output");
@@ -239,8 +231,8 @@ impl TransactionBuilder {
             }
         }
 
-        let tx_outputs = &mut transaction.output;
-        let tx_inputs = &mut transaction.input;
+        let tx_outputs = &mut tx.output;
+        let tx_inputs = &mut tx.input;
 
         // BIP-69: Sort outputs by amount first, then by scriptPubKey lexicographically
         tx_outputs.sort_by(|a, b| match a.value.cmp(&b.value) {
@@ -259,65 +251,114 @@ impl TransactionBuilder {
             }
         });
 
-        let signed_transaction = self.sign_transaction()?;
-
-        Ok(signed_transaction)
+        Ok(tx)
     }
 
-    fn sign_transaction(self) -> Result<Transaction, TransactionBuildingError> {
-        let tx = self.transaction;
-
-        // Collect all signatures first, then apply them
-        let mut signatures = Vec::new();
-        {
-            let cache = SighashCache::new(&tx);
-
-            for (index, (utxo, key_opt)) in sorted_inputs.iter().enumerate() {
-                if let Some(key) = key_opt {
-                    // Get the script pubkey from the UTXO
-                    let script_pubkey = &utxo.txout.script_pubkey;
-
-                    // Create signature hash for P2PKH
-                    let sighash = cache
-                        .legacy_signature_hash(index, script_pubkey, EcdsaSighashType::All.to_u32())
-                        .map_err(|e| {
-                            TransactionBuildingError::SigningFailed(format!(
-                                "Failed to compute sighash: {}",
-                                e
-                            ))
-                        })?;
-
-                    // Sign the hash
-                    let message = Message::from_digest(*sighash.as_byte_array());
-                    let signature = secp.sign_ecdsa(&message, key);
-
-                    // Create script signature (P2PKH)
-                    let mut sig_bytes = signature.serialize_der().to_vec();
-                    sig_bytes.push(EcdsaSighashType::All.to_u32() as u8);
-
-                    let pubkey = secp256k1::PublicKey::from_secret_key(&secp, key);
-
-                    let script_sig = Builder::new()
-                        .push_slice(<&PushBytes>::try_from(sig_bytes.as_slice()).map_err(|_| {
-                            TransactionBuildingError::SigningFailed(
-                                "Invalid signature length".into(),
-                            )
-                        })?)
-                        .push_slice(pubkey.serialize())
-                        .into_script();
-
-                    signatures.push((index, script_sig));
-                } else {
-                    signatures.push((index, ScriptBuf::new()));
-                }
+    fn add_signed_inputs(
+        &self,
+        tx: &mut Transaction,
+        utxos: &Vec<&Utxo>,
+    ) -> Result<(), TransactionBuildingError> {
+        let root_xpriv = match &self.wallet.wallet_type {
+            WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key,
+            WalletType::Seed {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key,
+            WalletType::ExtendedPrivKey(root_extended_private_key) => root_extended_private_key,
+            _ => {
+                return Err(TransactionBuildingError::SigningFailed(
+                    "Cannot sign with watch-only wallet".to_string(),
+                ));
             }
-        } // cache goes out of scope here
+        };
 
-        // Apply signatures
-        for (index, script_sig) in signatures {
-            tx.input[index].script_sig = script_sig;
+        // Build a map of address -> derivation path for all addresses in the account
+        let mut address_to_path: HashMap<Address, DerivationPath> = HashMap::new();
+
+        // Collect from all address pools (receive, change, etc.)
+        for pool in self.managed_account.account_type.address_pools() {
+            for addr_info in pool.addresses.values() {
+                address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
+            }
         }
 
-        Ok(tx)
+        let secp = Secp256k1::new();
+
+        // Collect all signatures first, then apply them
+        let mut inputs = Vec::new();
+
+        let cache = SighashCache::new(&*tx);
+
+        for (index, &utxo) in utxos.iter().enumerate() {
+            let key = {
+                // Look up the derivation path for this UTXO's address
+                let path = address_to_path.get(&utxo.address).ok_or(
+                    TransactionBuildingError::SigningFailed(format!(
+                        "Derivation path not found for address {}",
+                        utxo.address,
+                    )),
+                )?;
+
+                // Convert root key to ExtendedPrivKey and derive the child key
+                let root_ext_priv = root_xpriv.to_extended_priv_key(self.account.network);
+                let secp = secp256k1::Secp256k1::new();
+                let derived_xpriv = root_ext_priv
+                    .derive_priv(&secp, path)
+                    .map_err(|e| TransactionBuildingError::SigningFailed(e.to_string()))?;
+
+                derived_xpriv.private_key
+            };
+
+            // Get the script pubkey from the UTXO
+            let script_pubkey = &utxo.txout.script_pubkey;
+
+            // Create signature hash for P2PKH
+            let sighash = cache
+                .legacy_signature_hash(index, script_pubkey, EcdsaSighashType::All.to_u32())
+                .map_err(|e| {
+                    TransactionBuildingError::SigningFailed(format!(
+                        "Failed to compute sighash: {}",
+                        e
+                    ))
+                })?;
+
+            // Sign the hash
+            let message = Message::from_digest(*sighash.as_byte_array());
+            let signature = secp.sign_ecdsa(&message, &key);
+
+            // Create script signature (P2PKH)
+            let mut sig_bytes = signature.serialize_der().to_vec();
+            sig_bytes.push(EcdsaSighashType::All.to_u32() as u8);
+
+            let pubkey = secp256k1::PublicKey::from_secret_key(&secp, &key);
+
+            let script_sig = Builder::new()
+                .push_slice(<&PushBytes>::try_from(sig_bytes.as_slice()).map_err(|_| {
+                    TransactionBuildingError::SigningFailed("Invalid signature length".into())
+                })?)
+                .push_slice(pubkey.serialize())
+                .into_script();
+
+            // Map the UTXO to TxIn with the new scrip_sig
+            // Dash doesn't use RBF, so we use the standard sequence number
+            let sequence = 0xffffffff;
+
+            let txin = TxIn {
+                previous_output: utxo.outpoint,
+                script_sig,
+                sequence,
+                witness: dashcore::blockdata::witness::Witness::new(),
+            };
+
+            inputs.push(txin);
+        }
+
+        tx.input = inputs;
+
+        Ok(())
     }
 }
