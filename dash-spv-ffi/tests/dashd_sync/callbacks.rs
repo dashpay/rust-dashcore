@@ -5,80 +5,80 @@ use std::os::raw::{c_char, c_void};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::*;
+use dash_spv_ffi::*;
 
 /// Tracks callback invocations for verification.
 ///
 /// Fields are updated atomically from FFI callbacks and read in test assertions.
 #[derive(Default)]
-pub struct CallbackTracker {
+pub(super) struct CallbackTracker {
     // Sync event tracking
-    pub sync_start_count: AtomicU32,
-    pub block_headers_stored_count: AtomicU32,
-    pub block_header_sync_complete_count: AtomicU32,
-    pub filter_headers_stored_count: AtomicU32,
-    pub filter_headers_sync_complete_count: AtomicU32,
-    pub filters_stored_count: AtomicU32,
-    pub filters_sync_complete_count: AtomicU32,
-    pub blocks_needed_count: AtomicU32,
-    pub block_processed_count: AtomicU32,
-    pub masternode_state_updated_count: AtomicU32,
-    pub chainlock_received_count: AtomicU32,
-    pub instantlock_received_count: AtomicU32,
-    pub manager_error_count: AtomicU32,
-    pub sync_complete_count: AtomicU32,
+    pub(super) sync_start_count: AtomicU32,
+    pub(super) block_headers_stored_count: AtomicU32,
+    pub(super) block_header_sync_complete_count: AtomicU32,
+    pub(super) filter_headers_stored_count: AtomicU32,
+    pub(super) filter_headers_sync_complete_count: AtomicU32,
+    pub(super) filters_stored_count: AtomicU32,
+    pub(super) filters_sync_complete_count: AtomicU32,
+    pub(super) blocks_needed_count: AtomicU32,
+    pub(super) block_processed_count: AtomicU32,
+    pub(super) masternode_state_updated_count: AtomicU32,
+    pub(super) chainlock_received_count: AtomicU32,
+    pub(super) instantlock_received_count: AtomicU32,
+    pub(super) manager_error_count: AtomicU32,
+    pub(super) sync_complete_count: AtomicU32,
 
     // Network event tracking
-    pub peer_connected_count: AtomicU32,
-    pub peer_disconnected_count: AtomicU32,
-    pub peers_updated_count: AtomicU32,
+    pub(super) peer_connected_count: AtomicU32,
+    pub(super) peer_disconnected_count: AtomicU32,
+    pub(super) peers_updated_count: AtomicU32,
 
     // Wallet event tracking
-    pub transaction_received_count: AtomicU32,
-    pub balance_updated_count: AtomicU32,
+    pub(super) transaction_received_count: AtomicU32,
+    pub(super) balance_updated_count: AtomicU32,
 
     // Data from callbacks
-    pub last_header_tip: AtomicU32,
-    pub last_filter_tip: AtomicU32,
-    pub last_connected_peer_count: AtomicU32,
-    pub last_best_height: AtomicU32,
-    pub connected_peers: Mutex<Vec<String>>,
-    pub errors: Mutex<Vec<String>>,
+    pub(super) last_header_tip: AtomicU32,
+    pub(super) last_filter_tip: AtomicU32,
+    pub(super) last_connected_peer_count: AtomicU32,
+    pub(super) last_best_height: AtomicU32,
+    pub(super) connected_peers: Mutex<Vec<String>>,
+    pub(super) errors: Mutex<Vec<String>>,
 
     // Transaction data from on_transaction_received
-    pub received_txids: Mutex<Vec<[u8; 32]>>,
-    pub received_amounts: Mutex<Vec<i64>>,
+    pub(super) received_txids: Mutex<Vec<[u8; 32]>>,
+    pub(super) received_amounts: Mutex<Vec<i64>>,
 
     // Balance data from on_balance_updated
-    pub last_spendable: AtomicU64,
-    pub last_unconfirmed: AtomicU64,
+    pub(super) last_spendable: AtomicU64,
+    pub(super) last_unconfirmed: AtomicU64,
 
     // Lifecycle ordering via global sequence counter
-    pub sequence_counter: AtomicU32,
-    pub sync_start_seq: AtomicU32,
-    pub header_complete_seq: AtomicU32,
-    pub filter_header_complete_seq: AtomicU32,
-    pub filters_sync_complete_seq: AtomicU32,
-    pub sync_complete_seq: AtomicU32,
+    pub(super) sequence_counter: AtomicU32,
+    pub(super) sync_start_seq: AtomicU32,
+    pub(super) header_complete_seq: AtomicU32,
+    pub(super) filter_header_complete_seq: AtomicU32,
+    pub(super) filters_sync_complete_seq: AtomicU32,
+    pub(super) sync_complete_seq: AtomicU32,
 
     // Filter header range validation: (start, end, tip)
-    pub filter_header_ranges: Mutex<Vec<(u32, u32, u32)>>,
+    pub(super) filter_header_ranges: Mutex<Vec<(u32, u32, u32)>>,
 
     // Block processed heights
-    pub processed_block_heights: Mutex<Vec<u32>>,
+    pub(super) processed_block_heights: Mutex<Vec<u32>>,
 
     // Completion tracking
-    pub last_sync_cycle: AtomicU32,
+    pub(super) last_sync_cycle: AtomicU32,
 
     // Baseline for `wait_for_sync`: captured before the client starts so that
     // a SyncComplete firing between client start and `wait_for_sync` entry is
     // not missed.
-    pub sync_count_baseline: AtomicU32,
+    pub(super) sync_count_baseline: AtomicU32,
 }
 
 impl CallbackTracker {
     /// Assert that no errors were recorded during sync.
-    pub fn assert_no_errors(&self) {
+    pub(super) fn assert_no_errors(&self) {
         let errors = self.errors.lock().unwrap();
         assert!(errors.is_empty(), "Unexpected sync errors: {:?}", *errors);
     }
@@ -196,7 +196,7 @@ extern "C" fn on_filters_sync_complete(tip_height: u32, user_data: *mut c_void) 
 }
 
 extern "C" fn on_blocks_needed(
-    _blocks: *const crate::FFIBlockNeeded,
+    _blocks: *const dash_spv_ffi::FFIBlockNeeded,
     count: u32,
     user_data: *mut c_void,
 ) {
@@ -375,7 +375,7 @@ extern "C" fn on_balance_updated(
 ///
 /// The `user_data` pointer borrows the tracker Arc. The caller must ensure the
 /// Arc outlives all callback invocations (i.e. stop the client before dropping it).
-pub fn create_sync_callbacks(tracker: &Arc<CallbackTracker>) -> FFISyncEventCallbacks {
+pub(super) fn create_sync_callbacks(tracker: &Arc<CallbackTracker>) -> FFISyncEventCallbacks {
     FFISyncEventCallbacks {
         on_sync_start: Some(on_sync_start),
         on_block_headers_stored: Some(on_block_headers_stored),
@@ -399,7 +399,7 @@ pub fn create_sync_callbacks(tracker: &Arc<CallbackTracker>) -> FFISyncEventCall
 ///
 /// The `user_data` pointer borrows the tracker Arc. The caller must ensure the
 /// Arc outlives all callback invocations.
-pub fn create_network_callbacks(tracker: &Arc<CallbackTracker>) -> FFINetworkEventCallbacks {
+pub(super) fn create_network_callbacks(tracker: &Arc<CallbackTracker>) -> FFINetworkEventCallbacks {
     FFINetworkEventCallbacks {
         on_peer_connected: Some(on_peer_connected),
         on_peer_disconnected: Some(on_peer_disconnected),
@@ -412,7 +412,7 @@ pub fn create_network_callbacks(tracker: &Arc<CallbackTracker>) -> FFINetworkEve
 ///
 /// The `user_data` pointer borrows the tracker Arc. The caller must ensure the
 /// Arc outlives all callback invocations.
-pub fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWalletEventCallbacks {
+pub(super) fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWalletEventCallbacks {
     FFIWalletEventCallbacks {
         on_transaction_received: Some(on_transaction_received),
         on_balance_updated: Some(on_balance_updated),

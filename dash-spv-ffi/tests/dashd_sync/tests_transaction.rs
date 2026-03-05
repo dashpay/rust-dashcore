@@ -1,88 +1,10 @@
-//! FFI Sync tests using dashd.
-//!
-//! These tests mirror Rust SPV sync tests but use FFI bindings
-//! with the event-based API (dash_spv_ffi_client_run + event callbacks).
-
-use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use dash_spv::test_utils::DashdTestContext;
-use dash_spv_ffi::test_utils::FFITestContext;
 use dashcore::hashes::Hash;
 use dashcore::Amount;
 
-#[test]
-fn test_wallet_sync_via_ffi() {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
-        eprintln!("Skipping test (dashd context unavailable)");
-        return;
-    };
-
-    unsafe {
-        let ctx = FFITestContext::new(dashd.addr);
-
-        let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
-        tracing::info!("Added wallet, ID: {}", hex::encode(&wallet_id));
-
-        ctx.run_with_sync_callbacks();
-        tracing::info!("FFI client running");
-
-        ctx.wait_for_sync(dashd.initial_height);
-
-        ctx.tracker().assert_no_errors();
-
-        // Validate sync heights
-        let final_header = ctx.tracker().last_header_tip.load(Ordering::SeqCst);
-        let final_filter = ctx.tracker().last_filter_tip.load(Ordering::SeqCst);
-
-        assert_eq!(final_header, dashd.initial_height, "Header height mismatch");
-        assert_eq!(final_filter, dashd.initial_height, "Filter header height mismatch");
-        assert_eq!(
-            ctx.tracker().last_sync_cycle.load(Ordering::SeqCst),
-            0,
-            "Initial sync should be cycle 0"
-        );
-        tracing::info!("Heights match: headers={}, filters={}", final_header, final_filter);
-
-        // Validate wallet balance
-        let (confirmed, _unconfirmed) = ctx.get_wallet_balance(&wallet_id);
-        let expected_balance = (dashd.wallet.balance * 100_000_000.0).round() as u64;
-        tracing::info!(
-            "Balance: confirmed={} satoshis, expected={} satoshis",
-            confirmed,
-            expected_balance
-        );
-
-        assert_eq!(confirmed, expected_balance, "Balance mismatch");
-
-        // Validate transaction set against dashd baseline
-        let spv_txids = ctx.wallet_txids(&wallet_id);
-        let expected_txids: HashSet<String> = dashd
-            .wallet
-            .transactions
-            .iter()
-            .filter_map(|tx| tx.get("txid").and_then(|v| v.as_str()).map(String::from))
-            .collect();
-
-        let missing: Vec<_> = expected_txids.difference(&spv_txids).collect();
-        let extra: Vec<_> = spv_txids.difference(&expected_txids).collect();
-
-        assert!(
-            missing.is_empty(),
-            "SPV wallet is missing {} transactions: {:?}",
-            missing.len(),
-            missing
-        );
-        assert!(
-            extra.is_empty(),
-            "SPV wallet has {} unexpected transactions: {:?}",
-            extra.len(),
-            extra
-        );
-        tracing::info!("Transaction set validated: {} transactions match", spv_txids.len());
-    }
-}
+use super::context::FFITestContext;
 
 /// Verify incremental sync works via FFI by generating blocks after initial sync.
 ///
@@ -194,62 +116,6 @@ fn test_ffi_sync_then_generate_blocks() {
         );
 
         ctx.tracker().assert_no_errors();
-    }
-}
-
-/// Verify FFI client restart preserves consistent state across stop/recreate cycles.
-#[test]
-fn test_ffi_restart_consistency() {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
-        eprintln!("Skipping test (dashd context unavailable)");
-        return;
-    };
-
-    unsafe {
-        // First sync
-        tracing::info!("First FFI sync");
-        let ctx = FFITestContext::new(dashd.addr);
-        let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
-
-        ctx.run_with_sync_callbacks();
-        ctx.wait_for_sync(dashd.initial_height);
-
-        let (first_balance, _) = ctx.get_wallet_balance(&wallet_id);
-        let first_header = ctx.tracker().last_header_tip.load(Ordering::SeqCst);
-
-        ctx.tracker().assert_no_errors();
-        assert_eq!(
-            ctx.tracker().last_sync_cycle.load(Ordering::SeqCst),
-            0,
-            "First sync should be cycle 0"
-        );
-
-        tracing::info!("First sync: balance={}, header_tip={}", first_balance, first_header);
-
-        // Restart with same storage
-        tracing::info!("Restarting FFI client");
-        let ctx = ctx.restart();
-        let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
-
-        ctx.run_with_sync_callbacks();
-        ctx.wait_for_sync(dashd.initial_height);
-
-        let (second_balance, _) = ctx.get_wallet_balance(&wallet_id);
-        let second_header = ctx.tracker().last_header_tip.load(Ordering::SeqCst);
-
-        ctx.tracker().assert_no_errors();
-        assert_eq!(
-            ctx.tracker().last_sync_cycle.load(Ordering::SeqCst),
-            0,
-            "Restart sync should be cycle 0 (fresh client)"
-        );
-
-        tracing::info!("Second sync: balance={}, header_tip={}", second_balance, second_header);
-
-        // Verify state is identical
-        assert_eq!(first_balance, second_balance, "Balance mismatch after restart");
-        assert_eq!(first_header, second_header, "Header tip mismatch after restart");
     }
 }
 

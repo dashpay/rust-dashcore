@@ -7,20 +7,20 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::client::{
+use dash_spv::logging::{LogFileConfig, LoggingConfig, LoggingGuard};
+use dash_spv::test_utils::{retain_test_dir, SYNC_TIMEOUT};
+use dash_spv_ffi::client::{
     dash_spv_ffi_client_destroy, dash_spv_ffi_client_get_wallet_manager, dash_spv_ffi_client_new,
     dash_spv_ffi_client_run, dash_spv_ffi_client_set_network_event_callbacks,
     dash_spv_ffi_client_set_sync_event_callbacks, dash_spv_ffi_client_set_wallet_event_callbacks,
     dash_spv_ffi_client_stop, dash_spv_ffi_wallet_manager_free, FFIDashSpvClient,
 };
-use crate::config::{
+use dash_spv_ffi::config::{
     dash_spv_ffi_config_add_peer, dash_spv_ffi_config_destroy, dash_spv_ffi_config_new,
     dash_spv_ffi_config_set_data_dir, dash_spv_ffi_config_set_masternode_sync_enabled,
     dash_spv_ffi_config_set_restrict_to_configured_peers, FFIClientConfig,
 };
-use crate::types::FFIWalletManager as FFIWalletManagerOpaque;
-use dash_spv::logging::{LogFileConfig, LoggingConfig, LoggingGuard};
-use dash_spv::test_utils::{retain_test_dir, SYNC_TIMEOUT};
+use dash_spv_ffi::types::FFIWalletManager as FFIWalletManagerOpaque;
 use dashcore::hashes::Hash;
 use dashcore::{Address, Txid};
 use key_wallet_ffi::managed_account::{
@@ -85,7 +85,7 @@ impl Drop for SessionState {
 ///
 /// Split into `FixedState` (stays fixed across restarts) and `SessionState`
 /// (recreated on restart).
-pub struct FFITestContext {
+pub(super) struct FFITestContext {
     fixed: FixedState,
     session: SessionState,
 }
@@ -96,7 +96,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI functions that allocate and configure opaque pointers.
-    pub unsafe fn new(peer_addr: std::net::SocketAddr) -> Self {
+    pub(super) unsafe fn new(peer_addr: std::net::SocketAddr) -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let storage_dir = temp_dir.path().to_path_buf();
         let log_dir = storage_dir.join("logs");
@@ -150,13 +150,8 @@ impl FFITestContext {
         }
     }
 
-    /// The FFI client pointer.
-    pub fn client(&self) -> *mut FFIDashSpvClient {
-        self.session.client
-    }
-
     /// The callback tracker.
-    pub fn tracker(&self) -> &Arc<CallbackTracker> {
+    pub(super) fn tracker(&self) -> &Arc<CallbackTracker> {
         &self.session.tracker
     }
 
@@ -165,7 +160,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI wallet functions through raw pointers held by the context.
-    pub unsafe fn add_wallet(&self, mnemonic: &str) -> Vec<u8> {
+    pub(super) unsafe fn add_wallet(&self, mnemonic: &str) -> Vec<u8> {
         let mnemonic_c = CString::new(mnemonic).unwrap();
         let passphrase = CString::new("").unwrap();
         let mut error = FFIError::success();
@@ -202,7 +197,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI wallet functions through raw pointers held by the context.
-    pub unsafe fn get_wallet_balance(&self, wallet_id: &[u8]) -> (u64, u64) {
+    pub(super) unsafe fn get_wallet_balance(&self, wallet_id: &[u8]) -> (u64, u64) {
         let mut confirmed: u64 = 0;
         let mut unconfirmed: u64 = 0;
         let mut error = FFIError::success();
@@ -224,7 +219,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI client functions through raw pointers held by the context.
-    pub unsafe fn run_with_sync_callbacks(&self) {
+    pub(super) unsafe fn run_with_sync_callbacks(&self) {
         let sync_callbacks = create_sync_callbacks(&self.session.tracker);
         let result =
             dash_spv_ffi_client_set_sync_event_callbacks(self.session.client, sync_callbacks);
@@ -240,7 +235,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI client functions through raw pointers held by the context.
-    pub unsafe fn run_with_all_callbacks(&self) {
+    pub(super) unsafe fn run_with_all_callbacks(&self) {
         let sync_cbs = create_sync_callbacks(&self.session.tracker);
         let network_cbs = create_network_callbacks(&self.session.tracker);
         let wallet_cbs = create_wallet_callbacks(&self.session.tracker);
@@ -269,7 +264,7 @@ impl FFITestContext {
 
     /// Polls until a new `SyncComplete` event fires with both header and filter
     /// tips at or above `expected_height`.
-    pub fn wait_for_sync(&self, expected_height: u32) {
+    pub(super) fn wait_for_sync(&self, expected_height: u32) {
         let baseline = self.session.tracker.sync_count_baseline.load(Ordering::SeqCst);
         let start = std::time::Instant::now();
 
@@ -304,7 +299,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI wallet functions through raw pointers held by the context.
-    pub unsafe fn get_receive_address(&self, wallet_id: &[u8]) -> Address {
+    pub(super) unsafe fn get_receive_address(&self, wallet_id: &[u8]) -> Address {
         let mut error = FFIError::success();
         let wm = self.session.wallet_manager as *mut FFIWalletManager;
 
@@ -355,7 +350,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI managed account functions through raw pointers.
-    pub unsafe fn transaction_count(&self, wallet_id: &[u8]) -> usize {
+    pub(super) unsafe fn transaction_count(&self, wallet_id: &[u8]) -> usize {
         self.with_bip44_account(wallet_id, |account| {
             managed_core_account_get_transaction_count(account) as usize
         })
@@ -366,7 +361,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI managed account functions through raw pointers.
-    pub unsafe fn has_transaction(&self, wallet_id: &[u8], txid: &Txid) -> bool {
+    pub(super) unsafe fn has_transaction(&self, wallet_id: &[u8], txid: &Txid) -> bool {
         self.with_bip44_account(wallet_id, |account| {
             let mut txs_ptr: *mut FFITransactionRecord = std::ptr::null_mut();
             let mut count: usize = 0;
@@ -391,7 +386,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI managed account functions through raw pointers.
-    pub unsafe fn wallet_txids(&self, wallet_id: &[u8]) -> HashSet<String> {
+    pub(super) unsafe fn wallet_txids(&self, wallet_id: &[u8]) -> HashSet<String> {
         self.with_bip44_account(wallet_id, |account| {
             let mut txs_ptr: *mut FFITransactionRecord = std::ptr::null_mut();
             let mut count: usize = 0;
@@ -421,7 +416,7 @@ impl FFITestContext {
     /// # Safety
     ///
     /// Calls FFI client functions through raw pointers held by the context.
-    pub unsafe fn restart(self) -> Self {
+    pub(super) unsafe fn restart(self) -> Self {
         let fixed = self.fixed;
         // Drop the session (stops client, frees wallet manager, destroys client)
         drop(self.session);

@@ -1,16 +1,11 @@
-//! Integration test for FFI event callbacks.
-//!
-//! This test verifies all three callback structs work correctly in a real sync scenario:
-//! - FFISyncEventCallbacks
-//! - FFINetworkEventCallbacks
-//! - FFIWalletEventCallbacks
-
-use dash_spv::test_utils::DashdTestContext;
-use dash_spv_ffi::test_utils::FFITestContext;
-use dashcore::hashes::Hash;
-use dashcore::Amount;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+
+use dash_spv::test_utils::DashdTestContext;
+use dashcore::hashes::Hash;
+use dashcore::Amount;
+
+use super::context::FFITestContext;
 
 #[test]
 fn test_all_callbacks_during_sync() {

@@ -114,7 +114,7 @@ eval $(python3 contrib/setup-dashd.py)
 **Running:**
 ```bash
 cargo test -p dash-spv dashd_sync
-cargo test -p dash-spv-ffi dashd_ffi_sync_test
+cargo test -p dash-spv-ffi --test dashd_sync
 SKIP_DASHD_TESTS=1 cargo test   # skip when dashd is unavailable
 ```
 
@@ -125,6 +125,7 @@ SKIP_DASHD_TESTS=1 cargo test   # skip when dashd is unavailable
 
 **Key files:**
 - `dash-spv/tests/dashd_sync/` — test modules (basic, restart, disconnect, transaction)
+- `dash-spv-ffi/tests/dashd_sync/` — FFI test modules (basic, restart, transaction, callback)
 - `dash-spv/src/test_utils/` — shared infrastructure (`DashdTestContext`, `DashCoreNode`)
 - `.github/ci-groups.yml` — CI test group definitions (`spv` and `ffi` groups run dashd tests)
 
