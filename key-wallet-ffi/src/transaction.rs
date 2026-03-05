@@ -13,7 +13,7 @@ use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFITransactionContext, FFIWallet};
-use crate::FFIWalletManager;
+use crate::{wallet, FFIWalletManager};
 
 // MARK: - Transaction Types
 
@@ -109,53 +109,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
         manager_ref.runtime.block_on(async {
             let mut manager = manager_ref.manager.write().await;
 
-            let Some(managed_wallet) = manager.get_wallet_info_mut(wallet_id) else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    format!("There is no wallet with id {:?}", wallet_id),
-                );
-                return false;
-            };
-
-            let Some(wallet) = manager.get_wallet(wallet_id) else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    format!("There is no wallet with id {:?}", wallet_id),
-                );
-                return false;
-            };
-
-            // Get the managed account
-            let managed_account =
-                match managed_wallet.accounts.standard_bip44_accounts.get_mut(&account_index) {
-                    Some(account) => account,
-                    None => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::WalletError,
-                            format!("Account {} not found", account_index),
-                        );
-                        return false;
-                    }
-                };
-
-            let wallet_account = match wallet.accounts.standard_bip44_accounts.get(&account_index) {
-                Some(account) => account,
-                None => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("Wallet account {} not found", account_index),
-                    );
-                    return false;
-                }
-            };
-
             // Convert FFI outputs to Rust outputs
-            let mut tx_builder =
-                TransactionBuilder::new(managed_wallet, wallet, managed_account, wallet_account);
+            let mut tx_builder = TransactionBuilder::new(&mut manager, wallet_id, account_index);
 
             for output in outputs_slice {
                 if output.address.is_null() {

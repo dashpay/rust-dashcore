@@ -22,6 +22,7 @@ test-utils = ["dashcore/test-utils"]
 internals = { path = "../internals", package = "dashcore-private" }
 dashcore_hashes = { path = "../hashes", default-features = false }
 dashcore = { path="../dash" }
+key-wallet-manager = { path = "../key-wallet-manager", features = ["std"] }
 secp256k1 = { version = "0.30.0", default-features = false, features = ["hashes", "recovery"] }
 bip39 = { version = "2.2.0", default-features = false, features = ["chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }

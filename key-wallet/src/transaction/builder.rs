@@ -6,6 +6,7 @@
 use alloc::vec::Vec;
 use core::fmt;
 use dashcore::consensus::Encodable;
+use dashcore::prelude::CoreBlockHeight;
 use std::collections::HashMap;
 
 use dashcore::blockdata::script::{Builder, PushBytes};
@@ -20,9 +21,9 @@ use secp256k1::{Message, Secp256k1};
 use crate::account::{ManagedAccountTrait, ManagedCoreAccount};
 use crate::transaction::coin_selection::{SelectionError, UtxoSelector, UtxoSelectorStrategy};
 use crate::transaction::fee::FeeRate;
-use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use crate::wallet::{ManagedWalletInfo, WalletType};
-use crate::{Account, DerivationPath, Utxo, Wallet};
+use crate::wallet::WalletType;
+use crate::{Account, DerivationPath, ManagedAccountType, Utxo};
+use key_wallet_manager::wallet_manager::WalletManager;
 
 /// Errors that can occur during transaction building
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,17 +58,21 @@ impl std::error::Error for TransactionBuildingError {}
 /// to ensure deterministic ordering and improve privacy by preventing information leakage
 /// through predictable input/output ordering patterns.
 pub struct TransactionBuilder<'a> {
-    /// Sender account
-    managed_wallet: &'a ManagedWalletInfo,
-    wallet: &'a Wallet,
+    // Sender account needed information
+    synced_height: CoreBlockHeight,
+    wallet_type: WalletType,
+    change_address: Address,
+    available_utxos: Vec<&'a Utxo>,
+    managed_account_type: ManagedAccountType,
+    // TODO: Remove this stuff but need to fix bad crate architecture
     managed_account: &'a mut ManagedCoreAccount,
     account: &'a Account,
 
-    /// Fee rate (satoshis per kilobyte)
+    // Variables that define the desired transaction
     fee_rate: FeeRate,
     selection_strategy: UtxoSelectorStrategy,
 
-    /// Transaction fields
+    // Transaction fields
     version: u16,
     lock_time: u32,
     outputs: Vec<TxOut>,
@@ -77,16 +82,18 @@ pub struct TransactionBuilder<'a> {
 impl<'a> TransactionBuilder<'a> {
     /// Create a new transaction builder
     pub fn new(
-        managed_wallet: &'a ManagedWalletInfo,
-        wallet: &'a Wallet,
-        managed_account: &'a mut ManagedCoreAccount,
-        account: &'a Account,
+        wallet_manager: &'a WalletManager<ManagedWalletInfo>,
+        wallet_id: &'a WalletId,
+        account_index: u32,
     ) -> Self {
         Self {
-            managed_wallet,
-            wallet,
-            managed_account,
-            account,
+            synced_height: todo!(),
+            wallet_type: todo!(),
+            change_address: todo!(),
+            available_utxos: todo!(),
+            managed_account_type: todo!(),
+            managed_account: todo!(),
+            account: todo!(),
 
             fee_rate: FeeRate::normal(),
             selection_strategy: UtxoSelectorStrategy::OptimalConsolidation,
@@ -201,7 +208,7 @@ impl<'a> TransactionBuilder<'a> {
                 .select(
                     total_output + current_fee + DUST,
                     self.managed_account.utxos().values(),
-                    self.managed_wallet.synced_height(),
+                    self.synced_height,
                 )
                 .map_err(TransactionBuildingError::CoinSelection)?;
 
@@ -259,7 +266,7 @@ impl<'a> TransactionBuilder<'a> {
         tx: &mut Transaction,
         utxos: &Vec<&Utxo>,
     ) -> Result<(), TransactionBuildingError> {
-        let root_xpriv = match &self.wallet.wallet_type {
+        let root_xpriv = match &self.wallet_type {
             WalletType::Mnemonic {
                 root_extended_private_key,
                 ..
