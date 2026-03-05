@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Recursively copy a directory and all its contents.
-pub fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
+pub(super) fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
