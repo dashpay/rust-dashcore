@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Workspace with crates: `dash`, `hashes`, `internals`, `dash-network`, `dash-spv`, `key-wallet`, `rpc-*`, utilities (`fuzz`, `test-utils`), and FFI crates (`*-ffi`).
+- Workspace with crates: `dash`, `hashes`, `internals`, `dash-spv`, `key-wallet`, `rpc-*`, utilities (`fuzz`, `test-utils`), and FFI crates (`*-ffi`).
 - Each crate keeps sources in `src/`; unit tests live alongside code with `#[cfg(test)]`. Integration tests use `tests/` (e.g., `rpc-integration-test`).
 - FFI bindings are in `*-ffi`. Shared helpers in `internals/` and `test-utils/`.
 

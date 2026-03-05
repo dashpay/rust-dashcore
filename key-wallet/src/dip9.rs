@@ -2,7 +2,7 @@ use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, Extended
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use bitflags::bitflags;
-use dash_network::Network;
+use dashcore::Network;
 use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

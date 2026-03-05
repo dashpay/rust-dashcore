@@ -24,10 +24,10 @@
 
 | Group | Crates | Coverage |
 |-------|--------|----------|
-| core | dashcore, dashcore_hashes, dashcore-private, dash-network | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=core)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=core) |
+| core | dashcore, dashcore_hashes, dashcore-private | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=core)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=core) |
 | spv | dash-spv | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=spv)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=spv) |
 | wallet | key-wallet, key-wallet-manager | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=wallet)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=wallet) |
-| ffi | dash-network-ffi, dash-spv-ffi, key-wallet-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=ffi)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=ffi) |
+| ffi | dash-spv-ffi, key-wallet-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=ffi)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=ffi) |
 | rpc | dashcore-rpc, dashcore-rpc-json | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=rpc)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=rpc) |
 
 </details>

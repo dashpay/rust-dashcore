@@ -22,8 +22,8 @@ use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
+use crate::network::constants::Network;
 use crate::pow::CompactTarget;
-use dash_network::Network;
 
 /// How many satoshis are in "one dash".
 pub const COIN_VALUE: u64 = 100_000_000;
@@ -178,16 +178,14 @@ pub fn genesis_block(network: Network) -> Block {
                 txdata,
             }
         }
-        // Any new network variant must be handled explicitly.
-        _ => unreachable!("genesis_block(): unsupported network variant {network:?}"),
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::Network;
     use crate::internal_macros::hex;
-    use dash_network::Network;
 
     #[test]
     fn dash_genesis_first_transaction() {

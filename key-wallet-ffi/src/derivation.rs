@@ -2,7 +2,7 @@
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFINetwork;
-use dash_network::Network;
+use dashcore::Network;
 use key_wallet::{ExtendedPrivKey, ExtendedPubKey};
 use secp256k1::Secp256k1;
 use std::ffi::{CStr, CString};

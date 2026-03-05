@@ -8,8 +8,8 @@ mod validation;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::Network;
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
-use crate::network::constants::NetworkExt;
 use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
@@ -28,7 +28,6 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, QuorumHash};
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use dash_network::Network;
 use hashes::Hash;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

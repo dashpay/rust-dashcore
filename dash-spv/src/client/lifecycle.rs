@@ -26,7 +26,6 @@ use crate::sync::{
     InstantSendManager, Managers, MasternodesManager, SyncCoordinator,
 };
 use crate::types::MempoolState;
-use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
 use key_wallet_manager::wallet_interface::WalletInterface;

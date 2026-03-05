@@ -1,4 +1,4 @@
-use dash_network::Network;
+use crate::Network;
 use hashes::{Hash, sha256};
 
 use crate::{Address, PrivateKey, PublicKey};

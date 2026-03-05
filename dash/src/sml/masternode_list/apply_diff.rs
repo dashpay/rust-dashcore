@@ -1,5 +1,5 @@
+use crate::Network;
 use crate::bls_sig_utils::BLSSignature;
-use crate::network::constants::NetworkExt;
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
@@ -10,7 +10,6 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
-use dash_network::Network;
 
 impl MasternodeList {
     /// Applies an `MnListDiff` to update the current masternode list.
@@ -170,7 +169,6 @@ impl MasternodeList {
 mod tests {
     use super::*;
     use crate::consensus::deserialize;
-    use crate::network::constants::NetworkExt;
     use crate::sml::masternode_list::from_diff::TryFromWithBlockHashLookup;
 
     #[test]

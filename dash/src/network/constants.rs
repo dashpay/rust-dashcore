@@ -18,16 +18,13 @@
 //! Dash network constants.
 //!
 //! This module provides various constants relating to the Dash network
-//! protocol, such as protocol versioning and magic header bytes.
-//!
-//! The [`Network`][1] type is now provided by the `dash_network` crate.
-//!
-//! [1]: https://docs.rs/dash-network/latest/dash_network/enum.Network.html
+//! protocol, such as protocol versioning and magic header bytes and the
+//! different network types supported by Dash.
 //!
 //! # Example: encoding a network's magic bytes
 //!
 //! ```rust
-//! use dash_network::Network;
+//! use dashcore::Network;
 //! use dashcore::consensus::encode::serialize;
 //!
 //! let network = Network::Dash;
@@ -43,7 +40,6 @@ use hashes::Hash;
 
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::{BlockHash, io};
-use dash_network::Network;
 
 // Re-export NODE_HEADERS_COMPRESSED for convenience
 pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COMPRESSED;
@@ -65,18 +61,71 @@ pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COM
 /// 60001 - Support `pong` message and nonce in `ping` message
 pub const PROTOCOL_VERSION: u32 = 70237;
 
-/// Extension trait for Network to add dash-specific methods
-pub trait NetworkExt {
-    /// The known dash genesis block hash for mainnet and testnet
-    fn known_genesis_block_hash(&self) -> Option<BlockHash>;
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
 
-    /// V20 activation height when quorumsCLSigs was introduced (protocol 70230).
-    /// See DIP-0029 and Dash Core src/chainparams.cpp.
-    fn v20_activation_height(&self) -> u32;
+/// The cryptocurrency network to act on.
+#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[non_exhaustive]
+#[repr(u8)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub enum Network {
+    /// Classic Dash Core Payment Chain
+    Dash,
+    /// Dash's testnet network.
+    Testnet,
+    /// Dash's devnet network.
+    Devnet,
+    /// Bitcoin's regtest network.
+    Regtest,
 }
 
-impl NetworkExt for Network {
-    fn known_genesis_block_hash(&self) -> Option<BlockHash> {
+impl Network {
+    /// Creates a `Network` from the magic bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dashcore::Network;
+    ///
+    /// assert_eq!(Some(Network::Dash), Network::from_magic(0xBD6B0CBF));
+    /// assert_eq!(None, Network::from_magic(0xFFFFFFFF));
+    /// ```
+    pub fn from_magic(magic: u32) -> Option<Network> {
+        // Note: any new entries here must be added to `magic` below
+        match magic {
+            0xBD6B0CBF => Some(Network::Dash),
+            0xFFCAE2CE => Some(Network::Testnet),
+            0xCEFFCAE2 => Some(Network::Devnet),
+            0xDCB7C1FC => Some(Network::Regtest),
+            _ => None,
+        }
+    }
+
+    /// Return the network magic bytes, which should be encoded little-endian
+    /// at the start of every message
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dashcore::Network;
+    ///
+    /// let network = Network::Dash;
+    /// assert_eq!(network.magic(), 0xBD6B0CBF);
+    /// ```
+    pub fn magic(self) -> u32 {
+        // Note: any new entries here must be added to `from_magic` above
+        match self {
+            Network::Dash => 0xBD6B0CBF,
+            Network::Testnet => 0xFFCAE2CE,
+            Network::Devnet => 0xCEFFCAE2,
+            Network::Regtest => 0xDCB7C1FC,
+        }
+    }
+
+    pub fn known_genesis_block_hash(&self) -> Option<BlockHash> {
         match self {
             Network::Dash => {
                 let mut block_hash =
@@ -100,16 +149,40 @@ impl NetworkExt for Network {
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
-            _ => None,
         }
     }
 
-    fn v20_activation_height(&self) -> u32 {
+    pub fn v20_activation_height(&self) -> u32 {
         match self {
             Network::Dash => 1_987_776,
             Network::Testnet => 905_100,
             // Devnet and regtest activate V20 immediately
             _ => 0,
+        }
+    }
+}
+
+impl fmt::Display for Network {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Network::Dash => write!(f, "dash"),
+            Network::Testnet => write!(f, "testnet"),
+            Network::Devnet => write!(f, "devnet"),
+            Network::Regtest => write!(f, "regtest"),
+        }
+    }
+}
+
+impl std::str::FromStr for Network {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "dash" | "mainnet" => Ok(Network::Dash),
+            "testnet" | "test" => Ok(Network::Testnet),
+            "devnet" | "dev" => Ok(Network::Devnet),
+            "regtest" => Ok(Network::Regtest),
+            _ => Err(format!("Unknown network type: {}", s)),
         }
     }
 }
@@ -291,8 +364,45 @@ impl Decodable for ServiceFlags {
 #[cfg(test)]
 mod tests {
     use super::ServiceFlags;
+    use crate::Network;
     use crate::consensus::encode::{deserialize, serialize};
-    use dash_network::Network;
+
+    #[test]
+    fn test_network_magic() {
+        assert_eq!(Network::Dash.magic(), 0xBD6B0CBF);
+        assert_eq!(Network::Testnet.magic(), 0xFFCAE2CE);
+        assert_eq!(Network::Devnet.magic(), 0xCEFFCAE2);
+        assert_eq!(Network::Regtest.magic(), 0xDCB7C1FC);
+    }
+
+    #[test]
+    fn test_network_from_magic() {
+        assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Dash));
+        assert_eq!(Network::from_magic(0xFFCAE2CE), Some(Network::Testnet));
+        assert_eq!(Network::from_magic(0xCEFFCAE2), Some(Network::Devnet));
+        assert_eq!(Network::from_magic(0xDCB7C1FC), Some(Network::Regtest));
+        assert_eq!(Network::from_magic(0x12345678), None);
+    }
+
+    #[test]
+    fn test_network_display() {
+        assert_eq!(Network::Dash.to_string(), "dash");
+        assert_eq!(Network::Testnet.to_string(), "testnet");
+        assert_eq!(Network::Devnet.to_string(), "devnet");
+        assert_eq!(Network::Regtest.to_string(), "regtest");
+    }
+
+    #[test]
+    fn test_network_from_str() {
+        assert_eq!("dash".parse::<Network>().unwrap(), Network::Dash);
+        assert_eq!("mainnet".parse::<Network>().unwrap(), Network::Dash);
+        assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
+        assert_eq!("test".parse::<Network>().unwrap(), Network::Testnet);
+        assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
+        assert_eq!("dev".parse::<Network>().unwrap(), Network::Devnet);
+        assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
+        assert!("invalid".parse::<Network>().is_err());
+    }
 
     #[test]
     fn serialize_test() {
@@ -305,20 +415,6 @@ mod tests {
         assert_eq!(deserialize(&[0xce, 0xe2, 0xca, 0xff]).ok(), Some(Network::Testnet.magic()));
         assert_eq!(deserialize(&[0xe2, 0xca, 0xff, 0xce]).ok(), Some(Network::Devnet.magic()));
         assert_eq!(deserialize(&[0xfc, 0xc1, 0xb7, 0xdc]).ok(), Some(Network::Regtest.magic()));
-    }
-
-    #[test]
-    fn string_test() {
-        assert_eq!(Network::Dash.to_string(), "dash");
-        assert_eq!(Network::Testnet.to_string(), "testnet");
-        assert_eq!(Network::Regtest.to_string(), "regtest");
-        assert_eq!(Network::Devnet.to_string(), "devnet");
-
-        assert_eq!("dash".parse::<Network>().unwrap(), Network::Dash);
-        assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
-        assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
-        assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
-        assert!("fakenet".parse::<Network>().is_err());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::bls_sig_utils::BLSSignature;
-use crate::network::constants::NetworkExt;
+
+use crate::Network;
 use crate::network::message_sml::MnListDiff;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::{
@@ -11,7 +12,6 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
 use crate::{BlockHash, QuorumHash};
-use dash_network::Network;
 use hashes::Hash;
 use std::collections::BTreeMap;
 
@@ -158,7 +158,6 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
 mod tests {
     use super::*;
     use crate::consensus::deserialize;
-    use crate::network::constants::NetworkExt;
 
     #[test]
     fn post_v20_requires_chainlock_signatures() {

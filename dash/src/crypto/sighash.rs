@@ -1178,13 +1178,13 @@ mod tests {
     use hashes::HashEngine;
 
     use super::*;
+    use crate::Network;
     use crate::address::Address;
     use crate::consensus::deserialize;
     use crate::crypto::key::PublicKey;
     use crate::crypto::sighash::{LegacySighash, TapSighash};
     use crate::internal_macros::hex;
     use crate::taproot::TapLeafHash;
-    use dash_network::Network;
 
     #[test]
     fn sighash_single_bug() {

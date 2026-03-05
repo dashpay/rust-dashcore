@@ -6,7 +6,6 @@ groups:
     - dashcore
     - dashcore_hashes
     - dashcore-private
-    - dash-network
 
   spv:
     - dash-spv
@@ -16,7 +15,6 @@ groups:
     - key-wallet-manager
 
   ffi:
-    - dash-network-ffi
     - dash-spv-ffi
     - key-wallet-ffi
 

@@ -24,7 +24,7 @@ use dashcore::blsful::{
 #[cfg(feature = "serde")]
 use serde;
 
-use dash_network::Network;
+use dashcore::Network;
 use serde::Deserialize;
 
 use crate::bip32::{ChainCode, ChildNumber, DerivationPath, Fingerprint};

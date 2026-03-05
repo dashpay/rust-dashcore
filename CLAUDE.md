@@ -22,9 +22,7 @@ rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol libra
 - `hashes/` - Cryptographic hash implementations (SHA256, X11, Blake3)
 - `internals/` - Internal utilities and macros
 
-### Network & SPV
-- `dash-network/` - Network protocol abstractions
-- `dash-network-ffi/` - C-compatible FFI bindings for network types
+### SPV
 - `dash-spv/` - SPV client implementation
 - `dash-spv-ffi/` - C-compatible FFI bindings for SPV client
 

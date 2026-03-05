@@ -21,8 +21,7 @@
 //! chains (such as mainnet, testnet).
 //!
 
-use crate::Work;
-use dash_network::Network;
+use crate::{Work, network::constants::Network};
 
 /// Parameters that influence chain consensus.
 #[non_exhaustive]
@@ -123,7 +122,6 @@ impl Params {
                 allow_min_difficulty_blocks: true,
                 no_pow_retargeting: true,
             },
-            other => panic!("Unsupported network variant: {other:?}"),
         }
     }
 

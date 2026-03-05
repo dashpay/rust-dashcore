@@ -46,7 +46,7 @@ use alloc::{string::String, vec::Vec};
 use base58ck;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use dash_network::Network;
+use dashcore::Network;
 
 /// XpubIdentifier as a hash160 result
 type XpubIdentifier = hash160::Hash;
@@ -2104,7 +2104,7 @@ mod tests {
 
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
-    use dash_network::Network::{self, Dash};
+    use dashcore::Network::{self, Dash};
 
     #[test]
     fn test_parse_derivation_path() {

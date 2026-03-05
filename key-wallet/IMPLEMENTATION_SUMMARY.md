@@ -105,7 +105,6 @@
 - ✅ BIP38 encryption/decryption
 
 ### Integration Points
-- Works with dash-network for network types
 - Compatible with bitcoin_hashes
 - Uses secp256k1 for cryptography
 - Integrates with bip39 crate
@@ -187,7 +186,6 @@ let transaction = builder.build()?;
 - `secp256k1` - Elliptic curve cryptography
 - `bip39` - Mnemonic phrase support
 - `base58ck` - Base58check encoding
-- `dash-network` - Network types
 
 ### Optional
 - `serde` - Serialization support

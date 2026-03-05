@@ -7,7 +7,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use tokio::sync::RwLock;
 

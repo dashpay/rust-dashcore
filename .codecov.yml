@@ -25,7 +25,6 @@ flags:
       - dash/src/
       - hashes/src/
       - internals/src/
-      - dash-network/src/
   spv:
     paths:
       - dash-spv/src/
@@ -35,7 +34,6 @@ flags:
       - key-wallet-manager/src/
   ffi:
     paths:
-      - dash-network-ffi/src/
       - dash-spv-ffi/src/
       - key-wallet-ffi/src/
   rpc:

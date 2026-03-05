@@ -7,8 +7,8 @@ use std::io;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
+use crate::Network;
 use crate::consensus::{Decodable, Encodable, encode};
-use dash_network::Network;
 
 /// Represents a DKG (Distributed Key Generation) mining window
 /// This is the range of blocks where a quorum commitment can be mined

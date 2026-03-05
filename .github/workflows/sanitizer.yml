@@ -10,12 +10,10 @@ on:
     paths:
       - 'key-wallet-ffi/**'
       - 'dash-spv-ffi/**'
-      - 'dash-network-ffi/**'
       - 'dashcore/**'
       - 'dashcore_hashes/**'
       - 'key-wallet/**'
       - 'dash-spv/**'
-      - 'dash-network/**'
 
 permissions:
   contents: read
@@ -43,7 +41,7 @@ jobs:
         run: |
           # FFI crates (C interop)
           cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
-            -p key-wallet-ffi -p dash-spv-ffi -p dash-network-ffi --lib --tests
+            -p key-wallet-ffi -p dash-spv-ffi --lib --tests
 
           # Core crypto crates (unsafe optimizations)
           cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \

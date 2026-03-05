@@ -11,6 +11,3 @@ dashcore_hashes:
 dashcore-private:
   - bare
   - alloc
-
-dash-network:
-  - no-std
