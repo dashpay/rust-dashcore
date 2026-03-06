@@ -1,4 +1,4 @@
-#[cfg(feature = "bincode")]
+#[cfg(feature = "serde")]
 #[cfg(test)]
 mod tests {
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;

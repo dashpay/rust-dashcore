@@ -4,8 +4,6 @@
 
 use std::collections::BTreeMap;
 
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +19,6 @@ pub type DashpayContactIdentityId = [u8; 32];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct DashpayAccountKey {
     pub index: u32,
     pub user_identity_id: DashpayOurUserIdentityId,
@@ -31,7 +28,6 @@ pub struct DashpayAccountKey {
 /// Key for Platform Payment accounts (DIP-17)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct PlatformPaymentAccountKey {
     /// Account index (hardened)
     pub account: u32,
@@ -42,7 +38,6 @@ pub struct PlatformPaymentAccountKey {
 /// Collection of accounts organized by type
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AccountCollection {
     /// Standard BIP44 accounts by index
     pub standard_bip44_accounts: BTreeMap<u32, Account>,

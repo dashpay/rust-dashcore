@@ -5,8 +5,6 @@ use crate::bip32::{ChainCode, ChildNumber, ExtendedPrivKey, ExtendedPubKey};
 use crate::derivation_bls_bip32::ExtendedBLSPrivKey;
 use crate::wallet::WalletType;
 use crate::{Error, Network, Wallet};
-#[cfg(feature = "bincode")]
-use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]
 use dashcore::blsful::Bls12381G2Impl;
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
@@ -153,56 +151,6 @@ impl RootExtendedPrivKey {
     }
 }
 
-#[cfg(feature = "bincode")]
-impl Encode for RootExtendedPrivKey {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> Result<(), bincode::error::EncodeError> {
-        // Encode the private key as 32 bytes
-        let private_key_bytes = self.root_private_key.secret_bytes();
-        bincode::Encode::encode(&private_key_bytes, encoder)?;
-
-        // Encode the chain code
-        bincode::Encode::encode(&self.root_chain_code, encoder)?;
-
-        Ok(())
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<C> Decode<C> for RootExtendedPrivKey {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        // Decode the private key bytes
-        let private_key_bytes: [u8; 32] = bincode::Decode::decode(decoder)?;
-        let root_private_key =
-            secp256k1::SecretKey::from_byte_array(&private_key_bytes).map_err(|e| {
-                bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-            })?;
-
-        // Decode the chain code
-        let root_chain_code: ChainCode = bincode::Decode::decode(decoder)?;
-
-        Ok(Self {
-            root_private_key,
-            root_chain_code,
-        })
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<'de, C> BorrowDecode<'de, C> for RootExtendedPrivKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        // For borrowed decode, we still need to copy the data since secp256k1::SecretKey
-        // doesn't support borrowing from the decoder
-        <Self as Decode<C>>::decode(decoder)
-    }
-}
-
 pub trait FromOnNetwork<T>: Sized {
     /// Converts to this type from the input type.
     fn from_on_network(value: T, network: Network) -> Self;
@@ -286,55 +234,6 @@ impl RootExtendedPubKey {
             public_key: self.root_public_key,
             chain_code: self.root_chain_code,
         }
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl Encode for RootExtendedPubKey {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> Result<(), bincode::error::EncodeError> {
-        // Encode the public key as serialized bytes (33 bytes compressed)
-        let public_key_bytes = self.root_public_key.serialize();
-        bincode::Encode::encode(&public_key_bytes, encoder)?;
-
-        // Encode the chain code
-        bincode::Encode::encode(&self.root_chain_code, encoder)?;
-
-        Ok(())
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<C> Decode<C> for RootExtendedPubKey {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        // Decode the public key bytes
-        let public_key_bytes: [u8; 33] = bincode::Decode::decode(decoder)?;
-        let root_public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-        })?;
-
-        // Decode the chain code
-        let root_chain_code: ChainCode = bincode::Decode::decode(decoder)?;
-
-        Ok(Self {
-            root_public_key,
-            root_chain_code,
-        })
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<'de, C> BorrowDecode<'de, C> for RootExtendedPubKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        // For borrowed decode, we still need to copy the data since secp256k1::PublicKey
-        // doesn't support borrowing from the decoder
-        <Self as Decode<C>>::decode(decoder)
     }
 }
 

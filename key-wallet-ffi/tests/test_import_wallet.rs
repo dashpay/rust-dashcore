@@ -1,6 +1,6 @@
 //! Test for wallet import from bytes via FFI
 
-#[cfg(feature = "bincode")]
+#[cfg(feature = "serde")]
 #[cfg(test)]
 mod tests {
     use key_wallet_ffi::error::{FFIError, FFIErrorCode};

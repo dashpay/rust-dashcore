@@ -8,10 +8,6 @@
 pub mod test_utils;
 
 #[cfg(test)]
-#[macro_use]
-mod test_macros;
-
-#[cfg(test)]
 mod address_metadata_tests;
 #[cfg(all(test, feature = "bip38"))]
 mod bip38_tests;

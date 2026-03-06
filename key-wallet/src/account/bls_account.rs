@@ -16,8 +16,6 @@ use dashcore::Address;
 use serde::{Deserialize, Serialize};
 
 use crate::bip32::{ChainCode, Fingerprint};
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use dashcore::blsful::{Bls12381G2Impl, SerializationFormat};
 
 use crate::account::derivation::AccountDerivation;
@@ -27,7 +25,6 @@ pub use dashcore::blsful::SecretKey;
 /// BLS account structure for Platform and masternode operations
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct BLSAccount {
     /// Wallet id (stored as Vec for serialization)
     pub parent_wallet_id: Option<Vec<u8>>,
@@ -162,21 +159,6 @@ impl BLSAccount {
         let mut watch_only = self.clone();
         watch_only.is_watch_only = true;
         watch_only
-    }
-
-    /// Serialize account to bytes
-    #[cfg(feature = "bincode")]
-    pub fn serialize(&self) -> Result<Vec<u8>> {
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .map_err(|e| Error::Serialization(e.to_string()))
-    }
-
-    /// Deserialize account from bytes
-    #[cfg(feature = "bincode")]
-    pub fn deserialize(data: &[u8]) -> Result<Self> {
-        bincode::decode_from_slice(data, bincode::config::standard())
-            .map(|(account, _)| account)
-            .map_err(|e| Error::Serialization(e.to_string()))
     }
 }
 

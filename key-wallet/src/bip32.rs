@@ -42,8 +42,6 @@ use crate::dip9::{
     IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET,
 };
 use base58ck;
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use dashcore::Network;
 
 /// XpubIdentifier as a hash160 result
@@ -56,7 +54,6 @@ pub use secp256k1::SecretKey as PrivateKey;
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct ChainCode([u8; 32]);
 
 impl ChainCode {
@@ -201,7 +198,6 @@ impl<'de> serde::Deserialize<'de> for ChainCode {
 
 /// A fingerprint
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Fingerprint([u8; 4]);
 
 impl Fingerprint {
@@ -356,77 +352,6 @@ pub struct ExtendedPrivKey {
     pub chain_code: ChainCode,
 }
 
-#[cfg(feature = "bincode")]
-impl bincode::Encode for ExtendedPrivKey {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> Result<(), bincode::error::EncodeError> {
-        self.network.encode(encoder)?;
-        self.depth.encode(encoder)?;
-        self.parent_fingerprint.encode(encoder)?;
-        self.child_number.encode(encoder)?;
-        // Encode the private key as bytes
-        self.private_key.secret_bytes().encode(encoder)?;
-        self.chain_code.encode(encoder)?;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<C> bincode::Decode<C> for ExtendedPrivKey {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        let network = Network::decode(decoder)?;
-        let depth = u8::decode(decoder)?;
-        let parent_fingerprint = Fingerprint::decode(decoder)?;
-        let child_number = ChildNumber::decode(decoder)?;
-        // Decode the private key from bytes
-        let private_key_bytes: [u8; 32] = <[u8; 32]>::decode(decoder)?;
-        let private_key = secp256k1::SecretKey::from_slice(&private_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-        })?;
-        let chain_code = ChainCode::decode(decoder)?;
-
-        Ok(ExtendedPrivKey {
-            network,
-            depth,
-            parent_fingerprint,
-            child_number,
-            private_key,
-            chain_code,
-        })
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPrivKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        let network = Network::borrow_decode(decoder)?;
-        let depth = u8::borrow_decode(decoder)?;
-        let parent_fingerprint = Fingerprint::borrow_decode(decoder)?;
-        let child_number = ChildNumber::borrow_decode(decoder)?;
-        // Decode the private key from bytes
-        let private_key_bytes: [u8; 32] = <[u8; 32]>::borrow_decode(decoder)?;
-        let private_key = secp256k1::SecretKey::from_slice(&private_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-        })?;
-        let chain_code = ChainCode::borrow_decode(decoder)?;
-
-        Ok(ExtendedPrivKey {
-            network,
-            depth,
-            parent_fingerprint,
-            child_number,
-            private_key,
-            chain_code,
-        })
-    }
-}
-
 #[cfg(feature = "serde")]
 impl serde::Serialize for ExtendedPrivKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -477,77 +402,6 @@ pub struct ExtendedPubKey {
     pub chain_code: ChainCode,
 }
 
-#[cfg(feature = "bincode")]
-impl bincode::Encode for ExtendedPubKey {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> Result<(), bincode::error::EncodeError> {
-        self.network.encode(encoder)?;
-        self.depth.encode(encoder)?;
-        self.parent_fingerprint.encode(encoder)?;
-        self.child_number.encode(encoder)?;
-        // Encode the public key as bytes (33 bytes for compressed)
-        self.public_key.serialize().encode(encoder)?;
-        self.chain_code.encode(encoder)?;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<C> bincode::Decode<C> for ExtendedPubKey {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        let network = Network::decode(decoder)?;
-        let depth = u8::decode(decoder)?;
-        let parent_fingerprint = Fingerprint::decode(decoder)?;
-        let child_number = ChildNumber::decode(decoder)?;
-        // Decode the public key from bytes (33 bytes for compressed)
-        let public_key_bytes: [u8; 33] = <[u8; 33]>::decode(decoder)?;
-        let public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-        })?;
-        let chain_code = ChainCode::decode(decoder)?;
-
-        Ok(ExtendedPubKey {
-            network,
-            depth,
-            parent_fingerprint,
-            child_number,
-            public_key,
-            chain_code,
-        })
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPubKey {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        let network = Network::borrow_decode(decoder)?;
-        let depth = u8::borrow_decode(decoder)?;
-        let parent_fingerprint = Fingerprint::borrow_decode(decoder)?;
-        let child_number = ChildNumber::borrow_decode(decoder)?;
-        // Decode the public key from bytes (33 bytes for compressed)
-        let public_key_bytes: [u8; 33] = <[u8; 33]>::borrow_decode(decoder)?;
-        let public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-        })?;
-        let chain_code = ChainCode::borrow_decode(decoder)?;
-
-        Ok(ExtendedPubKey {
-            network,
-            depth,
-            parent_fingerprint,
-            child_number,
-            public_key,
-            chain_code,
-        })
-    }
-}
-
 #[cfg(feature = "serde")]
 impl serde::Serialize for ExtendedPubKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -571,7 +425,6 @@ impl<'de> serde::Deserialize<'de> for ExtendedPubKey {
 
 /// A child number for a derived key
 #[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum ChildNumber {
     /// Non-hardened key
     Normal {
@@ -941,34 +794,6 @@ pub trait IntoDerivationPath {
 /// A BIP-32 derivation path.
 #[derive(Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct DerivationPath(Vec<ChildNumber>);
-
-#[cfg(feature = "bincode")]
-impl bincode::Encode for DerivationPath {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> Result<(), bincode::error::EncodeError> {
-        self.0.encode(encoder)
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<C> bincode::Decode<C> for DerivationPath {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        Ok(DerivationPath(Vec::<ChildNumber>::decode(decoder)?))
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<'de, C> bincode::BorrowDecode<'de, C> for DerivationPath {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        Ok(DerivationPath(Vec::<ChildNumber>::borrow_decode(decoder)?))
-    }
-}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u32)]
@@ -2433,42 +2258,6 @@ mod tests {
             "m/0h".parse().unwrap(),
             "xprv9uPDJpEQgRQfDcW7BkF7eTya6RPxXeJCqCJGHuCJ4GiRVLzkTXBAJMu2qaMWPrS7AANYqdq6vcBcBUdJCVVFceUvJFjaPdGZ2y9WACViL4L",
             "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y",
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "serde")]
-    pub fn encode_decode_childnumber() {
-        serde_round_trip!(ChildNumber::from_normal_idx(0).unwrap());
-        serde_round_trip!(ChildNumber::from_normal_idx(1).unwrap());
-        serde_round_trip!(ChildNumber::from_normal_idx((1 << 31) - 1).unwrap());
-        serde_round_trip!(ChildNumber::from_hardened_idx(0).unwrap());
-        serde_round_trip!(ChildNumber::from_hardened_idx(1).unwrap());
-        serde_round_trip!(ChildNumber::from_hardened_idx((1 << 31) - 1).unwrap());
-    }
-
-    #[test]
-    #[cfg(feature = "serde")]
-    pub fn encode_fingerprint_chaincode() {
-        use serde_json;
-        let fp = Fingerprint::from([1u8, 2, 3, 42]);
-        let cc = ChainCode::from([
-            1u8, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8,
-            9, 0, 1, 2,
-        ]);
-
-        serde_round_trip!(fp);
-        serde_round_trip!(cc);
-
-        assert_eq!("\"0102032a\"", serde_json::to_string(&fp).unwrap());
-        assert_eq!(
-            "\"0102030405060708090001020304050607080900010203040506070809000102\"",
-            serde_json::to_string(&cc).unwrap()
-        );
-        assert_eq!("0102032a", fp.to_string());
-        assert_eq!(
-            "0102030405060708090001020304050607080900010203040506070809000102",
-            cc.to_string()
         );
     }
 

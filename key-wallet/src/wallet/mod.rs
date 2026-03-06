@@ -4,7 +4,6 @@
 //! multiple accounts, seed management, and transaction coordination.
 
 pub mod accounts;
-pub mod backup;
 pub mod balance;
 #[cfg(feature = "bip38")]
 pub mod bip38;
@@ -22,8 +21,6 @@ use crate::account::account_collection::AccountCollection;
 use crate::mnemonic::Mnemonic;
 use crate::seed::Seed;
 use crate::Network;
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use core::fmt;
 use dashcore_hashes::{sha256, Hash};
 #[cfg(feature = "serde")]
@@ -33,7 +30,6 @@ use zeroize::Zeroize;
 /// Type of wallet based on how it was created
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum WalletType {
     /// Standard mnemonic wallet without passphrase
     Mnemonic {
@@ -66,7 +62,6 @@ pub enum WalletType {
 /// in ManagedWalletInfo.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Wallet {
     /// Network this wallet is associated with
     pub network: Network,
