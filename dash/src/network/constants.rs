@@ -72,13 +72,13 @@ use bincode_derive::{Decode, Encode};
 #[repr(u8)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum Network {
-    /// Classic Dash Core Payment Chain
+    /// Dash mainnet, the production network for real transactions.
     Dash,
-    /// Dash's testnet network.
+    /// Dash public test network for protocol-level testing without real funds.
     Testnet,
-    /// Dash's devnet network.
+    /// Dash development network, an isolated environment for feature development and testing.
     Devnet,
-    /// Bitcoin's regtest network.
+    /// Local regression testing network for deterministic, offline testing with instant block generation.
     Regtest,
 }
 
