@@ -205,7 +205,7 @@ mod tests {
             assert!(xpub.is_null());
 
             let network = account_get_network(ptr::null());
-            assert_eq!(network, crate::FFINetwork::Dash);
+            assert_eq!(network, crate::FFINetwork::Mainnet);
 
             let wallet_id = account_get_parent_wallet_id(ptr::null());
             assert!(wallet_id.is_null());

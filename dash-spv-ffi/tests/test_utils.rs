@@ -42,10 +42,10 @@ mod tests {
     #[test]
     fn test_network_names() {
         unsafe {
-            let name = ffi_network_get_name(FFINetwork::Dash);
+            let name = ffi_network_get_name(FFINetwork::Mainnet);
             assert!(!name.is_null());
             let name_str = CStr::from_ptr(name).to_str().unwrap();
-            assert_eq!(name_str, "dash");
+            assert_eq!(name_str, "mainnet");
 
             let name = ffi_network_get_name(FFINetwork::Testnet);
             assert!(!name.is_null());

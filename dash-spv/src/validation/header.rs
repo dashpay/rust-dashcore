@@ -133,7 +133,7 @@ mod tests {
     fn test_genesis_blocks() {
         let validator = BlockHeaderValidator::new();
 
-        for network in [Network::Dash, Network::Testnet, Network::Regtest] {
+        for network in [Network::Mainnet, Network::Testnet, Network::Regtest] {
             let genesis = HashedBlockHeader::from(genesis_block(network).header);
             assert!(
                 validator.validate(&[genesis]).is_ok(),

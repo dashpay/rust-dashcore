@@ -67,7 +67,7 @@ let mnemonic = Mnemonic::generate(24, Language::English)?;
 println!("Mnemonic: {}", mnemonic.phrase());
 
 // Create wallet from mnemonic
-let wallet = Wallet::from_mnemonic(mnemonic.clone(), None, Network::Dash)?;
+let wallet = Wallet::from_mnemonic(mnemonic.clone(), None, Network::Mainnet)?;
 
 // Get wallet ID (unique identifier)
 println!("Wallet ID: {:?}", hex::encode(wallet.wallet_id));
@@ -81,7 +81,7 @@ use key_wallet::managed_account::ManagedAccount;
 
 // Create a standard BIP44 account
 let account = wallet.create_account(
-    Network::Dash,
+    Network::Mainnet,
     AccountType::Standard {
         index: 0,
         standard_account_type: StandardAccountType::BIP44Account,
@@ -130,7 +130,7 @@ for i in 0..100 {
 ```rust
 // Create CoinJoin account for privacy
 let coinjoin_account = wallet.create_account(
-    Network::Dash,
+    Network::Mainnet,
     AccountType::Standard {
         index: 0,
         standard_account_type: StandardAccountType::CoinJoinAccount,
@@ -151,7 +151,7 @@ let pool_1_address = coinjoin_account.derive_address_at_pool(1, 0)?;
     
     // Create identity authentication key
     let identity_account = wallet.create_account(
-        Network::Dash,
+        Network::Mainnet,
         AccountType::IdentityAuthentication {
             identity_index: 0,
             key_index: 0,
@@ -176,7 +176,7 @@ let tx: Transaction = get_transaction_from_network();
 
 let result = wallet_info.check_transaction(
     &tx,
-    Network::Dash,
+    Network::Mainnet,
     TransactionContext::Mempool,
     Some(&wallet), // Update state if transaction is ours
 );

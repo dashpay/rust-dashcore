@@ -16,7 +16,7 @@ pub trait NetworkLLMQExt {
 impl NetworkLLMQExt for Network {
     fn is_llmq_type(&self) -> LLMQType {
         match self {
-            Network::Dash => LLMQType::Llmqtype50_60,
+            Network::Mainnet => LLMQType::Llmqtype50_60,
             Network::Testnet => LLMQType::Llmqtype50_60,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTestInstantSend,
@@ -25,7 +25,7 @@ impl NetworkLLMQExt for Network {
 
     fn isd_llmq_type(&self) -> LLMQType {
         match self {
-            Network::Dash => LLMQType::Llmqtype60_75,
+            Network::Mainnet => LLMQType::Llmqtype60_75,
             Network::Testnet => LLMQType::Llmqtype60_75,
             Network::Devnet => LLMQType::LlmqtypeDevnetDIP0024,
             Network::Regtest => LLMQType::LlmqtypeTestDIP0024,
@@ -34,7 +34,7 @@ impl NetworkLLMQExt for Network {
 
     fn chain_locks_type(&self) -> LLMQType {
         match self {
-            Network::Dash => LLMQType::Llmqtype400_60,
+            Network::Mainnet => LLMQType::Llmqtype400_60,
             Network::Testnet => LLMQType::Llmqtype50_60,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTest,
@@ -43,7 +43,7 @@ impl NetworkLLMQExt for Network {
 
     fn platform_type(&self) -> LLMQType {
         match self {
-            Network::Dash => LLMQType::Llmqtype100_67,
+            Network::Mainnet => LLMQType::Llmqtype100_67,
             Network::Testnet => LLMQType::Llmqtype25_67,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTest,
@@ -53,7 +53,7 @@ impl NetworkLLMQExt for Network {
     /// Get all enabled LLMQ types for this network
     fn enabled_llmq_types(&self) -> Vec<LLMQType> {
         match self {
-            Network::Dash => vec![
+            Network::Mainnet => vec![
                 LLMQType::Llmqtype50_60,  // InstantSend
                 LLMQType::Llmqtype60_75,  // InstantSend DIP24 (rotating)
                 LLMQType::Llmqtype400_60, // ChainLocks
@@ -129,7 +129,7 @@ impl NetworkLLMQExt for Network {
     /// Check if a quorum type should be skipped at the given height
     fn should_skip_quorum_type(&self, llmq_type: &LLMQType, height: u32) -> bool {
         match (self, llmq_type) {
-            (Network::Dash, LLMQType::Llmqtype100_67) => height < 1_888_888, // Platform activation on mainnet
+            (Network::Mainnet, LLMQType::Llmqtype100_67) => height < 1_888_888, // Platform activation on mainnet
             (Network::Testnet, LLMQType::Llmqtype25_67) => height < 1_289_520, // Platform activation on testnet
             _ => false,
         }
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_enabled_llmq_types_mainnet() {
-        let network = Network::Dash;
+        let network = Network::Mainnet;
         let types = network.enabled_llmq_types();
 
         assert!(types.contains(&LLMQType::Llmqtype50_60));
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_should_skip_platform_quorum() {
-        let network = Network::Dash;
+        let network = Network::Mainnet;
 
         // Platform quorum should be skipped before activation height
         assert!(network.should_skip_quorum_type(&LLMQType::Llmqtype100_67, 1_888_887));

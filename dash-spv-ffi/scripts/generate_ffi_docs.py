@@ -276,7 +276,7 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
 
     md.append("### Enumerations")
     md.append("")
-    md.append("- `FFINetwork` - Network type (Dash, Testnet, Regtest, Devnet)")
+    md.append("- `FFINetwork` - Network type (Mainnet, Testnet, Regtest, Devnet)")
     md.append("- `FFIValidationMode` - Validation mode (None, Basic, Full)")
     md.append("- `FFIMempoolStrategy` - Mempool strategy (FetchAll, BloomFilter, Selective)")
     md.append("")

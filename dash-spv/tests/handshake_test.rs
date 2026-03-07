@@ -13,12 +13,12 @@ async fn test_handshake_with_mainnet_peer() {
     let _ = env_logger::builder().filter_level(log::LevelFilter::Debug).is_test(true).try_init();
 
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
-    let result = Peer::connect(peer_addr, 10, Network::Dash).await;
+    let result = Peer::connect(peer_addr, 10, Network::Mainnet).await;
 
     match result {
         Ok(mut connection) => {
             let mut handshake_manager = HandshakeManager::new(
-                Network::Dash,
+                Network::Mainnet,
                 MempoolStrategy::BloomFilter,
                 Some("handshake_test".parse().unwrap()),
             );
@@ -54,7 +54,7 @@ async fn test_handshake_timeout() {
     // This IP range is reserved for documentation and will never respond.
     let peer_addr: SocketAddr = "192.0.2.1:9999".parse().expect("Valid peer address");
     let start = std::time::Instant::now();
-    let result = Peer::connect(peer_addr, 2, Network::Dash).await;
+    let result = Peer::connect(peer_addr, 2, Network::Mainnet).await;
     let elapsed = start.elapsed();
 
     assert!(result.is_err(), "Connection should fail for unreachable peer");
@@ -73,7 +73,8 @@ async fn test_handshake_timeout() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_network_manager_creation() {
     let temp_dir = tempfile::TempDir::new().expect("Failed to create temporary directory");
-    let config = ClientConfig::new(Network::Dash).with_storage_path(temp_dir.path().to_path_buf());
+    let config =
+        ClientConfig::new(Network::Mainnet).with_storage_path(temp_dir.path().to_path_buf());
     let network = PeerNetworkManager::new(&config).await;
 
     assert!(network.is_ok(), "Network manager creation should succeed");
@@ -85,7 +86,7 @@ async fn test_network_manager_creation() {
 #[tokio::test]
 async fn test_multiple_connect_disconnect_cycles() {
     let peer_addr: SocketAddr = "127.0.0.1:9999".parse().expect("Valid peer address");
-    let mut connection = Peer::new(peer_addr, Duration::from_secs(10), Network::Dash);
+    let mut connection = Peer::new(peer_addr, Duration::from_secs(10), Network::Mainnet);
 
     // Try multiple connect/disconnect cycles
     for i in 1..=3 {

@@ -59,7 +59,7 @@ fn test_separate_wallets_per_network() {
 
     let mut mainnet_wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        Network::Dash,
+        Network::Mainnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -109,7 +109,7 @@ fn test_separate_wallets_per_network() {
     assert_eq!(testnet_wallet.network, Network::Testnet);
     assert_eq!(testnet_wallet.accounts.standard_bip44_accounts.len(), 3);
 
-    assert_eq!(mainnet_wallet.network, Network::Dash);
+    assert_eq!(mainnet_wallet.network, Network::Mainnet);
     assert_eq!(mainnet_wallet.accounts.standard_bip44_accounts.len(), 2);
 
     assert_eq!(devnet_wallet.network, Network::Devnet);

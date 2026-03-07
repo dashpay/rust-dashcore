@@ -193,7 +193,7 @@ impl Default for MasternodeListEngine {
             known_snapshots: Default::default(),
             rotated_quorums_per_cycle: Default::default(),
             quorum_statuses: Default::default(),
-            network: Network::Dash,
+            network: Network::Mainnet,
         }
     }
 }
@@ -1197,7 +1197,7 @@ mod tests {
         // This one is serialized not with bincode, but with core consensus
         let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
         let mut masternode_list_engine =
-            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Dash)
+            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
                 .expect("expected to start engine");
 
         let mn_list_diff_bytes_2: &[u8] =
@@ -1283,7 +1283,7 @@ mod tests {
         // This one is serialized not with bincode, but with core consensus
         let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
         let mut masternode_list_engine =
-            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Dash)
+            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
                 .expect("expected to start engine");
 
         let block_container_bytes: &[u8] =
@@ -1444,7 +1444,7 @@ mod tests {
             include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
         let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
         let mut masternode_list_engine =
-            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Dash)
+            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
                 .expect("expected to start engine");
 
         let block_container_bytes: &[u8] =

@@ -295,7 +295,7 @@ mod tests {
 
         let wallet = Wallet::from_mnemonic(
             mnemonic,
-            Network::Dash,
+            Network::Mainnet,
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();

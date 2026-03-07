@@ -405,7 +405,7 @@ impl PrivateKey {
     pub fn fmt_wif(&self, fmt: &mut dyn Write) -> fmt::Result {
         let mut ret = [0; 34];
         ret[0] = match self.network {
-            Network::Dash => 204,
+            Network::Mainnet => 204,
             Network::Testnet | Network::Devnet | Network::Regtest => 239,
         };
         ret[1..33].copy_from_slice(&self.inner[..]);
@@ -439,7 +439,7 @@ impl PrivateKey {
         };
 
         let network = match data[0] {
-            204 => Network::Dash,
+            204 => Network::Mainnet,
             239 => Network::Testnet,
             x => {
                 return Err(Error::Base58(base58::Error::InvalidAddressVersion(x)));
@@ -819,7 +819,7 @@ mod tests {
     use secp256k1::Secp256k1;
 
     use super::*;
-    use crate::Network::{Dash, Testnet};
+    use crate::Network::{Mainnet, Testnet};
     use crate::address::Address;
     use crate::io;
 
@@ -845,7 +845,7 @@ mod tests {
         // mainnet uncompressed
         let sk =
             PrivateKey::from_wif("7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c").unwrap();
-        assert_eq!(sk.network, Dash);
+        assert_eq!(sk.network, Mainnet);
         assert!(!sk.compressed);
         assert_eq!(&sk.to_wif(), "7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c");
 

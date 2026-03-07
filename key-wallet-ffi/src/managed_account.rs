@@ -482,13 +482,13 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
 /// # Safety
 ///
 /// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
-/// - Returns `FFINetwork::Dash` if the account is null
+/// - Returns `FFINetwork::Mainnet` if the account is null
 #[no_mangle]
 pub unsafe extern "C" fn managed_core_account_get_network(
     account: *const FFIManagedCoreAccount,
 ) -> FFINetwork {
     if account.is_null() {
-        return FFINetwork::Dash;
+        return FFINetwork::Mainnet;
     }
 
     let account = &*account;
@@ -1157,13 +1157,13 @@ pub unsafe extern "C" fn managed_wallet_get_platform_payment_account(
 /// # Safety
 ///
 /// - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
-/// - Returns `FFINetwork::Dash` if the account is null
+/// - Returns `FFINetwork::Mainnet` if the account is null
 #[no_mangle]
 pub unsafe extern "C" fn managed_platform_account_get_network(
     account: *const FFIManagedPlatformAccount,
 ) -> FFINetwork {
     if account.is_null() {
-        return FFINetwork::Dash;
+        return FFINetwork::Mainnet;
     }
 
     let account = &*account;
@@ -1665,7 +1665,7 @@ mod tests {
         unsafe {
             // Test null account for get_network
             let network = managed_core_account_get_network(ptr::null());
-            assert_eq!(network, FFINetwork::Dash);
+            assert_eq!(network, FFINetwork::Mainnet);
 
             let mut index_out: c_uint = 0;
             let account_type = managed_core_account_get_account_type(ptr::null(), &mut index_out);

@@ -171,12 +171,12 @@ mod tests {
 
         // Height 2227096 is post-V20 on mainnet (1,987,776)
         let post_v20_height = 2_227_096;
-        assert!(post_v20_height >= Network::Dash.v20_activation_height());
+        assert!(post_v20_height >= Network::Mainnet.v20_activation_height());
 
         let result = MasternodeList::try_from_with_block_hash_lookup(
             diff,
             |_| Some(post_v20_height),
-            Network::Dash,
+            Network::Mainnet,
         );
 
         assert!(
@@ -197,12 +197,12 @@ mod tests {
 
         // Use a pre-V20 height on mainnet (V20 at 1,987,776)
         let pre_v20_height = 1_900_000;
-        assert!(pre_v20_height < Network::Dash.v20_activation_height());
+        assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
 
         let result = MasternodeList::try_from_with_block_hash_lookup(
             diff,
             |_| Some(pre_v20_height),
-            Network::Dash,
+            Network::Mainnet,
         );
 
         assert!(

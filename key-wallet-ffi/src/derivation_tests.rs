@@ -571,7 +571,7 @@ mod tests {
 
         // Test with Mainnet
         let xprv_main = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Dash, &mut error)
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Mainnet, &mut error)
         };
         assert!(!xprv_main.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);

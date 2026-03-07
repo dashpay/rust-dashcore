@@ -38,7 +38,7 @@ fn do_test(data: &[u8]) {
         assert_eq!(data, &encode::serialize(&script)[..]);
 
         // Check if valid address and if that address roundtrips.
-        if let Ok(addr) = Address::from_script(&script, Network::Dash) {
+        if let Ok(addr) = Address::from_script(&script, Network::Mainnet) {
             assert_eq!(addr.script_pubkey(), script);
         }
     }

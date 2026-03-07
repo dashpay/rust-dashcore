@@ -203,7 +203,7 @@ fn test_multi_network_backup_restore() {
     .unwrap();
 
     // Create separate wallets for each network
-    let networks = vec![Network::Testnet, Network::Dash, Network::Devnet];
+    let networks = vec![Network::Testnet, Network::Mainnet, Network::Devnet];
     let mut wallets = Vec::new();
 
     for network in &networks {

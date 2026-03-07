@@ -1001,7 +1001,7 @@ mod test {
         // Test encoding and decoding SendDsq(true)
         let msg_true = NetworkMessage::SendDsq(true);
         let raw_msg = RawNetworkMessage {
-            magic: crate::Network::Dash.magic(),
+            magic: crate::Network::Mainnet.magic(),
             payload: msg_true,
         };
 
@@ -1022,7 +1022,7 @@ mod test {
         // Test encoding and decoding SendDsq(false)
         let msg_false = NetworkMessage::SendDsq(false);
         let raw_msg = RawNetworkMessage {
-            magic: crate::Network::Dash.magic(),
+            magic: crate::Network::Mainnet.magic(),
             payload: msg_false,
         };
 

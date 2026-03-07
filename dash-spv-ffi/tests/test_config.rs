@@ -27,7 +27,7 @@ mod tests {
             assert!(!config.is_null());
 
             let network = dash_spv_ffi_config_get_network(config);
-            assert_eq!(network as i32, FFINetwork::Dash as i32);
+            assert_eq!(network as i32, FFINetwork::Mainnet as i32);
 
             dash_spv_ffi_config_destroy(config);
         }

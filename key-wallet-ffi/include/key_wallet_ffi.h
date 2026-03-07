@@ -106,7 +106,7 @@ typedef enum {
  FFI Network type (single network)
  */
 typedef enum {
-    DASH = 0,
+    MAINNET = 0,
     TESTNET = 1,
     REGTEST = 2,
     DEVNET = 3,
@@ -976,7 +976,7 @@ FFIAccountResult wallet_get_top_up_account_with_registration_index(const FFIWall
  # Safety
 
  - `account` must be a valid pointer to an FFIAccount instance
- - Returns `FFINetwork::Dash` if the account is null
+ - Returns `FFINetwork::Mainnet` if the account is null
  */
  FFINetwork account_get_network(const FFIAccount *account) ;
 
@@ -1030,7 +1030,7 @@ FFIAccountResult wallet_get_top_up_account_with_registration_index(const FFIWall
  # Safety
 
  - `account` must be a valid pointer to an FFIBLSAccount instance
- - Returns `FFINetwork::Dash` if the account is null
+ - Returns `FFINetwork::Mainnet` if the account is null
  */
  FFINetwork bls_account_get_network(const FFIBLSAccount *account) ;
 
@@ -1087,7 +1087,7 @@ FFIAccountType bls_account_get_account_type(const FFIBLSAccount *account,
  # Safety
 
  - `account` must be a valid pointer to an FFIEdDSAAccount instance
- - Returns `FFINetwork::Dash` if the account is null
+ - Returns `FFINetwork::Mainnet` if the account is null
  */
  FFINetwork eddsa_account_get_network(const FFIEdDSAAccount *account) ;
 
@@ -2512,7 +2512,7 @@ FFIManagedCoreAccountResult managed_wallet_get_dashpay_external_account(const FF
  # Safety
 
  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
- - Returns `FFINetwork::Dash` if the account is null
+ - Returns `FFINetwork::Mainnet` if the account is null
  */
  FFINetwork managed_core_account_get_network(const FFIManagedCoreAccount *account) ;
 
@@ -2740,7 +2740,7 @@ FFIManagedPlatformAccountResult managed_wallet_get_platform_payment_account(cons
  # Safety
 
  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance
- - Returns `FFINetwork::Dash` if the account is null
+ - Returns `FFINetwork::Mainnet` if the account is null
  */
  FFINetwork managed_platform_account_get_network(const FFIManagedPlatformAccount *account) ;
 

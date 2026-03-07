@@ -77,7 +77,7 @@ pub struct ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            network: Network::Dash,
+            network: Network::Mainnet,
             peers: vec![],
             restrict_to_configured_peers: false,
             storage_path: PathBuf::from("./dash-spv-storage"),
@@ -110,7 +110,7 @@ impl ClientConfig {
 
     /// Create a configuration for mainnet.
     pub fn mainnet() -> Self {
-        Self::new(Network::Dash)
+        Self::new(Network::Mainnet)
     }
 
     /// Create a configuration for testnet.
@@ -221,7 +221,7 @@ impl ClientConfig {
     /// Explicit peers can still be added via add_peer() or configuration.
     fn default_peers_for_network(network: Network) -> Vec<SocketAddr> {
         match network {
-            Network::Dash | Network::Testnet => {
+            Network::Mainnet | Network::Testnet => {
                 // Return empty to trigger immediate DNS discovery
                 // DNS seeds will be used: dnsseed.dash.org (mainnet), testnet-seed.dashdot.io (testnet)
                 vec![]

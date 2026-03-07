@@ -114,7 +114,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
 
     let cfg = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     let default_port = match cfg.network {
-        dashcore::Network::Dash => 9999,
+        dashcore::Network::Mainnet => 9999,
         dashcore::Network::Testnet => 19999,
         dashcore::Network::Regtest => 19899,
         dashcore::Network::Devnet => 29999,
@@ -232,13 +232,13 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_masternode_sync_enabled(
 ///
 /// # Safety
 /// - `config` must be a valid pointer to an FFIClientConfig or null
-/// - If null, returns FFINetwork::Dash as default
+/// - If null, returns FFINetwork::Mainnet as default
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_config_get_network(
     config: *const FFIClientConfig,
 ) -> FFINetwork {
     if config.is_null() {
-        return FFINetwork::Dash;
+        return FFINetwork::Mainnet;
     }
 
     let config = unsafe { &*((*config).inner as *const ClientConfig) };

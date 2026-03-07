@@ -61,7 +61,7 @@ mod tests {
     fn test_network_conversions() {
         // Test all network conversions
         let networks = [
-            (FFINetwork::Dash, dashcore::Network::Dash),
+            (FFINetwork::Mainnet, dashcore::Network::Mainnet),
             (FFINetwork::Testnet, dashcore::Network::Testnet),
             (FFINetwork::Regtest, dashcore::Network::Regtest),
             (FFINetwork::Devnet, dashcore::Network::Devnet),

@@ -289,10 +289,10 @@ fn main() {
 
     // Map network
     let network = match matches.get_one::<String>("network").map(|s| s.as_str()) {
-        Some("mainnet") => FFINetwork::Dash,
+        Some("mainnet") => FFINetwork::Mainnet,
         Some("testnet") => FFINetwork::Testnet,
         Some("regtest") => FFINetwork::Regtest,
-        _ => FFINetwork::Dash,
+        _ => FFINetwork::Mainnet,
     };
 
     unsafe {

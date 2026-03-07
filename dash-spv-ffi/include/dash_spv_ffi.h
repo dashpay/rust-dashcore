@@ -795,7 +795,7 @@ int32_t dash_spv_ffi_config_set_masternode_sync_enabled(struct FFIClientConfig *
  *
  * # Safety
  * - `config` must be a valid pointer to an FFIClientConfig or null
- * - If null, returns FFINetwork::Dash as default
+ * - If null, returns FFINetwork::Mainnet as default
  */
  FFINetwork dash_spv_ffi_config_get_network(const struct FFIClientConfig *config) ;
 

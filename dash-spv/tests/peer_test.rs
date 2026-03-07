@@ -217,7 +217,7 @@ mod unit_tests {
         let discovery = DnsDiscovery::new().await.unwrap();
 
         // Test mainnet discovery
-        let peers = discovery.discover_peers(Network::Dash).await;
+        let peers = discovery.discover_peers(Network::Mainnet).await;
         assert!(!peers.is_empty(), "Should discover mainnet peers");
 
         // All peers should use correct port
@@ -226,7 +226,7 @@ mod unit_tests {
         }
 
         // Test limited discovery
-        let limited = discovery.discover_peers_limited(Network::Dash, 5).await;
+        let limited = discovery.discover_peers_limited(Network::Mainnet, 5).await;
         assert!(limited.len() <= 5);
     }
 }

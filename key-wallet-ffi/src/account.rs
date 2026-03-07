@@ -231,11 +231,11 @@ pub unsafe extern "C" fn account_get_extended_public_key_as_string(
 /// # Safety
 ///
 /// - `account` must be a valid pointer to an FFIAccount instance
-/// - Returns `FFINetwork::Dash` if the account is null
+/// - Returns `FFINetwork::Mainnet` if the account is null
 #[no_mangle]
 pub unsafe extern "C" fn account_get_network(account: *const FFIAccount) -> FFINetwork {
     if account.is_null() {
-        return FFINetwork::Dash;
+        return FFINetwork::Mainnet;
     }
 
     let account = &*account;
@@ -342,12 +342,12 @@ pub unsafe extern "C" fn bls_account_get_extended_public_key_as_string(
 /// # Safety
 ///
 /// - `account` must be a valid pointer to an FFIBLSAccount instance
-/// - Returns `FFINetwork::Dash` if the account is null
+/// - Returns `FFINetwork::Mainnet` if the account is null
 #[cfg(feature = "bls")]
 #[no_mangle]
 pub unsafe extern "C" fn bls_account_get_network(account: *const FFIBLSAccount) -> FFINetwork {
     if account.is_null() {
-        return FFINetwork::Dash;
+        return FFINetwork::Mainnet;
     }
 
     let account = &*account;
@@ -459,12 +459,12 @@ pub unsafe extern "C" fn eddsa_account_get_extended_public_key_as_string(
 /// # Safety
 ///
 /// - `account` must be a valid pointer to an FFIEdDSAAccount instance
-/// - Returns `FFINetwork::Dash` if the account is null
+/// - Returns `FFINetwork::Mainnet` if the account is null
 #[cfg(feature = "eddsa")]
 #[no_mangle]
 pub unsafe extern "C" fn eddsa_account_get_network(account: *const FFIEdDSAAccount) -> FFINetwork {
     if account.is_null() {
-        return FFINetwork::Dash;
+        return FFINetwork::Mainnet;
     }
 
     let account = &*account;

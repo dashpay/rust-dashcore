@@ -257,7 +257,7 @@ impl AccountType {
 
     /// Get the derivation path for this account type
     pub fn derivation_path(&self, network: Network) -> Result<DerivationPath, crate::error::Error> {
-        let coin_type = if network == Network::Dash {
+        let coin_type = if network == Network::Mainnet {
             5
         } else {
             1
@@ -301,7 +301,7 @@ impl AccountType {
             Self::IdentityRegistration => {
                 // Base path without index - actual key index added when deriving
                 match network {
-                    Network::Dash => {
+                    Network::Mainnet => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_MAINNET))
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
@@ -315,7 +315,7 @@ impl AccountType {
             } => {
                 // Base path with registration index - actual key index added when deriving
                 let base_path = match network {
-                    Network::Dash => crate::dip9::IDENTITY_TOPUP_PATH_MAINNET,
+                    Network::Mainnet => crate::dip9::IDENTITY_TOPUP_PATH_MAINNET,
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         crate::dip9::IDENTITY_TOPUP_PATH_TESTNET
                     }
@@ -331,7 +331,7 @@ impl AccountType {
             Self::IdentityTopUpNotBoundToIdentity => {
                 // Base path without registration index - actual key index added when deriving
                 match network {
-                    Network::Dash => {
+                    Network::Mainnet => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_MAINNET))
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
@@ -343,7 +343,7 @@ impl AccountType {
             Self::IdentityInvitation => {
                 // Base path without index - actual key index added when deriving
                 match network {
-                    Network::Dash => {
+                    Network::Mainnet => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_MAINNET))
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
@@ -355,7 +355,7 @@ impl AccountType {
             Self::AssetLockAddressTopUp => {
                 // Base path without index - actual key index added when deriving
                 match network {
-                    Network::Dash => {
+                    Network::Mainnet => {
                         Ok(DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET))
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
@@ -367,7 +367,7 @@ impl AccountType {
             Self::AssetLockShieldedAddressTopUp => {
                 // Base path without index - actual key index added when deriving
                 match network {
-                    Network::Dash => Ok(DerivationPath::from(
+                    Network::Mainnet => Ok(DerivationPath::from(
                         crate::dip9::ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
                     )),
                     Network::Testnet | Network::Devnet | Network::Regtest => {
@@ -425,7 +425,9 @@ impl AccountType {
             } => {
                 // Base DashPay root + account 0' + user_id/friend_id (non-hardened per DIP-14/DIP-15)
                 let mut path = match network {
-                    Network::Dash => DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET),
+                    Network::Mainnet => {
+                        DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET)
+                    }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
@@ -447,7 +449,9 @@ impl AccountType {
             } => {
                 // Base DashPay root + account 0' + friend_id/user_id (non-hardened per DIP-14/DIP-15)
                 let mut path = match network {
-                    Network::Dash => DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET),
+                    Network::Mainnet => {
+                        DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET)
+                    }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
@@ -469,7 +473,7 @@ impl AccountType {
                 // DIP-17: m/9'/coin_type'/17'/account'/key_class'
                 // The leaf index is non-hardened and appended during address generation
                 let mut path = match network {
-                    Network::Dash => {
+                    Network::Mainnet => {
                         DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_MAINNET)
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {

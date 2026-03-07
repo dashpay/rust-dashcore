@@ -1031,7 +1031,7 @@ impl AddressPoolBuilder {
             base_path: None,
             pool_type: AddressPoolType::External,
             gap_limit: DEFAULT_EXTERNAL_GAP_LIMIT,
-            network: Network::Dash,
+            network: Network::Mainnet,
             address_type: AddressType::P2pkh,
             key_source: None,
         }

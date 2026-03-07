@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FFINetwork {
-    Dash = 0,
+    Mainnet = 0,
     Testnet = 1,
     Regtest = 2,
     Devnet = 3,
@@ -17,7 +17,7 @@ pub enum FFINetwork {
 #[no_mangle]
 pub extern "C" fn ffi_network_get_name(network: FFINetwork) -> *const c_char {
     match network {
-        FFINetwork::Dash => c"dash".as_ptr() as *const c_char,
+        FFINetwork::Mainnet => c"mainnet".as_ptr() as *const c_char,
         FFINetwork::Testnet => c"testnet".as_ptr() as *const c_char,
         FFINetwork::Regtest => c"regtest".as_ptr() as *const c_char,
         FFINetwork::Devnet => c"devnet".as_ptr() as *const c_char,
@@ -27,7 +27,7 @@ pub extern "C" fn ffi_network_get_name(network: FFINetwork) -> *const c_char {
 impl From<FFINetwork> for Network {
     fn from(net: FFINetwork) -> Self {
         match net {
-            FFINetwork::Dash => Network::Dash,
+            FFINetwork::Mainnet => Network::Mainnet,
             FFINetwork::Testnet => Network::Testnet,
             FFINetwork::Regtest => Network::Regtest,
             FFINetwork::Devnet => Network::Devnet,
@@ -38,11 +38,11 @@ impl From<FFINetwork> for Network {
 impl From<Network> for FFINetwork {
     fn from(net: Network) -> Self {
         match net {
-            Network::Dash => FFINetwork::Dash,
+            Network::Mainnet => FFINetwork::Mainnet,
             Network::Testnet => FFINetwork::Testnet,
             Network::Regtest => FFINetwork::Regtest,
             Network::Devnet => FFINetwork::Devnet,
-            _ => FFINetwork::Dash,
+            _ => FFINetwork::Mainnet,
         }
     }
 }

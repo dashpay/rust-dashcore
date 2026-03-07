@@ -156,7 +156,7 @@ mod tests {
         assert!(parsed.is_ok());
 
         // Should fail with mainnet (different prefix)
-        let parsed = Address::from_string(addr_str.clone(), Network::Dash);
+        let parsed = Address::from_string(addr_str.clone(), Network::Mainnet);
         assert!(parsed.is_err());
     }
 }

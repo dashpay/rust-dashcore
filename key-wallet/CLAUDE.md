@@ -237,7 +237,7 @@ while !stage.should_stop(index, gap_limit) {
 ### 3. Ignoring Network Types
 **Wrong**: Mixing mainnet and testnet
 ```rust
-let address = Address::from_script(&script, Network::Dash)?;
+let address = Address::from_script(&script, Network::Mainnet)?;
 // Using on testnet without checking
 ```
 

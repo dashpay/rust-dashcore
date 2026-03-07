@@ -149,7 +149,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Parse network
     let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
     let network = match network_str.as_str() {
-        "mainnet" => Network::Dash,
+        "mainnet" => Network::Mainnet,
         "testnet" => Network::Testnet,
         "regtest" => Network::Regtest,
         n => return Err(format!("Invalid network: {}", n).into()),

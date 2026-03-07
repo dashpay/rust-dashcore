@@ -112,7 +112,7 @@ pub fn genesis_block(network: Network) -> Block {
     let txdata = vec![dash_genesis_tx()];
 
     match network {
-        Network::Dash => {
+        Network::Mainnet => {
             // Mainnet merkle root - Note: bytes are reversed for internal representation
             let merkle_bytes =
                 hex!("c762a6567f3cc092f0684bb62b7e00a84890b990f07cc71a6bb58d64b98e02e0");
@@ -221,7 +221,7 @@ mod test {
 
     #[test]
     fn dash_genesis_full_block() {
-        let genesis_block = genesis_block(Network::Dash);
+        let genesis_block = genesis_block(Network::Mainnet);
 
         assert_eq!(genesis_block.header.version, block::Version::ONE);
         assert_eq!(genesis_block.header.prev_blockhash, Hash::all_zeros());

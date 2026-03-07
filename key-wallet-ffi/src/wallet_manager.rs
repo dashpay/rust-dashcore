@@ -801,7 +801,7 @@ pub unsafe extern "C" fn wallet_manager_network(
 ) -> FFINetwork {
     if manager.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
-        return FFINetwork::Dash; // Default fallback
+        return FFINetwork::Mainnet; // Default fallback
     }
 
     let manager_ref = &*manager;

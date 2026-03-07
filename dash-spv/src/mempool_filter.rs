@@ -195,7 +195,7 @@ mod tests {
             2, // Small limit for testing
             mempool_state.clone(),
             HashSet::new(),
-            Network::Dash,
+            Network::Mainnet,
         );
 
         // Should fetch any transaction when under limit
@@ -246,7 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_transaction_relevant_with_address() {
-        let network = Network::Dash;
+        let network = Network::Mainnet;
 
         let addr1 = Address::dummy(network, 0);
         let addr2 = Address::dummy(network, 1);
@@ -273,7 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_transaction_relevant_with_script() {
-        let network = Network::Dash;
+        let network = Network::Mainnet;
 
         let addr1 = Address::dummy(network, 0);
         let addr2 = Address::dummy(network, 1);
@@ -300,7 +300,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_transaction_relevant_with_outpoint() {
-        let network = Network::Dash;
+        let network = Network::Mainnet;
 
         let addr1 = Address::dummy(network, 0);
 
@@ -346,7 +346,7 @@ mod tests {
             3, // Very small limit
             mempool_state.clone(),
             HashSet::new(),
-            Network::Dash,
+            Network::Mainnet,
         );
 
         // Should not be at capacity initially
@@ -391,7 +391,7 @@ mod tests {
             1000,
             mempool_state.clone(),
             HashSet::new(),
-            Network::Dash,
+            Network::Mainnet,
         );
 
         // Add some transactions with different ages
@@ -458,7 +458,7 @@ mod tests {
             1000,
             mempool_state,
             HashSet::new(),
-            Network::Dash,
+            Network::Mainnet,
         );
 
         // BloomFilter strategy should always return true (actual filtering is done by network layer)
@@ -470,7 +470,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_address_with_earliest_height() {
-        let network = Network::Dash;
+        let network = Network::Mainnet;
         let addr1 = Address::dummy(network, 0);
         let addr2 = Address::dummy(network, 1);
 

@@ -26,7 +26,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
 
     // 3. Create master key
     println!("\n3. Creating master key...");
-    let master = ExtendedPrivKey::new_master(Network::Dash, &seed)?;
+    let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed)?;
     let secp = secp256k1::Secp256k1::new();
     let master_pub = ExtendedPubKey::from_priv(&secp, &master);
     println!("   Master public key: {}", master_pub);
@@ -54,7 +54,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
         let addr_key = account.derive_priv(&secp, &receive_path)?;
         let addr_xpub = ExtendedPubKey::from_priv(&secp, &addr_key);
         let addr =
-            Address::p2pkh(&dashcore::PublicKey::new(addr_xpub.public_key), DashNetwork::Dash);
+            Address::p2pkh(&dashcore::PublicKey::new(addr_xpub.public_key), DashNetwork::Mainnet);
         println!("     {}: {}", i, addr);
     }
 
@@ -68,7 +68,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
         let addr_key = account.derive_priv(&secp, &change_path)?;
         let addr_xpub = ExtendedPubKey::from_priv(&secp, &addr_key);
         let addr =
-            Address::p2pkh(&dashcore::PublicKey::new(addr_xpub.public_key), DashNetwork::Dash);
+            Address::p2pkh(&dashcore::PublicKey::new(addr_xpub.public_key), DashNetwork::Mainnet);
         println!("     {}: {}", i, addr);
     }
 
@@ -100,7 +100,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     match Address::<dashcore::address::NetworkUnchecked>::from_str(test_address) {
         Ok(parsed) => {
             // NetworkUnchecked addresses need to be converted to check network
-            if let Ok(checked) = parsed.clone().require_network(DashNetwork::Dash) {
+            if let Ok(checked) = parsed.clone().require_network(DashNetwork::Mainnet) {
                 println!("   Parsed address: {}", checked);
                 println!("   Type: {:?}", checked.address_type());
                 println!("   Network: Dash");

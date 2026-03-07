@@ -900,7 +900,7 @@ mod tests {
         let mut hd_keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = Default::default();
 
         let mut sk: ExtendedPrivKey =
-            ExtendedPrivKey::new_master(key_wallet::Network::Dash, &seed).unwrap();
+            ExtendedPrivKey::new_master(key_wallet::Network::Mainnet, &seed).unwrap();
 
         let fprint = sk.fingerprint(secp);
 

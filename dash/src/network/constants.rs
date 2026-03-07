@@ -27,7 +27,7 @@
 //! use dashcore::Network;
 //! use dashcore::consensus::encode::serialize;
 //!
-//! let network = Network::Dash;
+//! let network = Network::Mainnet;
 //! let bytes = serialize(&network.magic());
 //!
 //! assert_eq!(&bytes[..], &[0xBF, 0x0C, 0x6B, 0xBD]);
@@ -73,7 +73,7 @@ use bincode_derive::{Decode, Encode};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum Network {
     /// Dash mainnet, the production network for real transactions.
-    Dash,
+    Mainnet,
     /// Dash public test network for protocol-level testing without real funds.
     Testnet,
     /// Dash development network, an isolated environment for feature development and testing.
@@ -90,13 +90,13 @@ impl Network {
     /// ```rust
     /// use dashcore::Network;
     ///
-    /// assert_eq!(Some(Network::Dash), Network::from_magic(0xBD6B0CBF));
+    /// assert_eq!(Some(Network::Mainnet), Network::from_magic(0xBD6B0CBF));
     /// assert_eq!(None, Network::from_magic(0xFFFFFFFF));
     /// ```
     pub fn from_magic(magic: u32) -> Option<Network> {
         // Note: any new entries here must be added to `magic` below
         match magic {
-            0xBD6B0CBF => Some(Network::Dash),
+            0xBD6B0CBF => Some(Network::Mainnet),
             0xFFCAE2CE => Some(Network::Testnet),
             0xCEFFCAE2 => Some(Network::Devnet),
             0xDCB7C1FC => Some(Network::Regtest),
@@ -112,13 +112,13 @@ impl Network {
     /// ```rust
     /// use dashcore::Network;
     ///
-    /// let network = Network::Dash;
+    /// let network = Network::Mainnet;
     /// assert_eq!(network.magic(), 0xBD6B0CBF);
     /// ```
     pub fn magic(self) -> u32 {
         // Note: any new entries here must be added to `from_magic` above
         match self {
-            Network::Dash => 0xBD6B0CBF,
+            Network::Mainnet => 0xBD6B0CBF,
             Network::Testnet => 0xFFCAE2CE,
             Network::Devnet => 0xCEFFCAE2,
             Network::Regtest => 0xDCB7C1FC,
@@ -127,7 +127,7 @@ impl Network {
 
     pub fn known_genesis_block_hash(&self) -> Option<BlockHash> {
         match self {
-            Network::Dash => {
+            Network::Mainnet => {
                 let mut block_hash =
                     hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
                         .expect("expected valid hex");
@@ -154,7 +154,7 @@ impl Network {
 
     pub fn v20_activation_height(&self) -> u32 {
         match self {
-            Network::Dash => 1_987_776,
+            Network::Mainnet => 1_987_776,
             Network::Testnet => 905_100,
             // Devnet and regtest activate V20 immediately
             _ => 0,
@@ -165,7 +165,7 @@ impl Network {
 impl fmt::Display for Network {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Network::Dash => write!(f, "dash"),
+            Network::Mainnet => write!(f, "mainnet"),
             Network::Testnet => write!(f, "testnet"),
             Network::Devnet => write!(f, "devnet"),
             Network::Regtest => write!(f, "regtest"),
@@ -178,7 +178,7 @@ impl std::str::FromStr for Network {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "dash" | "mainnet" => Ok(Network::Dash),
+            "mainnet" | "main" => Ok(Network::Mainnet),
             "testnet" | "test" => Ok(Network::Testnet),
             "devnet" | "dev" => Ok(Network::Devnet),
             "regtest" => Ok(Network::Regtest),
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_network_magic() {
-        assert_eq!(Network::Dash.magic(), 0xBD6B0CBF);
+        assert_eq!(Network::Mainnet.magic(), 0xBD6B0CBF);
         assert_eq!(Network::Testnet.magic(), 0xFFCAE2CE);
         assert_eq!(Network::Devnet.magic(), 0xCEFFCAE2);
         assert_eq!(Network::Regtest.magic(), 0xDCB7C1FC);
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_network_from_magic() {
-        assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Dash));
+        assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Mainnet));
         assert_eq!(Network::from_magic(0xFFCAE2CE), Some(Network::Testnet));
         assert_eq!(Network::from_magic(0xCEFFCAE2), Some(Network::Devnet));
         assert_eq!(Network::from_magic(0xDCB7C1FC), Some(Network::Regtest));
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_network_display() {
-        assert_eq!(Network::Dash.to_string(), "dash");
+        assert_eq!(Network::Mainnet.to_string(), "mainnet");
         assert_eq!(Network::Testnet.to_string(), "testnet");
         assert_eq!(Network::Devnet.to_string(), "devnet");
         assert_eq!(Network::Regtest.to_string(), "regtest");
@@ -394,8 +394,7 @@ mod tests {
 
     #[test]
     fn test_network_from_str() {
-        assert_eq!("dash".parse::<Network>().unwrap(), Network::Dash);
-        assert_eq!("mainnet".parse::<Network>().unwrap(), Network::Dash);
+        assert_eq!("mainnet".parse::<Network>().unwrap(), Network::Mainnet);
         assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
         assert_eq!("test".parse::<Network>().unwrap(), Network::Testnet);
         assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
@@ -406,12 +405,12 @@ mod tests {
 
     #[test]
     fn serialize_test() {
-        assert_eq!(serialize(&Network::Dash.magic()), &[0xbf, 0x0c, 0x6b, 0xbd]);
+        assert_eq!(serialize(&Network::Mainnet.magic()), &[0xbf, 0x0c, 0x6b, 0xbd]);
         assert_eq!(serialize(&Network::Testnet.magic()), &[0xce, 0xe2, 0xca, 0xff]);
         assert_eq!(serialize(&Network::Devnet.magic()), &[0xe2, 0xca, 0xff, 0xce]);
         assert_eq!(serialize(&Network::Regtest.magic()), &[0xfc, 0xc1, 0xb7, 0xdc]);
 
-        assert_eq!(deserialize(&[0xbf, 0x0c, 0x6b, 0xbd]).ok(), Some(Network::Dash.magic()));
+        assert_eq!(deserialize(&[0xbf, 0x0c, 0x6b, 0xbd]).ok(), Some(Network::Mainnet.magic()));
         assert_eq!(deserialize(&[0xce, 0xe2, 0xca, 0xff]).ok(), Some(Network::Testnet.magic()));
         assert_eq!(deserialize(&[0xe2, 0xca, 0xff, 0xce]).ok(), Some(Network::Devnet.magic()));
         assert_eq!(deserialize(&[0xfc, 0xc1, 0xb7, 0xdc]).ok(), Some(Network::Regtest.magic()));

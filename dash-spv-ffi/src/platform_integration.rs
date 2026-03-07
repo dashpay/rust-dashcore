@@ -183,10 +183,10 @@ pub unsafe extern "C" fn ffi_dash_spv_get_platform_activation_height(
 
     // Platform activation heights per network
     let height = match network {
-        dashcore::Network::Dash => 1_888_888, // Mainnet (placeholder - needs verification)
+        dashcore::Network::Mainnet => 1_888_888, // Mainnet (placeholder - needs verification)
         dashcore::Network::Testnet => 1_289_520, // Testnet confirmed height
-        dashcore::Network::Devnet => 1,       // Devnet starts immediately
-        _ => 0,                               // Unknown network
+        dashcore::Network::Devnet => 1,          // Devnet starts immediately
+        _ => 0,                                  // Unknown network
     };
 
     // Set the output value

@@ -6,7 +6,7 @@ use dashcore::Network;
 
 #[test]
 fn test_handshake_state_transitions() {
-    let mut handshake = HandshakeManager::new(Network::Dash, MempoolStrategy::BloomFilter, None);
+    let mut handshake = HandshakeManager::new(Network::Mainnet, MempoolStrategy::BloomFilter, None);
 
     // Initial state should be Init
     assert_eq!(*handshake.state(), HandshakeState::Init);

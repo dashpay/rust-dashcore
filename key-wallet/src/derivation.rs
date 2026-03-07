@@ -98,7 +98,7 @@ impl HDWallet {
     /// Get a standard BIP44 account key
     pub fn bip44_account(&self, account: u32) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
-            crate::Network::Dash => crate::dip9::DASH_BIP44_PATH_MAINNET,
+            crate::Network::Mainnet => crate::dip9::DASH_BIP44_PATH_MAINNET,
             Network::Testnet | Network::Devnet | Network::Regtest => {
                 crate::dip9::DASH_BIP44_PATH_TESTNET
             }
@@ -117,7 +117,7 @@ impl HDWallet {
     /// Get a CoinJoin account key
     pub fn coinjoin_account(&self, account: u32) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
-            crate::Network::Dash => crate::dip9::COINJOIN_PATH_MAINNET,
+            crate::Network::Mainnet => crate::dip9::COINJOIN_PATH_MAINNET,
             Network::Testnet | Network::Devnet | Network::Regtest => {
                 crate::dip9::COINJOIN_PATH_TESTNET
             }
@@ -140,7 +140,7 @@ impl HDWallet {
         key_index: u32,
     ) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
-            crate::Network::Dash => crate::dip9::IDENTITY_AUTHENTICATION_PATH_MAINNET,
+            crate::Network::Mainnet => crate::dip9::IDENTITY_AUTHENTICATION_PATH_MAINNET,
             Network::Testnet | Network::Devnet | Network::Regtest => {
                 crate::dip9::IDENTITY_AUTHENTICATION_PATH_TESTNET
             }
@@ -337,7 +337,7 @@ impl DerivationPathBuilder {
         // For now, just use BIP44 derivation
         // m/44'/coin_type'/account'/0/0
         let coin_type = match network {
-            Network::Dash => 5,
+            Network::Mainnet => 5,
             Network::Testnet | Network::Devnet | Network::Regtest => 1,
             _ => 5, // Default to Dash
         };
@@ -455,7 +455,7 @@ mod tests {
         ).unwrap();
 
         let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::Network::Dash).unwrap();
+        let wallet = HDWallet::from_seed(&seed, crate::Network::Mainnet).unwrap();
 
         // Test BIP44 account derivation
         let account0 = wallet.bip44_account(0).unwrap();
@@ -472,7 +472,7 @@ mod tests {
         let secp = secp256k1::Secp256k1::new();
 
         // Create master key
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Dash, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
 
         // Test m/0'/1/2' path (from DashSync test)
         let path = DerivationPath::from(vec![
@@ -529,7 +529,7 @@ mod tests {
         let secp = secp256k1::Secp256k1::new();
 
         // Test master key serialization (m)
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Dash, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
         let master_xprv = master_key.to_string();
         let master_xpub = ExtendedPubKey::from_priv(&secp, &master_key).to_string();
 
@@ -596,7 +596,7 @@ mod tests {
         ).unwrap();
 
         let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::Network::Dash).unwrap();
+        let wallet = HDWallet::from_seed(&seed, crate::Network::Mainnet).unwrap();
         let secp = secp256k1::Secp256k1::new();
 
         // Test identity authentication derivation (purpose 9' for Dash Platform)

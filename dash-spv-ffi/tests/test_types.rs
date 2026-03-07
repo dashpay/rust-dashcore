@@ -32,12 +32,12 @@ mod tests {
 
     #[test]
     fn test_ffi_network_conversion() {
-        assert_eq!(dashcore::Network::Dash, FFINetwork::Dash.into());
+        assert_eq!(dashcore::Network::Mainnet, FFINetwork::Mainnet.into());
         assert_eq!(dashcore::Network::Testnet, FFINetwork::Testnet.into());
         assert_eq!(dashcore::Network::Regtest, FFINetwork::Regtest.into());
         assert_eq!(dashcore::Network::Devnet, FFINetwork::Devnet.into());
 
-        assert_eq!(FFINetwork::Dash, dashcore::Network::Dash.into());
+        assert_eq!(FFINetwork::Mainnet, dashcore::Network::Mainnet.into());
         assert_eq!(FFINetwork::Testnet, dashcore::Network::Testnet.into());
         assert_eq!(FFINetwork::Regtest, dashcore::Network::Regtest.into());
         assert_eq!(FFINetwork::Devnet, dashcore::Network::Devnet.into());

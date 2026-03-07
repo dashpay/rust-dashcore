@@ -131,7 +131,7 @@ fn test_derivation_paths() {
 
     // Account path
     let success = key_wallet_ffi::derivation::derivation_bip44_account_path(
-        FFINetwork::Dash,
+        FFINetwork::Mainnet,
         0,
         path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
         path_buffer.len(),
@@ -149,7 +149,7 @@ fn test_derivation_paths() {
     // Payment path
     path_buffer.fill(0);
     let success = key_wallet_ffi::derivation::derivation_bip44_payment_path(
-        FFINetwork::Dash,
+        FFINetwork::Mainnet,
         0,
         false,
         5,

@@ -994,7 +994,7 @@ impl From<KeyDerivationType> for u32 {
 impl DerivationPath {
     pub fn bip_44_account(network: Network, account: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => DASH_BIP44_PATH_MAINNET,
+            Network::Mainnet => DASH_BIP44_PATH_MAINNET,
             _ => DASH_BIP44_PATH_TESTNET,
         }
         .into();
@@ -1010,7 +1010,7 @@ impl DerivationPath {
         address_index: u32,
     ) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => DASH_BIP44_PATH_MAINNET,
+            Network::Mainnet => DASH_BIP44_PATH_MAINNET,
             _ => DASH_BIP44_PATH_TESTNET,
         }
         .into();
@@ -1029,7 +1029,7 @@ impl DerivationPath {
     }
     pub fn coinjoin_path(network: Network, account: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => COINJOIN_PATH_MAINNET,
+            Network::Mainnet => COINJOIN_PATH_MAINNET,
             _ => COINJOIN_PATH_TESTNET,
         }
         .into();
@@ -1042,7 +1042,7 @@ impl DerivationPath {
     /// This might have been used in the past
     pub fn identity_registration_path_child_non_hardened(network: Network, index: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => IDENTITY_REGISTRATION_PATH_MAINNET,
+            Network::Mainnet => IDENTITY_REGISTRATION_PATH_MAINNET,
             _ => IDENTITY_REGISTRATION_PATH_TESTNET,
         }
         .into();
@@ -1054,7 +1054,7 @@ impl DerivationPath {
 
     pub fn identity_registration_path(network: Network, index: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => IDENTITY_REGISTRATION_PATH_MAINNET,
+            Network::Mainnet => IDENTITY_REGISTRATION_PATH_MAINNET,
             _ => IDENTITY_REGISTRATION_PATH_TESTNET,
         }
         .into();
@@ -1066,7 +1066,7 @@ impl DerivationPath {
 
     pub fn identity_top_up_path(network: Network, identity_index: u32, top_up_index: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => IDENTITY_TOPUP_PATH_MAINNET,
+            Network::Mainnet => IDENTITY_TOPUP_PATH_MAINNET,
             _ => IDENTITY_TOPUP_PATH_TESTNET,
         }
         .into();
@@ -1083,7 +1083,7 @@ impl DerivationPath {
 
     pub fn identity_invitation_path(network: Network, index: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => IDENTITY_INVITATION_PATH_MAINNET,
+            Network::Mainnet => IDENTITY_INVITATION_PATH_MAINNET,
             _ => IDENTITY_INVITATION_PATH_TESTNET,
         }
         .into();
@@ -1095,7 +1095,7 @@ impl DerivationPath {
 
     pub fn asset_lock_address_top_up_path(network: Network, index: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET,
+            Network::Mainnet => ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET,
             _ => ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET,
         }
         .into();
@@ -1107,7 +1107,7 @@ impl DerivationPath {
 
     pub fn asset_lock_shielded_address_top_up_path(network: Network, index: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
+            Network::Mainnet => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
             _ => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
         }
         .into();
@@ -1124,7 +1124,7 @@ impl DerivationPath {
         key_index: u32,
     ) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
-            Network::Dash => IDENTITY_AUTHENTICATION_PATH_MAINNET,
+            Network::Mainnet => IDENTITY_AUTHENTICATION_PATH_MAINNET,
             _ => IDENTITY_AUTHENTICATION_PATH_TESTNET,
         }
         .into();
@@ -1619,7 +1619,7 @@ impl ExtendedPrivKey {
         }
 
         let network = match data {
-            [0x04u8, 0x88, 0xAD, 0xE4, ..] => Network::Dash,
+            [0x04u8, 0x88, 0xAD, 0xE4, ..] => Network::Mainnet,
             [0x04u8, 0x35, 0x83, 0x94, ..] => Network::Testnet,
             [b0, b1, b2, b3, ..] => return Err(Error::UnknownVersion([*b0, *b1, *b2, *b3])),
             _ => unreachable!("length checked above"),
@@ -1644,7 +1644,7 @@ impl ExtendedPrivKey {
         let mut ret = [0; 78];
         ret[0..4].copy_from_slice(
             &match self.network {
-                Network::Dash => [0x04, 0x88, 0xAD, 0xE4],
+                Network::Mainnet => [0x04, 0x88, 0xAD, 0xE4],
                 _ => [0x04, 0x35, 0x83, 0x94], // Testnet/Devnet/Regtest/Unknown
             }[..],
         );
@@ -1665,7 +1665,7 @@ impl ExtendedPrivKey {
 
         let version = &data[0..4];
         let network = match version {
-            [0x0Eu8, 0xEC, 0xF0, 0x2E] => Network::Dash, // Mainnet private
+            [0x0Eu8, 0xEC, 0xF0, 0x2E] => Network::Mainnet, // Mainnet private
             [0x0Eu8, 0xED, 0x27, 0x74] => Network::Testnet, // Testnet private
             [b0, b1, b2, b3] => return Err(Error::UnknownVersion([*b0, *b1, *b2, *b3])),
             _ => unreachable!("length checked above"),
@@ -1707,7 +1707,7 @@ impl ExtendedPrivKey {
 
         // Version bytes
         let version: [u8; 4] = match self.network {
-            Network::Dash => [0x0E, 0xEC, 0xF0, 0x2E],
+            Network::Mainnet => [0x0E, 0xEC, 0xF0, 0x2E],
             _ => [0x0E, 0xED, 0x27, 0x74], // Testnet/Devnet/Regtest/Unknown
         };
         ret[0..4].copy_from_slice(&version);
@@ -1911,7 +1911,7 @@ impl ExtendedPubKey {
         }
 
         let network = match data {
-            [0x04u8, 0x88, 0xB2, 0x1E, ..] => Network::Dash,
+            [0x04u8, 0x88, 0xB2, 0x1E, ..] => Network::Mainnet,
             [0x04u8, 0x35, 0x87, 0xCF, ..] => Network::Testnet,
             [b0, b1, b2, b3, ..] => return Err(Error::UnknownVersion([*b0, *b1, *b2, *b3])),
             _ => unreachable!("length checked above"),
@@ -1936,7 +1936,7 @@ impl ExtendedPubKey {
         let mut ret = [0; 78];
         ret[0..4].copy_from_slice(
             &match self.network {
-                Network::Dash => [0x04u8, 0x88, 0xB2, 0x1E],
+                Network::Mainnet => [0x04u8, 0x88, 0xB2, 0x1E],
                 _ => [0x04u8, 0x35, 0x87, 0xCF], // Testnet/Devnet/Regtest/Unknown
             }[..],
         );
@@ -1954,7 +1954,7 @@ impl ExtendedPubKey {
 
         // Version bytes
         let version: [u8; 4] = match self.network {
-            Network::Dash => [0x0E, 0xEC, 0xEF, 0xC5],
+            Network::Mainnet => [0x0E, 0xEC, 0xEF, 0xC5],
             _ => [0x0E, 0xED, 0x27, 0x0B], // Testnet/Devnet/Regtest/Unknown
         };
         ret[0..4].copy_from_slice(&version);
@@ -2006,7 +2006,7 @@ impl ExtendedPubKey {
 
         let version = &data[0..4];
         let network = match version {
-            [0x0Eu8, 0xEC, 0xEF, 0xC5] => Network::Dash, // Mainnet public
+            [0x0Eu8, 0xEC, 0xEF, 0xC5] => Network::Mainnet, // Mainnet public
             [0x0Eu8, 0xED, 0x27, 0x0B] => Network::Testnet, // Testnet public
             [b0, b1, b2, b3] => return Err(Error::UnknownVersion([*b0, *b1, *b2, *b3])),
             _ => unreachable!("length checked above"),
@@ -2104,7 +2104,7 @@ mod tests {
 
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
-    use dashcore::Network::{self, Dash};
+    use dashcore::Network::{self, Mainnet};
 
     #[test]
     fn test_parse_derivation_path() {
@@ -2292,7 +2292,7 @@ mod tests {
         // m
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m".parse().unwrap(),
             "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
@@ -2302,7 +2302,7 @@ mod tests {
         // m/0h
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0h".parse().unwrap(),
             "xprv9uHRZZhk6KAJC1avXpDAp4MDc3sQKNxDiPvvkX8Br5ngLNv1TxvUxt4cV1rGL5hj6KCesnDYUhd7oWgT11eZG7XnxHrnYeSvkzY7d2bhkJ7",
@@ -2312,7 +2312,7 @@ mod tests {
         // m/0h/1
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0h/1".parse().unwrap(),
             "xprv9wTYmMFdV23N2TdNG573QoEsfRrWKQgWeibmLntzniatZvR9BmLnvSxqu53Kw1UmYPxLgboyZQaXwTCg8MSY3H2EU4pWcQDnRnrVA1xe8fs",
@@ -2322,7 +2322,7 @@ mod tests {
         // m/0h/1/2h
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0h/1/2h".parse().unwrap(),
             "xprv9z4pot5VBttmtdRTWfWQmoH1taj2axGVzFqSb8C9xaxKymcFzXBDptWmT7FwuEzG3ryjH4ktypQSAewRiNMjANTtpgP4mLTj34bhnZX7UiM",
@@ -2332,7 +2332,7 @@ mod tests {
         // m/0h/1/2h/2
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0h/1/2h/2".parse().unwrap(),
             "xprvA2JDeKCSNNZky6uBCviVfJSKyQ1mDYahRjijr5idH2WwLsEd4Hsb2Tyh8RfQMuPh7f7RtyzTtdrbdqqsunu5Mm3wDvUAKRHSC34sJ7in334",
@@ -2342,7 +2342,7 @@ mod tests {
         // m/0h/1/2h/2/1000000000
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0h/1/2h/2/1000000000".parse().unwrap(),
             "xprvA41z7zogVVwxVSgdKUHDy1SKmdb533PjDz7J6N6mV6uS3ze1ai8FHa8kmHScGpWmj4WggLyQjgPie1rFSruoUihUZREPSL39UNdE3BBDu76",
@@ -2358,7 +2358,7 @@ mod tests {
         // m
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m".parse().unwrap(),
             "xprv9s21ZrQH143K31xYSDQpPDxsXRTUcvj2iNHm5NUtrGiGG5e2DtALGdso3pGz6ssrdK4PFmM8NSpSBHNqPqm55Qn3LqFtT2emdEXVYsCzC2U",
@@ -2368,7 +2368,7 @@ mod tests {
         // m/0
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0".parse().unwrap(),
             "xprv9vHkqa6EV4sPZHYqZznhT2NPtPCjKuDKGY38FBWLvgaDx45zo9WQRUT3dKYnjwih2yJD9mkrocEZXo1ex8G81dwSM1fwqWpWkeS3v86pgKt",
@@ -2378,7 +2378,7 @@ mod tests {
         // m/0/2147483647h
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0/2147483647h".parse().unwrap(),
             "xprv9wSp6B7kry3Vj9m1zSnLvN3xH8RdsPP1Mh7fAaR7aRLcQMKTR2vidYEeEg2mUCTAwCd6vnxVrcjfy2kRgVsFawNzmjuHc2YmYRmagcEPdU9",
@@ -2388,7 +2388,7 @@ mod tests {
         // m/0/2147483647h/1
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0/2147483647h/1".parse().unwrap(),
             "xprv9zFnWC6h2cLgpmSA46vutJzBcfJ8yaJGg8cX1e5StJh45BBciYTRXSd25UEPVuesF9yog62tGAQtHjXajPPdbRCHuWS6T8XA2ECKADdw4Ef",
@@ -2398,7 +2398,7 @@ mod tests {
         // m/0/2147483647h/1/2147483646h
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0/2147483647h/1/2147483646h".parse().unwrap(),
             "xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc",
@@ -2408,7 +2408,7 @@ mod tests {
         // m/0/2147483647h/1/2147483646h/2
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0/2147483647h/1/2147483646h/2".parse().unwrap(),
             "xprvA2nrNbFZABcdryreWet9Ea4LvTJcGsqrMzxHx98MMrotbir7yrKCEXw7nadnHM8Dq38EGfSh6dqA9QWTyefMLEcBYJUuekgW4BYPJcr9E7j",
@@ -2424,7 +2424,7 @@ mod tests {
         // m
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m".parse().unwrap(),
             "xprv9s21ZrQH143K25QhxbucbDDuQ4naNntJRi4KUfWT7xo4EKsHt2QJDu7KXp1A3u7Bi1j8ph3EGsZ9Xvz9dGuVrtHHs7pXeTzjuxBrCmmhgC6",
@@ -2434,7 +2434,7 @@ mod tests {
         // m/0h
         test_path(
             &secp,
-            Dash,
+            Mainnet,
             &seed,
             "m/0h".parse().unwrap(),
             "xprv9uPDJpEQgRQfDcW7BkF7eTya6RPxXeJCqCJGHuCJ4GiRVLzkTXBAJMu2qaMWPrS7AANYqdq6vcBcBUdJCVVFceUvJFjaPdGZ2y9WACViL4L",
@@ -2500,7 +2500,7 @@ mod tests {
         }
 
         let xpriv = ExtendedPrivKey {
-            network: Network::Dash,
+            network: Network::Mainnet,
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::Normal { index: 0 },
@@ -2603,13 +2603,13 @@ mod tests {
 
     #[test]
     fn test_bip_44_account_path() {
-        let path = DerivationPath::bip_44_account(Network::Dash, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
         assert_eq!(path.to_string(), "m/44'/5'/0'");
     }
 
     #[test]
     fn test_bip_44_payment_path() {
-        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, true, 0);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 0);
         assert_eq!(path.to_string(), "m/44'/5'/0'/1/0");
 
         let path = DerivationPath::bip_44_payment_path(Network::Testnet, 1, false, 42);
@@ -2618,7 +2618,7 @@ mod tests {
 
     #[test]
     fn test_coinjoin_path() {
-        let path = DerivationPath::coinjoin_path(Network::Dash, 0);
+        let path = DerivationPath::coinjoin_path(Network::Mainnet, 0);
         assert_eq!(path.to_string(), "m/9'/5'/4'/0'");
 
         let path = DerivationPath::coinjoin_path(Network::Testnet, 1);
@@ -2627,7 +2627,7 @@ mod tests {
 
     #[test]
     fn test_identity_registration_path() {
-        let path = DerivationPath::identity_registration_path(Network::Dash, 10);
+        let path = DerivationPath::identity_registration_path(Network::Mainnet, 10);
         assert_eq!(path.to_string(), "m/9'/5'/5'/1'/10'");
     }
 
@@ -2639,13 +2639,13 @@ mod tests {
 
     #[test]
     fn test_identity_invitation_path() {
-        let path = DerivationPath::identity_invitation_path(Network::Dash, 15);
+        let path = DerivationPath::identity_invitation_path(Network::Mainnet, 15);
         assert_eq!(path.to_string(), "m/9'/5'/5'/3'/15'");
     }
 
     #[test]
     fn test_asset_lock_address_top_up_path() {
-        let path = DerivationPath::asset_lock_address_top_up_path(Network::Dash, 7);
+        let path = DerivationPath::asset_lock_address_top_up_path(Network::Mainnet, 7);
         assert_eq!(path.to_string(), "m/9'/5'/5'/4'/7'");
 
         let path = DerivationPath::asset_lock_address_top_up_path(Network::Testnet, 0);
@@ -2654,7 +2654,7 @@ mod tests {
 
     #[test]
     fn test_asset_lock_shielded_address_top_up_path() {
-        let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Dash, 3);
+        let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Mainnet, 3);
         assert_eq!(path.to_string(), "m/9'/5'/5'/5'/3'");
 
         let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Testnet, 1);
@@ -2664,7 +2664,7 @@ mod tests {
     #[test]
     fn test_identity_authentication_path() {
         let path = DerivationPath::identity_authentication_path(
-            Network::Dash,
+            Network::Mainnet,
             KeyDerivationType::ECDSA,
             1,
             2,
@@ -2682,11 +2682,11 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_for_master_seed() {
-        let path = DerivationPath::bip_44_account(Network::Dash, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex::decode(HEX_SEED).unwrap().as_ref(),
-                Network::Dash,
+                Network::Mainnet,
             )
             .unwrap();
         assert_eq!(
@@ -2698,11 +2698,11 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_for_master_seed() {
-        let path = DerivationPath::bip_44_account(Network::Dash, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
         let pk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex::decode(HEX_SEED).unwrap().as_ref(),
-                Network::Dash,
+                Network::Mainnet,
             )
             .unwrap();
         assert_eq!(
@@ -2714,11 +2714,11 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_payment_change_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, true, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3);
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex::decode(HEX_SEED).unwrap().as_ref(),
-                Network::Dash,
+                Network::Mainnet,
             )
             .unwrap();
         assert_eq!(sk.to_string(), "xprvA4FGorKLZVC4VT3Lf2UZS3hYZBpc8wGmmyyo5HPTUS8RcyX1yw2qHddBZVxn1u4NVduXDob1sKnx3d9e5wdY3VP8qibq7CgMqPhjUoV5G2K");
@@ -2727,11 +2727,11 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_payment_main_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, false, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3);
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex::decode(HEX_SEED).unwrap().as_ref(),
-                Network::Dash,
+                Network::Mainnet,
             )
             .unwrap();
         assert_eq!(sk.to_string(), "xprvA4F8hpkJuhhk4xqnnmY44WiVwUVPMdbF9VHE8vVmAiF6NyVXNmnyg5KnZF4VibNUuycJs6Dov4YBLm6bT2qGa81B5HHgqhUvixW2Qcgg5AE");
@@ -2740,11 +2740,11 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_payment_change_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, true, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3);
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex::decode(HEX_SEED).unwrap().as_ref(),
-                Network::Dash,
+                Network::Mainnet,
             )
             .unwrap();
         assert_eq!(
@@ -2755,11 +2755,11 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_payment_external_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, false, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3);
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex::decode(HEX_SEED).unwrap().as_ref(),
-                Network::Dash,
+                Network::Mainnet,
             )
             .unwrap();
         assert_eq!(

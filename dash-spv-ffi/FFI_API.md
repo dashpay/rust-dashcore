@@ -241,10 +241,10 @@ dash_spv_ffi_config_get_network(config: *const FFIClientConfig,) -> FFINetwork
 ```
 
 **Description:**
-Gets the network type from the configuration  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFINetwork::Dash as default
+Gets the network type from the configuration  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFINetwork::Mainnet as default
 
 **Safety:**
-- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFINetwork::Dash as default
+- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFINetwork::Mainnet as default
 
 **Module:** `config`
 
@@ -921,7 +921,7 @@ Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
 
 ### Enumerations
 
-- `FFINetwork` - Network type (Dash, Testnet, Regtest, Devnet)
+- `FFINetwork` - Network type (Mainnet, Testnet, Regtest, Devnet)
 - `FFIValidationMode` - Validation mode (None, Basic, Full)
 - `FFIMempoolStrategy` - Mempool strategy (FetchAll, BloomFilter, Selective)
 

@@ -10,7 +10,7 @@ mod peer_tests {
     fn test_peer_creation() {
         let addr = "127.0.0.1:9999".parse().unwrap();
         let timeout = Duration::from_secs(30);
-        let peer = Peer::new(addr, timeout, Network::Dash);
+        let peer = Peer::new(addr, timeout, Network::Mainnet);
 
         assert!(!peer.is_connected());
         assert_eq!(peer.address(), addr);

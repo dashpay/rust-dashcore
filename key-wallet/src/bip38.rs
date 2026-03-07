@@ -86,7 +86,7 @@ impl Bip38EncryptedKey {
         // Try to determine network from address hash
         // In BIP38, bytes 3-6 are the address hash
         // We'll default to mainnet for now
-        let network = Network::Dash;
+        let network = Network::Mainnet;
 
         Ok(Self {
             data,
@@ -482,7 +482,7 @@ impl Bip38Builder {
         Self {
             password: None,
             compressed: false,
-            network: Network::Dash,
+            network: Network::Mainnet,
             lot: None,
             sequence: None,
         }
@@ -563,7 +563,8 @@ mod tests {
         .unwrap();
 
         let encrypted =
-            encrypt_private_key(&private_key, "TestingOneTwoThree", false, Network::Dash).unwrap();
+            encrypt_private_key(&private_key, "TestingOneTwoThree", false, Network::Mainnet)
+                .unwrap();
 
         // Decrypt and verify
         let decrypted = encrypted.decrypt("TestingOneTwoThree").unwrap();
@@ -590,7 +591,7 @@ mod tests {
             &private_key,
             password,
             true, // compressed
-            Network::Dash,
+            Network::Mainnet,
         )
         .unwrap();
 
@@ -624,14 +625,15 @@ mod tests {
 
         // Test uncompressed
         let uncompressed =
-            encrypt_private_key(&private_key, password, false, Network::Dash).unwrap();
+            encrypt_private_key(&private_key, password, false, Network::Mainnet).unwrap();
 
         assert!(!uncompressed.compressed);
         let decrypted_uncomp = uncompressed.decrypt(password).unwrap();
         assert_eq!(private_key.secret_bytes(), decrypted_uncomp.secret_bytes());
 
         // Test compressed
-        let compressed = encrypt_private_key(&private_key, password, true, Network::Dash).unwrap();
+        let compressed =
+            encrypt_private_key(&private_key, password, true, Network::Mainnet).unwrap();
 
         assert!(compressed.compressed);
         let decrypted_comp = compressed.decrypt(password).unwrap();
@@ -695,7 +697,7 @@ mod tests {
 
         let public_key = PublicKey::from_secret_key(&secp, &private_key);
         let dash_pubkey = dashcore::PublicKey::new(public_key);
-        let dash_network = dashcore::Network::Dash;
+        let dash_network = Network::Mainnet;
         let address = Address::p2pkh(&dash_pubkey, dash_network);
         let hash = address_hash_from_address(&address);
 

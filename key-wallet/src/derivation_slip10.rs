@@ -153,8 +153,8 @@ impl ExtendedEd25519PrivKey {
 
         // Version bytes (4 bytes) - Custom for Ed25519
         match self.network {
-            Network::Dash => result.extend_from_slice(&[0x03, 0xB8, 0xC0, 0x0C]), // Custom version
-            _ => result.extend_from_slice(&[0x03, 0xB8, 0xC0, 0x0D]),             // Testnet version
+            Network::Mainnet => result.extend_from_slice(&[0x03, 0xB8, 0xC0, 0x0C]), // Custom version
+            _ => result.extend_from_slice(&[0x03, 0xB8, 0xC0, 0x0D]), // Testnet version
         }
 
         // Depth (1 byte)
@@ -184,7 +184,7 @@ impl ExtendedEd25519PrivKey {
 
         // Check version and determine network
         let network = match &data[0..4] {
-            [0x03, 0xB8, 0xC0, 0x0C] => Network::Dash,
+            [0x03, 0xB8, 0xC0, 0x0C] => Network::Mainnet,
             [0x03, 0xB8, 0xC0, 0x0D] => Network::Testnet,
             version => {
                 let mut v = [0u8; 4];
@@ -301,7 +301,7 @@ impl ExtendedEd25519PubKey {
 
         // Version bytes (4 bytes) - Custom for Ed25519 public
         match self.network {
-            Network::Dash => result.extend_from_slice(&[0x03, 0xB8, 0xC4, 0x3E]), // Custom public version
+            Network::Mainnet => result.extend_from_slice(&[0x03, 0xB8, 0xC4, 0x3E]), // Custom public version
             _ => result.extend_from_slice(&[0x03, 0xB8, 0xC4, 0x3F]), // Testnet public version
         }
 
@@ -332,7 +332,7 @@ impl ExtendedEd25519PubKey {
 
         // Check version and determine network
         let network = match &data[0..4] {
-            [0x03, 0xB8, 0xC4, 0x3E] => Network::Dash,
+            [0x03, 0xB8, 0xC4, 0x3E] => Network::Mainnet,
             [0x03, 0xB8, 0xC4, 0x3F] => Network::Testnet,
             version => {
                 let mut v = [0u8; 4];
@@ -720,7 +720,7 @@ mod test {
     }
 
     fn derive_ed25519_private_key(seed: &[u8], indexes: &[u32]) -> [u8; 32] {
-        let master = ExtendedEd25519PrivKey::new_master(Network::Dash, seed).unwrap();
+        let master = ExtendedEd25519PrivKey::new_master(Network::Mainnet, seed).unwrap();
 
         let mut current = master;
         for &index in indexes {

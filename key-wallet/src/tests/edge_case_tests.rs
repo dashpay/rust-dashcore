@@ -92,7 +92,7 @@ fn test_network_mismatch_handling() {
     // Create wallet for mainnet with same mnemonic
     let mainnet_wallet = Wallet::from_mnemonic(
         mnemonic,
-        Network::Dash,
+        Network::Mainnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -102,7 +102,7 @@ fn test_network_mismatch_handling() {
 
     // But networks should be different
     assert_eq!(testnet_wallet.network, Network::Testnet);
-    assert_eq!(mainnet_wallet.network, Network::Dash);
+    assert_eq!(mainnet_wallet.network, Network::Mainnet);
 }
 
 #[test]

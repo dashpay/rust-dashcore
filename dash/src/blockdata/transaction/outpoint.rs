@@ -97,7 +97,7 @@ impl OutPoint {
     /// use dashcore::blockdata::constants::genesis_block;
     /// use dashcore::Network;
     ///
-    /// let block = genesis_block(Network::Dash);
+    /// let block = genesis_block(Network::Mainnet);
     /// let tx = &block.txdata[0];
     ///
     /// // Coinbase transactions don't have any previous output.

@@ -206,7 +206,7 @@ mod tests {
 
     fn p2pkh_hex(pk: &str) -> Script {
         let pk: PublicKey = PublicKey::from_str(pk).unwrap();
-        let witness_script = Address::p2pkh(&pk, Network::Dash).script_pubkey();
+        let witness_script = Address::p2pkh(&pk, Network::Mainnet).script_pubkey();
         witness_script
     }
 

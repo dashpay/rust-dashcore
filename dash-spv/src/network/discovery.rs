@@ -32,7 +32,7 @@ impl DnsDiscovery {
     /// Discover peers for the given network
     pub async fn discover_peers(&self, network: Network) -> Vec<SocketAddr> {
         let (seeds, port) = match network {
-            Network::Dash => (MAINNET_DNS_SEEDS, 9999),
+            Network::Mainnet => (MAINNET_DNS_SEEDS, 9999),
             Network::Testnet => (TESTNET_DNS_SEEDS, 19999),
             _ => {
                 log::debug!("No DNS seeds for {:?} network", network);
@@ -84,7 +84,7 @@ mod tests {
     #[ignore] // Requires network access
     async fn test_dns_discovery_mainnet() {
         let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
-        let peers = discovery.discover_peers(Network::Dash).await;
+        let peers = discovery.discover_peers(Network::Mainnet).await;
 
         // Print discovered peers for debugging
         println!("Discovered {} mainnet peers:", peers.len());

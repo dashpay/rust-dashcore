@@ -31,7 +31,7 @@
 //! let public_key = PublicKey::new(s.generate_keypair(&mut rand::thread_rng()).1);
 //!
 //! // Generate pay-to-pubkey-hash address.
-//! let address = Address::p2pkh(&public_key, Network::Dash);
+//! let address = Address::p2pkh(&public_key, Network::Mainnet);
 //! # }
 //! ```
 //!
@@ -732,15 +732,15 @@ struct AddressInner {
 ///
 /// // variant 1
 /// let address: Address<NetworkUnchecked> = "XxMZ412shTuxDKUBdNfxMeLr4KhtfJjRv5".parse().unwrap();
-/// let address: Address<NetworkChecked> = address.require_network(Network::Dash).unwrap();
+/// let address: Address<NetworkChecked> = address.require_network(Network::Mainnet).unwrap();
 ///
 /// // variant 2
 /// let address: Address = Address::from_str("XxMZ412shTuxDKUBdNfxMeLr4KhtfJjRv5").unwrap()
-///                .require_network(Network::Dash).unwrap();
+///                .require_network(Network::Mainnet).unwrap();
 ///
 /// // variant 3
 /// let address: Address<NetworkChecked> = "XxMZ412shTuxDKUBdNfxMeLr4KhtfJjRv5".parse::<Address<_>>()
-///                .unwrap().require_network(Network::Dash).unwrap();
+///                .unwrap().require_network(Network::Mainnet).unwrap();
 /// ```
 ///
 /// ### Formatting addresses
@@ -838,7 +838,7 @@ impl<'de> serde::Deserialize<'de> for Address<NetworkChecked> {
         // For NetworkChecked, we need to assume a network. This is a limitation
         // of deserializing without network context. Users should use Address<NetworkUnchecked>
         // for serde when the network is not known at compile time.
-        addr_unchecked.require_network(Network::Dash).map_err(D::Error::custom)
+        addr_unchecked.require_network(Network::Mainnet).map_err(D::Error::custom)
     }
 }
 
@@ -992,15 +992,15 @@ impl<V: NetworkValidation> Address<V> {
     /// Format the address for the usage by `Debug` and `Display` implementations.
     fn fmt_internal(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let p2pkh_prefix = match self.network() {
-            Network::Dash => PUBKEY_ADDRESS_PREFIX_MAIN,
+            Network::Mainnet => PUBKEY_ADDRESS_PREFIX_MAIN,
             Network::Testnet | Network::Devnet | Network::Regtest => PUBKEY_ADDRESS_PREFIX_TEST,
         };
         let p2sh_prefix = match self.network() {
-            Network::Dash => SCRIPT_ADDRESS_PREFIX_MAIN,
+            Network::Mainnet => SCRIPT_ADDRESS_PREFIX_MAIN,
             Network::Testnet | Network::Devnet | Network::Regtest => SCRIPT_ADDRESS_PREFIX_TEST,
         };
         let bech32_hrp = match self.network() {
-            Network::Dash => "ds",
+            Network::Mainnet => "ds",
             Network::Testnet | Network::Devnet => "tb",
             Network::Regtest => "dsrt",
         };
@@ -1233,10 +1233,10 @@ impl Address<NetworkUnchecked> {
     /// assert!(address.is_valid_for_network(Network::Regtest));
     /// assert!(address.is_valid_for_network(Network::Devnet));
     ///
-    /// assert_eq!(address.is_valid_for_network(Network::Dash), false);
+    /// assert_eq!(address.is_valid_for_network(Network::Mainnet), false);
     ///
     /// let address: Address<NetworkUnchecked> = "Xs6U2uPMzn4zyfTtEkDgXMFGm39RP1F7mv".parse().unwrap();
-    /// assert!(address.is_valid_for_network(Network::Dash));
+    /// assert!(address.is_valid_for_network(Network::Mainnet));
     /// assert_eq!(address.is_valid_for_network(Network::Testnet), false);
     /// ```
     pub fn is_valid_for_network(&self, network: Network) -> bool {
@@ -1247,7 +1247,7 @@ impl Address<NetworkUnchecked> {
 
         match (self.network(), network) {
             (a, b) if *a == b => true,
-            (Network::Dash, _) | (_, Network::Dash) => false,
+            (Network::Mainnet, _) | (_, Network::Mainnet) => false,
             (Network::Regtest, _) | (_, Network::Regtest) if !is_legacy => false,
             (Network::Testnet, _) | (Network::Regtest, _) | (Network::Devnet, _) => true,
         }
@@ -1335,7 +1335,7 @@ impl FromStr for Address<NetworkUnchecked> {
         // try bech32
         let bech32_network = match find_bech32_prefix(s) {
             // note that upper or lowercase is allowed but NOT mixed case
-            "ds" | "DS" => Some(Network::Dash),
+            "ds" | "DS" => Some(Network::Mainnet),
             "td" | "TD" => Some(Network::Testnet), // this may also be a devnet
             "dsrt" | "DSRT" => Some(Network::Regtest),
             _ => None,
@@ -1378,10 +1378,10 @@ impl FromStr for Address<NetworkUnchecked> {
 
         let (network, payload) = match data[0] {
             PUBKEY_ADDRESS_PREFIX_MAIN => {
-                (Network::Dash, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
+                (Network::Mainnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
             }
             SCRIPT_ADDRESS_PREFIX_MAIN => {
-                (Network::Dash, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
+                (Network::Mainnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
             }
             PUBKEY_ADDRESS_PREFIX_TEST => {
                 (Network::Testnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
@@ -1401,15 +1401,15 @@ impl FromStr for Address<NetworkUnchecked> {
 // impl fmt::Display for Address {
 //     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
 //         let p2pkh_prefix = match self.network {
-//             Network::Dash => PUBKEY_ADDRESS_PREFIX_MAIN,
+//             Network::Mainnet => PUBKEY_ADDRESS_PREFIX_MAIN,
 //             Network::Testnet | Network::Devnet | Network::Regtest => PUBKEY_ADDRESS_PREFIX_TEST,
 //         };
 //         let p2sh_prefix = match self.network {
-//             Network::Dash => SCRIPT_ADDRESS_PREFIX_MAIN,
+//             Network::Mainnet => SCRIPT_ADDRESS_PREFIX_MAIN,
 //             Network::Testnet | Network::Devnet | Network::Regtest => SCRIPT_ADDRESS_PREFIX_TEST,
 //         };
 //         let bech32_hrp = match self.network {
-//             Network::Dash => "ds",
+//             Network::Mainnet => "ds",
 //             Network::Testnet | Network::Devnet => "td",
 //             Network::Regtest => "dsrt",
 //         };
@@ -1462,7 +1462,7 @@ mod tests {
     use secp256k1::XOnlyPublicKey;
 
     use super::*;
-    use crate::Network::{Dash, Testnet};
+    use crate::Network::{Mainnet, Testnet};
     use crate::crypto::key::PublicKey;
 
     fn roundtrips(addr: &Address) {
@@ -1491,7 +1491,7 @@ mod tests {
     #[test]
     fn test_p2pkh_address_58() {
         let addr = Address::new(
-            Dash,
+            Mainnet,
             Payload::PubkeyHash("162c5ea71c0b23f5b9022ef047c4a86470a5b070".parse().unwrap()),
         );
 
@@ -1507,7 +1507,7 @@ mod tests {
     #[test]
     fn test_p2pkh_from_key() {
         let key = "048d5141948c1702e8c95f438815794b87f706a8d4cd2bffad1dc1570971032c9b6042a0431ded2478b5c9cf2d81c124a5e57347a3c63ef0e7716cf54d613ba183".parse::<PublicKey>().unwrap();
-        let addr = Address::p2pkh(&key, Dash);
+        let addr = Address::p2pkh(&key, Mainnet);
         assert_eq!(&addr.to_string(), "XyzL4FHjYiiQk9uhm6yCM4ewbkboBggYyo");
 
         let key = "03df154ebfcf29d29cc10d5c2565018bce2d9edbab267c31d2caf44a63056cf99f"
@@ -1522,7 +1522,7 @@ mod tests {
     #[test]
     fn test_p2sh_address_58() {
         let addr = Address::new(
-            Dash,
+            Mainnet,
             Payload::ScriptHash("162c5ea71c0b23f5b9022ef047c4a86470a5b070".parse().unwrap()),
         );
 
@@ -1557,14 +1557,14 @@ mod tests {
         let mut key = "033bc8c83c52df5712229a2f72206d90192366c36428cb0c12b6af98324d97bfbc"
             .parse::<PublicKey>()
             .unwrap();
-        let addr = Address::p2wpkh(&key, Dash).unwrap();
+        let addr = Address::p2wpkh(&key, Mainnet).unwrap();
         assert_eq!(&addr.to_string(), "bc1qvzvkjn4q3nszqxrv3nraga2r822xjty3ykvkuw");
         assert_eq!(addr.address_type(), Some(AddressType::P2wpkh));
         roundtrips(&addr);
 
         // Test uncompressed pubkey
         key.compressed = false;
-        assert_eq!(Address::p2wpkh(&key, Dash), Err(Error::UncompressedPubkey));
+        assert_eq!(Address::p2wpkh(&key, Mainnet), Err(Error::UncompressedPubkey));
     }
 
     #[ignore]
@@ -1572,7 +1572,7 @@ mod tests {
     fn test_p2wsh() {
         // stolen from Dash transaction 5df912fda4becb1c29e928bec8d64d93e9ba8efa9b5b405bd683c86fd2c65667
         let script = ScriptBuf::from_hex("52210375e00eb72e29da82b89367947f29ef34afb75e8654f6ea368e0acdfd92976b7c2103a1b26313f430c4b15bb1fdce663207659d8cac749a0e53d70eff01874496feff2103c96d495bfdd5ba4145e3e046fee45e84a8a48ad05bd8dbb395c011a32cf9f88053ae").unwrap();
-        let addr = Address::p2wsh(&script, Dash);
+        let addr = Address::p2wsh(&script, Mainnet);
         assert_eq!(
             &addr.to_string(),
             "bc1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej"
@@ -1587,21 +1587,21 @@ mod tests {
         let mut key = "026c468be64d22761c30cd2f12cbc7de255d592d7904b1bab07236897cc4c2e766"
             .parse::<PublicKey>()
             .unwrap();
-        let addr = Address::p2shwpkh(&key, Dash).unwrap();
+        let addr = Address::p2shwpkh(&key, Mainnet).unwrap();
         assert_eq!(&addr.to_string(), "7pu4bhf1eANQdvBoPH2FcDtDpMu4c7ZNuN");
         assert_eq!(addr.address_type(), Some(AddressType::P2sh));
         roundtrips(&addr);
 
         // Test uncompressed pubkey
         key.compressed = false;
-        assert_eq!(Address::p2wpkh(&key, Dash), Err(Error::UncompressedPubkey));
+        assert_eq!(Address::p2wpkh(&key, Mainnet), Err(Error::UncompressedPubkey));
     }
 
     #[test]
     fn test_p2shwsh() {
         // stolen from Dash transaction f9ee2be4df05041d0e0a35d7caa3157495ca4f93b233234c9967b6901dacf7a9
         let script = ScriptBuf::from_hex("522103e5529d8eaa3d559903adb2e881eb06c86ac2574ffa503c45f4e942e2a693b33e2102e5f10fcdcdbab211e0af6a481f5532536ec61a5fdbf7183770cf8680fe729d8152ae").unwrap();
-        let addr = Address::p2shwsh(&script, Dash);
+        let addr = Address::p2shwsh(&script, Mainnet);
         assert_eq!(&addr.to_string(), "7WxUWa53KVEhSdBWwoB7LYMr2VedMZqoqt");
         assert_eq!(addr.address_type(), Some(AddressType::P2sh));
         roundtrips(&addr);
@@ -1614,7 +1614,7 @@ mod tests {
             "654f6ea368e0acdfd92976b7c2103a1b26313f430654f6ea368e0acdfd92976b7c2103a1b26313f4"
         );
         let witness_prog = WitnessProgram::new(WitnessVersion::V13, program.to_vec()).unwrap();
-        let addr = Address::new(Dash, Payload::WitnessProgram(witness_prog));
+        let addr = Address::new(Mainnet, Payload::WitnessProgram(witness_prog));
         roundtrips(&addr);
     }
 
@@ -1662,7 +1662,7 @@ mod tests {
         for (address, expected_type) in &addresses {
             let addr = Address::from_str(address)
                 .unwrap()
-                .require_network(Network::Dash)
+                .require_network(Network::Mainnet)
                 .expect("mainnet");
             assert_eq!(&addr.address_type(), expected_type);
         }
@@ -1852,7 +1852,7 @@ mod tests {
         for el in
             ["Xxb77sLZJZMUeYdf3TpWNoRFgEvjQkoi2q", "XanpivH7JqvtWsCkjB5vXqoGBhv4XGBRJn"].iter()
         {
-            let addr = Address::from_str(el).unwrap().require_network(Dash).expect("mainnet");
+            let addr = Address::from_str(el).unwrap().require_network(Mainnet).expect("mainnet");
             assert_eq!(addr.to_qr_uri(), format!("dash:{}", el));
         }
 
@@ -1881,9 +1881,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         const LEGACY_EQUIVALENCE_CLASSES: &[&[Network]] =
-            &[&[Network::Dash], &[Network::Testnet, Network::Regtest, Network::Devnet]];
+            &[&[Network::Mainnet], &[Network::Testnet, Network::Regtest, Network::Devnet]];
         const SEGWIT_EQUIVALENCE_CLASSES: &[&[Network]] =
-            &[&[Network::Dash], &[Network::Regtest], &[Network::Testnet, Network::Devnet]];
+            &[&[Network::Mainnet], &[Network::Regtest], &[Network::Testnet, Network::Devnet]];
 
         fn test_addr_type(payloads: &[Payload], equivalence_classes: &[&[Network]]) {
             for pl in payloads {
@@ -1921,7 +1921,7 @@ mod tests {
         )
         .unwrap();
         let secp = Secp256k1::verification_only();
-        let address = Address::p2tr(&secp, internal_key, None, Network::Dash);
+        let address = Address::p2tr(&secp, internal_key, None, Network::Mainnet);
         assert_eq!(
             address.to_string(),
             "ds1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqq9xzlq"
@@ -1936,7 +1936,7 @@ mod tests {
         let address_string = "bc1qhvd6suvqzjcu9pxjhrwhtrlj85ny3n2mqql5w4";
         let address = Address::from_str(address_string)
             .expect("address")
-            .require_network(Network::Dash)
+            .require_network(Network::Mainnet)
             .expect("mainnet");
 
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
@@ -1957,7 +1957,7 @@ mod tests {
         let address_string = "7fH3aFXJ5TWv5eNScx7m4FCf3XD27mXYHq";
         let address = Address::from_str(address_string)
             .expect("address")
-            .require_network(Network::Dash)
+            .require_network(Network::Mainnet)
             .expect("mainnet");
 
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
@@ -1978,7 +1978,7 @@ mod tests {
         let address_string = "XgjvsEewx8SHii5SFYM856eU2qGrJuZ3AN";
         let address = Address::from_str(address_string)
             .expect("address")
-            .require_network(Network::Dash)
+            .require_network(Network::Mainnet)
             .expect("mainnet");
 
         let pubkey_string = "0370be7922711cf8e19923d40126d1fb1a7300d873019abd58c7984aeff44f8ce4";
@@ -1999,7 +1999,7 @@ mod tests {
         let address_string = "Xo6KeXZcaKyZCEMGioNYnsrPskpUZAZFhr";
         let address = Address::from_str(address_string)
             .expect("address")
-            .require_network(Network::Dash)
+            .require_network(Network::Mainnet)
             .expect("testnet");
 
         let pubkey_string = "04e96e22004e3db93530de27ccddfdf1463975d2138ac018fc3e7ba1a2e5e0aad8e424d0b55e2436eb1d0dcd5cb2b8bcc6d53412c22f358de57803a6a655fbbd04";
@@ -2022,13 +2022,13 @@ mod tests {
         let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
         let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
         let tweaked_pubkey = TweakedPublicKey::dangerous_assume_tweaked(xonly_pubkey);
-        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Dash);
+        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Mainnet);
 
         assert_eq!(
             address,
             Address::from_str("bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e")
                 .expect("address")
-                .require_network(Network::Dash)
+                .require_network(Network::Mainnet)
                 .expect("mainnet")
         );
 
@@ -2049,13 +2049,13 @@ mod tests {
         let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
         let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
         let tweaked_pubkey = TweakedPublicKey::dangerous_assume_tweaked(xonly_pubkey);
-        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Dash);
+        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Mainnet);
 
         assert_eq!(
             address,
             Address::from_str("bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e")
                 .expect("address")
-                .require_network(Network::Dash)
+                .require_network(Network::Mainnet)
                 .expect("mainnet")
         );
 
@@ -2074,10 +2074,10 @@ mod tests {
             ScriptBuf::from_hex("001161458e330389cd0437ee9fe3641d70cc18").unwrap();
         let expected = Err(Error::UnrecognizedScript);
 
-        assert_eq!(Address::from_script(&bad_p2wpkh, Network::Dash), expected);
-        assert_eq!(Address::from_script(&bad_p2wsh, Network::Dash), expected);
+        assert_eq!(Address::from_script(&bad_p2wpkh, Network::Mainnet), expected);
+        assert_eq!(Address::from_script(&bad_p2wsh, Network::Mainnet), expected);
         assert_eq!(
-            Address::from_script(&invalid_segwitv0_script, Network::Dash),
+            Address::from_script(&invalid_segwitv0_script, Network::Mainnet),
             Err(Error::InvalidSegwitV0ProgramLength(17))
         );
     }
@@ -2109,10 +2109,10 @@ mod tests {
             "bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e",
         ];
         for addr in &addresses {
-            let addr = Address::from_str(addr).unwrap().require_network(Network::Dash).unwrap();
+            let addr = Address::from_str(addr).unwrap().require_network(Network::Mainnet).unwrap();
             for another in &addresses {
                 let another =
-                    Address::from_str(another).unwrap().require_network(Network::Dash).unwrap();
+                    Address::from_str(another).unwrap().require_network(Network::Mainnet).unwrap();
                 assert_eq!(addr.matches_script_pubkey(&another.script_pubkey()), addr == another);
             }
         }

@@ -12,7 +12,7 @@ mod tests {
     fn test_default_config() {
         let config = ClientConfig::default();
 
-        assert_eq!(config.network, Network::Dash);
+        assert_eq!(config.network, Network::Mainnet);
         assert!(config.peers.is_empty());
         assert_eq!(config.validation_mode, ValidationMode::Full);
         assert!(config.enable_filters);
@@ -30,7 +30,7 @@ mod tests {
     #[test]
     fn test_network_specific_configs() {
         let mainnet = ClientConfig::mainnet();
-        assert_eq!(mainnet.network, Network::Dash);
+        assert_eq!(mainnet.network, Network::Mainnet);
         assert!(mainnet.peers.is_empty()); // Should use DNS discovery
 
         let testnet = ClientConfig::testnet();

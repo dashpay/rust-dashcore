@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_chain_work_from_header() {
-        let genesis = genesis_block(Network::Dash).header;
+        let genesis = genesis_block(Network::Mainnet).header;
         let work = ChainWork::from_header(&genesis);
         assert!(!work.is_zero());
     }

@@ -2346,10 +2346,10 @@ account_get_network(account: *const FFIAccount) -> FFINetwork
 ```
 
 **Description:**
-Get the network of an account  # Safety  - `account` must be a valid pointer to an FFIAccount instance - Returns `FFINetwork::Dash` if the account is null
+Get the network of an account  # Safety  - `account` must be a valid pointer to an FFIAccount instance - Returns `FFINetwork::Mainnet` if the account is null
 
 **Safety:**
-- `account` must be a valid pointer to an FFIAccount instance - Returns `FFINetwork::Dash` if the account is null
+- `account` must be a valid pointer to an FFIAccount instance - Returns `FFINetwork::Mainnet` if the account is null
 
 **Module:** `account`
 
@@ -3171,10 +3171,10 @@ managed_core_account_get_network(account: *const FFIManagedCoreAccount,) -> FFIN
 ```
 
 **Description:**
-Get the network of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - Returns `FFINetwork::Dash` if the account is null
+Get the network of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - Returns `FFINetwork::Mainnet` if the account is null
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedCoreAccount instance - Returns `FFINetwork::Dash` if the account is null
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - Returns `FFINetwork::Mainnet` if the account is null
 
 **Module:** `managed_account`
 
@@ -3363,10 +3363,10 @@ managed_platform_account_get_network(account: *const FFIManagedPlatformAccount,)
 ```
 
 **Description:**
-Get the network of a managed platform account  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance - Returns `FFINetwork::Dash` if the account is null
+Get the network of a managed platform account  # Safety  - `account` must be a valid pointer to an FFIManagedPlatformAccount instance - Returns `FFINetwork::Mainnet` if the account is null
 
 **Safety:**
-- `account` must be a valid pointer to an FFIManagedPlatformAccount instance - Returns `FFINetwork::Dash` if the account is null
+- `account` must be a valid pointer to an FFIManagedPlatformAccount instance - Returns `FFINetwork::Mainnet` if the account is null
 
 **Module:** `managed_account`
 

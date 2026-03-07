@@ -406,7 +406,7 @@ fn test_account_network_consistency() {
     );
 
     // Test creating account with different network
-    let dash_mainnet = Network::Dash;
+    let dash_mainnet = Network::Mainnet;
     let mainnet_account =
         Account::from_xpriv(Some([0u8; 32]), account_type, account_key, dash_mainnet).unwrap();
 

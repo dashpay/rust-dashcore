@@ -154,7 +154,7 @@ mod tests {
         // Use a valid enum value to avoid UB in Rust tests. If invalid raw inputs
         // need to be tested, do so from a C test or add a raw-int FFI entrypoint.
         unsafe {
-            let config = dash_spv_ffi_config_new(FFINetwork::Dash);
+            let config = dash_spv_ffi_config_new(FFINetwork::Mainnet);
             assert!(!config.is_null());
             dash_spv_ffi_config_destroy(config);
         }

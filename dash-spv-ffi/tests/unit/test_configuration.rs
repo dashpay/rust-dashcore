@@ -11,7 +11,7 @@ mod tests {
         unsafe {
             // Test creating config with each valid network
             let networks =
-                [FFINetwork::Dash, FFINetwork::Testnet, FFINetwork::Regtest, FFINetwork::Devnet];
+                [FFINetwork::Mainnet, FFINetwork::Testnet, FFINetwork::Regtest, FFINetwork::Devnet];
             for net in networks {
                 let config = dash_spv_ffi_config_new(net);
                 assert!(!config.is_null());
@@ -218,7 +218,7 @@ mod tests {
 
             // Test getters with null
             let net = dash_spv_ffi_config_get_network(std::ptr::null());
-            assert_eq!(net as i32, FFINetwork::Dash as i32); // Returns default
+            assert_eq!(net as i32, FFINetwork::Mainnet as i32); // Returns default
 
             // Test destroy with null (should be safe)
             dash_spv_ffi_config_destroy(std::ptr::null_mut());

@@ -181,7 +181,7 @@ mod tests {
         let base_list = MasternodeList::try_from_with_block_hash_lookup(
             base_diff,
             |_| Some(2_227_096),
-            Network::Dash,
+            Network::Mainnet,
         )
         .expect("expected to create base list");
 
@@ -193,9 +193,9 @@ mod tests {
 
         // Height 2241332 is post-V20 on mainnet (1,987,776)
         let post_v20_height = 2_241_332;
-        assert!(post_v20_height >= Network::Dash.v20_activation_height());
+        assert!(post_v20_height >= Network::Mainnet.v20_activation_height());
 
-        let result = base_list.apply_diff(diff, post_v20_height, None, Network::Dash);
+        let result = base_list.apply_diff(diff, post_v20_height, None, Network::Mainnet);
 
         assert!(
             matches!(result, Err(SmlError::IncompleteSignatureSet)),
@@ -214,7 +214,7 @@ mod tests {
         let base_list = MasternodeList::try_from_with_block_hash_lookup(
             base_diff,
             |_| Some(base_height),
-            Network::Dash,
+            Network::Mainnet,
         )
         .expect("expected to create base list");
 
@@ -229,9 +229,9 @@ mod tests {
 
         // Use a pre-V20 height on mainnet
         let pre_v20_height = 1_900_000u32;
-        assert!(pre_v20_height < Network::Dash.v20_activation_height());
+        assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
 
-        let result = base_list.apply_diff(diff, pre_v20_height, None, Network::Dash);
+        let result = base_list.apply_diff(diff, pre_v20_height, None, Network::Mainnet);
 
         assert!(
             result.is_ok(),

@@ -65,7 +65,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         > = Managers::default();
 
         let checkpoints = match config.network {
-            dashcore::Network::Dash => mainnet_checkpoints(),
+            dashcore::Network::Mainnet => mainnet_checkpoints(),
             dashcore::Network::Testnet => testnet_checkpoints(),
             _ => Vec::new(),
         };
@@ -262,7 +262,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         if let Some(start_height) = config.start_from_height {
             // Get checkpoints for this network
             let checkpoints = match config.network {
-                dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
+                dashcore::Network::Mainnet => crate::chain::checkpoints::mainnet_checkpoints(),
                 dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
                 _ => vec![],
             };

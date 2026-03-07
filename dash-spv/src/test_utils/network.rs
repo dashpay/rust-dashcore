@@ -179,6 +179,6 @@ impl NetworkManager for MockNetworkManager {
 impl Peer {
     pub fn dummy() -> Self {
         let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
-        Peer::new(addr, Duration::from_secs(10), Network::Dash)
+        Peer::new(addr, Duration::from_secs(10), Network::Mainnet)
     }
 }
