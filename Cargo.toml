@@ -16,6 +16,7 @@ panic = "unwind"
 
 [profile.release.package.dash-fuzz]
 # Disable LTO and keep debuginfo for honggfuzz to avoid link GC issues
+codegen-units = 16
 debug = 1
 
 [profile.dev]
