@@ -834,14 +834,23 @@ impl Peer {
 }
 
 #[cfg(test)]
+impl Peer {
+    pub(crate) fn set_services(&mut self, flags: ServiceFlags) {
+        self.services = Some(flags.as_u64());
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
     use std::time::{Duration, SystemTime};
 
     use super::Peer;
 
     #[test]
     fn remove_expired_pings() {
-        let mut peer = Peer::dummy();
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let mut peer = Peer::dummy(addr);
         let now = SystemTime::now();
         let expired = now - Duration::from_secs(61);
 

@@ -970,34 +970,24 @@ impl PeerNetworkManager {
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
 
-        // For filter-related messages, we need a peer that supports compact filters
-        let requires_compact_filters =
-            matches!(&message, NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_));
+        let required_service = match &message {
+            NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
+                Some(ServiceFlags::COMPACT_FILTERS)
+            }
+            _ => None,
+        };
         let check_headers2 =
             matches!(&message, NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_));
 
-        let selected_peer = if requires_compact_filters {
-            // Find a peer that supports compact filters
-            let mut filter_peer = None;
-            for (addr, peer) in &peers {
-                let peer_guard = peer.read().await;
-
-                if peer_guard.supports_compact_filters() {
-                    filter_peer = Some(*addr);
-                    break;
-                }
-            }
-
-            match filter_peer {
-                Some(addr) => {
-                    log::debug!("Selected peer {} for compact filter request", addr);
-                    addr
+        let selected_peer = if let Some(flags) = required_service {
+            match self.pool.peer_with_service(flags).await {
+                Some((address, _)) => {
+                    log::debug!("Selected peer {} with {} for {}", address, flags, message.cmd());
+                    address
                 }
                 None => {
-                    log::warn!("No peers support compact filters, cannot send {}", message.cmd());
-                    return Err(NetworkError::ProtocolError(
-                        "No peers support compact filters".to_string(),
-                    ));
+                    log::warn!("No peers support {}, cannot send {}", flags, message.cmd());
+                    return Err(NetworkError::ProtocolError(format!("No peers support {}", flags)));
                 }
             }
         } else if check_headers2 {
@@ -1015,13 +1005,11 @@ impl PeerNetworkManager {
             }
 
             if selected.is_none() {
-                for (addr, peer) in &peers {
-                    let peer_guard = peer.read().await;
-                    if peer_guard.supports_headers2() {
-                        selected = Some(*addr);
-                        break;
-                    }
-                }
+                selected = self
+                    .pool
+                    .peer_with_service(ServiceFlags::NODE_HEADERS_COMPRESSED)
+                    .await
+                    .map(|(addr, _)| addr);
             }
 
             let chosen = selected.unwrap_or(peers[0].0);
@@ -1086,33 +1074,17 @@ impl PeerNetworkManager {
         // Select eligible peers based on message type
         let (selected_peers, require_capability) = match &message {
             NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
-                // Filter requests require compact filter support
-                let filter_peers: Vec<_> = {
-                    let mut result = Vec::new();
-                    for (addr, peer) in &peers {
-                        let peer_guard = peer.read().await;
-                        if peer_guard.supports_compact_filters() {
-                            result.push((*addr, peer.clone()));
-                        }
-                    }
-                    result
-                };
+                let filter_peers =
+                    self.pool.peers_with_service(ServiceFlags::COMPACT_FILTERS).await;
                 (filter_peers, true)
             }
             NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => {
-                // Prefer headers2 peers, fall back to all
-                let headers2_peers: Vec<_> = {
-                    let mut result = Vec::new();
-                    for (addr, peer) in &peers {
-                        let peer_guard = peer.read().await;
-                        if peer_guard.supports_headers2()
-                            && !self.headers2_disabled.lock().await.contains(addr)
-                        {
-                            result.push((*addr, peer.clone()));
-                        }
-                    }
-                    result
-                };
+                // Prefer headers2 peers (excluding disabled), fall back to all
+                let disabled = self.headers2_disabled.lock().await;
+                let mut headers2_peers =
+                    self.pool.peers_with_service(ServiceFlags::NODE_HEADERS_COMPRESSED).await;
+                headers2_peers.retain(|(addr, _)| !disabled.contains(addr));
+                drop(disabled);
                 if headers2_peers.is_empty() {
                     (peers.clone(), false)
                 } else {
