@@ -26,7 +26,7 @@
 |-------|--------|----------|
 | core | dashcore, dashcore_hashes, dashcore-private | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=core)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=core) |
 | spv | dash-spv | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=spv)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=spv) |
-| wallet | key-wallet, key-wallet-manager | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=wallet)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=wallet) |
+| wallet | key-wallet | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=wallet)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=wallet) |
 | ffi | dash-spv-ffi, key-wallet-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=ffi)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=ffi) |
 | rpc | dashcore-rpc, dashcore-rpc-json | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=rpc)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=rpc) |
 
@@ -46,7 +46,7 @@ Supports (or should support)
 * Pay-to-contract support as in Appendix A of the [Blockstream sidechains whitepaper](https://www.blockstream.com/sidechains.pdf)
 * JSONRPC interaction with Dash Core
 * FFI bindings for C/Swift integration (dash-spv-ffi, key-wallet-ffi)
-* [High-level wallet management](key-wallet-manager/README.md) with transaction building and UTXO management
+* High-level wallet management with transaction building and UTXO management
 
 # Known limitations
 
@@ -98,12 +98,9 @@ See `client/examples/` for more usage examples.
 
 This library provides comprehensive wallet functionality through multiple components:
 
-* **key-wallet**: Low-level cryptographic primitives for HD wallets, mnemonic generation, and key derivation
-* **[key-wallet-manager](key-wallet-manager/README.md)**: High-level wallet management with transaction building, UTXO tracking, and coin selection
+* **key-wallet**: Low-level cryptographic primitives for HD wallets, mnemonic generation, and key derivation; and high-level wallet management with transaction building, UTXO tracking, and coin selection
 * **key-wallet-ffi**: C/Swift FFI bindings for mobile integration
 * **dash-spv**: SPV (Simplified Payment Verification) client implementation
-
-For most applications, start with [key-wallet-manager](key-wallet-manager/README.md) which provides a complete, easy-to-use interface for wallet operations.
 
 # Supported Dash Core Versions
 The following versions are officially supported:
@@ -121,10 +118,6 @@ This workspace compiles on Rust 1.89 or newer. Crates use mixed editions (2021 a
 # Documentation
 
 Documentation can be found on [dashcore.readme.io/docs](https://dashcore.readme.io/docs).
-
-## Component Documentation
-
-* **[key-wallet-manager](key-wallet-manager/README.md)** - High-level wallet management guide
 
 # Contributing
 

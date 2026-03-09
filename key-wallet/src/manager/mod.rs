@@ -1,32 +1,39 @@
-//! High-level wallet management
-//!
-//! This module provides a high-level interface for managing multiple wallets,
-//! each of which can have multiple accounts. This follows the architecture
-//! pattern where a manager oversees multiple distinct wallets.
-
+/// High-level wallet management for Dash
+///
+/// This module provides high-level wallet functionality that builds on top of
+/// the low-level primitives in `key-wallet`
+///
+/// ## Features
+///
+/// - Multiple wallet management
+/// - BIP 157/158 compact block filter support
+/// - Address generation and gap limit handling
+/// - Blockchain synchronization
+mod events;
 mod matching;
 mod process_block;
+mod wallet_interface;
 
-pub use crate::wallet_manager::matching::{check_compact_filters_for_addresses, FilterMatchKey};
+pub use events::WalletEvent;
+pub use matching::{check_compact_filters_for_addresses, FilterMatchKey};
+pub use wallet_interface::{BlockProcessingResult, WalletInterface};
+
+use crate::account::AccountCollection;
+use crate::transaction_checking::TransactionContext;
+use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
+use crate::Utxo;
+use crate::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
+use crate::{ExtendedPubKey, WalletCoreBalance};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
-use key_wallet::account::AccountCollection;
-use key_wallet::transaction_checking::TransactionContext;
-use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
-use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
-use key_wallet::wallet::WalletType;
-use key_wallet::Utxo;
-use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
-use key_wallet::{ExtendedPubKey, WalletCoreBalance};
 use std::collections::BTreeSet;
 use std::str::FromStr;
-use zeroize::Zeroize;
 
-use crate::WalletEvent;
 #[cfg(feature = "std")]
 use tokio::sync::broadcast;
 
@@ -125,9 +132,9 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         mnemonic: &str,
         passphrase: &str,
         birth_height: CoreBlockHeight,
-        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
+        account_creation_options: crate::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
-        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, crate::mnemonic::Language::English)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         // Use appropriate wallet creation method based on whether a passphrase is provided
@@ -200,11 +207,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         mnemonic: &str,
         passphrase: &str,
         birth_height: CoreBlockHeight,
-        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
+        account_creation_options: crate::wallet::initialization::WalletAccountCreationOptions,
         downgrade_to_pubkey_wallet: bool,
         allow_external_signing: bool,
     ) -> Result<(Vec<u8>, WalletId), WalletError> {
-        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+        use crate::wallet::WalletType;
+        use zeroize::Zeroize;
+
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, crate::mnemonic::Language::English)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         // Create the initial wallet from mnemonic
@@ -280,13 +290,12 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// Returns the generated wallet ID
     pub fn create_wallet_with_random_mnemonic(
         &mut self,
-        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
+        account_creation_options: crate::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
         // Generate a random mnemonic (24 words for maximum security)
-        let mnemonic =
-            Mnemonic::generate(24, key_wallet::mnemonic::Language::English).map_err(|e| {
-                WalletError::WalletCreation(format!("Failed to generate mnemonic: {}", e))
-            })?;
+        let mnemonic = Mnemonic::generate(24, crate::mnemonic::Language::English).map_err(|e| {
+            WalletError::WalletCreation(format!("Failed to generate mnemonic: {}", e))
+        })?;
 
         let wallet = Wallet::from_mnemonic(mnemonic, self.network, account_creation_options)
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
@@ -373,7 +382,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn import_wallet_from_extended_priv_key(
         &mut self,
         xprv: &str,
-        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
+        account_creation_options: crate::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
         // Parse the extended private key
         let extended_priv_key = ExtendedPrivKey::from_str(xprv)
@@ -1114,10 +1123,10 @@ fn current_timestamp() -> u64 {
 #[cfg(feature = "std")]
 impl std::error::Error for WalletError {}
 
-/// Conversion from key_wallet::Error to WalletError
-impl From<key_wallet::Error> for WalletError {
-    fn from(err: key_wallet::Error) -> Self {
-        use key_wallet::Error;
+/// Conversion from crate::Error to WalletError
+impl From<crate::Error> for WalletError {
+    fn from(err: crate::Error) -> Self {
+        use crate::Error;
 
         match err {
             Error::InvalidMnemonic(msg) => WalletError::InvalidMnemonic(msg),

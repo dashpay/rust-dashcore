@@ -279,7 +279,7 @@ mod tests {
     use dashcore::block::Header;
     use dashcore::network::message::NetworkMessage;
     use dashcore_hashes::Hash;
-    use key_wallet_manager::wallet_manager::FilterMatchKey;
+    use key_wallet::manager::FilterMatchKey;
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::mpsc::unbounded_channel;

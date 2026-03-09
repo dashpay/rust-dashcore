@@ -124,14 +124,3 @@
 1. **High Priority**: Mnemonic handling, key derivation, address generation
 2. **Medium Priority**: Multi-language mnemonics, BIP38, gap limit edge cases
 3. **Low Priority**: Performance tests, CoinJoin, migration tests
-
-## Note
-
-High-level tests involving:
-- Transaction building and signing
-- UTXO management and coin selection  
-- Fee calculation and management
-- Multi-wallet operations
-- Balance tracking
-
-Have been moved to `key-wallet-manager/missing_tests.md`

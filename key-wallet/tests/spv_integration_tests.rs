@@ -4,12 +4,12 @@ use dashcore::blockdata::block::Block;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::constants::COINBASE_MATURITY;
 use dashcore::Address;
+use key_wallet::manager::WalletInterface;
+use key_wallet::manager::WalletManager;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
-use key_wallet_manager::wallet_interface::WalletInterface;
-use key_wallet_manager::wallet_manager::WalletManager;
 
 #[tokio::test]
 async fn test_block_processing() {

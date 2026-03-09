@@ -1,4 +1,4 @@
-//! FFI bindings for WalletManager from key-wallet-manager crate
+//! FFI bindings for WalletManager
 
 #[cfg(test)]
 #[path = "wallet_manager_tests.rs"]
@@ -16,9 +16,9 @@ use tokio::sync::RwLock;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::FFINetwork;
+use key_wallet::manager::WalletInterface;
+use key_wallet::manager::WalletManager;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_interface::WalletInterface;
-use key_wallet_manager::wallet_manager::WalletManager;
 
 /// FFI wrapper for WalletManager
 ///
@@ -470,14 +470,14 @@ pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
         Err(e) => {
             // Convert the error to FFI error
             match e {
-                key_wallet_manager::wallet_manager::WalletError::WalletExists(_) => {
+                key_wallet::manager::WalletError::WalletExists(_) => {
                     FFIError::set_error(
                         error,
                         FFIErrorCode::InvalidState,
                         "Wallet already exists in the manager".to_string(),
                     );
                 }
-                key_wallet_manager::wallet_manager::WalletError::InvalidParameter(msg) => {
+                key_wallet::manager::WalletError::InvalidParameter(msg) => {
                     FFIError::set_error(
                         error,
                         FFIErrorCode::SerializationError,

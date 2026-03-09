@@ -2,7 +2,7 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
-use crate::WalletEvent;
+use crate::manager::WalletEvent;
 use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;

@@ -8,6 +8,7 @@
 
 use crate::{dash_spv_ffi_sync_progress_destroy, FFISyncProgress};
 use dashcore::hashes::Hash;
+use key_wallet::manager::WalletEvent;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 
@@ -619,9 +620,7 @@ impl FFIClientErrorCallback {
 
 impl FFIWalletEventCallbacks {
     /// Dispatch a WalletEvent to the appropriate callback.
-    pub fn dispatch(&self, event: &key_wallet_manager::WalletEvent) {
-        use key_wallet_manager::WalletEvent;
-
+    pub fn dispatch(&self, event: &WalletEvent) {
         match event {
             WalletEvent::TransactionReceived {
                 wallet_id,

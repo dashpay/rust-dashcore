@@ -1,6 +1,6 @@
 use dashcore::bip158::BlockFilter;
 use dashcore::BlockHash;
-use key_wallet_manager::wallet_manager::FilterMatchKey;
+use key_wallet::manager::FilterMatchKey;
 use std::collections::{HashMap, HashSet};
 
 /// Tracks individual filters within a batch.

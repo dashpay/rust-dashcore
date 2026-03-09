@@ -1,15 +1,14 @@
-use crate::wallet_interface::{BlockProcessingResult, WalletInterface};
-use crate::WalletEvent;
-use crate::WalletManager;
+use crate::manager::wallet_interface::{BlockProcessingResult, WalletInterface};
+use crate::manager::{WalletEvent, WalletManager};
+use crate::transaction_checking::transaction_router::TransactionRouter;
+use crate::transaction_checking::TransactionContext;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction};
-use key_wallet::transaction_checking::transaction_router::TransactionRouter;
-use key_wallet::transaction_checking::TransactionContext;
-use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use tokio::sync::broadcast;
 
 #[async_trait]
@@ -169,8 +168,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wallet::managed_wallet_info::ManagedWalletInfo;
     use dashcore::Network;
-    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
     #[tokio::test]
     async fn test_synced_height() {

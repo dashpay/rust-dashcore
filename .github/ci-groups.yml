@@ -12,7 +12,6 @@ groups:
 
   wallet:
     - key-wallet
-    - key-wallet-manager
 
   ffi:
     - dash-spv-ffi

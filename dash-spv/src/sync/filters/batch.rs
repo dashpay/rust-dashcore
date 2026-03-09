@@ -1,6 +1,6 @@
 use dashcore::bip158::BlockFilter;
 use dashcore::Address;
-use key_wallet_manager::wallet_manager::FilterMatchKey;
+use key_wallet::manager::FilterMatchKey;
 use std::collections::{HashMap, HashSet};
 
 /// A completed batch of compact block filters ready for verification.
@@ -134,7 +134,7 @@ mod tests {
     use crate::sync::filters::batch::FiltersBatch;
     use dashcore::bip158::BlockFilter;
     use dashcore::Header;
-    use key_wallet_manager::wallet_manager::FilterMatchKey;
+    use key_wallet::manager::FilterMatchKey;
     use std::collections::{BTreeSet, HashMap};
 
     #[test]

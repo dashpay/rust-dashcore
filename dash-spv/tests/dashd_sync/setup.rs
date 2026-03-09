@@ -11,10 +11,10 @@ use dash_spv::{
 use dashcore::network::address::AddrV2Message;
 use dashcore::network::constants::ServiceFlags;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
+use key_wallet::manager::{WalletId, WalletManager};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;

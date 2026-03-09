@@ -19,6 +19,7 @@ The key-wallet crate is a core component of the rust-dashcore ecosystem, offerin
 The library is organized into several key modules:
 
 - **Core Wallet Management**: Complete wallet lifecycle including creation, backup, and recovery
+- **Multi-wallet management**: Manages multiple wallets, each containing multiple accounts
 - **Account System**: Multi-account support with different account types for various use cases
 - **Address Pools**: Efficient address generation and management with gap limit tracking
 - **Transaction Processing**: Transaction checking, UTXO tracking, and balance calculation
@@ -32,6 +33,18 @@ The library is organized into several key modules:
 - **BIP39**: Mnemonic phrase generation and validation (multiple languages)
 - **BIP38**: Encrypted private key support (optional feature)
 - **SLIP-10**: Ed25519 key derivation for Platform identities
+
+### Transactions
+- **Transaction Building**: Construct, sign, and broadcast Dash transactions
+- **Coin Selection**: Multiple strategies (smallest first, largest first, optimal)
+- **UTXO Tracking**: Comprehensive unspent output management
+- **Fee Management**: Dynamic fee calculation and levels
+
+### Wallet Manager
+- **Wallet Management**: Create, configure, and manage HD wallets
+- **Watch-Only Support**: Monitor addresses without private keys
+- **Multi-Account**: BIP44 account management
+- **Optimized**: Efficient algorithms for large transaction sets
 
 ### Dash-Specific Features (DIP9)
 

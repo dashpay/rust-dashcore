@@ -3,7 +3,7 @@
 //! These events are emitted by the WalletManager when significant wallet
 //! operations occur, allowing consumers to receive push-based notifications.
 
-use crate::wallet_manager::WalletId;
+use crate::manager::WalletId;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashcore::{Address, Amount, SignedAmount, Txid};

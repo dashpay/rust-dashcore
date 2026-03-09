@@ -1,19 +1,160 @@
-use dashcore::blockdata::transaction::Transaction;
-use dashcore::{Address, Network, Txid};
+use dashcore::{Address, Network, Transaction, Txid};
 
-use crate::managed_account::transaction_record::TransactionRecord;
-use crate::managed_account::ManagedCoreAccount;
-use crate::transaction_checking::{
-    TransactionCheckResult, TransactionContext, WalletTransactionChecker,
+use crate::{
+    account::{ManagedCoreAccount, TransactionRecord},
+    transaction_checking::{TransactionCheckResult, TransactionContext, WalletTransactionChecker},
+    wallet::{initialization::WalletAccountCreationOptions, ManagedWalletInfo},
+    ExtendedPubKey, Utxo, Wallet,
 };
-use crate::utxo::Utxo;
-use crate::wallet::initialization::WalletAccountCreationOptions;
-use crate::wallet::{ManagedWalletInfo, Wallet};
-use crate::ExtendedPubKey;
 
 impl ManagedWalletInfo {
     pub fn dummy(id: u8) -> Self {
         ManagedWalletInfo::new(Network::Regtest, [id; 32])
+    }
+}
+
+use crate::manager::{BlockProcessingResult, WalletEvent, WalletInterface};
+use dashcore::prelude::CoreBlockHeight;
+use dashcore::Block;
+use std::{collections::BTreeMap, sync::Arc};
+use tokio::sync::{broadcast, Mutex};
+
+// Type alias for transaction effects map
+type TransactionEffectsMap = Arc<Mutex<BTreeMap<Txid, (i64, Vec<String>)>>>;
+
+pub struct MockWallet {
+    processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
+    processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
+    // Map txid -> (net_amount, addresses)
+    effects: TransactionEffectsMap,
+    synced_height: CoreBlockHeight,
+    event_sender: broadcast::Sender<WalletEvent>,
+}
+
+impl Default for MockWallet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MockWallet {
+    pub fn new() -> Self {
+        let (event_sender, _) = broadcast::channel(16);
+        Self {
+            processed_blocks: Arc::new(Mutex::new(Vec::new())),
+            processed_transactions: Arc::new(Mutex::new(Vec::new())),
+            effects: Arc::new(Mutex::new(BTreeMap::new())),
+            synced_height: 0,
+            event_sender,
+        }
+    }
+
+    pub async fn set_effect(&self, txid: dashcore::Txid, net: i64, addresses: Vec<String>) {
+        let mut map = self.effects.lock().await;
+        map.insert(txid, (net, addresses));
+    }
+
+    pub fn processed_blocks(&self) -> Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>> {
+        self.processed_blocks.clone()
+    }
+
+    pub fn processed_transactions(&self) -> Arc<Mutex<Vec<dashcore::Txid>>> {
+        self.processed_transactions.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl WalletInterface for MockWallet {
+    async fn process_block(&mut self, block: &Block, height: u32) -> BlockProcessingResult {
+        let mut processed = self.processed_blocks.lock().await;
+        processed.push((block.block_hash(), height));
+
+        BlockProcessingResult {
+            new_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
+            existing_txids: Vec::new(),
+            new_addresses: Vec::new(),
+        }
+    }
+
+    async fn process_mempool_transaction(&mut self, tx: &Transaction) {
+        let mut processed = self.processed_transactions.lock().await;
+        processed.push(tx.txid());
+    }
+
+    async fn describe(&self) -> String {
+        "MockWallet (test implementation)".to_string()
+    }
+
+    async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
+        let map = self.effects.lock().await;
+        map.get(&tx.txid()).cloned()
+    }
+
+    fn monitored_addresses(&self) -> Vec<Address> {
+        Vec::new()
+    }
+
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
+    }
+
+    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+        self.synced_height = height;
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
+        self.event_sender.subscribe()
+    }
+}
+
+/// Mock wallet that returns false for filter checks
+pub struct NonMatchingMockWallet {
+    synced_height: CoreBlockHeight,
+    event_sender: broadcast::Sender<WalletEvent>,
+}
+
+impl Default for NonMatchingMockWallet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NonMatchingMockWallet {
+    pub fn new() -> Self {
+        let (event_sender, _) = broadcast::channel(16);
+        Self {
+            synced_height: 0,
+            event_sender,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl WalletInterface for NonMatchingMockWallet {
+    async fn process_block(&mut self, _block: &Block, _height: u32) -> BlockProcessingResult {
+        BlockProcessingResult::default()
+    }
+
+    async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}
+
+    fn monitored_addresses(&self) -> Vec<Address> {
+        Vec::new()
+    }
+
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
+    }
+
+    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+        self.synced_height = height;
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
+        self.event_sender.subscribe()
+    }
+
+    async fn describe(&self) -> String {
+        "NonMatchingWallet (test implementation)".to_string()
     }
 }
 
