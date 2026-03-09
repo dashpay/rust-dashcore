@@ -1,0 +1,17 @@
+[package]
+name = "ffi-header-gen"
+version = { workspace = true }
+edition = "2021"
+publish = false
+description = "Generates C headers for FFI crates using cbindgen"
+
+[lib]
+name = "ffi_header_gen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ffi-header-gen"
+path = "src/main.rs"
+
+[dependencies]
+cbindgen = "0.29"

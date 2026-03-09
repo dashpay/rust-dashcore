@@ -30,7 +30,7 @@ libc = "0.2"
 hex = "0.4"
 
 [build-dependencies]
-cbindgen = "0.29"
+ffi-header-gen = { path = "../ffi-header-gen" }
 
 [dev-dependencies]
 tempfile = "3.0"

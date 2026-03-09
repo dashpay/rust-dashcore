@@ -9,18 +9,17 @@ from concurrent.futures import ThreadPoolExecutor
 FFI_CRATES = ["key-wallet-ffi", "dash-spv-ffi"]
 
 
-def build_ffi_crates(repo_root: Path) -> bool:
-    """Build all FFI crates to regenerate headers."""
-    print("  Building FFI crates...")
+def regenerate_headers(repo_root: Path) -> bool:
+    """Regenerate FFI headers using the ffi-header-gen workspace binary."""
+    print("  Generating FFI headers...")
     result = subprocess.run(
-        ["cargo", "build", "--quiet", "--target-dir", "target/verify-ffi"]
-        + [f"-p={crate}" for crate in FFI_CRATES],
+        ["cargo", "run", "--quiet", "-p", "ffi-header-gen", "--", str(repo_root)],
         cwd=repo_root,
         capture_output=True,
         text=True
     )
     if result.returncode != 0:
-        print("Build failed:", file=sys.stderr)
+        print("Header generation failed:", file=sys.stderr)
         if result.stderr:
             print(result.stderr, file=sys.stderr)
         return False
@@ -48,8 +47,8 @@ def main():
 
     print("Regenerating FFI headers and documentation")
 
-    # Build all FFI crates first
-    if not build_ffi_crates(repo_root):
+    # Generate headers
+    if not regenerate_headers(repo_root):
         sys.exit(1)
 
     # Generate docs in parallel

@@ -1,5 +1,4 @@
 // Build script for key-wallet-ffi
-// Generates C header file using cbindgen
 
 use std::env;
 use std::path::PathBuf;
@@ -18,24 +17,14 @@ fn main() {
         _ => {}
     }
 
-    // Generate C header file using cbindgen
+    // Generate C header file
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let output_path = PathBuf::from(&crate_dir).join("include/key_wallet_ffi.h");
+    let crate_path = PathBuf::from(&crate_dir);
 
-    // Create include directory if it doesn't exist
-    std::fs::create_dir_all(output_path.parent().unwrap()).ok();
+    println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=src");
 
-    match cbindgen::Builder::new()
-        .with_crate(&crate_dir)
-        .with_config(cbindgen::Config::from_file("cbindgen.toml").unwrap_or_default())
-        .generate()
-    {
-        Ok(bindings) => {
-            bindings.write_to_file(&output_path);
-            println!("cargo:warning=Generated C header at {:?}", output_path);
-        }
-        Err(e) => {
-            println!("cargo:warning=Failed to generate C header: {}", e);
-        }
+    if let Err(e) = ffi_header_gen::generate_header(&crate_path, "key_wallet_ffi.h") {
+        println!("cargo:warning=Failed to generate C header: {}", e);
     }
 }
