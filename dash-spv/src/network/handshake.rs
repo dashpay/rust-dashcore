@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dashcore::network::constants;
-use dashcore::network::constants::{ServiceFlags, NODE_HEADERS_COMPRESSED};
+use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_network::VersionMessage;
 use dashcore::Network;
@@ -36,7 +36,7 @@ pub struct HandshakeManager {
     state: HandshakeState,
     our_version: u32,
     peer_version: Option<u32>,
-    peer_services: Option<ServiceFlags>,
+    peer_services: ServiceFlags,
     version_received: bool,
     verack_received: bool,
     version_sent: bool,
@@ -56,7 +56,7 @@ impl HandshakeManager {
             state: HandshakeState::Init,
             our_version: constants::PROTOCOL_VERSION,
             peer_version: None,
-            peer_services: None,
+            peer_services: ServiceFlags::NONE,
             version_received: false,
             verack_received: false,
             version_sent: false,
@@ -157,7 +157,7 @@ impl HandshakeManager {
                     version_msg
                 );
                 self.peer_version = Some(version_msg.version);
-                self.peer_services = Some(version_msg.services);
+                self.peer_services = version_msg.services;
                 self.version_received = true;
 
                 // Update connection's peer information
@@ -261,7 +261,7 @@ impl HandshakeManager {
             .as_secs() as i64;
 
         // Advertise headers2 support (NODE_HEADERS_COMPRESSED)
-        let services = ServiceFlags::NONE | NODE_HEADERS_COMPRESSED;
+        let services = ServiceFlags::NODE_HEADERS_COMPRESSED;
 
         // Parse the local address safely
         let local_addr = "127.0.0.1:0"
@@ -313,7 +313,7 @@ impl HandshakeManager {
 
     /// Check if peer supports headers2 compression.
     pub fn peer_supports_headers2(&self) -> bool {
-        self.peer_services.map(|services| services.has(NODE_HEADERS_COMPRESSED)).unwrap_or(false)
+        self.peer_services.has(ServiceFlags::NODE_HEADERS_COMPRESSED)
     }
 
     /// Negotiate headers2 support with the peer after handshake completion.

@@ -40,7 +40,7 @@ pub struct Peer {
     pending_pings: HashMap<u64, SystemTime>, // nonce -> sent_time
     // Peer information from Version message
     version: Option<u32>,
-    services: Option<u64>,
+    services: ServiceFlags,
     user_agent: Option<String>,
     best_height: Option<u32>,
     relay: Option<bool>,
@@ -68,7 +68,7 @@ impl Peer {
             last_pong_received: None,
             pending_pings: HashMap::new(),
             version: None,
-            services: None,
+            services: ServiceFlags::NONE,
             user_agent: None,
             best_height: None,
             relay: None,
@@ -115,7 +115,7 @@ impl Peer {
             last_pong_received: None,
             pending_pings: HashMap::new(),
             version: None,
-            services: None,
+            services: ServiceFlags::NONE,
             user_agent: None,
             best_height: None,
             relay: None,
@@ -144,7 +144,7 @@ impl Peer {
     }
 
     pub fn has_service(&self, flags: ServiceFlags) -> bool {
-        self.services.map(|s| ServiceFlags::from(s).has(flags)).unwrap_or(false)
+        self.services.has(flags)
     }
 
     /// Connect to the peer (instance method for compatibility).
@@ -273,7 +273,7 @@ impl Peer {
 
         // All validations passed, update peer info
         self.version = Some(version_msg.version);
-        self.services = Some(version_msg.services.as_u64());
+        self.services = version_msg.services;
         self.user_agent = Some(version_msg.user_agent.clone());
         self.best_height = Some(version_msg.start_height as u32);
         self.relay = Some(version_msg.relay);
@@ -824,12 +824,7 @@ impl Peer {
         // We can request headers2 if peer has the service flag for headers2 support
         // Note: We don't wait for SendHeaders2 from peer as that creates a race condition
         // during initial sync. The service flag is sufficient to know they support headers2.
-        if let Some(services) = self.services {
-            dashcore::network::constants::ServiceFlags::from(services)
-                .has(dashcore::network::constants::NODE_HEADERS_COMPRESSED)
-        } else {
-            false
-        }
+        self.services.has(ServiceFlags::NODE_HEADERS_COMPRESSED)
     }
 }
 
