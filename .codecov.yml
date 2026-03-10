@@ -1,3 +1,8 @@
+codecov:
+  notify:
+    # Must match the number of coverage-uploading groups (core, spv, wallet, ffi, rpc)
+    after_n_builds: 5
+
 coverage:
   status:
     project:
