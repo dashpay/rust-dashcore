@@ -177,7 +177,7 @@ mod tests {
             "192.168.1.1:9999".parse().expect("Failed to parse test address");
         let msg = AddrV2Message {
             time: 1234567890,
-            services: ServiceFlags::from(1),
+            services: ServiceFlags::NETWORK,
             addr: AddrV2::Ipv4(
                 addr.ip().to_string().parse().expect("Failed to parse IPv4 address"),
             ),

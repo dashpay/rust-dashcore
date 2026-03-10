@@ -201,7 +201,7 @@ mod unit_tests {
         assert!(handler.peer_supports_addrv2(&peer).await);
 
         // Test adding addresses
-        handler.add_known_address(peer, ServiceFlags::from(1)).await;
+        handler.add_known_address(peer, ServiceFlags::NETWORK).await;
         let known = handler.get_known_addresses().await;
         assert_eq!(known.len(), 1);
         assert_eq!(known[0].socket_addr().unwrap(), peer);

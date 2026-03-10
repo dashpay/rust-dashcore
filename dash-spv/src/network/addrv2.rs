@@ -180,7 +180,7 @@ mod tests {
 
         // Test adding known address
         let addr = "192.168.1.1:9999".parse().expect("Failed to parse test address");
-        handler.add_known_address(addr, ServiceFlags::from(1)).await;
+        handler.add_known_address(addr, ServiceFlags::NETWORK).await;
 
         let known = handler.get_known_addresses().await;
         assert_eq!(known.len(), 1);
@@ -207,21 +207,21 @@ mod tests {
             // Valid: current time
             AddrV2Message {
                 time: now,
-                services: ServiceFlags::from(1),
+                services: ServiceFlags::NETWORK,
                 addr: AddrV2::Ipv4(ipv4_addr),
                 port: addr.port(),
             },
             // Invalid: too old (4 hours ago)
             AddrV2Message {
                 time: now.saturating_sub(14400),
-                services: ServiceFlags::from(1),
+                services: ServiceFlags::NETWORK,
                 addr: AddrV2::Ipv4(ipv4_addr),
                 port: addr.port(),
             },
             // Invalid: too far in future (20 minutes)
             AddrV2Message {
                 time: now + 1200,
-                services: ServiceFlags::from(1),
+                services: ServiceFlags::NETWORK,
                 addr: AddrV2::Ipv4(ipv4_addr),
                 port: addr.port(),
             },

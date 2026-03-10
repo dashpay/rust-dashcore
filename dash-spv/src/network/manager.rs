@@ -301,7 +301,7 @@ impl PeerNetworkManager {
                             });
 
                             // Add to known addresses
-                            addrv2_handler.add_known_address(addr, ServiceFlags::from(1)).await;
+                            addrv2_handler.add_known_address(addr, ServiceFlags::NETWORK).await;
 
                             // // Start message reader for this peer
                             Self::start_peer_reader(
