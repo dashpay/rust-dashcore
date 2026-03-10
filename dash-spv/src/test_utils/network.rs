@@ -10,7 +10,6 @@ use dashcore::{
     network::message_blockdata::GetHeadersMessage, BlockHash, Network,
 };
 use dashcore_hashes::Hash;
-use std::any::Any;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -123,10 +122,6 @@ impl Default for MockNetworkManager {
 
 #[async_trait]
 impl NetworkManager for MockNetworkManager {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
         self.message_dispatcher.message_receiver(types)
     }
@@ -169,6 +164,14 @@ impl NetworkManager for MockNetworkManager {
         } else {
             0
         }
+    }
+
+    async fn broadcast(&self, _message: NetworkMessage) -> NetworkResult<()> {
+        panic!("Broadcast not implemented for MockNetworkManager");
+    }
+
+    async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()> {
+        panic!("Disconnect peer not implemented for MockNetworkManager");
     }
 
     fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {

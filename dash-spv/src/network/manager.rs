@@ -1263,10 +1263,6 @@ impl Clone for PeerNetworkManager {
 // Implement NetworkManager trait
 #[async_trait]
 impl NetworkManager for PeerNetworkManager {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
         self.message_dispatcher.lock().await.message_receiver(types)
     }
@@ -1317,6 +1313,26 @@ impl NetworkManager for PeerNetworkManager {
     fn peer_count(&self) -> usize {
         // Use cached counter to avoid blocking in async context
         self.connected_peer_count.load(Ordering::Relaxed)
+    }
+
+    async fn broadcast(&self, message: NetworkMessage) -> NetworkResult<()> {
+        let results = PeerNetworkManager::broadcast(self, message).await;
+
+        if results.is_empty() {
+            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
+        }
+
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        if successes > 0 {
+            return Err(NetworkError::ConnectionFailed("All broadcast sends failed".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> NetworkResult<()> {
+        PeerNetworkManager::disconnect_peer(self, addr, reason)
+            .await
+            .map_err(|e| NetworkError::ConnectionFailed(e.to_string()))
     }
 
     fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {

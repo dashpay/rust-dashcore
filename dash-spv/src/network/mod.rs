@@ -166,9 +166,6 @@ impl RequestSender {
 /// Network manager trait for abstracting network operations.
 #[async_trait]
 pub trait NetworkManager: Send + Sync + 'static {
-    /// Convert to Any for downcasting.
-    fn as_any(&self) -> &dyn std::any::Any;
-
     /// Creates and returns a receiver that yields only messages of the matching the provided message types.
     async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message>;
 
@@ -222,6 +219,12 @@ pub trait NetworkManager: Send + Sync + 'static {
 
         Ok(())
     }
+
+    /// Broadcast a message to all connected peers.
+    async fn broadcast(&self, _message: NetworkMessage) -> NetworkResult<()>;
+
+    /// Disconnect a specific peer by address.
+    async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()>;
 
     /// Subscribe to network events (peer connections, disconnections).
     ///
