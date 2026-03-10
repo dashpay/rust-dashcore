@@ -30,7 +30,6 @@ use dashcore::network::address::{AddrV2, AddrV2Message};
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::CompressionState;
-use dashcore::prelude::CoreBlockHeight;
 use dashcore::Network;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
@@ -1378,95 +1377,9 @@ impl NetworkManager for PeerNetworkManager {
         } // end match
     } // end send_message
 
-    async fn penalize_peer(&self, address: SocketAddr, score_change: i32, reason: &str) {
-        self.reputation_manager.update_reputation(address, score_change, reason).await;
-    }
-
-    async fn penalize_peer_invalid_chainlock(&self, address: SocketAddr, reason: &str) {
-        match self.disconnect_peer(&address, reason).await {
-            Ok(()) => {
-                log::warn!(
-                    "Peer {} disconnected for invalid ChainLock enforcement: {}",
-                    address,
-                    reason
-                );
-            }
-            Err(err) => {
-                log::error!(
-                    "Failed to disconnect peer {} after invalid ChainLock enforcement ({}): {}",
-                    address,
-                    reason,
-                    err
-                );
-            }
-        }
-
-        // Apply misbehavior score and a short temporary ban
-        self.reputation_manager
-            .update_reputation(address, misbehavior_scores::INVALID_CHAINLOCK, reason)
-            .await;
-
-        // Short ban: 10 minutes for relaying invalid ChainLock
-        self.reputation_manager
-            .temporary_ban_peer(address, Duration::from_secs(10 * 60), reason)
-            .await;
-    }
-
-    async fn penalize_peer_invalid_instantlock(&self, address: SocketAddr, reason: &str) {
-        // Apply misbehavior score and a short temporary ban
-        self.reputation_manager
-            .update_reputation(address, misbehavior_scores::INVALID_INSTANTLOCK, reason)
-            .await;
-
-        // Short ban: 10 minutes for relaying invalid InstantLock
-        self.reputation_manager
-            .temporary_ban_peer(address, Duration::from_secs(10 * 60), reason)
-            .await;
-
-        match self.disconnect_peer(&address, reason).await {
-            Ok(()) => {
-                log::warn!(
-                    "Peer {} disconnected for invalid InstantLock enforcement: {}",
-                    address,
-                    reason
-                );
-            }
-            Err(err) => {
-                log::error!(
-                    "Failed to disconnect peer {} after invalid InstantLock enforcement ({}): {}",
-                    address,
-                    reason,
-                    err
-                );
-            }
-        }
-    }
-
-    fn is_connected(&self) -> bool {
-        // Use cached counter to avoid blocking in async context
-        self.connected_peer_count.load(Ordering::Relaxed) > 0
-    }
-
     fn peer_count(&self) -> usize {
         // Use cached counter to avoid blocking in async context
         self.connected_peer_count.load(Ordering::Relaxed)
-    }
-
-    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight> {
-        self.pool.get_best_height().await
-    }
-
-    async fn has_peer_with_service(&self, service_flags: ServiceFlags) -> bool {
-        let peers = self.pool.get_all_peers().await;
-
-        for (_, peer) in peers.iter() {
-            let peer_guard = peer.read().await;
-            if peer_guard.has_service(service_flags) {
-                return true;
-            }
-        }
-
-        false
     }
 
     fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {

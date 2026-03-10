@@ -79,7 +79,6 @@ async fn test_network_manager_creation() {
     assert!(network.is_ok(), "Network manager creation should succeed");
     let network = network.unwrap();
 
-    assert!(!network.is_connected(), "Should start disconnected");
     assert_eq!(network.peer_count(), 0, "Should start with no peers");
 }
 

@@ -27,7 +27,6 @@ use dashcore::network::message_blockdata::{GetHeadersMessage, Inventory};
 use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
 use dashcore::network::message_qrinfo::GetQRInfo;
 use dashcore::network::message_sml::GetMnListDiff;
-use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
 pub use handshake::{HandshakeManager, HandshakeState};
@@ -35,7 +34,6 @@ pub use manager::PeerNetworkManager;
 pub use message_dispatcher::{Message, MessageDispatcher};
 pub use message_type::MessageType;
 pub use peer::Peer;
-use std::net::SocketAddr;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const FILTER_TYPE_DEFAULT: u8 = 0;
@@ -153,20 +151,8 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Send a message to a peer.
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()>;
 
-    /// Check if connected to any peers.
-    fn is_connected(&self) -> bool;
-
     /// Get the number of connected peers.
     fn peer_count(&self) -> usize;
-
-    /// Get the best block height reported by connected peers.
-    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight>;
-
-    /// Check if any connected peer supports a specific service.
-    async fn has_peer_with_service(
-        &self,
-        service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> bool;
 
     /// Request QRInfo from the network.
     ///
@@ -200,30 +186,6 @@ pub trait NetworkManager: Send + Sync + 'static {
         );
 
         Ok(())
-    }
-
-    /// Penalize a peer by address by adjusting reputation.
-    /// Default implementation is a no-op for managers without reputation.
-    async fn penalize_peer(&self, _address: SocketAddr, _score_change: i32, _reason: &str) {}
-
-    /// Penalize a peer by address for an invalid ChainLock.
-    async fn penalize_peer_invalid_chainlock(&self, address: SocketAddr, reason: &str) {
-        self.penalize_peer(
-            address,
-            crate::network::reputation::misbehavior_scores::INVALID_CHAINLOCK,
-            reason,
-        )
-        .await;
-    }
-
-    /// Penalize a peer by address for an invalid InstantLock.
-    async fn penalize_peer_invalid_instantlock(&self, peer_address: SocketAddr, reason: &str) {
-        self.penalize_peer(
-            peer_address,
-            crate::network::reputation::misbehavior_scores::INVALID_INSTANTLOCK,
-            reason,
-        )
-        .await;
     }
 
     /// Subscribe to network events (peer connections, disconnections).

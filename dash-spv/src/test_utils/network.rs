@@ -5,8 +5,6 @@ use crate::network::{
     RequestSender,
 };
 use async_trait::async_trait;
-use dashcore::network::constants::ServiceFlags;
-use dashcore::prelude::CoreBlockHeight;
 use dashcore::{
     block::Header as BlockHeader, network::message::NetworkMessage,
     network::message_blockdata::GetHeadersMessage, BlockHash, Network,
@@ -27,7 +25,6 @@ pub struct MockNetworkManager {
     connected: bool,
     connected_peer: SocketAddr,
     headers_chain: Vec<BlockHeader>,
-    peer_best_height: Option<u32>,
     message_dispatcher: MessageDispatcher,
     sent_messages: Vec<NetworkMessage>,
     /// Request sender for outgoing messages.
@@ -46,7 +43,6 @@ impl MockNetworkManager {
             connected: true,
             connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
             headers_chain: Vec::new(),
-            peer_best_height: None,
             message_dispatcher: MessageDispatcher::default(),
             sent_messages: Vec::new(),
             request_tx,
@@ -167,25 +163,12 @@ impl NetworkManager for MockNetworkManager {
 
         Ok(())
     }
-
-    fn is_connected(&self) -> bool {
-        self.connected
-    }
-
     fn peer_count(&self) -> usize {
         if self.connected {
             1
         } else {
             0
         }
-    }
-
-    async fn get_peer_best_height(&self) -> Option<CoreBlockHeight> {
-        self.peer_best_height
-    }
-
-    async fn has_peer_with_service(&self, _service_flags: ServiceFlags) -> bool {
-        self.connected
     }
 
     fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {
