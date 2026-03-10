@@ -105,7 +105,7 @@ impl PeerPool {
         let peers = self.get_all_peers().await;
 
         if peers.is_empty() {
-            log::debug!("get_peer_best_height: No peers available");
+            log::debug!("get_best_height: No peers available");
             return None;
         }
 
@@ -117,7 +117,7 @@ impl PeerPool {
             peer_count += 1;
 
             log::debug!(
-                "get_peer_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}",
+                "get_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}",
                 addr,
                 peer_guard.best_height(),
                 peer_guard.version(),
@@ -128,7 +128,7 @@ impl PeerPool {
                 if peer_height > 0 {
                     best_height = best_height.max(peer_height);
                     log::debug!(
-                        "get_peer_best_height: Updated best_height to {} from peer {}",
+                        "get_best_height: Updated best_height to {} from peer {}",
                         best_height,
                         addr
                     );
@@ -136,11 +136,7 @@ impl PeerPool {
             }
         }
 
-        log::debug!(
-            "get_peer_best_height: Checked {} peers, best_height: {}",
-            peer_count,
-            best_height
-        );
+        log::debug!("get_best_height: Checked {} peers, best_height: {}", peer_count, best_height);
 
         if best_height > 0 {
             Some(best_height)
