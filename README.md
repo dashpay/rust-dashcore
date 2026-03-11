@@ -9,13 +9,13 @@
 
   <p>
     <a href="https://crates.io/crates/dash"><img alt="Crate Info" src="https://img.shields.io/crates/v/dash.svg"/></a>
-    <a href="https://github.com/dashevo/rust-dashcore/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
-    <a href="https://github.com/dashevo/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashevo/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
+    <a href="https://github.com/dashpay/rust-dashcore/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
+    <a href="https://github.com/dashpay/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashpay/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
     <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/master"><img alt="Coverage (master)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/master/graph/badge.svg"/></a>
     <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev"><img alt="Coverage (develop)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg"/></a>
     <a href="https://docs.rs"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-rust--dashcore-green"/></a>
     <a href="#minimum-supported-rust-version-msrv"><img alt="Rustc Version 1.89+" src="https://img.shields.io/badge/rustc-1.89%2B-lightgrey.svg"/></a>
-    <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/dashevo/rust-dashcore">
+    <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/dashpay/rust-dashcore">
   </p>
 </div>
 
