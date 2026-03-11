@@ -5,7 +5,6 @@
 
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::Utxo;
-use alloc::vec::Vec;
 use core::cmp::Reverse;
 
 /// UTXO selection strategy
@@ -684,7 +683,6 @@ impl core::fmt::Display for SelectionError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for SelectionError {}
 
 #[cfg(test)]

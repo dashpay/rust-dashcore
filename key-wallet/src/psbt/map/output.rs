@@ -10,11 +10,9 @@ use {core, secp256k1};
 use crate::bip32::KeySource;
 use crate::psbt::map::Map;
 use crate::psbt::{raw, Error};
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::taproot::{TapLeafHash, TapTree};
-use std::collections::btree_map;
+use std::collections::{btree_map, BTreeMap};
 
 /// Type: Redeem ScriptBuf PSBT_OUT_REDEEM_SCRIPT = 0x00
 const PSBT_OUT_REDEEM_SCRIPT: u8 = 0x00;

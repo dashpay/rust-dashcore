@@ -26,19 +26,14 @@ use crate::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
 use crate::Utxo;
 use crate::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use crate::{ExtendedPubKey, WalletCoreBalance};
-use alloc::collections::BTreeMap;
-use alloc::string::String;
-use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
-#[cfg(feature = "std")]
 use tokio::sync::broadcast;
 
 /// Default capacity for the wallet event bus.
-#[cfg(feature = "std")]
 const DEFAULT_WALLET_EVENT_CAPACITY: usize = 1000;
 
 /// Unique identifier for a wallet (32-byte hash)
@@ -103,7 +98,6 @@ pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     /// produce the total monitor revision.
     structural_revision: u64,
     /// Event sender for wallet events
-    #[cfg(feature = "std")]
     event_sender: broadcast::Sender<WalletEvent>,
 }
 
@@ -117,7 +111,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
             structural_revision: 0,
-            #[cfg(feature = "std")]
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
         }
     }
@@ -125,13 +118,11 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// Subscribe to wallet events.
     ///
     /// Returns a receiver that will receive all wallet events emitted by this manager.
-    #[cfg(feature = "std")]
     pub fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
         self.event_sender.subscribe()
     }
 
     /// Get a reference to the event sender for emitting events.
-    #[cfg(feature = "std")]
     pub fn event_sender(&self) -> &broadcast::Sender<WalletEvent> {
         &self.event_sender
     }
@@ -581,7 +572,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                         }
                     }
 
-                    #[cfg(feature = "std")]
                     if check_result.is_new_transaction {
                         // First time seeing this transaction — emit TransactionReceived
                         for account_match in &check_result.affected_accounts {
@@ -1173,20 +1163,9 @@ impl core::fmt::Display for WalletError {
 
 /// Helper function for getting current timestamp
 fn current_timestamp() -> u64 {
-    #[cfg(feature = "std")]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        0 // In no_std environment, timestamp would need to be provided externally
-    }
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for WalletError {}
 
 #[cfg(test)]

@@ -3,8 +3,6 @@
 //! This module defines the trait that SPV clients use to interact with wallets.
 
 use crate::manager::WalletEvent;
-use alloc::string::String;
-use alloc::vec::Vec;
 use async_trait::async_trait;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
@@ -79,10 +77,7 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Return the wallet's per-transaction net change and involved addresses if known.
     /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.
     /// If the wallet has no record for the transaction, returns None.
-    async fn transaction_effect(
-        &self,
-        _tx: &Transaction,
-    ) -> Option<(i64, alloc::vec::Vec<alloc::string::String>)> {
+    async fn transaction_effect(&self, _tx: &Transaction) -> Option<(i64, Vec<String>)> {
         None
     }
 

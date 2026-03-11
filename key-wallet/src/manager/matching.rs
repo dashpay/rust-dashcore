@@ -1,4 +1,3 @@
-use alloc::vec::Vec;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, BlockHash};

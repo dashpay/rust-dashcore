@@ -3,7 +3,6 @@
 //! This module contains the transaction record structure used to track
 //! transactions associated with accounts.
 
-use alloc::string::String;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::{BlockHash, Txid};
 #[cfg(feature = "serde")]

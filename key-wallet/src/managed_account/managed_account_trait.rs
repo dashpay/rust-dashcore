@@ -2,13 +2,14 @@
 //!
 //! This module defines the common interface for all managed account types.
 
+use std::collections::BTreeMap;
+
 use crate::account::AccountMetadata;
 use crate::account::TransactionRecord;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
 use crate::Network;
-use alloc::collections::BTreeMap;
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::Txid;
 

@@ -11,9 +11,6 @@ use crate::error::{Error, Result};
 #[cfg(feature = "bip38")]
 use crate::Network;
 #[cfg(feature = "bip38")]
-use alloc::vec::Vec;
-
-#[cfg(feature = "bip38")]
 impl Wallet {
     /// Export the master private key as BIP38 encrypted
     pub fn export_master_key_bip38(

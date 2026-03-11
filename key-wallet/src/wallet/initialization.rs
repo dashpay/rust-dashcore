@@ -11,7 +11,6 @@ use crate::error::Result;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::seed::Seed;
 use crate::Network;
-use alloc::string::String;
 use std::collections::BTreeSet;
 
 /// Set of BIP44 account indices to create

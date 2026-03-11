@@ -1,7 +1,5 @@
 //! BIP39 Mnemonic implementation
 
-use alloc::string::String;
-use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
 
@@ -10,7 +8,6 @@ use crate::error::{Error, Result};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use bip39 as bip39_crate;
-#[cfg(feature = "std")]
 use rand::{RngCore, SeedableRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -156,7 +153,6 @@ impl Mnemonic {
     /// let mut rng = StdRng::from_entropy();
     /// let mnemonic = Mnemonic::generate_using_rng(12, Language::English, &mut rng).unwrap();
     /// ```
-    #[cfg(feature = "std")]
     pub fn generate_using_rng<R: RngCore>(
         word_count: usize,
         language: Language,
@@ -201,7 +197,6 @@ impl Mnemonic {
     /// let seed = 12345u64;
     /// let mnemonic = Mnemonic::generate_with_seed(12, Language::English, seed).unwrap();
     /// ```
-    #[cfg(feature = "std")]
     pub fn generate_with_seed(word_count: usize, language: Language, seed: u64) -> Result<Self> {
         use rand::rngs::StdRng;
 
@@ -528,7 +523,6 @@ mod tests {
 
     // Test mnemonic generation with custom RNG
     #[test]
-    #[cfg(feature = "std")]
     fn test_generate_using_rng() {
         use rand::rngs::StdRng;
         use rand::SeedableRng;
@@ -557,7 +551,6 @@ mod tests {
 
     // Test deterministic mnemonic generation from seed
     #[test]
-    #[cfg(feature = "std")]
     fn test_generate_with_seed() {
         // Generate mnemonic from seed
         let seed = 42u64;
@@ -598,7 +591,6 @@ mod tests {
 
     // Test that generate_with_seed is truly deterministic
     #[test]
-    #[cfg(feature = "std")]
     fn test_generate_with_seed_deterministic() {
         let test_seeds = vec![0u64, 1, 100, 1000, u64::MAX];
 

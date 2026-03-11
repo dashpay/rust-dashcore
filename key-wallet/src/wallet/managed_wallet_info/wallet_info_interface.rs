@@ -2,6 +2,8 @@
 //!
 //! This trait allows WalletManager to work with different wallet info implementations
 
+use std::collections::BTreeSet;
+
 use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::ManagedAccountTrait;
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
@@ -9,8 +11,7 @@ use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address as DashAddress, Transaction, Txid};
 

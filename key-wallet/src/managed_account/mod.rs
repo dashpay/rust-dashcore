@@ -20,13 +20,13 @@ use crate::wallet::balance::WalletCoreBalance;
 #[cfg(feature = "eddsa")]
 use crate::AddressInfo;
 use crate::{ExtendedPubKey, Network};
-use alloc::collections::BTreeMap;
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::{Address, ScriptBuf};
 use dashcore::{Transaction, Txid};
 use managed_account_type::ManagedAccountType;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::{BTreeSet, HashSet};
 
 pub mod address_pool;
@@ -948,17 +948,10 @@ impl ManagedCoreAccount {
 
     /// Get the current timestamp (for metadata)
     fn current_timestamp() -> u64 {
-        #[cfg(feature = "std")]
-        {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            0 // In no_std environments, timestamp must be provided externally
-        }
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     /// Get total address count across all pools

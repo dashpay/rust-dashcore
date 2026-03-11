@@ -9,13 +9,13 @@
 //!
 //! The derivation path follows DIP-17: `m/9'/coin_type'/17'/account'/key_class'/index`
 
+use std::collections::BTreeMap;
+
 use super::address_pool::{AddressPool, KeySource};
 use super::metadata::AccountMetadata;
 use super::platform_address::PlatformP2PKHAddress;
 use crate::error::{Error, Result};
 use crate::Network;
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
 use dashcore::Address;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -302,17 +302,10 @@ impl ManagedPlatformAccount {
 
     /// Get the current timestamp
     fn current_timestamp() -> u64 {
-        #[cfg(feature = "std")]
-        {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            0 // In no_std environments, timestamp must be provided externally
-        }
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     /// Get pool statistics

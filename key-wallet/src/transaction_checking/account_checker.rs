@@ -3,12 +3,13 @@
 //! This module provides methods for checking if transactions belong to
 //! specific accounts within a ManagedAccountCollection.
 
+use std::collections::BTreeMap;
+
 use super::transaction_router::AccountTypeToCheck;
 use crate::account::{ManagedAccountCollection, ManagedCoreAccount};
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::Address;
-use alloc::vec::Vec;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::transaction::TransactionPayload;
@@ -415,7 +416,7 @@ impl ManagedAccountCollection {
 
     /// Check indexed accounts (BTreeMap of accounts)
     fn check_indexed_accounts(
-        accounts: &alloc::collections::BTreeMap<u32, ManagedCoreAccount>,
+        accounts: &BTreeMap<u32, ManagedCoreAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();

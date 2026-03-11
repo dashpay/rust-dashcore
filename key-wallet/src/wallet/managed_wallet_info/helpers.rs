@@ -4,7 +4,6 @@ use super::ManagedWalletInfo;
 use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreAccount;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
-use alloc::vec::Vec;
 
 impl ManagedWalletInfo {
     // BIP44 Account Helpers

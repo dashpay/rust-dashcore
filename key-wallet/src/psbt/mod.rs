@@ -10,13 +10,10 @@
 use core::{cmp, fmt};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "std")]
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::bip32::KeySource;
 use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey};
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
 use core::borrow::Borrow;
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::txout::TxOut;
@@ -576,7 +573,6 @@ impl GetKey for $set<ExtendedPrivKey> {
     }
 }}}
 impl_get_key_for_set!(BTreeSet);
-#[cfg(feature = "std")]
 impl_get_key_for_set!(HashSet);
 
 #[rustfmt::skip]
@@ -598,7 +594,6 @@ impl GetKey for $map<PublicKey, PrivateKey> {
     }
 }}}
 impl_get_key_for_map!(BTreeMap);
-#[cfg(feature = "std")]
 impl_get_key_for_map!(HashMap);
 
 /// Errors when getting a key.
@@ -624,7 +619,6 @@ impl fmt::Display for GetKeyError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for GetKeyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use GetKeyError::*;
@@ -747,7 +741,6 @@ impl fmt::Display for SignError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for SignError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::SignError::*;
@@ -808,7 +801,6 @@ mod display_from_str {
         }
     }
 
-    #[cfg(feature = "std")]
     impl std::error::Error for PsbtParseError {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
             use self::PsbtParseError::*;
@@ -1130,16 +1122,9 @@ mod tests {
         #[cfg(feature = "base64")]
         use std::str::FromStr;
 
+        use crate::psbt::map::Map;
+
         use super::*;
-        use crate::psbt::map::{Input, Map, Output};
-        use crate::psbt::{raw, PartiallySignedTransaction};
-        use dashcore::blockdata::script::ScriptBuf;
-        use dashcore::blockdata::transaction::outpoint::OutPoint;
-        use dashcore::blockdata::transaction::txin::TxIn;
-        use dashcore::blockdata::transaction::txout::TxOut;
-        use dashcore::blockdata::transaction::Transaction;
-        use dashcore::blockdata::witness::Witness;
-        use dashcore::sighash::EcdsaSighashType;
 
         #[test]
         #[should_panic(expected = "InvalidMagic")]

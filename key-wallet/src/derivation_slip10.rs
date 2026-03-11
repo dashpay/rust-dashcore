@@ -9,15 +9,12 @@
 //! - Different serialization format (no xpub/xprv, custom encoding)
 
 use core::fmt;
-#[cfg(feature = "std")]
-use std::error;
-
-use alloc::{string::String, vec::Vec};
 pub use dashcore::ed25519_dalek::{SigningKey, VerifyingKey};
 use dashcore::Network;
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde;
+use std::error;
 // Re-export ChainCode, Fingerprint and ChildNumber from bip32
 use crate::bip32::{ChainCode, ChildNumber, Fingerprint};
 
@@ -444,7 +441,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl error::Error for Error {}
 
 impl From<crate::bip32::Error> for Error {

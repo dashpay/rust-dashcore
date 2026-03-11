@@ -5,8 +5,6 @@
 
 use crate::manager::WalletId;
 use crate::transaction_checking::TransactionContext;
-use alloc::string::String;
-use alloc::vec::Vec;
 use dashcore::{Address, Amount, SignedAmount, Txid};
 
 /// Events emitted by the wallet manager.

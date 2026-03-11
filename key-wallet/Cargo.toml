@@ -9,8 +9,7 @@ readme = "README.md"
 license = "CC0-1.0"
 
 [features]
-default = ["std", "manager"]
-std = ["secp256k1/std", "bip39/std", "getrandom", "rand"]
+default = ["secp256k1/std", "bip39/std", "getrandom", "rand", "manager"]
 manager = ["dep:tokio"]
 parallel-filters = ["manager", "dep:rayon"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]

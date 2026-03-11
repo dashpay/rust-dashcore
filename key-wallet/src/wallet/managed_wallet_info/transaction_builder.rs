@@ -3,7 +3,6 @@
 //! This module provides high-level transaction building functionality
 //! using types from the dashcore crate.
 
-use alloc::vec::Vec;
 use core::fmt;
 
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
@@ -825,7 +824,6 @@ impl fmt::Display for BuilderError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for BuilderError {}
 
 #[cfg(test)]

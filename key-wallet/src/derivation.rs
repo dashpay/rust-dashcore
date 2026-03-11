@@ -3,7 +3,6 @@
 //! This module provides key derivation functionality with a builder pattern
 //! for flexible path construction and derivation strategies.
 
-use alloc::vec::Vec;
 use secp256k1::Secp256k1;
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};

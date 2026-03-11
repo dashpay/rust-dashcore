@@ -2,8 +2,8 @@
 //!
 //! This module provides a structured way to manage accounts by type.
 
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
+use std::collections::BTreeMap;
+
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]

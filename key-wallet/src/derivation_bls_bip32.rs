@@ -10,11 +10,8 @@
 //! - Supports both hardened and non-hardened derivation
 
 use core::fmt;
-#[cfg(feature = "std")]
-use std::error;
-
-use alloc::string::String;
 use dashcore_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
+use std::error;
 
 // NOTE: We use Bls12381G2Impl for BLS keys (48-byte public keys)
 use dashcore::blsful::{
@@ -64,7 +61,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl error::Error for Error {}
 
 /// Extended BLS private key for HD derivation
