@@ -2056,8 +2056,9 @@ pub struct GetMasternodePaymentsResult {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DMNState {
-    #[serde_as(as = "DisplayFromStr")]
-    pub service: SocketAddr,
+    #[serde(default)]
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    pub service: Option<SocketAddr>,
     pub registered_height: u32,
     #[serde(default, rename = "PoSeRevivedHeight", deserialize_with = "deserialize_u32_opt")]
     pub pose_revived_height: Option<u32>,
@@ -2203,7 +2204,7 @@ impl DMNState {
         let diff = DMNStateDiff {
             service: if self.service != newer.service {
                 has_diff = true;
-                Some(newer.service)
+                newer.service
             } else {
                 None
             },
@@ -2316,7 +2317,7 @@ impl DMNState {
             self.pub_key_operator = pub_key_operator;
         }
         if let Some(service) = service {
-            self.service = service
+            self.service = Some(service)
         }
         if let Some(revocation_reason) = revocation_reason {
             self.revocation_reason = revocation_reason;
@@ -2366,8 +2367,9 @@ pub enum MasternodeState {
 pub struct MasternodeStatus {
     #[serde(default, deserialize_with = "deserialize_outpoint")]
     pub outpoint: dashcore::OutPoint,
-    #[serde_as(as = "DisplayFromStr")]
-    pub service: SocketAddr,
+    #[serde(default)]
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    pub service: Option<SocketAddr>,
     #[serde(rename = "proTxHash")]
     pub pro_tx_hash: ProTxHash,
     #[serde(rename = "type")]
