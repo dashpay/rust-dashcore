@@ -34,6 +34,7 @@ pub use manager::PeerNetworkManager;
 pub use message_dispatcher::{Message, MessageDispatcher};
 pub use message_type::MessageType;
 pub use peer::Peer;
+use std::net::SocketAddr;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const FILTER_TYPE_DEFAULT: u8 = 0;
@@ -43,6 +44,8 @@ const FILTER_TYPE_DEFAULT: u8 = 0;
 pub enum NetworkRequest {
     /// Send a message to the network.
     SendMessage(NetworkMessage),
+    /// Send a message to a specific peer.
+    SendMessageToPeer(NetworkMessage, SocketAddr),
 }
 
 /// Handle for managers to queue outgoing network requests.
@@ -66,8 +69,24 @@ impl RequestSender {
             .map_err(|e| NetworkError::ProtocolError(e.to_string()))
     }
 
-    pub fn request_inventory(&self, inventory: Vec<Inventory>) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetData(inventory))
+    /// Queue a message to be sent to a specific peer.
+    fn send_message_to_peer(
+        &self,
+        msg: NetworkMessage,
+        peer_address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.tx
+            .send(NetworkRequest::SendMessageToPeer(msg, peer_address))
+            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
+    /// Request inventory from a specific peer.
+    pub fn request_inventory(
+        &self,
+        inventory: Vec<Inventory>,
+        peer_address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::GetData(inventory), peer_address)
     }
 
     pub fn request_block_headers(&self, start_hash: BlockHash) -> NetworkResult<()> {

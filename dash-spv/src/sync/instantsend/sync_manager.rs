@@ -49,7 +49,7 @@ impl SyncManager for InstantSendManager {
                         "Received {} InstantSendLock announcements, requesting via getdata",
                         islocks_to_request.len()
                     );
-                    requests.request_inventory(islocks_to_request)?;
+                    requests.request_inventory(islocks_to_request, msg.peer_address())?;
                 }
                 Ok(vec![])
             }

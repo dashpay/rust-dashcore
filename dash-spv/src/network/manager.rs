@@ -790,6 +790,36 @@ impl PeerNetworkManager {
                                     }
                                 });
                             }
+                            Some(NetworkRequest::SendMessageToPeer(msg, peer_address)) => {
+                                log::debug!("Request processor: sending {} to peer {}", msg.cmd(), peer_address);
+                                let this = this.clone();
+                                tokio::spawn(async move {
+                                    let fallback_msg = msg.clone();
+                                    let result = match this.pool.get_peer(&peer_address).await {
+                                        Some(peer) => match this.send_message_to_peer(&peer_address, &peer, msg).await {
+                                            Ok(()) => Ok(()),
+                                            Err(err) => {
+                                                log::warn!(
+                                                    "Target peer {} send failed ({}), falling back to distributed send",
+                                                    peer_address,
+                                                    err
+                                                );
+                                                this.send_distributed(fallback_msg).await
+                                            }
+                                        },
+                                        None => {
+                                            log::warn!(
+                                                "Target peer {} disconnected, falling back to distributed send",
+                                                peer_address
+                                            );
+                                            this.send_distributed(fallback_msg).await
+                                        }
+                                    };
+                                    if let Err(e) = result {
+                                        log::error!("Request processor: failed to send message to peer {}: {}", peer_address, e);
+                                    }
+                                });
+                            }
                             None => {
                                 log::info!("Request processor: channel closed");
                                 break;
