@@ -6,7 +6,7 @@
 use crate::wallet_manager::WalletId;
 use alloc::string::String;
 use alloc::vec::Vec;
-use dashcore::{Address, Txid};
+use dashcore::{Address, Amount, SignedAmount, Txid};
 
 /// Events emitted by the wallet manager.
 ///
@@ -51,17 +51,25 @@ impl WalletEvent {
                 amount,
                 ..
             } => {
-                format!("TransactionReceived(txid={}, amount={})", txid, amount)
+                format!(
+                    "TransactionReceived(txid={}, amount={})",
+                    txid,
+                    SignedAmount::from_sat(*amount)
+                )
             }
             WalletEvent::BalanceUpdated {
                 spendable,
                 unconfirmed,
                 immature,
+                locked,
                 ..
             } => {
                 format!(
-                    "BalanceUpdated(spendable={}, unconfirmed={}, immature={})",
-                    spendable, unconfirmed, immature
+                    "BalanceUpdated(spendable={}, unconfirmed={}, immature={}, locked={})",
+                    Amount::from_sat(*spendable),
+                    Amount::from_sat(*unconfirmed),
+                    Amount::from_sat(*immature),
+                    Amount::from_sat(*locked)
                 )
             }
         }
