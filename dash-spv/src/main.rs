@@ -6,7 +6,7 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Arg, Command};
-use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, Network};
+use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, MempoolStrategy, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::wallet_manager::WalletManager;
 use tokio_util::sync::CancellationToken;
@@ -89,6 +89,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .long("no-mempool")
                 .help("Disable mempool transaction tracking")
                 .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("mempool-strategy")
+                .long("mempool-strategy")
+                .value_name("STRATEGY")
+                .help("Mempool strategy: fetch-all (higher bandwidth / more privacy) or bloom-filter (efficient / less privacy)")
+                .value_parser(clap::value_parser!(MempoolStrategy))
+                .default_value("bloom-filter"),
         )
         .arg(
             Arg::new("validation-mode")
@@ -249,6 +257,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches.get_flag("no-mempool") {
         config.enable_mempool_tracking = false;
+    } else {
+        let mempool_strategy = *matches
+            .get_one::<MempoolStrategy>("mempool-strategy")
+            .expect("mempool-strategy has default value");
+        config = config.with_mempool_tracking(mempool_strategy);
     }
 
     // Set start height if specified

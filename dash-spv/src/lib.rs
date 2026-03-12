@@ -68,6 +68,7 @@ pub mod types;
 pub mod validation;
 
 // Re-export main types for convenience
+pub use client::config::MempoolStrategy;
 pub use client::{ClientConfig, DashSpvClient};
 pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
