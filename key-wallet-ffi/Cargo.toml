@@ -13,8 +13,7 @@ name = "key_wallet_ffi"
 crate-type = ["cdylib", "staticlib", "lib"]
 
 [features]
-default = ["bincode", "eddsa", "bls", "bip38"]
-bip38 = ["key-wallet/bip38"]
+default = ["bincode", "eddsa", "bls"]
 bincode = ["key-wallet-manager/bincode", "key-wallet/bincode"]
 eddsa = ["dashcore/eddsa", "key-wallet/eddsa"]
 bls = ["dashcore/bls", "key-wallet/bls"]

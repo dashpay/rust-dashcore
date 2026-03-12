@@ -8,7 +8,7 @@ mod tests;
 #[path = "wallet_manager_serialization_tests.rs"]
 mod serialization_tests;
 
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::sync::Arc;
@@ -52,63 +52,6 @@ impl FFIWalletManager {
     pub fn network(&self) -> FFINetwork {
         self.network
     }
-}
-
-/// Describe the wallet manager for a given network and return a newly
-/// allocated C string.
-///
-/// # Safety
-/// - `manager` must be a valid pointer to an `FFIWalletManager`
-/// - Callers must free the returned string with `wallet_manager_free_string`
-#[no_mangle]
-pub unsafe extern "C" fn wallet_manager_describe(
-    manager: *const FFIWalletManager,
-    error: *mut FFIError,
-) -> *mut c_char {
-    if manager.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return ptr::null_mut();
-    }
-
-    let manager_ref = &*manager;
-    let runtime = manager_ref.runtime.clone();
-    let manager_arc = manager_ref.manager.clone();
-
-    let description = runtime.block_on(async {
-        let guard = manager_arc.read().await;
-        guard.describe().await
-    });
-
-    match CString::new(description) {
-        Ok(c_string) => {
-            FFIError::set_success(error);
-            c_string.into_raw()
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidState,
-                format!("Failed to create description string: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Free a string previously returned by wallet manager APIs.
-///
-/// # Safety
-/// - `value` must be either null or a pointer obtained from
-///   `wallet_manager_describe` (or other wallet manager FFI helpers that
-///   specify this free function).
-/// - The pointer must not be used after this call returns.
-#[no_mangle]
-pub unsafe extern "C" fn wallet_manager_free_string(value: *mut c_char) {
-    if value.is_null() {
-        return;
-    }
-
-    drop(CString::from_raw(value));
 }
 
 /// Create a new wallet manager
@@ -868,22 +811,6 @@ pub unsafe extern "C" fn wallet_manager_wallet_count(
     }
 }
 
-/// Free wallet manager
-///
-/// # Safety
-///
-/// - `manager` must be a valid pointer to an FFIWalletManager that was created by this library
-/// - The pointer must not be used after calling this function
-/// - This function must only be called once per manager
-#[no_mangle]
-pub unsafe extern "C" fn wallet_manager_free(manager: *mut FFIWalletManager) {
-    if !manager.is_null() {
-        unsafe {
-            let _ = Box::from_raw(manager);
-        }
-    }
-}
-
 /// Free wallet IDs buffer
 ///
 /// # Safety
@@ -899,28 +826,5 @@ pub unsafe extern "C" fn wallet_manager_free_wallet_ids(wallet_ids: *mut u8, cou
             // Reconstruct the boxed slice with the correct DST pointer
             let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(wallet_ids, count * 32));
         }
-    }
-}
-
-/// Free address array
-///
-/// # Safety
-///
-/// - `addresses` must be a valid pointer to an array of C string pointers allocated by this library
-/// - `count` must match the original allocation size
-/// - Each address pointer in the array must be either null or a valid C string allocated by this library
-/// - The pointers must not be used after calling this function
-/// - This function must only be called once per allocation
-#[no_mangle]
-pub unsafe extern "C" fn wallet_manager_free_addresses(addresses: *mut *mut c_char, count: usize) {
-    if !addresses.is_null() {
-        let slice = std::slice::from_raw_parts_mut(addresses, count);
-        for addr in slice {
-            if !addr.is_null() {
-                let _ = CString::from_raw(*addr);
-            }
-        }
-        // Free the array itself (matches boxed slice allocation)
-        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(addresses, count));
     }
 }

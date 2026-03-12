@@ -29,19 +29,3 @@ pub fn rust_string_to_c(s: String) -> *mut c_char {
         Err(_) => std::ptr::null_mut(),
     }
 }
-
-/// Helper function to convert C string to Rust string
-///
-/// # Safety
-///
-/// - `s` must be a valid null-terminated C string or null
-/// - The string must remain valid for the duration of this function call
-pub unsafe fn c_string_to_rust(s: *const c_char) -> Result<String, std::str::Utf8Error> {
-    use std::ffi::CStr;
-
-    if s.is_null() {
-        return Ok(String::new());
-    }
-
-    CStr::from_ptr(s).to_str().map(|s| s.to_string())
-}

@@ -68,60 +68,6 @@ impl From<key_wallet::mnemonic::Language> for FFILanguage {
     }
 }
 
-/// Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)
-#[no_mangle]
-pub extern "C" fn mnemonic_generate(word_count: c_uint, error: *mut FFIError) -> *mut c_char {
-    let entropy_bits = match word_count {
-        12 => 128,
-        15 => 160,
-        18 => 192,
-        21 => 224,
-        24 => 256,
-        _ => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                format!("Invalid word count: {}. Must be 12, 15, 18, 21, or 24", word_count),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    use key_wallet::mnemonic::Language;
-    let word_count = match entropy_bits {
-        128 => 12,
-        160 => 15,
-        192 => 18,
-        224 => 21,
-        256 => 24,
-        _ => 12,
-    };
-    match Mnemonic::generate(word_count, Language::English) {
-        Ok(mnemonic) => {
-            FFIError::set_success(error);
-            match CString::new(mnemonic.to_string()) {
-                Ok(c_str) => c_str.into_raw(),
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::AllocationFailed,
-                        "Failed to allocate string".to_string(),
-                    );
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidMnemonic,
-                format!("Failed to generate mnemonic: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
-}
-
 /// Generate a new mnemonic with specified language and word count
 #[no_mangle]
 pub extern "C" fn mnemonic_generate_with_language(

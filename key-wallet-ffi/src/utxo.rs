@@ -146,33 +146,6 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
     true
 }
 
-/// Get all UTXOs (deprecated - use managed_wallet_get_utxos instead)
-///
-/// # Safety
-///
-/// This function is deprecated and returns an empty list.
-/// Use `managed_wallet_get_utxos` with a ManagedWalletInfo instead.
-#[no_mangle]
-#[deprecated(note = "Use managed_wallet_get_utxos with ManagedWalletInfo instead")]
-pub unsafe extern "C" fn wallet_get_utxos(
-    _wallet: *const crate::types::FFIWallet,
-    utxos_out: *mut *mut FFIUTXO,
-    count_out: *mut usize,
-    error: *mut FFIError,
-) -> bool {
-    if utxos_out.is_null() || count_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    // Return empty list for backwards compatibility
-    *count_out = 0;
-    *utxos_out = ptr::null_mut();
-
-    FFIError::set_success(error);
-    true
-}
-
 /// Free UTXO array
 ///
 /// # Safety

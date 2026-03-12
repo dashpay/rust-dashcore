@@ -14,16 +14,6 @@ pub enum FFINetwork {
     Devnet = 3,
 }
 
-#[no_mangle]
-pub extern "C" fn ffi_network_get_name(network: FFINetwork) -> *const c_char {
-    match network {
-        FFINetwork::Mainnet => c"mainnet".as_ptr() as *const c_char,
-        FFINetwork::Testnet => c"testnet".as_ptr() as *const c_char,
-        FFINetwork::Regtest => c"regtest".as_ptr() as *const c_char,
-        FFINetwork::Devnet => c"devnet".as_ptr() as *const c_char,
-    }
-}
-
 impl From<FFINetwork> for Network {
     fn from(net: FFINetwork) -> Self {
         match net {
@@ -267,100 +257,6 @@ impl FFIAccountType {
                      Platform Payment account creation must use a different API path."
                 );
             }
-        }
-    }
-
-    /// Convert from AccountType to FFI representation
-    ///
-    /// Returns: (FFIAccountType, primary_index, optional_secondary_index)
-    ///
-    /// # Panics
-    ///
-    /// Panics when attempting to convert DashPay account types (DashpayReceivingFunds,
-    /// DashpayExternalAccount) because they contain 32-byte identity IDs that cannot be
-    /// represented in the current FFI tuple format. This prevents silent data loss.
-    ///
-    /// TODO: Extend the return type or create separate FFI functions that can return
-    ///       the full DashPay account information including identity IDs.
-    pub fn from_account_type(account_type: &key_wallet::AccountType) -> (Self, u32, Option<u32>) {
-        use key_wallet::account::account_type::StandardAccountType;
-        match account_type {
-            key_wallet::AccountType::Standard {
-                index,
-                standard_account_type,
-            } => match standard_account_type {
-                StandardAccountType::BIP44Account => (FFIAccountType::StandardBIP44, *index, None),
-                StandardAccountType::BIP32Account => (FFIAccountType::StandardBIP32, *index, None),
-            },
-            key_wallet::AccountType::CoinJoin {
-                index,
-            } => (FFIAccountType::CoinJoin, *index, None),
-            key_wallet::AccountType::IdentityRegistration => {
-                (FFIAccountType::IdentityRegistration, 0, None)
-            }
-            key_wallet::AccountType::IdentityTopUp {
-                registration_index,
-            } => (FFIAccountType::IdentityTopUp, 0, Some(*registration_index)),
-            key_wallet::AccountType::IdentityTopUpNotBoundToIdentity => {
-                (FFIAccountType::IdentityTopUpNotBoundToIdentity, 0, None)
-            }
-            key_wallet::AccountType::IdentityInvitation => {
-                (FFIAccountType::IdentityInvitation, 0, None)
-            }
-            key_wallet::AccountType::AssetLockAddressTopUp => {
-                (FFIAccountType::AssetLockAddressTopUp, 0, None)
-            }
-            key_wallet::AccountType::AssetLockShieldedAddressTopUp => {
-                (FFIAccountType::AssetLockShieldedAddressTopUp, 0, None)
-            }
-            key_wallet::AccountType::ProviderVotingKeys => {
-                (FFIAccountType::ProviderVotingKeys, 0, None)
-            }
-            key_wallet::AccountType::ProviderOwnerKeys => {
-                (FFIAccountType::ProviderOwnerKeys, 0, None)
-            }
-            key_wallet::AccountType::ProviderOperatorKeys => {
-                (FFIAccountType::ProviderOperatorKeys, 0, None)
-            }
-            key_wallet::AccountType::ProviderPlatformKeys => {
-                (FFIAccountType::ProviderPlatformKeys, 0, None)
-            }
-            key_wallet::AccountType::DashpayReceivingFunds {
-                index,
-                user_identity_id,
-                friend_identity_id,
-            } => {
-                // Cannot convert DashPay accounts to FFI without losing identity ID information
-                panic!(
-                    "Cannot convert AccountType::DashpayReceivingFunds (index={}, user_id={:?}, friend_id={:?}) \
-                     to FFI representation. The current FFI tuple format (FFIAccountType, u32, Option<u32>) \
-                     cannot represent the two 32-byte identity IDs required by DashPay accounts. \
-                     This would result in silent data loss. A dedicated FFI API for DashPay accounts is needed.",
-                    index,
-                    &user_identity_id[..8], // Show first 8 bytes for debugging
-                    &friend_identity_id[..8]
-                );
-            }
-            key_wallet::AccountType::DashpayExternalAccount {
-                index,
-                user_identity_id,
-                friend_identity_id,
-            } => {
-                // Cannot convert DashPay accounts to FFI without losing identity ID information
-                panic!(
-                    "Cannot convert AccountType::DashpayExternalAccount (index={}, user_id={:?}, friend_id={:?}) \
-                     to FFI representation. The current FFI tuple format (FFIAccountType, u32, Option<u32>) \
-                     cannot represent the two 32-byte identity IDs required by DashPay accounts. \
-                     This would result in silent data loss. A dedicated FFI API for DashPay accounts is needed.",
-                    index,
-                    &user_identity_id[..8], // Show first 8 bytes for debugging
-                    &friend_identity_id[..8]
-                );
-            }
-            key_wallet::AccountType::PlatformPayment {
-                account,
-                key_class,
-            } => (FFIAccountType::PlatformPayment, *account, Some(*key_class)),
         }
     }
 }
