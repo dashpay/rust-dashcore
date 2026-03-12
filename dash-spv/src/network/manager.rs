@@ -233,7 +233,7 @@ impl PeerNetworkManager {
         let addrv2_handler = self.addrv2_handler.clone();
         let shutdown_token = self.shutdown_token.clone();
         let reputation_manager = self.reputation_manager.clone();
-        let mempool_strategy = self.mempool_strategy;
+        let relay = self.mempool_strategy != MempoolStrategy::BloomFilter;
         let user_agent = self.user_agent.clone();
         let connected_peer_count = self.connected_peer_count.clone();
         let headers2_disabled = self.headers2_disabled.clone();
@@ -263,8 +263,7 @@ impl PeerNetworkManager {
             match connect_result {
                 Ok(mut peer) => {
                     // Perform handshake
-                    let mut handshake_manager =
-                        HandshakeManager::new(network, mempool_strategy, user_agent);
+                    let mut handshake_manager = HandshakeManager::new(network, relay, user_agent);
                     match handshake_manager.perform_handshake(&mut peer).await {
                         Ok(_) => {
                             log::info!("Successfully connected to {}", addr);
