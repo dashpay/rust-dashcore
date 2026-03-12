@@ -188,7 +188,6 @@ impl fmt::Display for ParseAmountError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for ParseAmountError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::ParseAmountError::*;
@@ -1615,7 +1614,6 @@ mod verification {
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
-    #[cfg(feature = "std")]
     use std::panic;
 
     #[cfg(feature = "serde")]
@@ -1666,7 +1664,6 @@ mod tests {
         assert_eq!(b, ssat(1));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_overflows() {
         // panic on overflow

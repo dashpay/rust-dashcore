@@ -16,7 +16,6 @@ use serde::{Deserializer, Serializer};
 
 use super::encode::Error as ConsensusError;
 use super::{Decodable, Encodable};
-use crate::alloc::string::ToString;
 use crate::io;
 
 /// Hex-encoding strategy

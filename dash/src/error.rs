@@ -30,7 +30,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::Error::*;
@@ -54,12 +53,10 @@ impl From<encode::Error> for Error {
 macro_rules! impl_std_error {
     // No source available
     ($type:ty) => {
-        #[cfg(feature = "std")]
         impl std::error::Error for $type {}
     };
     // Struct with $field as source
     ($type:ty, $field:ident) => {
-        #[cfg(feature = "std")]
         impl std::error::Error for $type {
             fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
                 Some(&self.$field)

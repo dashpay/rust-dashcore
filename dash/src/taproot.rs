@@ -640,7 +640,6 @@ impl core::fmt::Display for IncompleteBuilder {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for IncompleteBuilder {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::IncompleteBuilder::*;
@@ -679,7 +678,6 @@ impl core::fmt::Display for HiddenNodes {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for HiddenNodes {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::HiddenNodes::*;
@@ -1604,7 +1602,6 @@ impl fmt::Display for TaprootBuilderError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for TaprootBuilderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::TaprootBuilderError::*;
@@ -1666,7 +1663,6 @@ impl fmt::Display for TaprootError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for TaprootError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::TaprootError::*;

@@ -22,7 +22,7 @@ bls = ["dashcore/bls", "key-wallet/bls"]
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false, features = ["std"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["std"] }
-dashcore = { path = "../dash", features = ["std"] }
+dashcore = { path = "../dash" }
 secp256k1 = { version = "0.30.0", features = ["global-context"] }
 tokio = { version = "1.32", features = ["rt-multi-thread", "sync"] }
 libc = "0.2"

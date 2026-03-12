@@ -73,7 +73,6 @@ mod message_signing {
         }
     }
 
-    #[cfg(feature = "std")]
     impl std::error::Error for MessageSignatureError {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
             use self::MessageSignatureError::*;

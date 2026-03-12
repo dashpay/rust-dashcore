@@ -7,7 +7,6 @@
 
 use core::convert::{TryFrom, TryInto};
 use core::{convert, fmt, mem};
-#[cfg(feature = "std")]
 use std::error;
 
 use hashes::{Hash, sha256, siphash24};
@@ -37,7 +36,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::Error::*;
@@ -337,7 +335,6 @@ impl fmt::Display for TxIndexOutOfRangeError {
     }
 }
 
-#[cfg(feature = "std")]
 impl error::Error for TxIndexOutOfRangeError {}
 
 /// A [BlockTransactions] structure is used to provide some of the transactions

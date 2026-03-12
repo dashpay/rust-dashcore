@@ -19,7 +19,7 @@ edition = "2024"
 
 # Please don't forget to add relevant features to docs.rs below
 [features]
-default = [ "std", "secp-recovery", "bincode" ]
+default = ["secp-recovery", "bincode" ]
 base64 = [ "base64-compat" ]
 rand-std = ["secp256k1/rand"]
 rand = ["secp256k1/rand"]
@@ -35,24 +35,15 @@ message_verification = ["bls"]
 bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode" ]
 test-utils = []
 
-# At least one of std, no-std must be enabled.
-#
-# The no-std feature doesn't disable std - you need to turn off the std feature for that by disabling default.
-# Instead no-std enables additional features required for this crate to be usable without std.
-# As a result, both can be enabled without conflict.
-std = ["secp256k1/std", "bech32/std"]
-no-std = ["core2", "secp256k1/alloc"]
-
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
-bech32 = { version = "0.9.1", default-features = false }
+bech32 = { version = "0.9.1" }
 dashcore_hashes = { path = "../hashes" }
-secp256k1 = { default-features = false, features = ["hashes"], version= "0.30.0" }
-core2 = { version = "0.4.0", optional = true, features = ["alloc"], default-features = false }
+secp256k1 = { features = ["hashes"], version= "0.30.0" }
 rustversion = { version="1.0.20"}
 serde = { version = "1.0.219", default-features = false, features = [ "derive", "alloc" ], optional = true }
 
@@ -84,15 +75,14 @@ key-wallet = { path = "../key-wallet" }
 
 [[example]]
 name = "handshake"
-required-features = ["std"]
 
 [[example]]
 name = "ecdsa-psbt"
-required-features = ["std", "bitcoinconsensus"]
+required-features = ["bitcoinconsensus"]
 
 [[example]]
 name = "taproot-psbt"
-required-features = ["std", "rand-std", "bitcoinconsensus"]
+required-features = ["rand-std", "bitcoinconsensus"]
 
 [[bench]]
 name = "transaction"
