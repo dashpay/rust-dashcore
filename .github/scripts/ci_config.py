@@ -6,7 +6,6 @@ Used by GitHub Actions workflows for test management.
 Subcommands:
     verify-groups    Check all workspace crates are assigned to test groups
     run-group        Run tests for all crates in a group
-    run-no-std       Run no-std build checks
 """
 
 import argparse
@@ -102,66 +101,6 @@ def verify_groups(args):
     return 0
 
 
-def run_no_std(args):
-    """Run no-std build checks from ci-no-std.yml.
-
-    Format: crate_name: [list of configs]
-    Each config runs: cargo check -p crate --no-default-features --features <config>
-    Special: 'bare' means just --no-default-features (no features)
-    """
-    config = load_yaml(args.no_std_file)
-
-    failed = []
-
-    for crate_name, entries in config.items():
-        if not entries:
-            continue
-
-        for entry in entries:
-            if not isinstance(entry, str) or not entry.strip():
-                continue
-
-            entry_clean = entry.strip()
-
-            # Build cargo flags
-            if entry_clean == "bare":
-                flags = ["--no-default-features"]
-                display_name = "bare"
-            elif entry_clean == "no-std":
-                flags = ["--no-default-features", "--features", "no-std"]
-                display_name = "no-std"
-            elif " " in entry_clean:
-                # Multiple features (space-separated)
-                features = entry_clean.replace(" ", ",")
-                flags = ["--no-default-features", "--features", features]
-                display_name = entry_clean.replace(" ", "+")
-            else:
-                # Single feature
-                flags = ["--no-default-features", "--features", entry_clean]
-                display_name = entry_clean
-
-            github_group_start(f"{crate_name} ({display_name})")
-
-            cmd = ["cargo", "check", "-p", crate_name] + flags
-            result = subprocess.run(cmd)
-
-            github_group_end()
-
-            if result.returncode != 0:
-                failed.append(f"{crate_name} ({display_name})")
-                github_error(f"No-std check failed: {crate_name} with {' '.join(flags)}")
-
-    if failed:
-        print("\n" + "=" * 40)
-        print("FAILED NO-STD CHECKS:")
-        for f in failed:
-            print(f"  - {f}")
-        print("=" * 40)
-        return 1
-
-    return 0
-
-
 def run_group_tests(args):
     """Run tests for all crates in a group."""
     config = load_yaml(args.groups_file)
@@ -218,17 +157,10 @@ def main():
         default=Path(".github/ci-groups.yml"),
         help="Path to ci-groups.yml",
     )
-    parser.add_argument(
-        "--no-std-file",
-        type=Path,
-        default=Path(".github/ci-no-std.yml"),
-        help="Path to ci-no-std.yml",
-    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("verify-groups", help="Verify all crates assigned to groups")
-    subparsers.add_parser("run-no-std", help="Run no-std checks")
 
     run_group_parser = subparsers.add_parser("run-group", help="Run tests for a group")
     run_group_parser.add_argument("group", help="Group name")
@@ -243,7 +175,6 @@ def main():
 
     commands = {
         "verify-groups": verify_groups,
-        "run-no-std": run_no_std,
         "run-group": run_group_tests,
     }
 

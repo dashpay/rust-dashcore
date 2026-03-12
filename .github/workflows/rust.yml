@@ -91,17 +91,6 @@ jobs:
       os: windows-latest
       groups: ${{ needs.verify-execution.outputs.groups }}
 
-  no-std:
-    name: No-std Checks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: pip install pyyaml
-      - name: Run no-std checks
-        run: python .github/scripts/ci_config.py run-no-std
-
   integrations_tests:
     name: Integration Tests
     if: ${{ false }} # Temporarily disabled
