@@ -12,16 +12,7 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-//! `std` / `core2` Impls.
-//!
-//! Implementations of traits defined in `std` / `core2` and not in `core`.
-//!
-
-#[cfg(feature = "std")]
 use std::io;
-
-#[cfg(not(feature = "std"))]
-use core2::io;
 
 use crate::{hmac, ripemd160, sha1, sha256, sha512, siphash24, HashEngine};
 

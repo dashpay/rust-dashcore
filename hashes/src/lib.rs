@@ -88,16 +88,9 @@
 // that don't do anything but annoy us and cant actually ever be resolved.
 #![allow(bare_trait_objects)]
 #![allow(ellipsis_inclusive_range_patterns)]
-#![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 // Instead of littering the codebase for non-fuzzing code just globally allow.
 #![cfg_attr(fuzzing, allow(dead_code, unused_imports))]
 
-#[cfg(all(feature = "alloc", not(feature = "std")))]
-extern crate alloc;
-#[cfg(any(test, feature = "std"))]
-extern crate core;
-#[cfg(feature = "core2")]
-extern crate core2;
 #[cfg(feature = "serde")]
 pub extern crate serde;
 #[cfg(all(test, feature = "serde"))]
@@ -129,7 +122,6 @@ pub mod hash160;
 pub mod hash_x11;
 pub mod hex;
 pub mod hmac;
-#[cfg(any(feature = "std", feature = "core2"))]
 mod impls;
 pub mod ripemd160;
 pub mod sha1;

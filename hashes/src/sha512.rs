@@ -271,7 +271,6 @@ impl HashEngine {
 #[cfg(test)]
 mod tests {
     #[test]
-    #[cfg(feature = "alloc")]
     fn test() {
         use crate::{sha512, Hash, HashEngine};
 

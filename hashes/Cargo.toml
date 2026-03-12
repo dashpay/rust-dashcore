@@ -13,9 +13,7 @@ edition = "2021"
 exclude = ["tests", "contrib"]
 
 [features]
-default = ["std"]
-std = ["alloc"]
-alloc = []
+default = []
 schemars = ["actual-schemars"]
 serde-std = ["serde/std"]
 x11 = ["rs-x11-hash"]
@@ -27,7 +25,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
 
-core2 = { version = "0.4.0", default-features = false, optional = true }
 # Only enable this if you explicitly do not want to use "std", otherwise enable "serde-std".
 serde = { version = "1.0.219", default-features = false, optional = true }
 # Do NOT use this as a feature! Use the `schemars` feature instead. Can only be used with "std" enabled.
