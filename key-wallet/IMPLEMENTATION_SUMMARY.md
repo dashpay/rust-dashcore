@@ -2,7 +2,8 @@
 
 ## Completed Features
 
-### 1. Core Wallet Management (`wallet.rs`)
+### 1. Core Wallet Management (`wallet/`)
+
 - ✅ Complete wallet lifecycle management
 - ✅ Multiple account support (BIP44)
 - ✅ Mnemonic generation and recovery (BIP39)
@@ -11,16 +12,18 @@
 - ✅ Wallet metadata and configuration
 - ✅ Balance tracking per account
 
-### 2. Account Management (`account.rs`)
+### 2. Account Management (`account/`)
+
 - ✅ Standard accounts for regular transactions
 - ✅ CoinJoin accounts for privacy
-- ✅ Special purpose accounts (identity, masternode)
+- ✅ Special purpose accounts (identity, masternode, DashPay, Platform)
 - ✅ Account metadata (labels, colors, tags)
 - ✅ Balance tracking per account
 - ✅ Address usage tracking
 - ✅ Account serialization support
 
-### 3. Address Pool Management (`address_pool.rs`)
+### 3. Address Pool Management (`managed_account/address_pool.rs`)
+
 - ✅ Dynamic address generation
 - ✅ Usage tracking and marking
 - ✅ Address discovery scanning
@@ -29,12 +32,14 @@
 - ✅ Performance optimizations
 
 ### 4. Gap Limit Management (`gap_limit.rs`)
+
 - ✅ BIP44-compliant gap limit tracking
 - ✅ Staged gap limit expansion
 - ✅ Separate limits for external/internal/CoinJoin
 - ✅ Address discovery optimization
 
-### 5. Transaction Management (`transaction.rs`)
+### 5. Transaction Management (`wallet/managed_wallet_info/`)
+
 - ✅ Transaction building from scratch
 - ✅ UTXO selection strategies:
   - Smallest first (minimize UTXO set)
@@ -46,15 +51,18 @@
 - ✅ Change address management
 - ✅ Transaction signing (P2PKH)
 - ✅ UTXO tracking and management
+- ✅ Asset lock/unlock transactions (Dash-specific)
 
 ### 6. BIP38 Support (`bip38.rs`)
+
 - ✅ Password-protected private key encryption
 - ✅ Key decryption with password
 - ✅ Intermediate code generation
 - ✅ Multiple encryption modes
 - ✅ Optional feature (can be disabled)
 
-### 7. Address Support (`address.rs`)
+### 7. Address Support
+
 - ✅ P2PKH address generation
 - ✅ P2SH address support
 - ✅ Network-specific encoding
@@ -62,7 +70,8 @@
 - ✅ Base58check encoding/decoding
 
 ### 8. Mnemonic Support (`mnemonic.rs`)
-- ✅ Multi-language support (9 languages)
+
+- ✅ Multi-language support (10 languages)
 - ✅ 12/15/18/21/24 word phrases
 - ✅ Passphrase support
 - ✅ Seed generation
@@ -71,30 +80,34 @@
 ## Architecture Highlights
 
 ### Modular Design
+
 - Each component is self-contained
 - Clear separation of concerns
 - Minimal dependencies between modules
 
 ### No-std Support
+
 - Core functionality works without std library
 - Suitable for embedded systems
 - Optional std features for convenience
 
 ### Security Features
+
 - Private keys never exposed in Debug output
 - Optional BIP38 encryption
 - Secure random number generation
 - Memory-safe implementations
 
 ### Extensibility
+
 - Trait-based design for key derivation
-- Pluggable UTXO selection strategies
-- Support for custom account types
+- Pluggable UTXO selection strategies (`CoinSelector`, `SelectionStrategy`)
 - Extensible address types
 
 ## Testing Coverage
 
 ### Unit Tests
+
 - ✅ Account creation and management
 - ✅ Address generation and usage
 - ✅ Gap limit tracking
@@ -105,30 +118,25 @@
 - ✅ BIP38 encryption/decryption
 
 ### Integration Points
-- Compatible with bitcoin_hashes
+
+- Compatible with `dashcore_hashes`
 - Uses secp256k1 for cryptography
 - Integrates with bip39 crate
 
 ## Future Enhancements
 
 ### High Priority
-1. **Extended Transaction Support**
-   - P2SH transactions
-   - Multi-signature support
-   - SegWit support (if needed)
-   - Asset lock/unlock transactions
 
-2. **Advanced UTXO Management**
+1. **Advanced UTXO Management**
    - UTXO rollback for reorgs
-   - UTXO locking/unlocking
    - Coin control UI support
 
-3. **Persistence Layer**
+2. **Persistence Layer**
    - Database integration
    - Encrypted storage
-   - Backup/restore functionality
 
 ### Medium Priority
+
 1. **Performance Optimizations**
    - Batch address generation
    - Parallel derivation
@@ -145,6 +153,7 @@
    - Integration guides
 
 ### Low Priority
+
 1. **Extended Features**
    - Hardware wallet integration
    - Multi-party computation
@@ -153,41 +162,41 @@
 ## Usage Example
 
 ```rust
-use key_wallet::{Wallet, Network, Mnemonic, Language};
-use key_wallet::{TransactionBuilder, UtxoSelector, SelectionStrategy, FeeRate};
+use key_wallet::{Wallet, Network};
+use key_wallet::mnemonic::{Mnemonic, Language};
+use key_wallet::account::{AccountType, StandardAccountType};
 
-// Create a new wallet
-let config = WalletConfig::new(Network::Testnet)
-    .with_language(Language::English)
-    .with_passphrase("optional passphrase");
+// Create a new wallet from mnemonic
+let mnemonic = Mnemonic::generate(24, Language::English)?;
+let wallet = Wallet::from_mnemonic(mnemonic, None, Network::Testnet)?;
 
-let wallet = Wallet::new(config)?;
+// Create a standard BIP44 account
+let account = wallet.create_account(
+    Network::Testnet,
+    AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
+    },
+)?;
 
-// Add an account
-let account = wallet.add_account("Main Account")?;
+// Wrap in a managed account for mutable operations
+let mut managed = ManagedCoreAccount::from_account(&account);
 
 // Get a receive address
-let address = account.get_next_receive_address()?;
-
-// Build a transaction
-let builder = TransactionBuilder::new(Network::Testnet)
-    .add_inputs(selected_utxos)
-    .add_output(&destination_address, amount)?
-    .set_change_address(change_address)
-    .set_fee_rate(FeeRate::new(1000));
-
-let transaction = builder.build()?;
+let address = managed.get_next_receive_address()?;
 ```
 
 ## Dependencies
 
 ### Required
-- `bitcoin_hashes` - Cryptographic hashes
+
+- `dashcore_hashes` - Cryptographic hashes
 - `secp256k1` - Elliptic curve cryptography
 - `bip39` - Mnemonic phrase support
 - `base58ck` - Base58check encoding
 
 ### Optional
+
 - `serde` - Serialization support
 - `bincode` - Binary encoding
 - `scrypt`, `aes`, `sha2` - BIP38 support
@@ -199,4 +208,4 @@ This implementation follows Dash Core licensing (CC0-1.0).
 
 ## Status
 
-The key-wallet library is now feature-complete for basic HD wallet functionality with comprehensive account management, address generation, gap limit tracking, and transaction creation. All modules compile successfully and include unit tests.
+The key-wallet library is feature-complete for HD wallet functionality with comprehensive account management, address generation, gap limit tracking, and transaction creation. All modules compile successfully and include unit tests.

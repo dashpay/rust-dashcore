@@ -58,13 +58,13 @@ Account (Immutable)
 ├── account_xpub: ExtendedPubKey
 └── is_watch_only: bool
 
-ManagedAccount (Mutable)
+ManagedCoreAccount (Mutable)
 ├── account_type: ManagedAccountType (contains address pools)
 ├── metadata: AccountMetadata
-├── balance: WalletBalance
+├── balance: WalletCoreBalance
 ├── transactions: BTreeMap<Txid, TransactionRecord>
-├── monitored_addresses: BTreeSet<Address>
-└── utxos: BTreeMap<OutPoint, Utxo>
+├── utxos: BTreeMap<OutPoint, Utxo>
+└── spent_outpoints: HashSet<OutPoint>  // private, rebuilt on deserialization
 ```
 
 ### Address Pool Architecture
@@ -86,17 +86,21 @@ The crate uses a sophisticated enum-based type system for accounts:
 
 ```rust
 pub enum AccountType {
-    Standard { 
-        index: u32,
-        standard_account_type: StandardAccountType 
-    },
-    IdentityAuthentication { 
-        identity_index: u32,
-        key_index: u32 
-    },
-    IdentityEncryption { ... },
-    MasternodeOperator { ... },
-    // ... many more variants
+    Standard { index: u32, standard_account_type: StandardAccountType },
+    CoinJoin { index: u32 },
+    IdentityRegistration,
+    IdentityTopUp { registration_index: u32 },
+    IdentityTopUpNotBoundToIdentity,
+    IdentityInvitation,
+    AssetLockAddressTopUp,
+    AssetLockShieldedAddressTopUp,
+    ProviderVotingKeys,
+    ProviderOwnerKeys,
+    ProviderOperatorKeys,
+    ProviderPlatformKeys,
+    DashpayReceivingFunds { index: u32, user_identity_id: [u8; 32], friend_identity_id: [u8; 32] },
+    DashpayExternalAccount { index: u32, user_identity_id: [u8; 32], friend_identity_id: [u8; 32] },
+    PlatformPayment { account: u32, key_class: u32 },
 }
 ```
 
@@ -135,6 +139,14 @@ Address pools can be initialized from different key sources:
 pub enum KeySource {
     Private(ExtendedPrivKey),
     Public(ExtendedPubKey),
+    #[cfg(feature = "bls")]
+    BLSPrivate(ExtendedBLSPrivKey),
+    #[cfg(feature = "bls")]
+    BLSPublic(ExtendedBLSPubKey),
+    #[cfg(feature = "eddsa")]
+    EdDSAPrivate(ExtendedEd25519PrivKey),
+    #[cfg(feature = "eddsa")]
+    EdDSAPublic(ExtendedEd25519PubKey),
     NoKeySource,
 }
 ```
@@ -146,11 +158,22 @@ pub enum KeySource {
 ### Unit Test Organization
 
 Tests are organized by functionality:
-- `tests/bip32_tests.rs`: Key derivation correctness
-- `tests/mnemonic_tests.rs`: Mnemonic generation and validation
-- `tests/address_tests.rs`: Address generation and validation
-- `tests/derivation_tests.rs`: Path derivation testing
-- `tests/psbt.rs`: PSBT serialization/deserialization
+
+- `src/tests/account_tests.rs`: Account creation and management
+- `src/tests/address_pool_tests.rs`: Address pool generation and gap limit
+- `src/tests/transaction_tests.rs`: Transaction building and signing
+- `src/tests/wallet_tests.rs`: End-to-end wallet workflows
+- `src/tests/integration_tests.rs`: Full wallet integration flows
+- `src/tests/balance_tests.rs`: Balance calculation
+- `src/tests/spent_outpoints_tests.rs`: UTXO/outpoint tracking
+- `src/tests/special_transaction_tests.rs`: Dash-specific transactions
+- `src/tests/advanced_transaction_tests.rs`: Complex transaction scenarios
+- `src/tests/managed_account_collection_tests.rs`: Account collection management
+- `src/tests/backup_restore_tests.rs`: Wallet backup and restore
+- `src/tests/edge_case_tests.rs`: Edge case coverage
+- `src/tests/performance_tests.rs`: Performance benchmarks
+- `src/mnemonic_tests.rs`: Mnemonic generation and validation
+- `src/bip38_tests.rs`: BIP38 encryption/decryption
 
 ### Test Patterns
 
@@ -179,7 +202,7 @@ Tests are organized by functionality:
 let account_xpriv = derive_account_key(master, account_type)?;
 let account_xpub = ExtendedPubKey::from_priv(&secp, &account_xpriv);
 let account = Account::new(wallet_id, account_type, account_xpub, network)?;
-let managed_account = ManagedAccount::from_account(&account);
+let managed_account = ManagedCoreAccount::from_account(&account);
 ```
 
 ### 2. Address Generation Pattern
@@ -429,7 +452,7 @@ The crate uses a custom `Error` type with specific variants:
 ## Version Compatibility
 
 - Minimum Supported Rust Version (MSRV): 1.89
-- Compatible with Dash Core: 0.18.0 - 0.21.0
+- Compatible with Dash Core: 0.18.0 - 0.23.x
 - Follows semantic versioning (currently 0.x.x = unstable API)
 
 Remember: This crate is security-critical. Always prioritize correctness over performance, and never compromise on key material safety.

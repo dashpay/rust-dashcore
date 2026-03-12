@@ -27,12 +27,14 @@ The library is organized into several key modules:
 ## Key Features
 
 ### HD Wallet Support
+
 - **BIP32**: Hierarchical deterministic key derivation
 - **BIP39**: Mnemonic phrase generation and validation (multiple languages)
 - **BIP38**: Encrypted private key support (optional feature)
 - **SLIP-10**: Ed25519 key derivation for Platform identities
 
 ### Dash-Specific Features (DIP9)
+
 - **Standard Accounts**: BIP44-compliant accounts for regular transactions
 - **CoinJoin Accounts**: Privacy-enhanced mixing accounts
 - **Identity Keys**: Platform identity authentication and encryption keys
@@ -40,6 +42,7 @@ The library is organized into several key modules:
 - **Blockchain User Keys**: Keys for Platform blockchain users
 
 ### Account Types
+
 - **Standard ECDSA Accounts**: Traditional HD wallet accounts
 - **BLS Accounts**: For masternode operations and Platform voting
 - **EdDSA Accounts**: For Platform identity operations
@@ -47,6 +50,7 @@ The library is organized into several key modules:
 - **External Signable**: Integration with hardware wallets
 
 ### Advanced Features
+
 - **Gap Limit Management**: Automatic address discovery with configurable gap limits
 - **Address Pool Management**: Pre-generated address pools for performance
 - **Transaction Checking**: Efficient transaction ownership detection
@@ -77,7 +81,7 @@ println!("Wallet ID: {:?}", hex::encode(wallet.wallet_id));
 
 ```rust
 use key_wallet::account::{Account, AccountType, StandardAccountType};
-use key_wallet::managed_account::ManagedAccount;
+use key_wallet::managed_account::ManagedCoreAccount;
 
 // Create a standard BIP44 account
 let account = wallet.create_account(
@@ -89,7 +93,7 @@ let account = wallet.create_account(
 )?;
 
 // Convert to managed account for mutable operations
-let mut managed_account = ManagedAccount::from_account(&account);
+let mut managed_account = ManagedCoreAccount::from_account(&account);
 
 // Generate receive addresses
 let addresses = managed_account.generate_receive_addresses(10)?;
@@ -149,13 +153,10 @@ let pool_1_address = coinjoin_account.derive_address_at_pool(1, 0)?;
 {
     use key_wallet::account::EdDSAAccount;
     
-    // Create identity authentication key
+    // Create identity registration funding account
     let identity_account = wallet.create_account(
         Network::Mainnet,
-        AccountType::IdentityAuthentication {
-            identity_index: 0,
-            key_index: 0,
-        }
+        AccountType::IdentityRegistration,
     )?;
     
     // Get Ed25519 public key for Platform
@@ -196,6 +197,7 @@ if result.is_relevant {
 - `bip38`: BIP38 encrypted private key support
 - `eddsa`: Ed25519 support for Platform identities
 - `bls`: BLS signature support for masternodes
+- `test-utils`: Testing helpers and fixtures (for use in dev-dependencies)
 
 ## API Overview
 
@@ -203,7 +205,7 @@ if result.is_relevant {
 
 - `Wallet`: Main wallet structure managing accounts and keys
 - `Account`: Individual account within a wallet
-- `ManagedAccount`: Mutable account with address pools and metadata
+- `ManagedCoreAccount`: Mutable account with address pools and metadata
 - `Mnemonic`: BIP39 mnemonic phrase handling
 - `ExtendedPrivKey`/`ExtendedPubKey`: BIP32 extended keys
 - `DerivationPath`: HD wallet derivation paths
@@ -225,7 +227,7 @@ if result.is_relevant {
 
 ### From v0.39 to v0.40
 
-- Account structure split into immutable `Account` and mutable `ManagedAccount`
+- Account structure split into immutable `Account` and mutable `ManagedCoreAccount`
 - New transaction checking system with optimized routing
 - Enhanced address pool management with pre-generation support
 - Improved gap limit tracking with staged discovery
@@ -249,15 +251,16 @@ if result.is_relevant {
 ## Dependencies
 
 Core dependencies:
+
 - `dashcore`: Core Dash protocol implementation
 - `secp256k1`: ECDSA cryptography
 - `bip39`: Mnemonic phrase support
-- `hkdf`: Key derivation functions
 - Additional optional dependencies for specialized features
 
 ## Contributing
 
 Contributions are welcome! Please ensure:
+
 - All tests pass with `cargo test --all-features`
 - Code follows project style guidelines
 - New features include appropriate tests
