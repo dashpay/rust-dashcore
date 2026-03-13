@@ -1,3 +1,12 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 reviews:
   request_changes_workflow: true
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Check whether the PR title prefix allowed in the pr-title.yml workflow
+        accurately describes the changes. Flag e.g. if a PR labeled "fix" appears to add
+        new functionality, if a "feat" PR only refactors existing code, or if a
+        "chore" PR contains logic changes that should be a "feat" or "fix".
+        If a PR mixes unrelated concerns (e.g., a bug fix bundled with a refactor
+        or new feature), suggest splitting it into separate focused PRs.
