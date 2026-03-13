@@ -122,7 +122,6 @@ pub mod sml;
 pub mod string;
 pub mod taproot;
 pub mod util;
-// pub mod serialize;
 
 // May depend on crate features and we don't want to bother with it
 #[allow(unused)]
