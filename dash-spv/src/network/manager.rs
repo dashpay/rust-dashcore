@@ -10,7 +10,6 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::JoinSet;
 use tokio::time;
 
-use crate::client::config::MempoolStrategy;
 use crate::client::ClientConfig;
 use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
@@ -61,8 +60,6 @@ pub struct PeerNetworkManager {
     current_sync_peer: Arc<Mutex<Option<SocketAddr>>>,
     /// Data directory for storage
     data_dir: PathBuf,
-    /// Mempool strategy from config
-    mempool_strategy: MempoolStrategy,
     /// Optional user agent to advertise
     user_agent: Option<String>,
     /// Exclusive mode: restrict to configured peers only (no DNS or peer store)
@@ -115,7 +112,6 @@ impl PeerNetworkManager {
             initial_peers: config.peers.clone(),
             current_sync_peer: Arc::new(Mutex::new(None)),
             data_dir,
-            mempool_strategy: config.mempool_strategy,
             user_agent: config.user_agent.clone(),
             exclusive_mode,
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
@@ -233,7 +229,6 @@ impl PeerNetworkManager {
         let addrv2_handler = self.addrv2_handler.clone();
         let shutdown_token = self.shutdown_token.clone();
         let reputation_manager = self.reputation_manager.clone();
-        let mempool_strategy = self.mempool_strategy;
         let user_agent = self.user_agent.clone();
         let connected_peer_count = self.connected_peer_count.clone();
         let headers2_disabled = self.headers2_disabled.clone();
@@ -263,8 +258,7 @@ impl PeerNetworkManager {
             match connect_result {
                 Ok(mut peer) => {
                     // Perform handshake
-                    let mut handshake_manager =
-                        HandshakeManager::new(network, mempool_strategy, user_agent);
+                    let mut handshake_manager = HandshakeManager::new(network, user_agent);
                     match handshake_manager.perform_handshake(&mut peer).await {
                         Ok(_) => {
                             log::info!("Successfully connected to {}", addr);
@@ -1309,7 +1303,6 @@ impl Clone for PeerNetworkManager {
             initial_peers: self.initial_peers.clone(),
             current_sync_peer: self.current_sync_peer.clone(),
             data_dir: self.data_dir.clone(),
-            mempool_strategy: self.mempool_strategy,
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
             connected_peer_count: self.connected_peer_count.clone(),
