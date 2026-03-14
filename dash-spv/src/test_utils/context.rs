@@ -10,6 +10,7 @@ use tempfile::TempDir;
 use tracing::info;
 
 use super::fs_helpers::{copy_dir, retain_test_dir};
+use super::node::TestChain;
 use super::{DashCoreConfig, DashCoreNode, WalletFile};
 
 /// Shared test infrastructure for dashd integration tests.
@@ -32,17 +33,24 @@ pub struct DashdTestContext {
 }
 
 impl DashdTestContext {
-    /// Create a new dashd test context.
+    /// Create a new dashd test context for the given chain variant.
     ///
-    /// Returns `None` if `SKIP_DASHD_TESTS` is set. Panics if required env vars
-    /// are missing or if dashd fails to start.
-    pub async fn new() -> Option<Self> {
+    /// Returns `None` if `SKIP_DASHD_TESTS` is set. Panics if the variant
+    /// directory is not available under `DASHD_TEST_DATA` or if dashd fails
+    /// to start.
+    pub async fn new(chain: TestChain) -> Option<Self> {
         if std::env::var("SKIP_DASHD_TESTS").is_ok() {
             eprintln!("Skipping dashd integration test (SKIP_DASHD_TESTS is set)");
             return None;
         }
 
-        let mut config = DashCoreConfig::from_env();
+        let config = DashCoreConfig::from_env(chain)
+            .unwrap_or_else(|| panic!("DASHD_TEST_DATA/{} not found", chain.variant_dir()));
+        Some(Self::create(config).await)
+    }
+
+    /// Shared initialization: copies the datadir, starts dashd, loads wallets.
+    async fn create(mut config: DashCoreConfig) -> Self {
         let datadir = TempDir::new().expect("failed to create temp dir");
         copy_dir(&config.datadir, datadir.path()).expect("failed to copy datadir");
         config.datadir = datadir.path().to_path_buf();
@@ -72,19 +80,20 @@ impl DashdTestContext {
             info!("RPC miner not available (tests requiring block generation will be skipped)");
         }
 
-        Some(DashdTestContext {
+        DashdTestContext {
             node,
             addr,
             initial_height,
             wallet,
             supports_mining,
             datadir,
-        })
+        }
     }
 }
 
 impl Drop for DashdTestContext {
     fn drop(&mut self) {
-        retain_test_dir(self.datadir.path(), "dashd");
+        let label = format!("dashd-{}", self.addr.port());
+        retain_test_dir(self.datadir.path(), &label);
     }
 }

@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use dash_spv::test_utils::DashdTestContext;
+use dash_spv::test_utils::{DashdTestContext, TestChain};
 use dashcore::hashes::Hash;
 use dashcore::Amount;
 
@@ -13,7 +13,7 @@ use super::context::FFITestContext;
 #[test]
 fn test_ffi_sync_then_generate_blocks() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
         eprintln!("Skipping test (dashd context unavailable)");
         return;
     };
@@ -124,7 +124,7 @@ fn test_ffi_sync_then_generate_blocks() {
 #[test]
 fn test_ffi_multiple_transactions_in_single_block() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
         eprintln!("Skipping test (dashd context unavailable)");
         return;
     };
@@ -208,7 +208,7 @@ fn test_ffi_multiple_transactions_in_single_block() {
 #[test]
 fn test_ffi_multiple_transactions_across_blocks() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
         eprintln!("Skipping test (dashd context unavailable)");
         return;
     };

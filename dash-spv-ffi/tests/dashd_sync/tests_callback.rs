@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use dash_spv::test_utils::DashdTestContext;
+use dash_spv::test_utils::{DashdTestContext, TestChain};
 use dashcore::hashes::Hash;
 use dashcore::Amount;
 
@@ -10,7 +10,7 @@ use super::context::FFITestContext;
 #[test]
 fn test_all_callbacks_during_sync() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
         return;
     };
 
@@ -231,7 +231,7 @@ fn test_all_callbacks_during_sync() {
 #[test]
 fn test_callbacks_post_sync_transactions_and_disconnect() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
         return;
     };
     if !dashd.supports_mining {

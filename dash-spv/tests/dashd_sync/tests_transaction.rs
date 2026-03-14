@@ -3,6 +3,7 @@ use dashcore::Amount;
 
 use super::helpers::wait_for_sync;
 use super::setup::TestContext;
+use dash_spv::test_utils::TestChain;
 
 /// Verify incremental sync works by generating blocks after initial sync.
 ///
@@ -10,7 +11,7 @@ use super::setup::TestContext;
 /// verifying wallet balance updates and height progression at each step.
 #[tokio::test]
 async fn test_sync_then_generate_blocks() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
         return;
     };
     if !ctx.dashd.supports_mining {
@@ -84,7 +85,7 @@ async fn test_sync_then_generate_blocks() {
 /// are all detected by the SPV client.
 #[tokio::test]
 async fn test_multiple_transactions_in_single_block() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
         return;
     };
     if !ctx.dashd.supports_mining {
@@ -158,7 +159,7 @@ async fn test_multiple_transactions_in_single_block() {
 /// incrementally by the SPV client.
 #[tokio::test]
 async fn test_multiple_transactions_across_blocks() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
         return;
     };
     if !ctx.dashd.supports_mining {

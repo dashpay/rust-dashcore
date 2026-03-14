@@ -16,6 +16,6 @@ pub const SYNC_TIMEOUT: Duration = Duration::from_secs(180);
 pub use context::DashdTestContext;
 pub use fs_helpers::retain_test_dir;
 pub use network::{test_socket_address, MockNetworkManager};
-pub use node::{DashCoreNode, WalletFile};
+pub use node::{DashCoreNode, TestChain, WalletFile};
 
 pub(crate) use node::DashCoreConfig;

@@ -1,6 +1,6 @@
 use dash_spv::network::NetworkEvent;
 use dash_spv::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
-use dash_spv::test_utils::{retain_test_dir, DashdTestContext};
+use dash_spv::test_utils::{retain_test_dir, DashdTestContext, TestChain};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
@@ -51,14 +51,18 @@ impl TestContext {
     ///
     /// # Example
     /// ```rust
-    /// if let Some(context) = TestContext::new().await {
+    /// if let Some(context) = TestContext::new(TestChain::Full).await {
     ///     // Proceed with using the `context` for testing.
     /// } else {
     ///     eprintln!("Failed to create the test context");
     /// }
     /// ```
-    pub(super) async fn new() -> Option<Self> {
-        // Create storage dir first so we can set up per-test file logging
+    pub(super) async fn new(chain: TestChain) -> Option<Self> {
+        let dashd = DashdTestContext::new(chain).await?;
+        Some(Self::create(dashd))
+    }
+
+    fn create(dashd: DashdTestContext) -> Self {
         let storage_dir = TempDir::new().expect("Failed to create temporary directory");
         let log_dir = storage_dir.path().join("logs");
         let _log_guard = dash_spv::init_logging(dash_spv::LoggingConfig {
@@ -72,8 +76,6 @@ impl TestContext {
         })
         .expect("Failed to initialize test logging");
 
-        let dashd = DashdTestContext::new().await?;
-
         let client_config = create_test_config(storage_dir.path().to_path_buf(), dashd.addr);
 
         let (wallet, wallet_id) = create_test_wallet(&dashd.wallet.mnemonic, Network::Regtest);
@@ -85,14 +87,14 @@ impl TestContext {
             storage_dir.path().display(),
         );
 
-        Some(TestContext {
+        TestContext {
             dashd,
             storage_dir,
             client_config,
             wallet,
             wallet_id,
             _log_guard,
-        })
+        }
     }
     /// Spawns and initializes a new client instance asynchronously.
     pub(super) async fn spawn_new_client(&self) -> ClientHandle {

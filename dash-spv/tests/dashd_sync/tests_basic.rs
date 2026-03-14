@@ -10,10 +10,11 @@ use super::helpers::{count_wallet_transactions, get_spendable_balance, wait_for_
 use super::setup::{
     create_and_start_client, create_test_wallet, test_account_options, TestContext,
 };
+use dash_spv::test_utils::TestChain;
 
 #[tokio::test]
 async fn test_wallet_sync() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 
@@ -28,7 +29,7 @@ async fn test_wallet_sync() {
 /// transactions and zero balance, while headers and filters sync fully.
 #[tokio::test]
 async fn test_sync_empty_wallet() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 
@@ -74,7 +75,7 @@ async fn test_sync_empty_wallet() {
 /// transactions while the abandon wallet remains empty.
 #[tokio::test]
 async fn test_sync_two_wallets_same_client() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 
