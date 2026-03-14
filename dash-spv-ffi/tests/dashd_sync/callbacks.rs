@@ -4,6 +4,7 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use dash_spv_ffi::*;
 
@@ -81,6 +82,23 @@ impl CallbackTracker {
     pub(super) fn assert_no_errors(&self) {
         let errors = self.errors.lock().unwrap();
         assert!(errors.is_empty(), "Unexpected sync errors: {:?}", *errors);
+    }
+
+    /// Polls until the given counter exceeds `baseline`, with a 10s timeout.
+    ///
+    /// Wallet event callbacks travel on a separate broadcast channel from sync
+    /// events, so `wait_for_sync` completing does not guarantee they have fired.
+    pub(super) fn wait_for_callback(&self, counter: &AtomicU32, baseline: u32, name: &str) {
+        let timeout = std::time::Instant::now() + Duration::from_secs(10);
+        while counter.load(Ordering::SeqCst) <= baseline {
+            assert!(
+                std::time::Instant::now() < timeout,
+                "Timed out waiting for {} callback (stuck at baseline {})",
+                name,
+                baseline
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 }
 
