@@ -22,13 +22,7 @@ groups:
     - dashcore-rpc
     - dashcore-rpc-json
 
-  tools:
-    - dash-fuzz
-
-# Groups excluded from coverage collection
-no_coverage:
-  - tools
-
 # Crates intentionally not tested (with reason)
 excluded:
   - integration_test  # Requires live Dash node
+  - dash-fuzz  # Honggfuzz binary targets, tested by fuzz.yml
