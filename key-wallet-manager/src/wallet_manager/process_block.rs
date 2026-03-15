@@ -114,25 +114,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     fn update_synced_height(&mut self, height: CoreBlockHeight) {
         self.synced_height = height;
 
-        // Update each wallet and emit BalanceUpdated events if balance changed
-        for (wallet_id, info) in self.wallet_infos.iter_mut() {
-            let old_balance = info.balance();
-            info.update_synced_height(height);
-            let new_balance = info.balance();
+        let snapshot = self.snapshot_balances();
 
-            // Emit event if balance changed
-            #[cfg(feature = "std")]
-            if old_balance != new_balance {
-                let event = WalletEvent::BalanceUpdated {
-                    wallet_id: *wallet_id,
-                    spendable: new_balance.spendable(),
-                    unconfirmed: new_balance.unconfirmed(),
-                    immature: new_balance.immature(),
-                    locked: new_balance.locked(),
-                };
-                let _ = self.event_sender.send(event);
-            }
+        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
+            info.update_synced_height(height);
         }
+
+        self.emit_balance_changes(&snapshot);
     }
 
     fn filter_committed_height(&self) -> CoreBlockHeight {

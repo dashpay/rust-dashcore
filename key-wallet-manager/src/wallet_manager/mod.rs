@@ -1015,6 +1015,30 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         }
         addresses
     }
+
+    /// Snapshot the current balance of every managed wallet.
+    pub(crate) fn snapshot_balances(&self) -> Vec<(WalletId, WalletCoreBalance)> {
+        self.wallet_infos.iter().map(|(id, info)| (*id, info.balance())).collect()
+    }
+
+    /// Emit `BalanceUpdated` events for wallets whose balance differs from the snapshot.
+    pub(crate) fn emit_balance_changes(&self, old_balances: &[(WalletId, WalletCoreBalance)]) {
+        for (wallet_id, old_balance) in old_balances {
+            if let Some(info) = self.wallet_infos.get(wallet_id) {
+                let new_balance = info.balance();
+                if *old_balance != new_balance {
+                    let event = WalletEvent::BalanceUpdated {
+                        wallet_id: *wallet_id,
+                        spendable: new_balance.spendable(),
+                        unconfirmed: new_balance.unconfirmed(),
+                        immature: new_balance.immature(),
+                        locked: new_balance.locked(),
+                    };
+                    let _ = self.event_sender.send(event);
+                }
+            }
+        }
+    }
 }
 
 /// Wallet manager errors
