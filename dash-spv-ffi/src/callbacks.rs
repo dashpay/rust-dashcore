@@ -31,6 +31,7 @@ pub enum FFIManagerId {
     Masternodes = 4,
     ChainLocks = 5,
     InstantSend = 6,
+    Mempool = 7,
 }
 
 impl From<dash_spv::sync::ManagerIdentifier> for FFIManagerId {
@@ -43,6 +44,7 @@ impl From<dash_spv::sync::ManagerIdentifier> for FFIManagerId {
             dash_spv::sync::ManagerIdentifier::Masternode => FFIManagerId::Masternodes,
             dash_spv::sync::ManagerIdentifier::ChainLock => FFIManagerId::ChainLocks,
             dash_spv::sync::ManagerIdentifier::InstantSend => FFIManagerId::InstantSend,
+            dash_spv::sync::ManagerIdentifier::Mempool => FFIManagerId::Mempool,
         }
     }
 }
@@ -166,6 +168,8 @@ pub type OnBlockProcessedCallback = Option<
         height: u32,
         hash: *const [u8; 32],
         new_address_count: u32,
+        confirmed_txids: *const [u8; 32],
+        confirmed_txid_count: u32,
         user_data: *mut c_void,
     ),
 >;
@@ -354,13 +358,18 @@ impl FFISyncEventCallbacks {
                 block_hash,
                 height,
                 new_addresses,
+                confirmed_txids,
             } => {
                 if let Some(cb) = self.on_block_processed {
                     let hash_bytes = block_hash.as_byte_array();
+                    let txid_bytes: Vec<[u8; 32]> =
+                        confirmed_txids.iter().map(|txid| *txid.as_byte_array()).collect();
                     cb(
                         *height,
                         hash_bytes as *const [u8; 32],
                         new_addresses.len() as u32,
+                        txid_bytes.as_ptr(),
+                        txid_bytes.len() as u32,
                         self.user_data,
                     );
                 }

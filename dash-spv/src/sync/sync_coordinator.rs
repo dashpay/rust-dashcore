@@ -20,8 +20,8 @@ use crate::storage::{
 use crate::sync::progress::ProgressPercentage;
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
-    InstantSendManager, ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager,
-    SyncManagerProgress, SyncManagerTaskContext, SyncProgress,
+    InstantSendManager, ManagerIdentifier, MasternodesManager, MempoolManager, SyncEvent,
+    SyncManager, SyncManagerProgress, SyncManagerTaskContext, SyncProgress,
 };
 use crate::SyncError;
 use key_wallet::manager::WalletInterface;
@@ -78,6 +78,7 @@ where
     pub masternode: Option<MasternodesManager<H>>,
     pub chainlock: Option<ChainLockManager<H, M>>,
     pub instantsend: Option<InstantSendManager>,
+    pub(crate) mempool: Option<MempoolManager<W>>,
 }
 
 impl<H, FH, F, B, M, W> Default for Managers<H, FH, F, B, M, W>
@@ -98,6 +99,7 @@ where
             masternode: None,
             chainlock: None,
             instantsend: None,
+            mempool: None,
         }
     }
 }
@@ -156,6 +158,7 @@ where
         try_update_progress(managers.masternode.as_ref(), &mut initial_progress);
         try_update_progress(managers.chainlock.as_ref(), &mut initial_progress);
         try_update_progress(managers.instantsend.as_ref(), &mut initial_progress);
+        try_update_progress(managers.mempool.as_ref(), &mut initial_progress);
 
         tracing::info!("Initial sync progress {}", initial_progress.clone());
 
@@ -213,6 +216,7 @@ where
         let masternode = self.managers.masternode.take();
         let chainlock = self.managers.chainlock.take();
         let instantsend = self.managers.instantsend.take();
+        let mempool = self.managers.mempool.take();
 
         // Spawn each manager using the macro
         spawn_manager!(self, block_headers, network);
@@ -222,6 +226,7 @@ where
         spawn_manager!(self, masternode, network);
         spawn_manager!(self, chainlock, network);
         spawn_manager!(self, instantsend, network);
+        spawn_manager!(self, mempool, network);
 
         // Clone receivers for progress task
         let receivers = self.progress_receivers.clone();
@@ -402,6 +407,7 @@ fn update_progress_from_manager(
         SyncManagerProgress::Masternodes(m) => progress.update_masternodes(m),
         SyncManagerProgress::ChainLock(c) => progress.update_chainlocks(c),
         SyncManagerProgress::InstantSend(i) => progress.update_instantsend(i),
+        SyncManagerProgress::Mempool(m) => progress.update_mempool(m),
     }
 }
 

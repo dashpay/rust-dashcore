@@ -233,6 +233,8 @@ extern "C" fn on_block_processed(
     height: u32,
     _hash: *const [u8; 32],
     new_address_count: u32,
+    _confirmed_txids: *const [u8; 32],
+    confirmed_txid_count: u32,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
@@ -240,7 +242,12 @@ extern "C" fn on_block_processed(
     };
     tracker.processed_block_heights.lock().unwrap_or_else(|e| e.into_inner()).push(height);
     tracker.block_processed_count.fetch_add(1, Ordering::SeqCst);
-    tracing::debug!("on_block_processed: height={}, new_addresses={}", height, new_address_count);
+    tracing::debug!(
+        "on_block_processed: height={}, new_addresses={}, confirmed_txs={}",
+        height,
+        new_address_count,
+        confirmed_txid_count
+    );
 }
 
 extern "C" fn on_masternode_state_updated(height: u32, user_data: *mut c_void) {

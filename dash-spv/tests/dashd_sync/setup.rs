@@ -1,3 +1,4 @@
+use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::NetworkEvent;
 use dash_spv::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use dash_spv::test_utils::{retain_test_dir, DashdTestContext, TestChain, TestEventHandler};
@@ -10,7 +11,9 @@ use dash_spv::{
 };
 use dashcore::network::address::AddrV2Message;
 use dashcore::network::constants::ServiceFlags;
+use dashcore::Txid;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
+use key_wallet::manager::WalletEvent;
 use key_wallet::manager::{WalletId, WalletManager};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -99,6 +102,19 @@ impl TestContext {
     /// Spawns and initializes a new client instance asynchronously.
     pub(super) async fn spawn_new_client(&self) -> ClientHandle {
         create_and_start_client(&self.client_config, Arc::clone(&self.wallet)).await
+    }
+
+    /// Spawns an independent client with the given mempool strategy.
+    ///
+    /// Each call creates a fresh wallet (same mnemonic) and a separate storage directory.
+    /// The caller must hold the returned `TempDir` alive for the duration of the test.
+    pub(super) async fn spawn_client(&self, strategy: MempoolStrategy) -> (ClientHandle, TempDir) {
+        let storage = TempDir::new().expect("Failed to create client temp dir");
+        let mut config = create_test_config(storage.path().to_path_buf(), self.dashd.addr);
+        config.mempool_strategy = strategy;
+        let (wallet, _) = create_test_wallet(&self.dashd.wallet.mnemonic, Network::Regtest);
+        let handle = create_and_start_client(&config, wallet).await;
+        (handle, storage)
     }
     /// Retrieves the total count of transactions across all accounts in the wallet.
     pub(super) async fn transaction_count(&self) -> usize {
@@ -262,6 +278,8 @@ pub(super) struct ClientHandle {
     pub(super) sync_event_receiver: broadcast::Receiver<SyncEvent>,
     /// A channel for receiving network events.
     pub(super) network_event_receiver: broadcast::Receiver<NetworkEvent>,
+    /// A channel for receiving wallet events.
+    pub(super) wallet_event_receiver: broadcast::Receiver<WalletEvent>,
     /// A cancellation token for the client's run loop.
     pub(super) cancel_token: CancellationToken,
 }
@@ -276,6 +294,22 @@ impl ClientHandle {
             handle.await.expect("Run task panicked").expect("Run task returned error");
         }
     }
+}
+
+/// Check if a transaction exists in a client's wallet.
+pub(super) async fn client_has_transaction(
+    client: &TestClient,
+    wallet_id: &WalletId,
+    txid: &Txid,
+) -> bool {
+    let wallet_read = client.wallet().read().await;
+    let wallet_info = wallet_read.get_wallet_info(wallet_id).expect("Wallet info not found");
+    wallet_info
+        .accounts()
+        .all_accounts()
+        .iter()
+        .any(|account| account.transactions.contains_key(txid))
+        || wallet_info.immature_transactions().iter().any(|tx| &tx.txid() == txid)
 }
 
 /// Creates a new SPV client and starts it with a `TestEventHandler`.
@@ -301,6 +335,10 @@ pub(super) async fn create_and_start_client(
             .await
             .expect("Failed to create client");
 
+    let wallet_event_receiver = {
+        let w = client.wallet().read().await;
+        w.subscribe_events()
+    };
     let cancel_token = CancellationToken::new();
     let run_token = cancel_token.clone();
     let run_client = client.clone();
@@ -313,6 +351,7 @@ pub(super) async fn create_and_start_client(
         progress_receiver,
         sync_event_receiver,
         network_event_receiver,
+        wallet_event_receiver,
         cancel_token,
     }
 }

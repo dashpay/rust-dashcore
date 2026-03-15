@@ -174,6 +174,105 @@ async fn test_mempool_after_instantsend_is_suppressed() {
 }
 
 // ---------------------------------------------------------------------------
+// BalanceUpdated event tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_mempool_tx_emits_balance_updated() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+    let tx = create_tx_paying_to(&addr, 0xf1);
+
+    manager.process_mempool_transaction(&tx, false).await;
+
+    let events = drain_events(&mut rx);
+    let balance_events: Vec<_> =
+        events.iter().filter(|e| matches!(e, WalletEvent::BalanceUpdated { .. })).collect();
+    assert_eq!(balance_events.len(), 1, "expected exactly 1 BalanceUpdated, got {:?}", events);
+    assert!(
+        matches!(
+            balance_events[0],
+            WalletEvent::BalanceUpdated {
+                wallet_id: wid,
+                unconfirmed,
+                spendable,
+                ..
+            } if *wid == wallet_id && *unconfirmed == TX_AMOUNT && *spendable == 0
+        ),
+        "expected BalanceUpdated with unconfirmed={TX_AMOUNT}, spendable=0, got {:?}",
+        balance_events[0]
+    );
+}
+
+#[tokio::test]
+async fn test_instantsend_tx_emits_balance_updated_spendable() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+    let tx = create_tx_paying_to(&addr, 0xf2);
+
+    manager.process_mempool_transaction(&tx, true).await;
+
+    let events = drain_events(&mut rx);
+    let balance_events: Vec<_> =
+        events.iter().filter(|e| matches!(e, WalletEvent::BalanceUpdated { .. })).collect();
+    assert_eq!(balance_events.len(), 1, "expected exactly 1 BalanceUpdated, got {:?}", events);
+    assert!(
+        matches!(
+            balance_events[0],
+            WalletEvent::BalanceUpdated {
+                wallet_id: wid,
+                spendable,
+                unconfirmed,
+                ..
+            } if *wid == wallet_id && *spendable == TX_AMOUNT && *unconfirmed == 0
+        ),
+        "expected BalanceUpdated with spendable={TX_AMOUNT}, unconfirmed=0, got {:?}",
+        balance_events[0]
+    );
+}
+
+#[tokio::test]
+async fn test_mempool_to_instantsend_transitions_balance() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+    let tx = create_tx_paying_to(&addr, 0xf3);
+
+    // Mempool tx: balance should be unconfirmed
+    manager.process_mempool_transaction(&tx, false).await;
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            WalletEvent::BalanceUpdated {
+                wallet_id: wid,
+                unconfirmed,
+                spendable,
+                ..
+            } if *wid == wallet_id && *unconfirmed == TX_AMOUNT && *spendable == 0
+        )),
+        "expected unconfirmed balance after mempool, got {:?}",
+        events
+    );
+
+    // IS lock: balance should move from unconfirmed to spendable
+    manager.process_instant_send_lock(tx.txid());
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            WalletEvent::BalanceUpdated {
+                wallet_id: wid,
+                spendable,
+                unconfirmed,
+                ..
+            } if *wid == wallet_id && *spendable == TX_AMOUNT && *unconfirmed == 0
+        )),
+        "expected spendable balance after IS lock, got {:?}",
+        events
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Production API tests
 // ---------------------------------------------------------------------------
 
@@ -190,6 +289,68 @@ async fn test_process_instant_send_lock_for_unknown_txid() {
     assert_no_events(&mut rx);
     let balance_after = manager.wallet_infos.get(&wallet_id).unwrap().balance();
     assert_eq!(balance_before, balance_after);
+}
+
+#[tokio::test]
+async fn test_process_instant_send_lock_dedup() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let tx = create_tx_paying_to(&addr, 0xe1);
+
+    manager.process_mempool_transaction(&tx, false).await;
+    let mut rx = manager.subscribe_events();
+
+    // First IS lock should emit events
+    manager.process_instant_send_lock(tx.txid());
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            WalletEvent::TransactionStatusChanged {
+                wallet_id: wid,
+                status: TransactionContext::InstantSend,
+                ..
+            } if *wid == wallet_id
+        )),
+        "expected TransactionStatusChanged(InstantSend) with correct wallet_id, got {:?}",
+        events
+    );
+    assert!(
+        events.iter().any(
+            |e| matches!(e, WalletEvent::BalanceUpdated { wallet_id: wid, .. } if *wid == wallet_id)
+        ),
+        "expected BalanceUpdated for wallet, got {:?}",
+        events
+    );
+
+    // Second IS lock should be a no-op
+    manager.process_instant_send_lock(tx.txid());
+    assert_no_events(&mut rx);
+}
+
+#[tokio::test]
+async fn test_process_instant_send_lock_after_block_confirmation() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let tx = create_tx_paying_to(&addr, 0xe2);
+
+    // Process as IS mempool tx, then confirm in block
+    manager.process_mempool_transaction(&tx, true).await;
+    let block_ctx = TransactionContext::InBlock(BlockInfo::new(
+        500,
+        BlockHash::from_byte_array([0xe2; 32]),
+        5000,
+    ));
+    manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
+
+    // IS lock after block confirmation is a no-op (already tracked via mempool IS)
+    let mut rx = manager.subscribe_events();
+    manager.process_instant_send_lock(tx.txid());
+    assert_no_events(&mut rx);
+
+    // Confirm height preserved
+    let history = manager.wallet_transaction_history(&wallet_id).unwrap();
+    let records: Vec<_> = history.iter().filter(|r| r.txid == tx.txid()).collect();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].height, Some(500));
 }
 
 #[tokio::test]
@@ -322,6 +483,46 @@ async fn test_process_block_emits_events() {
 }
 
 #[tokio::test]
+async fn test_irrelevant_mempool_tx_emits_no_events() {
+    use dashcore::{PublicKey, ScriptBuf};
+
+    let (mut manager, _wallet_id, _addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+
+    // Create a tx paying to a random script that doesn't match any wallet address
+    let random_script =
+        ScriptBuf::new_p2pkh(&PublicKey::from_slice(&[2; 33]).unwrap().pubkey_hash());
+    let tx = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![dashcore::TxIn {
+            previous_output: dashcore::OutPoint {
+                txid: dashcore::Txid::from_byte_array([0xe4; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![dashcore::TxOut {
+            value: TX_AMOUNT,
+            script_pubkey: random_script,
+        }],
+        special_transaction_payload: None,
+    };
+
+    let result = manager.process_mempool_transaction(&tx, false).await;
+
+    assert!(!result.is_relevant);
+    assert_eq!(result.net_amount, 0);
+    assert_no_events(&mut rx);
+}
+
+// ---------------------------------------------------------------------------
+// Edge case tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
 async fn test_instantsend_to_chainlocked_event_flow() {
     assert_lifecycle_flow(
         &[
@@ -335,6 +536,58 @@ async fn test_instantsend_to_chainlocked_event_flow() {
         0xc3,
     )
     .await;
+}
+
+#[tokio::test]
+async fn test_mempool_to_block_to_chainlocked_event_flow() {
+    let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+    let tx = create_tx_paying_to(&addr, 0xc4);
+
+    // Step 1: mempool — emits TransactionReceived
+    manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let event = assert_single_event(&mut rx);
+    assert!(
+        matches!(
+            event,
+            WalletEvent::TransactionReceived {
+                status: TransactionContext::Mempool,
+                ..
+            }
+        ),
+        "expected TransactionReceived(Mempool), got {:?}",
+        event
+    );
+
+    // Step 2: block confirmation — emits TransactionStatusChanged
+    let block_ctx = TransactionContext::InBlock(BlockInfo::new(
+        1700,
+        BlockHash::from_byte_array([0xc4; 32]),
+        17000,
+    ));
+    manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
+    let event = assert_single_event(&mut rx);
+    assert!(
+        matches!(
+            event,
+            WalletEvent::TransactionStatusChanged {
+                status: TransactionContext::InBlock(_),
+                ..
+            }
+        ),
+        "expected TransactionStatusChanged(InBlock), got {:?}",
+        event
+    );
+
+    // Step 3: chain lock on already-confirmed tx — no event (wallet doesn't
+    // track chain lock state separately from block confirmation)
+    let cl_ctx = TransactionContext::InChainLockedBlock(BlockInfo::new(
+        1700,
+        BlockHash::from_byte_array([0xc4; 32]),
+        17000,
+    ));
+    manager.check_transaction_in_all_wallets(&tx, cl_ctx, true, true).await;
+    assert_no_events(&mut rx);
 }
 
 #[tokio::test]
@@ -375,6 +628,7 @@ async fn test_check_transaction_dry_run_does_not_persist_state() {
         .await;
 
     assert!(!result.affected_wallets.is_empty());
+    assert_eq!(result.total_received, TX_AMOUNT);
     assert_no_events(&mut rx);
 
     // Call again — should still report as relevant (state not persisted)
@@ -382,6 +636,7 @@ async fn test_check_transaction_dry_run_does_not_persist_state() {
         .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, false, false)
         .await;
     assert!(!result2.affected_wallets.is_empty());
+    assert_eq!(result2.total_received, TX_AMOUNT);
     assert_no_events(&mut rx);
 
     // Now persist — should still report as new since dry runs didn't record it

@@ -1,7 +1,10 @@
 use dash_spv::network::NetworkEvent;
-use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncProgress};
+use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncProgress, SyncState};
 use dash_spv::test_utils::DashCoreNode;
+use dashcore::Txid;
+use key_wallet::manager::WalletEvent;
 use key_wallet::manager::{WalletId, WalletManager};
+use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use std::collections::HashSet;
@@ -123,6 +126,66 @@ pub(super) async fn wait_for_network_event(
     }
 }
 
+/// Wait for a wallet `TransactionReceived` event with mempool status within the given timeout.
+/// Returns `Some(txid)` if received, `None` on timeout.
+pub(super) async fn wait_for_mempool_tx(
+    receiver: &mut broadcast::Receiver<WalletEvent>,
+    max_wait: Duration,
+) -> Option<Txid> {
+    let timeout = tokio::time::sleep(max_wait);
+    tokio::pin!(timeout);
+
+    loop {
+        tokio::select! {
+            _ = &mut timeout => return None,
+            result = receiver.recv() => {
+                match result {
+                    Ok(WalletEvent::TransactionReceived { txid, status: TransactionContext::Mempool, .. }) => return Some(txid),
+                    Ok(_) => continue,
+                    Err(_) => return None,
+                }
+            }
+        }
+    }
+}
+
+/// Wait for the mempool manager to reach `Synced` state via the progress watch channel.
+/// Returns `true` if the state is reached within the timeout, `false` otherwise.
+pub(super) async fn wait_for_mempool_synced(
+    progress_receiver: &mut watch::Receiver<SyncProgress>,
+) -> bool {
+    let timeout = tokio::time::sleep(Duration::from_secs(30));
+    tokio::pin!(timeout);
+
+    loop {
+        {
+            let progress = progress_receiver.borrow_and_update();
+            if progress.mempool().ok().is_some_and(|m| m.state() == SyncState::Synced) {
+                return true;
+            }
+        }
+
+        tokio::select! {
+            _ = &mut timeout => return false,
+            result = progress_receiver.changed() => {
+                if result.is_err() {
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+/// Assert that no mempool `TransactionReceived` event arrives within the given duration.
+pub(super) async fn assert_no_mempool_tx(
+    receiver: &mut broadcast::Receiver<WalletEvent>,
+    wait: Duration,
+) {
+    if let Some(txid) = wait_for_mempool_tx(receiver, wait).await {
+        panic!("Unexpected mempool TransactionReceived event with txid: {}", txid);
+    }
+}
+
 /// Run a disconnect-and-reconnect loop during sync, then verify final state.
 ///
 /// Waits for progress events, disconnects all peers after every 5th event,
@@ -204,4 +267,113 @@ pub(super) async fn run_disconnect_loop(
 
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
+}
+
+/// Wait for two clients to sync to the target height concurrently.
+pub(super) async fn wait_for_sync_both(
+    a: &mut ClientHandle,
+    b: &mut ClientHandle,
+    target_height: u32,
+) {
+    tokio::join!(
+        wait_for_sync(&mut a.progress_receiver, target_height),
+        wait_for_sync(&mut b.progress_receiver, target_height),
+    );
+}
+
+/// Wait for a mempool transaction event from two clients concurrently.
+/// Asserts both detect the same txid.
+pub(super) async fn wait_for_mempool_tx_both(
+    a: &mut ClientHandle,
+    b: &mut ClientHandle,
+    timeout: Duration,
+) -> Option<Txid> {
+    let (r_a, r_b) = tokio::join!(
+        wait_for_mempool_tx(&mut a.wallet_event_receiver, timeout),
+        wait_for_mempool_tx(&mut b.wallet_event_receiver, timeout),
+    );
+    match (r_a, r_b) {
+        (Some(txid_a), Some(txid_b)) => {
+            assert_eq!(txid_a, txid_b, "Clients detected different txids");
+            Some(txid_a)
+        }
+        (None, None) => None,
+        (a, b) => panic!("Strategy mismatch: client_a={:?}, client_b={:?}", a, b),
+    }
+}
+
+/// Collect N mempool transaction events from two clients concurrently.
+/// Asserts both detect the same set of txids.
+pub(super) async fn wait_for_mempool_txs_both(
+    a: &mut ClientHandle,
+    b: &mut ClientHandle,
+    count: usize,
+    timeout: Duration,
+) -> HashSet<Txid> {
+    async fn collect_n(
+        receiver: &mut broadcast::Receiver<WalletEvent>,
+        count: usize,
+        timeout: Duration,
+    ) -> HashSet<Txid> {
+        let mut txids = HashSet::new();
+        for _ in 0..count {
+            let txid = wait_for_mempool_tx(receiver, timeout)
+                .await
+                .expect("Expected mempool TransactionReceived event");
+            txids.insert(txid);
+        }
+        txids
+    }
+
+    let (txids_a, txids_b) = tokio::join!(
+        collect_n(&mut a.wallet_event_receiver, count, timeout),
+        collect_n(&mut b.wallet_event_receiver, count, timeout),
+    );
+    assert_eq!(txids_a, txids_b, "Clients detected different txid sets");
+    txids_a
+}
+
+/// Wait for both clients to reach mempool Synced state.
+pub(super) async fn wait_for_mempool_synced_both(a: &mut ClientHandle, b: &mut ClientHandle) {
+    let (r_a, r_b) = tokio::join!(
+        wait_for_mempool_synced(&mut a.progress_receiver),
+        wait_for_mempool_synced(&mut b.progress_receiver),
+    );
+    assert!(r_a, "Client A: expected mempool to reach Synced state");
+    assert!(r_b, "Client B: expected mempool to reach Synced state");
+}
+
+/// Assert that neither client receives a mempool transaction event within the given duration.
+pub(super) async fn assert_no_mempool_tx_both(
+    a: &mut ClientHandle,
+    b: &mut ClientHandle,
+    wait: Duration,
+) {
+    tokio::join!(
+        assert_no_mempool_tx(&mut a.wallet_event_receiver, wait),
+        assert_no_mempool_tx(&mut b.wallet_event_receiver, wait),
+    );
+}
+
+/// Wait for a network event on both clients concurrently.
+pub(super) async fn wait_for_network_event_both(
+    a: &mut ClientHandle,
+    b: &mut ClientHandle,
+    predicate: impl Fn(&NetworkEvent) -> bool + Clone,
+    max_wait: Duration,
+) -> bool {
+    let pred_clone = predicate.clone();
+    let (r_a, r_b) = tokio::join!(
+        wait_for_network_event(&mut a.network_event_receiver, predicate, max_wait),
+        wait_for_network_event(&mut b.network_event_receiver, pred_clone, max_wait),
+    );
+    r_a && r_b
+}
+
+/// Assert mempool transaction count on both clients.
+pub(super) async fn assert_mempool_count_both(a: &ClientHandle, b: &ClientHandle, expected: usize) {
+    let count_a = a.client.get_mempool_transaction_count().await;
+    let count_b = b.client.get_mempool_transaction_count().await;
+    assert_eq!(count_a, expected, "Client A mempool count: expected {}, got {}", expected, count_a);
+    assert_eq!(count_b, expected, "Client B mempool count: expected {}, got {}", expected, count_b);
 }

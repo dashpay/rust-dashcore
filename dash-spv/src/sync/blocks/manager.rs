@@ -100,6 +100,9 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 );
             }
 
+            // Collect confirmed txids before moving new_addresses out of result
+            let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
+
             // Collect new addresses for gap limit rescanning
             let new_addresses: Vec<_> = result.new_addresses.into_iter().collect();
             if !new_addresses.is_empty() {
@@ -122,6 +125,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 block_hash: hash,
                 height,
                 new_addresses,
+                confirmed_txids,
             });
         }
 

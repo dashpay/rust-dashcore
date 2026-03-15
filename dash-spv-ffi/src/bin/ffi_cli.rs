@@ -29,6 +29,7 @@ extern "C" fn on_sync_start(manager_id: FFIManagerId, _user_data: *mut c_void) {
         FFIManagerId::Masternodes => "Masternodes",
         FFIManagerId::ChainLocks => "ChainLocks",
         FFIManagerId::InstantSend => "InstantSend",
+        FFIManagerId::Mempool => "Mempool",
     };
     println!("[Sync] Manager started: {}", manager_name);
 }
@@ -76,9 +77,14 @@ extern "C" fn on_block_processed(
     height: u32,
     _hash: *const [u8; 32],
     new_address_count: u32,
+    _confirmed_txids: *const [u8; 32],
+    confirmed_txid_count: u32,
     _user_data: *mut c_void,
 ) {
-    println!("[Sync] Block processed: height={}, new_addresses={}", height, new_address_count);
+    println!(
+        "[Sync] Block processed: height={}, new_addresses={}, confirmed_txs={}",
+        height, new_address_count, confirmed_txid_count
+    );
 }
 
 extern "C" fn on_masternode_state_updated(height: u32, _user_data: *mut c_void) {

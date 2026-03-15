@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 39
+**Total Functions**: 40
 
 ## Table of Contents
 
@@ -12,6 +12,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 - [Configuration](#configuration)
 - [Synchronization](#synchronization)
 - [Transaction Management](#transaction-management)
+- [Mempool Operations](#mempool-operations)
 - [Platform Integration](#platform-integration)
 - [Error Handling](#error-handling)
 - [Utility Functions](#utility-functions)
@@ -68,6 +69,14 @@ Functions: 1
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | client |
+
+### Mempool Operations
+
+Functions: 1
+
+| Function | Description | Module |
+|----------|-------------|--------|
+| `dash_spv_ffi_mempool_progress_destroy` | Destroy an `FFIMempoolProgress` object | types |
 
 ### Platform Integration
 
@@ -463,6 +472,24 @@ Broadcasts a transaction to the Dash network via connected peers.  # Safety  - `
 - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes
 
 **Module:** `client`
+
+---
+
+### Mempool Operations - Detailed
+
+#### `dash_spv_ffi_mempool_progress_destroy`
+
+```c
+dash_spv_ffi_mempool_progress_destroy(progress: *mut FFIMempoolProgress) -> ()
+```
+
+**Description:**
+Destroy an `FFIMempoolProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
 
 ---
 

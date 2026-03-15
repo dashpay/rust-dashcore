@@ -1,7 +1,7 @@
 use crate::sync::ManagerIdentifier;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
-use dashcore::{Address, BlockHash};
+use dashcore::{Address, BlockHash, Txid};
 use key_wallet::manager::FilterMatchKey;
 use std::collections::BTreeSet;
 
@@ -90,7 +90,8 @@ pub enum SyncEvent {
     /// Block downloaded and processed through wallet.
     ///
     /// Emitted by: `BlocksManager`
-    /// Consumed by: `FiltersManager` (for gap limit rescanning)
+    /// Consumed by: `FiltersManager` (for gap limit rescanning),
+    ///              `MempoolManager` (to remove confirmed txs)
     BlockProcessed {
         /// Hash of the processed block
         block_hash: BlockHash,
@@ -98,6 +99,8 @@ pub enum SyncEvent {
         height: u32,
         /// New addresses discovered from wallet gap limit maintenance
         new_addresses: Vec<Address>,
+        /// Transaction IDs confirmed in this block that are relevant to the wallet
+        confirmed_txids: Vec<Txid>,
     },
 
     /// Masternode state updated to a new height.

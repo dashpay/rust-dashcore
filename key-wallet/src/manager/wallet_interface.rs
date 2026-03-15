@@ -7,7 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, Transaction, Txid};
+use dashcore::{Address, Block, OutPoint, Transaction, Txid};
 use tokio::sync::broadcast;
 
 /// Result of processing a block through the wallet
@@ -18,6 +18,21 @@ pub struct BlockProcessingResult {
     /// Transaction IDs that were already in wallet history
     pub existing_txids: Vec<Txid>,
     /// New addresses generated during gap limit maintenance
+    pub new_addresses: Vec<Address>,
+}
+
+/// Result of processing a mempool transaction through the wallet
+#[derive(Debug, Default, Clone)]
+pub struct MempoolTransactionResult {
+    /// Whether the transaction was relevant to any wallet.
+    pub is_relevant: bool,
+    /// Net amount change for the wallet (received - sent) in satoshis.
+    pub net_amount: i64,
+    /// Whether this is an outgoing transaction (net_amount < 0).
+    pub is_outgoing: bool,
+    /// Addresses involved in this transaction.
+    pub addresses: Vec<Address>,
+    /// New addresses generated during gap limit maintenance.
     pub new_addresses: Vec<Address>,
 }
 
@@ -45,11 +60,21 @@ pub trait WalletInterface: Send + Sync + 'static {
         height: CoreBlockHeight,
     ) -> BlockProcessingResult;
 
-    /// Called when a transaction is seen in the mempool
-    async fn process_mempool_transaction(&mut self, tx: &Transaction);
+    /// Called when a transaction is seen in the mempool.
+    /// Returns whether the transaction was relevant and any new addresses generated.
+    /// When `is_instant_send` is true, the transaction already has an IS lock.
+    async fn process_mempool_transaction(
+        &mut self,
+        tx: &Transaction,
+        is_instant_send: bool,
+    ) -> MempoolTransactionResult;
 
     /// Get all addresses the wallet is monitoring for incoming transactions
     fn monitored_addresses(&self) -> Vec<Address>;
+
+    /// Get all outpoints the wallet is watching (unspent outputs).
+    /// Used for bloom filter construction to detect spends of our UTXOs.
+    fn watched_outpoints(&self) -> Vec<OutPoint>;
 
     /// Return the wallet's per-transaction net change and involved addresses if known.
     /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.
