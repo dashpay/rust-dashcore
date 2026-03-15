@@ -462,6 +462,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
                     },
                 }
             }
+            FFITransactionContext::InstantSend => TransactionContext::InstantSend,
         };
 
         // Create a ManagedWalletInfo from the wallet

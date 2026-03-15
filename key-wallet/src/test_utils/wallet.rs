@@ -1,6 +1,14 @@
-use dashcore::{Address, Network};
+use dashcore::blockdata::transaction::Transaction;
+use dashcore::{Address, Network, Txid};
 
+use crate::managed_account::transaction_record::TransactionRecord;
+use crate::managed_account::ManagedCoreAccount;
+use crate::transaction_checking::{
+    TransactionCheckResult, TransactionContext, WalletTransactionChecker,
+};
+use crate::utxo::Utxo;
 use crate::wallet::initialization::WalletAccountCreationOptions;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::ExtendedPubKey;
 
@@ -49,5 +57,46 @@ impl TestWalletContext {
             receive_address,
             xpub,
         }
+    }
+
+    /// Returns the first BIP44 managed account (immutable).
+    pub fn bip44_account(&self) -> &ManagedCoreAccount {
+        self.managed_wallet.first_bip44_managed_account().expect("Should have BIP44 account")
+    }
+
+    /// Returns a transaction record by txid from the first BIP44 account.
+    pub fn transaction(&self, txid: &Txid) -> &TransactionRecord {
+        self.bip44_account().transactions.get(txid).expect("Should have transaction")
+    }
+
+    /// Returns the first UTXO from the first BIP44 account.
+    pub fn first_utxo(&self) -> &Utxo {
+        self.bip44_account().utxos.values().next().expect("Should have UTXO")
+    }
+
+    /// Processes a transaction: runs `check_core_transaction` with `update_state = true`
+    /// and refreshes the cached balance for relevant results.
+    pub async fn check_transaction_and_update_balance(
+        &mut self,
+        tx: &Transaction,
+        context: TransactionContext,
+    ) -> TransactionCheckResult {
+        let result =
+            self.managed_wallet.check_core_transaction(tx, context, &mut self.wallet, true).await;
+        self.managed_wallet.update_balance();
+        result
+    }
+
+    /// Funds the wallet's receive address via a mempool transaction and
+    /// asserts it was accepted. Returns the context and the funding transaction.
+    pub async fn with_mempool_funding(mut self, amount: u64) -> (Self, Transaction) {
+        let tx = Transaction::dummy(&self.receive_address, 0..1, &[amount]);
+
+        let result =
+            self.check_transaction_and_update_balance(&tx, TransactionContext::Mempool).await;
+        assert!(result.is_relevant);
+        assert!(result.is_new_transaction);
+
+        (self, tx)
     }
 }

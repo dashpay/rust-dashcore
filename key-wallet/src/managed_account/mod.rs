@@ -352,6 +352,8 @@ impl ManagedCoreAccount {
                                 tx.is_coin_base(),
                             );
                             utxo.is_confirmed = context.confirmed();
+                            utxo.is_instantlocked =
+                                matches!(context, TransactionContext::InstantSend);
                             self.utxos.insert(outpoint, utxo);
                         }
                     }
@@ -372,6 +374,30 @@ impl ManagedCoreAccount {
             }
             _ => {}
         }
+    }
+
+    /// Re-process an existing transaction with updated context (e.g., mempool→block confirmation)
+    /// and potentially new address matches from gap limit rescans.
+    pub(crate) fn confirm_transaction(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+    ) -> bool {
+        let mut changed = false;
+        if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
+            if !tx_record.is_confirmed() {
+                if let (Some(height), Some(hash)) = (context.block_height(), context.block_hash()) {
+                    tx_record.mark_confirmed(height, hash);
+                    changed = true;
+                }
+                if let Some(ts) = context.timestamp() {
+                    tx_record.timestamp = ts as u64;
+                }
+            }
+        }
+        self.update_utxos(tx, account_match, context);
+        changed
     }
 
     /// Record a new transaction and update UTXOs for spendable account types
@@ -397,6 +423,19 @@ impl ManagedCoreAccount {
         self.transactions.insert(tx.txid(), tx_record);
 
         self.update_utxos(tx, account_match, context);
+    }
+
+    /// Mark all UTXOs belonging to a transaction as InstantSend-locked.
+    /// Returns `true` if any UTXO was newly marked.
+    pub(crate) fn mark_utxos_instant_send(&mut self, txid: &Txid) -> bool {
+        let mut any_changed = false;
+        for utxo in self.utxos.values_mut() {
+            if utxo.outpoint.txid == *txid && !utxo.is_instantlocked {
+                utxo.is_instantlocked = true;
+                any_changed = true;
+            }
+        }
+        any_changed
     }
 
     /// Update the account balance

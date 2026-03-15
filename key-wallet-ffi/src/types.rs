@@ -1,5 +1,6 @@
 //! Common types for FFI interface
 
+use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::{Network, Wallet};
 use std::os::raw::{c_char, c_uint};
 use std::sync::Arc;
@@ -712,10 +713,27 @@ impl FFIWalletAccountCreationOptions {
 pub enum FFITransactionContext {
     /// Transaction is in the mempool (unconfirmed)
     Mempool = 0,
+    /// Transaction is in the mempool with an InstantSend lock
+    InstantSend = 1,
     /// Transaction is in a block at the given height
-    InBlock = 1,
+    InBlock = 2,
     /// Transaction is in a chain-locked block at the given height
-    InChainLockedBlock = 2,
+    InChainLockedBlock = 3,
+}
+
+impl From<TransactionContext> for FFITransactionContext {
+    fn from(ctx: TransactionContext) -> Self {
+        match ctx {
+            TransactionContext::Mempool => FFITransactionContext::Mempool,
+            TransactionContext::InstantSend => FFITransactionContext::InstantSend,
+            TransactionContext::InBlock {
+                ..
+            } => FFITransactionContext::InBlock,
+            TransactionContext::InChainLockedBlock {
+                ..
+            } => FFITransactionContext::InChainLockedBlock,
+        }
+    }
 }
 
 /// FFI-compatible transaction context details
@@ -764,9 +782,7 @@ impl FFITransactionContextDetails {
     }
 
     /// Convert to the native TransactionContext
-    pub fn to_transaction_context(&self) -> key_wallet::transaction_checking::TransactionContext {
-        use key_wallet::transaction_checking::TransactionContext;
-
+    pub fn to_transaction_context(&self) -> TransactionContext {
         match self.context_type {
             FFITransactionContext::Mempool => TransactionContext::Mempool,
             FFITransactionContext::InBlock => {
@@ -815,6 +831,7 @@ impl FFITransactionContextDetails {
                     },
                 }
             }
+            FFITransactionContext::InstantSend => TransactionContext::InstantSend,
         }
     }
 }

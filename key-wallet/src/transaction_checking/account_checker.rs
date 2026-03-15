@@ -289,7 +289,7 @@ impl ManagedAccountCollection {
     ) -> TransactionCheckResult {
         let mut result = TransactionCheckResult {
             is_relevant: false,
-            is_new_transaction: true,
+            is_new_transaction: false,
             affected_accounts: Vec::new(),
             total_received: 0,
             total_sent: 0,

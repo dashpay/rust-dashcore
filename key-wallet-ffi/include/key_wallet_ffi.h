@@ -178,13 +178,17 @@ typedef enum {
      */
     MEMPOOL = 0,
     /*
+     Transaction is in the mempool with an InstantSend lock
+     */
+    INSTANT_SEND = 1,
+    /*
      Transaction is in a block at the given height
      */
-    IN_BLOCK = 1,
+    IN_BLOCK = 2,
     /*
      Transaction is in a chain-locked block at the given height
      */
-    IN_CHAIN_LOCKED_BLOCK = 2,
+    IN_CHAIN_LOCKED_BLOCK = 3,
 } FFITransactionContext;
 
 /*

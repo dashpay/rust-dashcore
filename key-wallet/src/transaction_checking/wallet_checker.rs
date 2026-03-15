@@ -13,10 +13,12 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 
 /// Context for transaction processing
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionContext {
     /// Transaction is in the mempool (unconfirmed)
     Mempool,
+    /// Transaction is in the mempool with an InstantSend lock
+    InstantSend,
     /// Transaction is in a block at the given height
     InBlock {
         height: u32,
@@ -35,6 +37,7 @@ impl std::fmt::Display for TransactionContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TransactionContext::Mempool => write!(f, "mempool"),
+            TransactionContext::InstantSend => write!(f, "instant send"),
             TransactionContext::InBlock {
                 height,
                 ..
@@ -60,7 +63,7 @@ impl TransactionContext {
     /// Returns the block height if confirmed.
     pub(crate) fn block_height(&self) -> Option<CoreBlockHeight> {
         match self {
-            TransactionContext::Mempool => None,
+            TransactionContext::Mempool | TransactionContext::InstantSend => None,
             TransactionContext::InBlock {
                 height,
                 ..
@@ -74,7 +77,7 @@ impl TransactionContext {
     /// Returns the block hash if confirmed.
     pub(crate) fn block_hash(&self) -> Option<BlockHash> {
         match self {
-            TransactionContext::Mempool => None,
+            TransactionContext::Mempool | TransactionContext::InstantSend => None,
             TransactionContext::InBlock {
                 block_hash,
                 ..
@@ -88,7 +91,7 @@ impl TransactionContext {
     /// Returns the block time if confirmed.
     pub(crate) fn timestamp(&self) -> Option<u32> {
         match self {
-            TransactionContext::Mempool => None,
+            TransactionContext::Mempool | TransactionContext::InstantSend => None,
             TransactionContext::InBlock {
                 timestamp,
                 ..
@@ -148,14 +151,49 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // Check if this transaction already exists in any affected account
         let txid = tx.txid();
+        let mut is_new = true;
         for account_match in &result.affected_accounts {
             if let Some(account) =
                 self.accounts.get_by_account_type_match(&account_match.account_type_match)
             {
                 if account.transactions.contains_key(&txid) {
-                    result.is_new_transaction = false;
+                    is_new = false;
+                    break;
+                }
+            }
+        }
+        result.is_new_transaction = is_new;
+
+        if !is_new {
+            // IS lock on a transaction that is already confirmed is stale — ignore
+            if context == TransactionContext::InstantSend {
+                if !self.instant_send_locks.insert(txid) {
                     return result;
                 }
+                // Only accept IS transitions for unconfirmed transactions
+                let already_confirmed = result.affected_accounts.iter().any(|am| {
+                    self.accounts
+                        .get_by_account_type_match(&am.account_type_match)
+                        .and_then(|a| a.transactions.get(&txid))
+                        .map_or(false, |r| r.is_confirmed())
+                });
+                if already_confirmed {
+                    return result;
+                }
+                // Mark UTXOs as IS-locked in affected accounts
+                for account_match in &result.affected_accounts {
+                    if let Some(account) = self
+                        .accounts
+                        .get_by_account_type_match_mut(&account_match.account_type_match)
+                    {
+                        account.mark_utxos_instant_send(&txid);
+                    }
+                }
+                return result;
+            }
+            // Only proceed if the new context is a block confirmation
+            if !context.confirmed() {
+                return result;
             }
         }
 
@@ -167,7 +205,11 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 continue;
             };
 
-            account.record_transaction(tx, &account_match, context);
+            if is_new {
+                account.record_transaction(tx, &account_match, context);
+            } else {
+                account.confirm_transaction(tx, &account_match, context);
+            }
 
             for address_info in account_match.account_type_match.all_involved_addresses() {
                 account.mark_address_used(&address_info.address);
@@ -196,17 +238,23 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
-        self.increment_transactions();
+        if is_new {
+            // Populate dedup sets when a tx arrives with an initial IS status
+            if context == TransactionContext::InstantSend {
+                self.instant_send_locks.insert(txid);
+            }
+            self.increment_transactions();
 
-        let wallet_net = result.total_received as i64 - result.total_sent as i64;
-        tracing::info!(
-            txid = %tx.txid(),
-            context = %context,
-            net_change = wallet_net,
-            received = result.total_received,
-            sent = result.total_sent,
-            "New wallet transaction detected"
-        );
+            let wallet_net = result.total_received as i64 - result.total_sent as i64;
+            tracing::info!(
+                txid = %tx.txid(),
+                context = %context,
+                net_change = wallet_net,
+                received = result.total_received,
+                sent = result.total_sent,
+                "New wallet transaction detected"
+            );
+        }
 
         result
     }
@@ -729,6 +777,12 @@ mod tests {
             managed_wallet.metadata.total_transactions, total_tx_count_before,
             "total_transactions should not increase on rescan"
         );
+
+        // Verify UTXO state is unchanged after rescan
+        assert_eq!(managed_account.utxos.len(), 1, "Should still have exactly one UTXO");
+        let utxo = managed_account.utxos.values().next().expect("Should have UTXO");
+        assert!(utxo.is_confirmed);
+        assert_eq!(utxo.txout.value, 100_000);
     }
 
     /// Test that UTXO is not created when a spending tx has already been stored
@@ -836,5 +890,135 @@ mod tests {
             "UTXO should be from spend_tx (change), not funding_tx"
         );
         assert_eq!(utxo.txout.value, 50_000, "UTXO value should be 50k (change amount)");
+    }
+
+    /// Test that a mempool transaction gets confirmed when later seen in a block
+    #[tokio::test]
+    async fn test_mempool_transaction_confirmed_by_block() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(200_000).await;
+        let txid = tx.txid();
+
+        // Verify unconfirmed state
+        assert!(!ctx.transaction(&txid).is_confirmed(), "Mempool tx should be unconfirmed");
+        assert_eq!(ctx.transaction(&txid).height, None);
+        assert!(!ctx.first_utxo().is_confirmed, "Mempool UTXO should be unconfirmed");
+
+        let total_tx_before = ctx.managed_wallet.metadata.total_transactions;
+
+        // Same transaction now seen in a block
+        let block_hash = BlockHash::from_slice(&[5u8; 32]).expect("Should create block hash");
+        let block_context = TransactionContext::InBlock {
+            height: 500,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+
+        let result = ctx.check_transaction_and_update_balance(&tx, block_context).await;
+        assert!(result.is_relevant);
+        assert!(!result.is_new_transaction, "Re-processing should mark as existing");
+
+        // Verify confirmed state
+        let record = ctx.transaction(&txid);
+        assert!(record.is_confirmed(), "Tx should now be confirmed");
+        assert_eq!(record.height, Some(500));
+        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.timestamp, 1700000000);
+        assert!(ctx.first_utxo().is_confirmed, "UTXO should now be confirmed");
+
+        assert_eq!(
+            ctx.managed_wallet.metadata.total_transactions, total_tx_before,
+            "total_transactions should not increase for confirmation of existing tx"
+        );
+    }
+
+    /// Test the full lifecycle: mempool -> IS -> block -> chain-locked block -> late IS
+    #[tokio::test]
+    async fn test_full_confirmation_lifecycle() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(200_000).await;
+        let txid = tx.txid();
+
+        // Stage 1: mempool (already done in setup)
+        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 0);
+        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
+
+        // Stage 2: IS lock
+        let result =
+            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+        assert!(result.is_relevant);
+        assert!(!result.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 0);
+        assert!(ctx.first_utxo().is_instantlocked);
+        assert!(!ctx.first_utxo().is_confirmed);
+        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
+        assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
+
+        // Duplicate IS lock should be a no-op
+        let result_dup =
+            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+        assert!(result_dup.is_relevant);
+        assert!(!result_dup.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+
+        // Stage 3: block confirmation
+        let block_hash = BlockHash::from_slice(&[10u8; 32]).expect("hash");
+        let block_context = TransactionContext::InBlock {
+            height: 1000,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+        let result = ctx.check_transaction_and_update_balance(&tx, block_context).await;
+        assert!(!result.is_new_transaction);
+        assert!(ctx.transaction(&txid).is_confirmed());
+        assert_eq!(ctx.transaction(&txid).height, Some(1000));
+        assert!(ctx.first_utxo().is_confirmed);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+
+        // Stage 4: chain-locked block (rescan with stronger context)
+        let cl_context = TransactionContext::InChainLockedBlock {
+            height: 1000,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+        let result = ctx.check_transaction_and_update_balance(&tx, cl_context).await;
+        assert!(!result.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
+
+        // Stage 5: late IS lock on already-confirmed tx should be ignored
+        let balance_before = ctx.managed_wallet.balance();
+        let result =
+            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+        assert!(result.is_relevant);
+        assert!(!result.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), balance_before.spendable());
+    }
+
+    /// Test that a new transaction arriving directly with IS context populates the dedup set
+    #[tokio::test]
+    async fn test_new_transaction_with_instantsend_context() {
+        let mut ctx = TestWalletContext::new_random();
+        let tx = Transaction::dummy(&ctx.receive_address, 0..1, &[150_000]);
+        let txid = tx.txid();
+
+        // Arrive directly as IS (skipping plain mempool)
+        let result =
+            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+        assert!(result.is_relevant);
+        assert!(result.is_new_transaction);
+        assert_eq!(result.total_received, 150_000);
+
+        // Should be IS-locked and spendable immediately
+        assert!(ctx.first_utxo().is_instantlocked);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
+        assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
+
+        // A follow-up IS lock should be a no-op
+        let result2 =
+            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+        assert!(!result2.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
+        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
     }
 }

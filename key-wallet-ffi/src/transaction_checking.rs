@@ -183,6 +183,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                 },
             }
         }
+        FFITransactionContext::InstantSend => TransactionContext::InstantSend,
     };
 
     // Check the transaction - wallet is now required
@@ -615,7 +616,8 @@ mod tests {
     fn test_transaction_context_conversion() {
         // Test that FFI transaction context values match expectations
         assert_eq!(FFITransactionContext::Mempool as u32, 0);
-        assert_eq!(FFITransactionContext::InBlock as u32, 1);
-        assert_eq!(FFITransactionContext::InChainLockedBlock as u32, 2);
+        assert_eq!(FFITransactionContext::InstantSend as u32, 1);
+        assert_eq!(FFITransactionContext::InBlock as u32, 2);
+        assert_eq!(FFITransactionContext::InChainLockedBlock as u32, 3);
     }
 }
