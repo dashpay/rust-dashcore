@@ -21,7 +21,7 @@ comment:
 
 flag_management:
   default_rules:
-    carryforward: false
+    carryforward: true
 
 flags:
   core:
