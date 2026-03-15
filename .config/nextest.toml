@@ -1,5 +1,14 @@
+[test-groups]
+dashd-integration = { max-threads = 1 }
+
 [profile.ci]
 fail-fast = false
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# dashd integration tests each start their own dashd process;
+# running them concurrently causes resource contention and crashes.
+[[profile.ci.overrides]]
+filter = 'binary(dashd_sync)'
+test-group = 'dashd-integration'

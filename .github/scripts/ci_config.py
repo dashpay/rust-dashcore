@@ -156,12 +156,14 @@ def run_group_tests(args):
                     "cargo", "llvm-cov", "nextest",
                     "--no-report", "-p", crate, "--all-features",
                     "--profile", "ci",
+                    "--no-tests=pass",
                 ]
             else:
                 cmd = [
                     "cargo", "nextest", "run",
                     "-p", crate, "--all-features",
                     "--profile", "ci",
+                    "--no-tests=pass",
                 ]
             result = subprocess.run(cmd)
 
@@ -176,7 +178,12 @@ def run_group_tests(args):
         finally:
             github_group_end()
 
-    github_output("junit_dir", str(junit_dir))
+    junit_files = sorted(junit_dir.glob("junit-*.xml"))
+    if junit_files:
+        github_output(
+            "junit_files",
+            ",".join(str(f).replace("\\", "/") for f in junit_files),
+        )
 
     if failed:
         print("\n" + "=" * 40)
