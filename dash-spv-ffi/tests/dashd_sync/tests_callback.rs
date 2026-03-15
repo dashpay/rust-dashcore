@@ -10,7 +10,9 @@ use super::context::FFITestContext;
 #[test]
 fn test_all_callbacks_during_sync() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
+    // TODO: This should doesn't need a full chain but its currently flaky with the minimal chain
+    //       will be fixed once the flakiness is resolved.
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Full)) else {
         return;
     };
 
