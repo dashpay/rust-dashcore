@@ -12,6 +12,7 @@ use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
 use key_wallet::manager::WalletEvent;
+use key_wallet_ffi::types::FFITransactionContext;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 
@@ -526,10 +527,24 @@ impl FFINetworkEventCallbacks {
 pub type OnTransactionReceivedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
+        status: FFITransactionContext,
         account_index: u32,
         txid: *const [u8; 32],
         amount: i64,
         addresses: *const c_char,
+        user_data: *mut c_void,
+    ),
+>;
+
+/// Callback for WalletEvent::TransactionStatusChanged
+///
+/// The `wallet_id` string pointer and `txid` hash pointer are borrowed and only
+/// valid for the duration of the callback.
+pub type OnTransactionStatusChangedCallback = Option<
+    extern "C" fn(
+        wallet_id: *const c_char,
+        txid: *const [u8; 32],
+        status: FFITransactionContext,
         user_data: *mut c_void,
     ),
 >;
@@ -561,6 +576,7 @@ pub type OnBalanceUpdatedCallback = Option<
 #[derive(Clone)]
 pub struct FFIWalletEventCallbacks {
     pub on_transaction_received: OnTransactionReceivedCallback,
+    pub on_transaction_status_changed: OnTransactionStatusChangedCallback,
     pub on_balance_updated: OnBalanceUpdatedCallback,
     pub user_data: *mut c_void,
 }
@@ -573,6 +589,7 @@ impl Default for FFIWalletEventCallbacks {
     fn default() -> Self {
         Self {
             on_transaction_received: None,
+            on_transaction_status_changed: None,
             on_balance_updated: None,
             user_data: std::ptr::null_mut(),
         }
@@ -670,6 +687,7 @@ impl FFIWalletEventCallbacks {
         match event {
             WalletEvent::TransactionReceived {
                 wallet_id,
+                status,
                 account_index,
                 txid,
                 amount,
@@ -684,10 +702,28 @@ impl FFIWalletEventCallbacks {
                     let c_addresses = CString::new(addresses_str.join(",")).unwrap_or_default();
                     cb(
                         c_wallet_id.as_ptr(),
+                        FFITransactionContext::from(*status),
                         *account_index,
                         txid_bytes as *const [u8; 32],
                         *amount,
                         c_addresses.as_ptr(),
+                        self.user_data,
+                    );
+                }
+            }
+            WalletEvent::TransactionStatusChanged {
+                wallet_id,
+                txid,
+                status,
+            } => {
+                if let Some(cb) = self.on_transaction_status_changed {
+                    let wallet_id_hex = hex::encode(wallet_id);
+                    let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
+                    let txid_bytes = txid.as_byte_array();
+                    cb(
+                        c_wallet_id.as_ptr(),
+                        txid_bytes as *const [u8; 32],
+                        FFITransactionContext::from(*status),
                         self.user_data,
                     );
                 }

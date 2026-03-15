@@ -4,6 +4,7 @@
 //! operations occur, allowing consumers to receive push-based notifications.
 
 use crate::manager::WalletId;
+use crate::transaction_checking::TransactionContext;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashcore::{Address, Amount, SignedAmount, Txid};
@@ -14,10 +15,12 @@ use dashcore::{Address, Amount, SignedAmount, Txid};
 /// may want to react to.
 #[derive(Debug, Clone)]
 pub enum WalletEvent {
-    /// A transaction relevant to the wallet was received.
+    /// A transaction relevant to the wallet was received for the first time.
     TransactionReceived {
         /// ID of the affected wallet.
         wallet_id: WalletId,
+        /// Context at the time the transaction was first seen.
+        status: TransactionContext,
         /// Account index within the wallet.
         account_index: u32,
         /// Transaction ID.
@@ -26,6 +29,15 @@ pub enum WalletEvent {
         amount: i64,
         /// Addresses involved in the transaction.
         addresses: Vec<Address>,
+    },
+    /// The confirmation status of a previously seen transaction has changed.
+    TransactionStatusChanged {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// Transaction ID.
+        txid: Txid,
+        /// New transaction context.
+        status: TransactionContext,
     },
     /// The wallet balance has changed.
     BalanceUpdated {
@@ -49,13 +61,22 @@ impl WalletEvent {
             WalletEvent::TransactionReceived {
                 txid,
                 amount,
+                status,
                 ..
             } => {
                 format!(
-                    "TransactionReceived(txid={}, amount={})",
+                    "TransactionReceived(txid={}, amount={}, status={})",
                     txid,
-                    SignedAmount::from_sat(*amount)
+                    SignedAmount::from_sat(*amount),
+                    status
                 )
+            }
+            WalletEvent::TransactionStatusChanged {
+                txid,
+                status,
+                ..
+            } => {
+                format!("TransactionStatusChanged(txid={}, status={})", txid, status)
             }
             WalletEvent::BalanceUpdated {
                 spendable,

@@ -29,6 +29,8 @@ pub struct MockWallet {
     effects: TransactionEffectsMap,
     synced_height: CoreBlockHeight,
     event_sender: broadcast::Sender<WalletEvent>,
+    /// Recorded status change notifications for test assertions.
+    status_changes: Arc<Mutex<Vec<(Txid, TransactionContext)>>>,
 }
 
 impl Default for MockWallet {
@@ -46,7 +48,12 @@ impl MockWallet {
             effects: Arc::new(Mutex::new(BTreeMap::new())),
             synced_height: 0,
             event_sender,
+            status_changes: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    pub fn status_changes(&self) -> Arc<Mutex<Vec<(Txid, TransactionContext)>>> {
+        self.status_changes.clone()
     }
 
     pub async fn set_effect(&self, txid: dashcore::Txid, net: i64, addresses: Vec<String>) {
@@ -104,6 +111,12 @@ impl WalletInterface for MockWallet {
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
         self.event_sender.subscribe()
+    }
+
+    fn process_instant_send_lock(&mut self, txid: Txid) {
+        let mut changes =
+            self.status_changes.try_lock().expect("status_changes lock contention in test helper");
+        changes.push((txid, TransactionContext::InstantSend));
     }
 }
 

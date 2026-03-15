@@ -95,6 +95,10 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Subscribe to wallet events (e.g. transactions received, balance changes).
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent>;
 
+    /// Process an InstantSend lock for a transaction already in the wallet.
+    /// Marks UTXOs as IS-locked, emits status change and balance update events.
+    fn process_instant_send_lock(&mut self, _txid: Txid) {}
+
     /// Provide a human-readable description of the wallet implementation.
     ///
     /// Implementations are encouraged to include high-level state such as the

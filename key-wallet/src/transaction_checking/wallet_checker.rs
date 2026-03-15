@@ -106,6 +106,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if update_balance {
                     self.update_balance();
                 }
+                result.state_modified = true;
                 return result;
             }
             // Only proceed if the new context is a block confirmation
@@ -124,8 +125,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
             if is_new {
                 account.record_transaction(tx, &account_match, context);
-            } else {
-                account.confirm_transaction(tx, &account_match, context);
+                result.state_modified = true;
+            } else if account.confirm_transaction(tx, &account_match, context) {
+                result.state_modified = true;
             }
 
             for address_info in account_match.account_type_match.all_involved_addresses() {

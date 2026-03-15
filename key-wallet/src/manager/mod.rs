@@ -540,27 +540,39 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                         result.is_new_transaction = true;
                     }
 
-                    // Emit TransactionReceived events for each affected account
                     #[cfg(feature = "std")]
-                    for account_match in &check_result.affected_accounts {
-                        let Some(account_index) = account_match.account_type_match.account_index()
-                        else {
-                            continue;
-                        };
-                        let amount = account_match.received as i64 - account_match.sent as i64;
-                        let addresses: Vec<Address> = account_match
-                            .account_type_match
-                            .all_involved_addresses()
-                            .into_iter()
-                            .map(|info| info.address)
-                            .collect();
+                    if check_result.is_new_transaction {
+                        // First time seeing this transaction — emit TransactionReceived
+                        for account_match in &check_result.affected_accounts {
+                            let Some(account_index) =
+                                account_match.account_type_match.account_index()
+                            else {
+                                continue;
+                            };
+                            let amount = account_match.received as i64 - account_match.sent as i64;
+                            let addresses: Vec<Address> = account_match
+                                .account_type_match
+                                .all_involved_addresses()
+                                .into_iter()
+                                .map(|info| info.address)
+                                .collect();
 
-                        let event = WalletEvent::TransactionReceived {
+                            let event = WalletEvent::TransactionReceived {
+                                wallet_id,
+                                status: context,
+                                account_index,
+                                txid: tx.txid(),
+                                amount,
+                                addresses,
+                            };
+                            let _ = self.event_sender.send(event);
+                        }
+                    } else if check_result.state_modified {
+                        // Known transaction whose state was modified (confirmation or IS-lock).
+                        let event = WalletEvent::TransactionStatusChanged {
                             wallet_id,
-                            account_index,
                             txid: tx.txid(),
-                            amount,
-                            addresses,
+                            status: context,
                         };
                         let _ = self.event_sender.send(event);
                     }
@@ -1122,6 +1134,11 @@ fn current_timestamp() -> u64 {
 
 #[cfg(feature = "std")]
 impl std::error::Error for WalletError {}
+
+#[cfg(test)]
+mod event_tests;
+#[cfg(test)]
+mod test_helpers;
 
 /// Conversion from crate::Error to WalletError
 impl From<crate::Error> for WalletError {
