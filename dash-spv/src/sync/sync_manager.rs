@@ -2,8 +2,8 @@ use crate::error::SyncResult;
 use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
-    FiltersProgress, InstantSendProgress, ManagerIdentifier, MasternodesProgress, SyncEvent,
-    SyncState,
+    FiltersProgress, InstantSendProgress, ManagerIdentifier, MasternodesProgress, MempoolProgress,
+    SyncEvent, SyncState,
 };
 use async_trait::async_trait;
 
@@ -30,6 +30,7 @@ pub enum SyncManagerProgress {
     Masternodes(MasternodesProgress),
     ChainLock(ChainLockProgress),
     InstantSend(InstantSendProgress),
+    Mempool(MempoolProgress),
 }
 
 impl SyncManagerProgress {
@@ -42,6 +43,7 @@ impl SyncManagerProgress {
             SyncManagerProgress::Masternodes(progress) => progress.state(),
             SyncManagerProgress::ChainLock(progress) => progress.state(),
             SyncManagerProgress::InstantSend(progress) => progress.state(),
+            SyncManagerProgress::Mempool(progress) => progress.state(),
         }
     }
 }

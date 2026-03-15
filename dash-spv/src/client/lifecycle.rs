@@ -23,7 +23,7 @@ use crate::storage::{
 };
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
-    InstantSendManager, Managers, MasternodesManager, SyncCoordinator,
+    InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
 };
 use crate::types::MempoolState;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
@@ -122,10 +122,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             managers.instantsend = Some(InstantSendManager::new(masternode_list_engine.clone()));
         }
 
-        let sync_coordinator = SyncCoordinator::new(managers).await;
-
-        // Create mempool state
+        // Create mempool state and build mempool manager if tracking is enabled
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
+        if config.enable_mempool_tracking {
+            managers.mempool = Some(MempoolManager::new(
+                wallet.clone(),
+                mempool_state.clone(),
+                config.mempool_strategy,
+                config.max_mempool_transactions,
+            ));
+        }
+
+        let sync_coordinator = SyncCoordinator::new(managers).await;
 
         // Wrap storage in Arc<Mutex>
         let storage = Arc::new(Mutex::new(storage));

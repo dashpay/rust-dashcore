@@ -1,4 +1,4 @@
-use crate::wallet_interface::{BlockProcessingResult, WalletInterface};
+use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 use crate::WalletEvent;
 use crate::WalletManager;
 use alloc::string::String;
@@ -50,15 +50,49 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         result
     }
 
-    async fn process_mempool_transaction(&mut self, tx: &Transaction) {
-        let context = TransactionContext::Mempool;
+    async fn process_mempool_transaction(
+        &mut self,
+        tx: &Transaction,
+        is_instant_send: bool,
+    ) -> MempoolTransactionResult {
+        let context = if is_instant_send {
+            TransactionContext::InstantSend
+        } else {
+            TransactionContext::Mempool
+        };
+        let snapshot = self.snapshot_balances();
+        let check_result = self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
-        // Check transaction against all wallets
-        self.check_transaction_in_all_wallets(tx, context, true, true).await;
+        let is_relevant = !check_result.affected_wallets.is_empty();
+        let net_amount = if is_relevant {
+            check_result.total_received as i64 - check_result.total_sent as i64
+        } else {
+            0
+        };
+
+        // Refresh cached balances only for affected wallets
+        for wallet_id in &check_result.affected_wallets {
+            if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
+                info.update_balance();
+            }
+        }
+        self.emit_balance_changes(&snapshot);
+
+        MempoolTransactionResult {
+            is_relevant,
+            net_amount,
+            is_outgoing: net_amount < 0,
+            addresses: check_result.involved_addresses,
+            new_addresses: check_result.new_addresses,
+        }
     }
 
     fn monitored_addresses(&self) -> Vec<Address> {
         self.monitored_addresses()
+    }
+
+    fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {
+        self.watched_outpoints()
     }
 
     async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
@@ -195,8 +229,28 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::Network;
+    use crate::wallet_manager::test_helpers::*;
+    use dashcore::block::{Header, Version};
+    use dashcore::hashes::Hash;
+    use dashcore::pow::CompactTarget;
+    use dashcore::{
+        BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
+    };
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+
+    fn make_block(txdata: Vec<Transaction>) -> Block {
+        Block {
+            header: Header {
+                version: Version::ONE,
+                prev_blockhash: BlockHash::from_byte_array([0; 32]),
+                merkle_root: TxMerkleNode::from_byte_array([0; 32]),
+                time: 1000,
+                bits: CompactTarget::from_consensus(0x1d00ffff),
+                nonce: 0,
+            },
+            txdata,
+        }
+    }
 
     #[tokio::test]
     async fn test_synced_height() {
@@ -212,5 +266,112 @@ mod tests {
         // Decrease synced height
         manager.update_synced_height(10);
         assert_eq!(manager.synced_height(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_process_mempool_transaction_balance_events() {
+        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+        let mut rx = manager.subscribe_events();
+
+        // Relevant tx should emit BalanceUpdated
+        let tx = create_tx_paying_to(&addr, 0xaa);
+        manager.process_mempool_transaction(&tx, false).await;
+
+        let mut found = false;
+        while let Ok(event) = rx.try_recv() {
+            if let WalletEvent::BalanceUpdated {
+                unconfirmed,
+                ..
+            } = event
+            {
+                assert!(unconfirmed > 0, "unconfirmed balance should increase");
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "should emit BalanceUpdated for mempool transaction");
+
+        // Irrelevant tx should not emit any events
+        let unrelated_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::from_byte_array([0xbb; 32]),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            }],
+            output: vec![TxOut {
+                value: 100_000,
+                script_pubkey: ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array(
+                    [0xff; 20],
+                )),
+            }],
+            special_transaction_payload: None,
+        };
+        manager.process_mempool_transaction(&unrelated_tx, false).await;
+        assert!(rx.try_recv().is_err(), "should not emit events for irrelevant transaction");
+    }
+
+    #[tokio::test]
+    async fn test_process_block_emits_balance_updated() {
+        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+        let tx = create_tx_paying_to(&addr, 0xcc);
+        let block = make_block(vec![tx]);
+
+        let mut rx = manager.subscribe_events();
+        manager.process_block(&block, 100).await;
+
+        let mut found = false;
+        while let Ok(event) = rx.try_recv() {
+            if let WalletEvent::BalanceUpdated {
+                spendable,
+                ..
+            } = event
+            {
+                assert!(spendable > 0, "spendable balance should increase after block");
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "should emit BalanceUpdated for block processing");
+    }
+
+    #[tokio::test]
+    async fn test_mempool_transaction_result_contains_wallet_effect_data() {
+        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+        let tx = create_tx_paying_to(&addr, 0xaa);
+
+        let result = manager.process_mempool_transaction(&tx, false).await;
+
+        assert!(result.is_relevant);
+        assert_eq!(result.net_amount, TX_AMOUNT as i64);
+        assert!(!result.is_outgoing);
+        assert!(!result.addresses.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_check_transaction_populates_totals() {
+        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+
+        let tx = create_tx_paying_to(&addr, 0xf0);
+        let result = manager
+            .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
+            .await;
+
+        assert!(!result.affected_wallets.is_empty());
+        assert_eq!(result.total_received, TX_AMOUNT);
+        assert_eq!(result.total_sent, 0);
+        assert!(
+            !result.involved_addresses.is_empty(),
+            "involved_addresses should contain the target address"
+        );
+        assert!(
+            result.involved_addresses.contains(&addr),
+            "involved_addresses should contain the target address"
+        );
     }
 }

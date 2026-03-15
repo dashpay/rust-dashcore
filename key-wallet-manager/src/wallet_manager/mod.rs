@@ -67,6 +67,12 @@ pub struct CheckTransactionsResult {
     pub is_new_transaction: bool,
     /// New addresses generated during gap limit maintenance
     pub new_addresses: Vec<Address>,
+    /// Total value received across all wallets
+    pub total_received: u64,
+    /// Total value sent across all wallets
+    pub total_sent: u64,
+    /// Addresses involved across all wallets
+    pub involved_addresses: Vec<Address>,
 }
 
 /// High-level wallet manager that manages multiple wallets
@@ -529,6 +535,16 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     // If any wallet reports this as new, mark result as new
                     if check_result.is_new_transaction {
                         result.is_new_transaction = true;
+                    }
+
+                    // Aggregate totals and involved addresses across wallets
+                    result.total_received =
+                        result.total_received.saturating_add(check_result.total_received);
+                    result.total_sent = result.total_sent.saturating_add(check_result.total_sent);
+                    for account_match in &check_result.affected_accounts {
+                        for addr_info in account_match.account_type_match.all_involved_addresses() {
+                            result.involved_addresses.push(addr_info.address);
+                        }
                     }
 
                     #[cfg(feature = "std")]
@@ -1048,6 +1064,16 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 }
             }
         }
+    }
+
+    /// Get all outpoints from wallet UTXOs across all managed wallets.
+    /// Used for bloom filter construction to detect spends of our UTXOs.
+    pub fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {
+        let mut outpoints = Vec::new();
+        for info in self.wallet_infos.values() {
+            outpoints.extend(info.utxos().into_iter().map(|u| u.outpoint));
+        }
+        outpoints
     }
 }
 

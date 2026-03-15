@@ -38,6 +38,7 @@ typedef enum FFIManagerId {
   Masternodes = 4,
   ChainLocks = 5,
   InstantSend = 6,
+  Mempool = 7,
 } FFIManagerId;
 
 typedef enum FFIMempoolStrategy {
@@ -145,6 +146,18 @@ typedef struct FFIInstantSendProgress {
 } FFIInstantSendProgress;
 
 /**
+ * Progress for mempool transaction monitoring.
+ */
+typedef struct FFIMempoolProgress {
+  enum FFISyncState state;
+  uint32_t received;
+  uint32_t relevant;
+  uint32_t tracked;
+  uint32_t removed;
+  uint64_t last_activity;
+} FFIMempoolProgress;
+
+/**
  * Aggregate progress for all sync managers.
  * Provides a complete view of the parallel sync system's state.
  */
@@ -162,6 +175,7 @@ typedef struct FFISyncProgress {
   struct FFIMasternodesProgress *masternodes;
   struct FFIChainLockProgress *chainlocks;
   struct FFIInstantSendProgress *instantsend;
+  struct FFIMempoolProgress *mempool;
 } FFISyncProgress;
 
 /**
@@ -249,6 +263,8 @@ typedef void (*OnBlocksNeededCallback)(const struct FFIBlockNeeded *blocks,
 typedef void (*OnBlockProcessedCallback)(uint32_t height,
                                          const uint8_t (*hash)[32],
                                          uint32_t new_address_count,
+                                         const uint8_t (*confirmed_txids)[32],
+                                         uint32_t confirmed_txid_count,
                                          void *user_data);
 
 /**
@@ -975,6 +991,14 @@ struct FFIResult ffi_dash_spv_get_platform_activation_height(struct FFIDashSpvCl
  * - `progress` must be a pointer returned from this crate, or null.
  */
  void dash_spv_ffi_instantsend_progress_destroy(struct FFIInstantSendProgress *progress) ;
+
+/**
+ * Destroy an `FFIMempoolProgress` object.
+ *
+ * # Safety
+ * - `progress` must be a pointer returned from this crate, or null.
+ */
+ void dash_spv_ffi_mempool_progress_destroy(struct FFIMempoolProgress *progress) ;
 
 /**
  * Destroy an `FFISyncProgress` object and all its nested pointers.

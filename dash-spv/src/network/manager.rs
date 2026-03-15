@@ -992,6 +992,9 @@ impl PeerNetworkManager {
         }
 
         let preferred_service = match &message {
+            NetworkMessage::FilterLoad(_)
+            | NetworkMessage::FilterClear
+            | NetworkMessage::MemPool => Some((ServiceFlags::BLOOM, true)),
             NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
                 Some((ServiceFlags::COMPACT_FILTERS, true))
             }
