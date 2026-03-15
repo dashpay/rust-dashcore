@@ -3,6 +3,7 @@
 use crate::account::{AccountType, StandardAccountType};
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
@@ -46,29 +47,12 @@ fn test_standard_transaction_routing() {
 
 #[tokio::test]
 async fn test_transaction_routing_to_bip44_account() {
-    // Create a wallet with a BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with default options");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get the account's xpub for address derivation from the wallet's first BIP44 account
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Expected BIP44 account at index 0 to exist");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    // Get an address from the BIP44 account
-    let address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create a transaction that sends to this address
     let mut tx = create_basic_transaction();

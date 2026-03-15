@@ -215,6 +215,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestWalletContext;
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use crate::wallet::{ManagedWalletInfo, Wallet};
@@ -400,23 +401,12 @@ mod tests {
     /// Test coinbase transaction handling for immature transaction logic
     #[tokio::test]
     async fn test_wallet_checker_coinbase_immature_handling() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get a wallet address
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address: address,
+            ..
+        } = TestWalletContext::new_random();
 
         // Create a coinbase transaction
         let coinbase_tx = Transaction {
@@ -486,22 +476,12 @@ mod tests {
     /// Test that spending a wallet-owned UTXO without creating change is detected
     #[tokio::test]
     async fn test_wallet_checker_detects_spend_only_transaction() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Prepare a managed BIP44 account and derive a receive address
-        let wallet_account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-
-        let receive_address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&wallet_account.account_xpub), true)
-            .expect("Should derive receive address");
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address,
+            ..
+        } = TestWalletContext::new_random();
 
         // Fund the wallet with a transaction paying to the receive address
         let funding_value = 50_000_000u64;
@@ -521,7 +501,7 @@ mod tests {
         // Build a spend transaction that sends funds to an external address only
         let external_address = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("Should create pubkey"),
-            network,
+            Network::Testnet,
         );
         let spend_tx = Transaction {
             version: 2,
@@ -575,25 +555,12 @@ mod tests {
     /// Test the full coinbase maturity flow - immature to mature transition
     #[tokio::test]
     async fn test_wallet_checker_immature_transaction_flow() {
-        use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get a wallet address
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address: address,
+            ..
+        } = TestWalletContext::new_random();
 
         // Create a coinbase transaction
         let coinbase_tx = Transaction {
@@ -691,24 +658,12 @@ mod tests {
     /// Test mempool context for timestamp/height handling
     #[tokio::test]
     async fn test_wallet_checker_mempool_context() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get a wallet address
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
-
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address: address,
+            ..
+        } = TestWalletContext::new_random();
         let tx = create_transaction_to_address(&address, 100_000);
 
         // Test with Mempool context
@@ -734,24 +689,12 @@ mod tests {
     /// Test that rescanning a block marks transactions as existing
     #[tokio::test]
     async fn test_transaction_rescan_marks_as_existing() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get a wallet address
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
-
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address: address,
+            ..
+        } = TestWalletContext::new_random();
         let tx = create_transaction_to_address(&address, 100_000);
 
         let context = TransactionContext::InBlock {
@@ -813,23 +756,12 @@ mod tests {
     /// Test that UTXO is not created when a spending tx has already been stored
     #[tokio::test]
     async fn test_utxo_not_created_when_already_spent() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get wallet addresses (we need two - one for receive, one for change)
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let receive_address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address,
+            xpub,
+        } = TestWalletContext::new_random();
 
         let change_address = managed_wallet
             .first_bip44_managed_account_mut()

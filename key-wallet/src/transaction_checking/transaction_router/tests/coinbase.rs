@@ -1,12 +1,10 @@
 //! Tests for coinbase transaction handling
 
+use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
 use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
-use crate::wallet::initialization::WalletAccountCreationOptions;
-use crate::wallet::{ManagedWalletInfo, Wallet};
-use crate::Network;
 use dashcore::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::BLSSignature;
@@ -62,29 +60,12 @@ fn create_basic_transaction() -> Transaction {
 
 #[tokio::test]
 async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
-    // Create a wallet with a BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with BIP44 account for coinbase test");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get the account's xpub for address derivation from the wallet's first BIP44 account
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Failed to get BIP44 account at index 0");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    // Get a receive address from the BIP44 account
-    let receive_address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address from BIP44 account");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create a coinbase transaction that pays to our receive address
     let mut coinbase_tx = create_coinbase_transaction();
@@ -136,27 +117,17 @@ async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
 
 #[tokio::test]
 async fn test_coinbase_transaction_routing_to_bip44_change_address() {
-    // Create a wallet with a BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with BIP44 account for coinbase change test");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get the account's xpub for address derivation
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Failed to get BIP44 account at index 0");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        xpub,
+        ..
+    } = TestWalletContext::new_random();
 
     // Get a change address from the BIP44 account
-    let change_address = managed_account
+    let change_address = managed_wallet_info
+        .first_bip44_managed_account_mut()
+        .expect("Failed to get first BIP44 managed account")
         .next_change_address(Some(&xpub), true)
         .expect("Failed to generate change address from BIP44 account");
 
@@ -210,29 +181,19 @@ async fn test_coinbase_transaction_routing_to_bip44_change_address() {
 
 #[tokio::test]
 async fn test_update_state_flag_behavior() {
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with default options");
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Expected BIP44 account at index 0 to exist");
-    let xpub = account.account_xpub;
-
-    // Get an address and initial state
-    let (address, initial_balance, initial_tx_count) = {
+    // Capture initial state
+    let (initial_balance, initial_tx_count) = {
         let managed_account = managed_wallet_info
             .first_bip44_managed_account_mut()
             .expect("Failed to get first BIP44 managed account");
-        let address = managed_account
-            .next_receive_address(Some(&xpub), true)
-            .expect("Failed to generate receive address");
-        let balance = managed_account.balance.spendable();
-        let tx_count = managed_account.transactions.len();
-        (address, balance, tx_count)
+        (managed_account.balance.spendable(), managed_account.transactions.len())
     };
 
     // Create a test transaction
@@ -345,25 +306,12 @@ fn test_coinbase_routing() {
 
 #[tokio::test]
 async fn test_coinbase_transaction_with_payload_routing() {
-    // Test coinbase with special payload routing to BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get address from BIP44 account
-    let account =
-        wallet.accounts.standard_bip44_accounts.get(&0).expect("Expected BIP44 account at index 0");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    let address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create coinbase transaction with special payload
     let mut coinbase_tx = create_coinbase_transaction();
