@@ -1,5 +1,6 @@
 //! Tests for coinbase transaction handling
 
+use super::helpers::test_addr;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
@@ -10,7 +11,7 @@ use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
 
 /// Helper to create a coinbase transaction
 fn create_coinbase_transaction() -> Transaction {
@@ -30,28 +31,6 @@ fn create_coinbase_transaction() -> Transaction {
         }],
         output: vec![TxOut {
             value: 5000000000, // 50 DASH block reward
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    }
-}
-
-/// Helper to create a basic transaction
-fn create_basic_transaction() -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 100000,
             script_pubkey: ScriptBuf::new(),
         }],
         special_transaction_payload: None,
@@ -197,7 +176,8 @@ async fn test_update_state_flag_behavior() {
     };
 
     // Create a test transaction
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
     tx.output.push(TxOut {
         value: 75000,
         script_pubkey: address.script_pubkey(),
@@ -268,7 +248,8 @@ async fn test_update_state_flag_behavior() {
 #[test]
 fn test_coinbase_classification() {
     // Test that coinbase transactions are properly classified
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Create a coinbase payload
     let payload = CoinbasePayload {

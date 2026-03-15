@@ -1,6 +1,6 @@
 //! Tests for asset unlock transaction handling
 
-use super::helpers::create_test_transaction;
+use super::helpers::test_addr;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
@@ -10,9 +10,10 @@ use dashcore::blockdata::transaction::special_transaction::asset_unlock::qualifi
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{BlockHash, OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 
 #[test]
 fn test_asset_unlock_routing() {
@@ -35,7 +36,8 @@ fn test_asset_unlock_routing() {
 #[test]
 fn test_asset_unlock_classification() {
     // Test that AssetUnlock transactions are properly classified
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     // Create an asset unlock payload
     let base = AssetUnlockBasePayload {
@@ -75,7 +77,7 @@ async fn test_asset_unlock_transaction_routing() {
     } = TestWalletContext::new_random();
 
     // Create an asset unlock transaction
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -146,7 +148,8 @@ async fn test_asset_unlock_routing_to_bip32_account() {
     } = TestWalletContext::new_random();
 
     // Create an asset unlock transaction to our address
-    let mut tx = create_test_transaction(0, vec![]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..0, &[]);
     tx.output.push(TxOut {
         value: 200_000_000, // 2 DASH unlocked
         script_pubkey: address.script_pubkey(),

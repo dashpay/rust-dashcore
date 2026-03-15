@@ -227,28 +227,6 @@ mod tests {
     use dashcore::{Address, BlockHash, TxIn, Txid};
     use dashcore_hashes::Hash;
 
-    /// Create a test transaction that sends to a given address
-    fn create_transaction_to_address(address: &Address, amount: u64) -> Transaction {
-        Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: Txid::from_byte_array([1u8; 32]),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
-            }],
-            output: vec![TxOut {
-                value: amount,
-                script_pubkey: address.script_pubkey(),
-            }],
-            special_transaction_payload: None,
-        }
-    }
-
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
     async fn test_wallet_checker_unrelated_transaction() {
@@ -266,7 +244,7 @@ mod tests {
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("Should create pubkey"),
             network,
         );
-        let tx = create_transaction_to_address(&dummy_address, 100_000);
+        let tx = Transaction::dummy(&dummy_address, 0..1, &[100_000]);
 
         let context = TransactionContext::Mempool;
 
@@ -341,7 +319,7 @@ mod tests {
         };
 
         if let (Some(_xpub), Some(address)) = (bip32_xpub, bip32_address) {
-            let tx = create_transaction_to_address(&address, 50_000);
+            let tx = Transaction::dummy(&address, 0..1, &[50_000]);
 
             let context = TransactionContext::InBlock {
                 height: 100000,
@@ -378,7 +356,7 @@ mod tests {
         };
 
         if let (Some(_xpub), Some(address)) = (coinjoin_xpub, coinjoin_address) {
-            let tx = create_transaction_to_address(&address, 75_000);
+            let tx = Transaction::dummy(&address, 0..1, &[75_000]);
 
             let context = TransactionContext::InChainLockedBlock {
                 height: 100001,
@@ -485,7 +463,7 @@ mod tests {
 
         // Fund the wallet with a transaction paying to the receive address
         let funding_value = 50_000_000u64;
-        let funding_tx = create_transaction_to_address(&receive_address, funding_value);
+        let funding_tx = Transaction::dummy(&receive_address, 0..1, &[funding_value]);
         let funding_context = TransactionContext::InBlock {
             height: 1,
             block_hash: Some(BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash")),
@@ -664,7 +642,7 @@ mod tests {
             receive_address: address,
             ..
         } = TestWalletContext::new_random();
-        let tx = create_transaction_to_address(&address, 100_000);
+        let tx = Transaction::dummy(&address, 0..1, &[100_000]);
 
         // Test with Mempool context
         let context = TransactionContext::Mempool;
@@ -695,7 +673,7 @@ mod tests {
             receive_address: address,
             ..
         } = TestWalletContext::new_random();
-        let tx = create_transaction_to_address(&address, 100_000);
+        let tx = Transaction::dummy(&address, 0..1, &[100_000]);
 
         let context = TransactionContext::InBlock {
             height: 100,
@@ -770,7 +748,7 @@ mod tests {
             .expect("Should get change address");
 
         // Create the funding transaction
-        let funding_tx = create_transaction_to_address(&receive_address, 100_000);
+        let funding_tx = Transaction::dummy(&receive_address, 0..1, &[100_000]);
 
         // Create a spending transaction that:
         // 1. Spends the funding tx's output

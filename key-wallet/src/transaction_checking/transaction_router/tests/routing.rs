@@ -1,5 +1,6 @@
 //! Tests for transaction routing logic
 
+use super::helpers::test_addr;
 use crate::account::{AccountType, StandardAccountType};
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_type::ManagedAccountType;
@@ -11,30 +12,9 @@ use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-
-/// Helper to create a basic transaction
-fn create_basic_transaction() -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 100000,
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    }
-}
+use dashcore::{BlockHash, ScriptBuf, TxOut};
 
 #[test]
 fn test_standard_transaction_routing() {
@@ -55,7 +35,8 @@ async fn test_transaction_routing_to_bip44_account() {
     } = TestWalletContext::new_random();
 
     // Create a transaction that sends to this address
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add an output to our address
     tx.output.push(TxOut {
@@ -123,7 +104,8 @@ async fn test_transaction_routing_to_bip32_account() {
     };
 
     // Create a transaction that sends to this address
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add an output to our address
     tx.output.push(TxOut {
@@ -235,7 +217,8 @@ async fn test_transaction_routing_to_coinjoin_account() {
     };
 
     // Create a CoinJoin-like transaction (multiple inputs/outputs with same denominations)
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add multiple outputs with CoinJoin denominations
     tx.output.push(TxOut {
@@ -336,7 +319,8 @@ async fn test_transaction_affects_multiple_accounts() {
         .expect("Failed to generate receive address for BIP32 account");
 
     // Create a transaction that sends to multiple accounts
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add outputs to different accounts
     tx.output.push(TxOut {

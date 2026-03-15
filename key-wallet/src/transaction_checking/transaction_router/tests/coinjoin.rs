@@ -4,13 +4,16 @@ use super::helpers::*;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
+use dashcore::blockdata::transaction::Transaction;
 
 #[test]
 fn test_coinjoin_mixing_round() {
     // Standard CoinJoin mixing round
-    let tx = create_test_transaction(
-        6, // Multiple participants
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..6, // Multiple participants
+        &[
             10_000_000, // 0.1 DASH denomination
             10_000_000, // 0.1 DASH denomination
             10_000_000, // 0.1 DASH denomination
@@ -31,9 +34,11 @@ fn test_coinjoin_mixing_round() {
 #[test]
 fn test_coinjoin_with_multiple_denominations() {
     // CoinJoin with mixed denominations
-    let tx = create_test_transaction(
-        8,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..8,
+        &[
             100_000_000, // 1 DASH
             100_000_000, // 1 DASH
             10_000_000,  // 0.1 DASH
@@ -55,9 +60,11 @@ fn test_coinjoin_with_multiple_denominations() {
 #[test]
 fn test_coinjoin_threshold_exactly_half_denominations() {
     // Edge case: exactly half outputs are denominations
-    let tx = create_test_transaction(
-        4,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..4,
+        &[
             100_000_000, // Denomination
             100_000_000, // Denomination
             50_000_000,  // Non-denomination
@@ -73,9 +80,11 @@ fn test_coinjoin_threshold_exactly_half_denominations() {
 #[test]
 fn test_not_coinjoin_just_under_threshold() {
     // Just under 50% denominations
-    let tx = create_test_transaction(
-        3,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..3,
+        &[
             100_000_000, // Denomination
             50_000_000,  // Non-denomination
             75_000_000,  // Non-denomination
