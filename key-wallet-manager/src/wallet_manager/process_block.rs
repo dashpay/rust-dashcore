@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, Transaction};
+use dashcore::{Address, Block, Transaction, Txid};
 use key_wallet::transaction_checking::transaction_router::TransactionRouter;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -134,6 +134,32 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
         self.event_sender.subscribe()
+    }
+
+    fn process_instant_send_lock(&mut self, txid: Txid) {
+        let snapshot = self.snapshot_balances();
+
+        let mut affected_wallets = Vec::new();
+        for (wallet_id, info) in self.wallet_infos.iter_mut() {
+            if info.mark_instant_send_utxos(&txid) {
+                affected_wallets.push(*wallet_id);
+            }
+        }
+
+        if affected_wallets.is_empty() {
+            return;
+        }
+
+        for wallet_id in affected_wallets {
+            let event = WalletEvent::TransactionStatusChanged {
+                wallet_id,
+                txid,
+                status: TransactionContext::InstantSend,
+            };
+            let _ = self.event_sender().send(event);
+        }
+
+        self.emit_balance_changes(&snapshot);
     }
 
     async fn describe(&self) -> String {

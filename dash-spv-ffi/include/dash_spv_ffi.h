@@ -375,11 +375,23 @@ typedef struct FFINetworkEventCallbacks {
  * copy any data they need to retain after the callback returns.
  */
 typedef void (*OnTransactionReceivedCallback)(const char *wallet_id,
+                                              FFITransactionContext status,
                                               uint32_t account_index,
                                               const uint8_t (*txid)[32],
                                               int64_t amount,
                                               const char *addresses,
                                               void *user_data);
+
+/**
+ * Callback for WalletEvent::TransactionStatusChanged
+ *
+ * The `wallet_id` string pointer and `txid` hash pointer are borrowed and only
+ * valid for the duration of the callback.
+ */
+typedef void (*OnTransactionStatusChangedCallback)(const char *wallet_id,
+                                                   const uint8_t (*txid)[32],
+                                                   FFITransactionContext status,
+                                                   void *user_data);
 
 /**
  * Callback for WalletEvent::BalanceUpdated
@@ -406,6 +418,7 @@ typedef void (*OnBalanceUpdatedCallback)(const char *wallet_id,
  */
 typedef struct FFIWalletEventCallbacks {
   OnTransactionReceivedCallback on_transaction_received;
+  OnTransactionStatusChangedCallback on_transaction_status_changed;
   OnBalanceUpdatedCallback on_balance_updated;
   void *user_data;
 } FFIWalletEventCallbacks;
