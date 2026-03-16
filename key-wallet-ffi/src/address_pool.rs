@@ -805,6 +805,34 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
             }
         }
         if !found {
+            if let Some(account) = &mut collection.blockchain_identities_ecdsa {
+                if account.mark_address_used(&address) {
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            if let Some(account) = &mut collection.blockchain_identities_ecdsa_hash160 {
+                if account.mark_address_used(&address) {
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            if let Some(account) = &mut collection.blockchain_identities_bls {
+                if account.mark_address_used(&address) {
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            if let Some(account) = &mut collection.blockchain_identities_bls_hash160 {
+                if account.mark_address_used(&address) {
+                    found = true;
+                }
+            }
+        }
+        if !found {
             for account in collection.dashpay_receival_accounts.values_mut() {
                 if account.mark_address_used(&address) {
                     found = true;
