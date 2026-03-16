@@ -120,17 +120,18 @@ def run_group_tests(args):
     for crate in crates:
         github_group_start(f"Testing {crate}")
 
-        if coverage:
-            cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
-        else:
-            cmd = ["cargo", "test", "-p", crate, "--all-features"]
-        result = subprocess.run(cmd)
+        try:
+            if coverage:
+                cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
+            else:
+                cmd = ["cargo", "test", "-p", crate, "--all-features"]
+            result = subprocess.run(cmd)
 
-        github_group_end()
-
-        if result.returncode != 0:
-            failed.append(crate)
-            github_error(f"Test failed for {crate} on {args.os}")
+            if result.returncode != 0:
+                failed.append(crate)
+                github_error(f"Test failed for {crate} on {args.os}")
+        finally:
+            github_group_end()
 
     if failed:
         print("\n" + "=" * 40)
