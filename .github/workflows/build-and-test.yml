@@ -66,7 +66,7 @@ jobs:
       - name: Run tests
         id: tests
         env:
-          DASHD_TEST_RETAIN_DIR: ${{ (matrix.group == 'spv' || matrix.group == 'ffi') && '/tmp/dashd-test-logs' || '' }}
+          DASHD_TEST_RETAIN_DIR: ${{ (matrix.group == 'spv' || matrix.group == 'ffi') && format('{0}/dashd-test-logs', runner.temp) || '' }}
         run: >
           python .github/scripts/ci_config.py run-group ${{ matrix.group }}
           --os ${{ inputs.os }}
@@ -90,6 +90,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.group }}-test-logs-${{ inputs.os }}
-          path: /tmp/dashd-test-logs/
+          path: ${{ runner.temp }}/dashd-test-logs/
           retention-days: 7
           if-no-files-found: ignore
