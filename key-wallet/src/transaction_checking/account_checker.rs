@@ -1103,6 +1103,31 @@ impl ManagedCoreAccount {
             }
         }
 
+        // Check blockchain identities accounts
+        if let Some(account) = &collection.blockchain_identities_ecdsa {
+            if account.contains_address(address) {
+                return Some((AccountTypeToCheck::BlockchainIdentitiesECDSA, None));
+            }
+        }
+
+        if let Some(account) = &collection.blockchain_identities_ecdsa_hash160 {
+            if account.contains_address(address) {
+                return Some((AccountTypeToCheck::BlockchainIdentitiesECDSAHash160, None));
+            }
+        }
+
+        if let Some(account) = &collection.blockchain_identities_bls {
+            if account.contains_address(address) {
+                return Some((AccountTypeToCheck::BlockchainIdentitiesBLS, None));
+            }
+        }
+
+        if let Some(account) = &collection.blockchain_identities_bls_hash160 {
+            if account.contains_address(address) {
+                return Some((AccountTypeToCheck::BlockchainIdentitiesBLSHash160, None));
+            }
+        }
+
         // Check provider accounts
         if let Some(account) = &collection.provider_voting_keys {
             if account.contains_address(address) {
