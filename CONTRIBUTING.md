@@ -59,6 +59,8 @@ We use the standard fork-and-PR model:
 5. Open a PR early for feedback; keep the description clear and scoped.
 
 Commits should explain the why and the what. Conventional Commits are encouraged.
+PR titles must use one of the following prefixes (enforced by CI):
+`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `refactor`, `test`.
 
 
 ## Preparing PRs
