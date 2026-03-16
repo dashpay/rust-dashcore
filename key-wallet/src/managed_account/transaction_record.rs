@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_transaction_record_creation() {
-        let tx = Transaction::empty();
+        let tx = Transaction::dummy_empty();
         let record = TransactionRecord::new(tx.clone(), 1234567890, 50000, true);
 
         assert_eq!(record.txid, tx.txid());
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_confirmations_calculation() {
-        let tx = Transaction::empty();
+        let tx = Transaction::dummy_empty();
         let mut record = TransactionRecord::new(tx, 1234567890, 50000, true);
 
         // Unconfirmed transaction
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_incoming_outgoing() {
-        let tx = Transaction::empty();
+        let tx = Transaction::dummy_empty();
 
         let incoming = TransactionRecord::new(tx.clone(), 1234567890, 50000, false);
         assert!(incoming.is_incoming());
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_confirmed_transaction_creation() {
-        let tx = Transaction::empty();
+        let tx = Transaction::dummy_empty();
         let block_hash = BlockHash::all_zeros();
         let record =
             TransactionRecord::new_confirmed(tx.clone(), 100, block_hash, 1234567890, 50000, true);
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_mark_unconfirmed() {
-        let tx = Transaction::empty();
+        let tx = Transaction::dummy_empty();
         let block_hash = BlockHash::all_zeros();
         let mut record =
             TransactionRecord::new_confirmed(tx, 100, block_hash, 1234567890, 50000, true);
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_labels_and_fees() {
-        let tx = Transaction::empty();
+        let tx = Transaction::dummy_empty();
         let mut record = TransactionRecord::new(tx, 1234567890, -50000, true);
 
         assert_eq!(record.fee, None);

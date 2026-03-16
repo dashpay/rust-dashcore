@@ -4,7 +4,7 @@ use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witnes
 
 impl Transaction {
     /// Creates a transaction with no inputs or outputs.
-    pub fn empty() -> Transaction {
+    pub fn dummy_empty() -> Transaction {
         Transaction {
             version: 1,
             lock_time: 0,
