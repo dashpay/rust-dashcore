@@ -175,7 +175,8 @@ async fn test_identity_registration_account_routing() {
 }
 
 #[tokio::test]
-async fn test_normal_payment_to_identity_address_not_detected() {
+async fn test_normal_payment_to_identity_registration_shared_path_detected_via_blockchain_identities_ecdsa_hash160(
+) {
     let network = Network::Testnet;
 
     let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
@@ -229,12 +230,12 @@ async fn test_normal_payment_to_identity_address_not_detected() {
         .await;
 
     // The identity registration address (m/9'/coinType'/5'/1') is shared with
-    // BlockchainIdentities subfeature=1. Since BlockchainIdentities accounts are
-    // checked for standard transactions, this normal payment IS now detected
-    // via the BlockchainIdentities account (but NOT via IdentityRegistration).
+    // BlockchainIdentitiesECDSAHash160 (subfeature=1). Since BlockchainIdentities accounts are
+    // checked for standard transactions, this normal payment IS detected
+    // via BlockchainIdentitiesECDSAHash160 (but NOT via IdentityRegistration).
     assert!(
         result.is_relevant,
-        "Normal payment to identity-path address should be detected via BlockchainIdentities"
+        "Normal payment to identity-path address should be detected via BlockchainIdentitiesECDSAHash160"
     );
 
     // Verify that identity registration account is NOT in the affected accounts
@@ -247,16 +248,14 @@ async fn test_normal_payment_to_identity_address_not_detected() {
         "Identity registration account should not be affected by normal payment"
     );
 
-    // But BlockchainIdentities should be in the affected accounts
+    // Specifically BlockchainIdentitiesECDSAHash160 (subfeature=1) should be in the affected
+    // accounts, as it shares the m/9'/coinType'/5'/1' derivation path with identity registration
     assert!(
         result.affected_accounts.iter().any(|acc| matches!(
             acc.account_type_match.to_account_type_to_check(),
-            AccountTypeToCheck::BlockchainIdentitiesECDSA
-                | AccountTypeToCheck::BlockchainIdentitiesECDSAHash160
-                | AccountTypeToCheck::BlockchainIdentitiesBLS
-                | AccountTypeToCheck::BlockchainIdentitiesBLSHash160
+            AccountTypeToCheck::BlockchainIdentitiesECDSAHash160
         )),
-        "BlockchainIdentities account should be affected by normal payment to shared-path address"
+        "BlockchainIdentitiesECDSAHash160 account should be affected by normal payment to the shared m/9'/coinType'/5'/1' path"
     );
 }
 
