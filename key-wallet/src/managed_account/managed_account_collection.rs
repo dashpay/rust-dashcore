@@ -56,6 +56,18 @@ macro_rules! get_by_account_type_match_impl {
             CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
                 ..
             } => $self.asset_lock_shielded_address_topup.$as_opt(),
+            CoreAccountTypeMatch::BlockchainIdentitiesECDSA {
+                ..
+            } => $self.blockchain_identities_ecdsa.$as_opt(),
+            CoreAccountTypeMatch::BlockchainIdentitiesECDSAHash160 {
+                ..
+            } => $self.blockchain_identities_ecdsa_hash160.$as_opt(),
+            CoreAccountTypeMatch::BlockchainIdentitiesBLS {
+                ..
+            } => $self.blockchain_identities_bls.$as_opt(),
+            CoreAccountTypeMatch::BlockchainIdentitiesBLSHash160 {
+                ..
+            } => $self.blockchain_identities_bls_hash160.$as_opt(),
             CoreAccountTypeMatch::ProviderVotingKeys {
                 ..
             } => $self.provider_voting_keys.$as_opt(),
@@ -130,6 +142,14 @@ pub struct ManagedAccountCollection {
     pub asset_lock_address_topup: Option<ManagedCoreAccount>,
     /// Asset lock shielded address top-up account (optional)
     pub asset_lock_shielded_address_topup: Option<ManagedCoreAccount>,
+    /// Blockchain identities ECDSA account
+    pub blockchain_identities_ecdsa: Option<ManagedCoreAccount>,
+    /// Blockchain identities ECDSA_HASH160 account
+    pub blockchain_identities_ecdsa_hash160: Option<ManagedCoreAccount>,
+    /// Blockchain identities BLS account
+    pub blockchain_identities_bls: Option<ManagedCoreAccount>,
+    /// Blockchain identities BLS_HASH160 account
+    pub blockchain_identities_bls_hash160: Option<ManagedCoreAccount>,
     /// Provider voting keys (optional)
     pub provider_voting_keys: Option<ManagedCoreAccount>,
     /// Provider owner keys (optional)
@@ -160,6 +180,10 @@ impl ManagedAccountCollection {
             identity_invitation: None,
             asset_lock_address_topup: None,
             asset_lock_shielded_address_topup: None,
+            blockchain_identities_ecdsa: None,
+            blockchain_identities_ecdsa_hash160: None,
+            blockchain_identities_bls: None,
+            blockchain_identities_bls_hash160: None,
             provider_voting_keys: None,
             provider_owner_keys: None,
             provider_operator_keys: None,
@@ -210,6 +234,18 @@ impl ManagedAccountCollection {
             ManagedAccountType::AssetLockShieldedAddressTopUp {
                 ..
             } => self.asset_lock_shielded_address_topup.is_some(),
+            ManagedAccountType::BlockchainIdentitiesECDSA {
+                ..
+            } => self.blockchain_identities_ecdsa.is_some(),
+            ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                ..
+            } => self.blockchain_identities_ecdsa_hash160.is_some(),
+            ManagedAccountType::BlockchainIdentitiesBLS {
+                ..
+            } => self.blockchain_identities_bls.is_some(),
+            ManagedAccountType::BlockchainIdentitiesBLSHash160 {
+                ..
+            } => self.blockchain_identities_bls_hash160.is_some(),
             ManagedAccountType::ProviderVotingKeys {
                 ..
             } => self.provider_voting_keys.is_some(),
@@ -318,6 +354,26 @@ impl ManagedAccountCollection {
                 ..
             } => {
                 self.asset_lock_shielded_address_topup = Some(account);
+            }
+            ManagedAccountType::BlockchainIdentitiesECDSA {
+                ..
+            } => {
+                self.blockchain_identities_ecdsa = Some(account);
+            }
+            ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                ..
+            } => {
+                self.blockchain_identities_ecdsa_hash160 = Some(account);
+            }
+            ManagedAccountType::BlockchainIdentitiesBLS {
+                ..
+            } => {
+                self.blockchain_identities_bls = Some(account);
+            }
+            ManagedAccountType::BlockchainIdentitiesBLSHash160 {
+                ..
+            } => {
+                self.blockchain_identities_bls_hash160 = Some(account);
             }
             ManagedAccountType::ProviderVotingKeys {
                 ..
@@ -447,6 +503,27 @@ impl ManagedAccountCollection {
         if let Some(account) = &account_collection.asset_lock_shielded_address_topup {
             if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
                 managed_collection.asset_lock_shielded_address_topup = Some(managed_account);
+            }
+        }
+
+        if let Some(account) = &account_collection.blockchain_identities_ecdsa {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.blockchain_identities_ecdsa = Some(managed_account);
+            }
+        }
+        if let Some(account) = &account_collection.blockchain_identities_ecdsa_hash160 {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.blockchain_identities_ecdsa_hash160 = Some(managed_account);
+            }
+        }
+        if let Some(account) = &account_collection.blockchain_identities_bls {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.blockchain_identities_bls = Some(managed_account);
+            }
+        }
+        if let Some(account) = &account_collection.blockchain_identities_bls_hash160 {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.blockchain_identities_bls_hash160 = Some(managed_account);
             }
         }
 
@@ -687,6 +764,41 @@ impl ManagedAccountCollection {
                 )?;
                 ManagedAccountType::AssetLockShieldedAddressTopUp {
                     addresses,
+                }
+            }
+            AccountType::BlockchainIdentitiesECDSA
+            | AccountType::BlockchainIdentitiesECDSAHash160
+            | AccountType::BlockchainIdentitiesBLS
+            | AccountType::BlockchainIdentitiesBLSHash160 => {
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                match account_type {
+                    AccountType::BlockchainIdentitiesECDSA => {
+                        ManagedAccountType::BlockchainIdentitiesECDSA {
+                            addresses,
+                        }
+                    }
+                    AccountType::BlockchainIdentitiesECDSAHash160 => {
+                        ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                            addresses,
+                        }
+                    }
+                    AccountType::BlockchainIdentitiesBLS => {
+                        ManagedAccountType::BlockchainIdentitiesBLS {
+                            addresses,
+                        }
+                    }
+                    AccountType::BlockchainIdentitiesBLSHash160 => {
+                        ManagedAccountType::BlockchainIdentitiesBLSHash160 {
+                            addresses,
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             }
             AccountType::ProviderVotingKeys => {
@@ -970,6 +1082,19 @@ impl ManagedAccountCollection {
             accounts.push(account);
         }
 
+        if let Some(account) = &self.blockchain_identities_ecdsa {
+            accounts.push(account);
+        }
+        if let Some(account) = &self.blockchain_identities_ecdsa_hash160 {
+            accounts.push(account);
+        }
+        if let Some(account) = &self.blockchain_identities_bls {
+            accounts.push(account);
+        }
+        if let Some(account) = &self.blockchain_identities_bls_hash160 {
+            accounts.push(account);
+        }
+
         if let Some(account) = &self.provider_voting_keys {
             accounts.push(account);
         }
@@ -1026,6 +1151,19 @@ impl ManagedAccountCollection {
         }
 
         if let Some(account) = &mut self.asset_lock_shielded_address_topup {
+            accounts.push(account);
+        }
+
+        if let Some(account) = &mut self.blockchain_identities_ecdsa {
+            accounts.push(account);
+        }
+        if let Some(account) = &mut self.blockchain_identities_ecdsa_hash160 {
+            accounts.push(account);
+        }
+        if let Some(account) = &mut self.blockchain_identities_bls {
+            accounts.push(account);
+        }
+        if let Some(account) = &mut self.blockchain_identities_bls_hash160 {
             accounts.push(account);
         }
 
@@ -1087,6 +1225,10 @@ impl ManagedAccountCollection {
             && self.identity_invitation.is_none()
             && self.asset_lock_address_topup.is_none()
             && self.asset_lock_shielded_address_topup.is_none()
+            && self.blockchain_identities_ecdsa.is_none()
+            && self.blockchain_identities_ecdsa_hash160.is_none()
+            && self.blockchain_identities_bls.is_none()
+            && self.blockchain_identities_bls_hash160.is_none()
             && self.provider_voting_keys.is_none()
             && self.provider_owner_keys.is_none()
             && self.provider_operator_keys.is_none()
@@ -1107,6 +1249,10 @@ impl ManagedAccountCollection {
         self.identity_invitation = None;
         self.asset_lock_address_topup = None;
         self.asset_lock_shielded_address_topup = None;
+        self.blockchain_identities_ecdsa = None;
+        self.blockchain_identities_ecdsa_hash160 = None;
+        self.blockchain_identities_bls = None;
+        self.blockchain_identities_bls_hash160 = None;
         self.provider_voting_keys = None;
         self.provider_owner_keys = None;
         self.provider_operator_keys = None;

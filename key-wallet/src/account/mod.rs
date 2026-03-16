@@ -549,4 +549,55 @@ mod tests {
         let change3 = account.derive_change_address(3).unwrap();
         assert_eq!(internal3, change3);
     }
+
+    #[test]
+    fn test_blockchain_identities_derivation_path_testnet() {
+        use crate::dip9::DerivationPathReference;
+
+        let variants: [(AccountType, u32); 4] = [
+            (AccountType::BlockchainIdentitiesECDSA, 0),
+            (AccountType::BlockchainIdentitiesECDSAHash160, 1),
+            (AccountType::BlockchainIdentitiesBLS, 2),
+            (AccountType::BlockchainIdentitiesBLSHash160, 3),
+        ];
+
+        for (account_type, expected_subfeature) in &variants {
+            assert_eq!(
+                account_type.derivation_path_reference(),
+                DerivationPathReference::BlockchainIdentities
+            );
+            assert_eq!(account_type.index(), None);
+            assert_eq!(account_type.registration_index(), None);
+
+            let path = account_type.derivation_path(Network::Testnet).unwrap();
+            let children: Vec<_> = path.into_iter().collect();
+            assert_eq!(children.len(), 4);
+            // m/9'/1'/5'/subfeature'
+            assert_eq!(*children[0], ChildNumber::from_hardened_idx(9).unwrap());
+            assert_eq!(*children[1], ChildNumber::from_hardened_idx(1).unwrap());
+            assert_eq!(*children[2], ChildNumber::from_hardened_idx(5).unwrap());
+            assert_eq!(*children[3], ChildNumber::from_hardened_idx(*expected_subfeature).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_blockchain_identities_derivation_path_mainnet() {
+        let variants: [(AccountType, u32); 4] = [
+            (AccountType::BlockchainIdentitiesECDSA, 0),
+            (AccountType::BlockchainIdentitiesECDSAHash160, 1),
+            (AccountType::BlockchainIdentitiesBLS, 2),
+            (AccountType::BlockchainIdentitiesBLSHash160, 3),
+        ];
+
+        for (account_type, expected_subfeature) in &variants {
+            let path = account_type.derivation_path(Network::Mainnet).unwrap();
+            let children: Vec<_> = path.into_iter().collect();
+            assert_eq!(children.len(), 4);
+            // m/9'/5'/5'/subfeature'
+            assert_eq!(*children[0], ChildNumber::from_hardened_idx(9).unwrap());
+            assert_eq!(*children[1], ChildNumber::from_hardened_idx(5).unwrap());
+            assert_eq!(*children[2], ChildNumber::from_hardened_idx(5).unwrap());
+            assert_eq!(*children[3], ChildNumber::from_hardened_idx(*expected_subfeature).unwrap());
+        }
+    }
 }

@@ -49,6 +49,14 @@ fn get_managed_account_by_type<'a>(
         AccountType::AssetLockShieldedAddressTopUp => {
             collection.asset_lock_shielded_address_topup.as_ref()
         }
+        AccountType::BlockchainIdentitiesECDSA => collection.blockchain_identities_ecdsa.as_ref(),
+        AccountType::BlockchainIdentitiesECDSAHash160 => {
+            collection.blockchain_identities_ecdsa_hash160.as_ref()
+        }
+        AccountType::BlockchainIdentitiesBLS => collection.blockchain_identities_bls.as_ref(),
+        AccountType::BlockchainIdentitiesBLSHash160 => {
+            collection.blockchain_identities_bls_hash160.as_ref()
+        }
         AccountType::ProviderVotingKeys => collection.provider_voting_keys.as_ref(),
         AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_ref(),
         AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_ref(),
@@ -101,6 +109,14 @@ fn get_managed_account_by_type_mut<'a>(
         AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_mut(),
         AccountType::AssetLockShieldedAddressTopUp => {
             collection.asset_lock_shielded_address_topup.as_mut()
+        }
+        AccountType::BlockchainIdentitiesECDSA => collection.blockchain_identities_ecdsa.as_mut(),
+        AccountType::BlockchainIdentitiesECDSAHash160 => {
+            collection.blockchain_identities_ecdsa_hash160.as_mut()
+        }
+        AccountType::BlockchainIdentitiesBLS => collection.blockchain_identities_bls.as_mut(),
+        AccountType::BlockchainIdentitiesBLSHash160 => {
+            collection.blockchain_identities_bls_hash160.as_mut()
         }
         AccountType::ProviderVotingKeys => collection.provider_voting_keys.as_mut(),
         AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_mut(),

@@ -555,6 +555,12 @@ impl Wallet {
         // Asset lock shielded address top-up
         self.add_account(AccountType::AssetLockShieldedAddressTopUp, None)?;
 
+        // Blockchain identity accounts
+        self.add_account(AccountType::BlockchainIdentitiesECDSA, None)?;
+        self.add_account(AccountType::BlockchainIdentitiesECDSAHash160, None)?;
+        self.add_account(AccountType::BlockchainIdentitiesBLS, None)?;
+        self.add_account(AccountType::BlockchainIdentitiesBLSHash160, None)?;
+
         // Provider keys accounts
         self.add_account(AccountType::ProviderVotingKeys, None)?;
         self.add_account(AccountType::ProviderOwnerKeys, None)?;
@@ -582,6 +588,15 @@ impl Wallet {
 
         // Asset lock shielded address top-up
         self.add_account_with_passphrase(AccountType::AssetLockShieldedAddressTopUp, passphrase)?;
+
+        // Blockchain identity accounts
+        self.add_account_with_passphrase(AccountType::BlockchainIdentitiesECDSA, passphrase)?;
+        self.add_account_with_passphrase(
+            AccountType::BlockchainIdentitiesECDSAHash160,
+            passphrase,
+        )?;
+        self.add_account_with_passphrase(AccountType::BlockchainIdentitiesBLS, passphrase)?;
+        self.add_account_with_passphrase(AccountType::BlockchainIdentitiesBLSHash160, passphrase)?;
 
         // Provider keys accounts
         self.add_account_with_passphrase(AccountType::ProviderVotingKeys, passphrase)?;
@@ -845,6 +860,18 @@ impl Wallet {
             }
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys => {
                 coll.provider_owner_keys.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::BlockchainIdentitiesECDSA => {
+                coll.blockchain_identities_ecdsa.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::BlockchainIdentitiesECDSAHash160 => {
+                coll.blockchain_identities_ecdsa_hash160.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::BlockchainIdentitiesBLS => {
+                coll.blockchain_identities_bls.as_ref().map(|a| a.account_xpub)
+            }
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::BlockchainIdentitiesBLSHash160 => {
+                coll.blockchain_identities_bls_hash160.as_ref().map(|a| a.account_xpub)
             }
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys |
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderPlatformKeys => {

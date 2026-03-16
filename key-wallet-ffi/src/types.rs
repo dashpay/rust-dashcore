@@ -194,6 +194,14 @@ pub enum FFIAccountType {
     AssetLockAddressTopUp = 14,
     /// Asset lock shielded address top-up funding (subfeature 5)
     AssetLockShieldedAddressTopUp = 15,
+    /// Blockchain identity ECDSA keys (DIP-9) - Path: m/9'/coinType'/5'/0'
+    BlockchainIdentitiesECDSA = 16,
+    /// Blockchain identity ECDSA Hash160 keys (DIP-9) - Path: m/9'/coinType'/5'/1'
+    BlockchainIdentitiesECDSAHash160 = 17,
+    /// Blockchain identity BLS keys (DIP-9) - Path: m/9'/coinType'/5'/2'
+    BlockchainIdentitiesBLS = 18,
+    /// Blockchain identity BLS Hash160 keys (DIP-9) - Path: m/9'/coinType'/5'/3'
+    BlockchainIdentitiesBLSHash160 = 19,
 }
 
 impl FFIAccountType {
@@ -227,6 +235,18 @@ impl FFIAccountType {
             FFIAccountType::AssetLockAddressTopUp => key_wallet::AccountType::AssetLockAddressTopUp,
             FFIAccountType::AssetLockShieldedAddressTopUp => {
                 key_wallet::AccountType::AssetLockShieldedAddressTopUp
+            }
+            FFIAccountType::BlockchainIdentitiesECDSA => {
+                key_wallet::AccountType::BlockchainIdentitiesECDSA
+            }
+            FFIAccountType::BlockchainIdentitiesECDSAHash160 => {
+                key_wallet::AccountType::BlockchainIdentitiesECDSAHash160
+            }
+            FFIAccountType::BlockchainIdentitiesBLS => {
+                key_wallet::AccountType::BlockchainIdentitiesBLS
+            }
+            FFIAccountType::BlockchainIdentitiesBLSHash160 => {
+                key_wallet::AccountType::BlockchainIdentitiesBLSHash160
             }
             FFIAccountType::ProviderVotingKeys => key_wallet::AccountType::ProviderVotingKeys,
             FFIAccountType::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
@@ -312,6 +332,18 @@ impl FFIAccountType {
             }
             key_wallet::AccountType::AssetLockShieldedAddressTopUp => {
                 (FFIAccountType::AssetLockShieldedAddressTopUp, 0, None)
+            }
+            key_wallet::AccountType::BlockchainIdentitiesECDSA => {
+                (FFIAccountType::BlockchainIdentitiesECDSA, 0, None)
+            }
+            key_wallet::AccountType::BlockchainIdentitiesECDSAHash160 => {
+                (FFIAccountType::BlockchainIdentitiesECDSAHash160, 0, None)
+            }
+            key_wallet::AccountType::BlockchainIdentitiesBLS => {
+                (FFIAccountType::BlockchainIdentitiesBLS, 0, None)
+            }
+            key_wallet::AccountType::BlockchainIdentitiesBLSHash160 => {
+                (FFIAccountType::BlockchainIdentitiesBLSHash160, 0, None)
             }
             key_wallet::AccountType::ProviderVotingKeys => {
                 (FFIAccountType::ProviderVotingKeys, 0, None)

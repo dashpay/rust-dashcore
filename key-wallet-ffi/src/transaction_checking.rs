@@ -382,6 +382,74 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                     ffi_accounts.push(ffi_match);
                     continue;
                 }
+                CoreAccountTypeMatch::BlockchainIdentitiesECDSA {
+                    involved_addresses,
+                } => {
+                    let ffi_match = FFIAccountMatch {
+                        account_type: 16, // BlockchainIdentitiesECDSA
+                        account_index: 0,
+                        registration_index: 0,
+                        received: account_match.received,
+                        sent: account_match.sent,
+                        external_addresses_count: involved_addresses.len() as c_uint,
+                        internal_addresses_count: 0,
+                        has_external_addresses: !involved_addresses.is_empty(),
+                        has_internal_addresses: false,
+                    };
+                    ffi_accounts.push(ffi_match);
+                    continue;
+                }
+                CoreAccountTypeMatch::BlockchainIdentitiesECDSAHash160 {
+                    involved_addresses,
+                } => {
+                    let ffi_match = FFIAccountMatch {
+                        account_type: 17, // BlockchainIdentitiesECDSAHash160
+                        account_index: 0,
+                        registration_index: 0,
+                        received: account_match.received,
+                        sent: account_match.sent,
+                        external_addresses_count: involved_addresses.len() as c_uint,
+                        internal_addresses_count: 0,
+                        has_external_addresses: !involved_addresses.is_empty(),
+                        has_internal_addresses: false,
+                    };
+                    ffi_accounts.push(ffi_match);
+                    continue;
+                }
+                CoreAccountTypeMatch::BlockchainIdentitiesBLS {
+                    involved_addresses,
+                } => {
+                    let ffi_match = FFIAccountMatch {
+                        account_type: 18, // BlockchainIdentitiesBLS
+                        account_index: 0,
+                        registration_index: 0,
+                        received: account_match.received,
+                        sent: account_match.sent,
+                        external_addresses_count: involved_addresses.len() as c_uint,
+                        internal_addresses_count: 0,
+                        has_external_addresses: !involved_addresses.is_empty(),
+                        has_internal_addresses: false,
+                    };
+                    ffi_accounts.push(ffi_match);
+                    continue;
+                }
+                CoreAccountTypeMatch::BlockchainIdentitiesBLSHash160 {
+                    involved_addresses,
+                } => {
+                    let ffi_match = FFIAccountMatch {
+                        account_type: 19, // BlockchainIdentitiesBLSHash160
+                        account_index: 0,
+                        registration_index: 0,
+                        received: account_match.received,
+                        sent: account_match.sent,
+                        external_addresses_count: involved_addresses.len() as c_uint,
+                        internal_addresses_count: 0,
+                        has_external_addresses: !involved_addresses.is_empty(),
+                        has_internal_addresses: false,
+                    };
+                    ffi_accounts.push(ffi_match);
+                    continue;
+                }
                 CoreAccountTypeMatch::ProviderVotingKeys {
                     involved_addresses,
                 } => {

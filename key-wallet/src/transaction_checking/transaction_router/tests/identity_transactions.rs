@@ -228,27 +228,35 @@ async fn test_normal_payment_to_identity_address_not_detected() {
         )
         .await;
 
-    // A normal transaction to an identity registration address should NOT be detected
-    // Identity addresses are only for special transactions (AssetLock)
+    // The identity registration address (m/9'/coinType'/5'/1') is shared with
+    // BlockchainIdentities subfeature=1. Since BlockchainIdentities accounts are
+    // checked for standard transactions, this normal payment IS now detected
+    // via the BlockchainIdentities account (but NOT via IdentityRegistration).
     assert!(
-        !result.is_relevant,
-        "Normal payment to identity address should not be detected as relevant. Got is_relevant={}",
-        result.is_relevant
+        result.is_relevant,
+        "Normal payment to identity-path address should be detected via BlockchainIdentities"
     );
 
-    assert_eq!(
-        result.total_received, 0,
-        "Should not have received any funds from normal payment to identity address. Got {} duffs",
-        result.total_received
-    );
-
-    // Verify that identity registration account is not in the affected accounts
+    // Verify that identity registration account is NOT in the affected accounts
+    // (IdentityRegistration is only checked for AssetLock transactions)
     assert!(
         !result.affected_accounts.iter().any(|acc| matches!(
             acc.account_type_match.to_account_type_to_check(),
             AccountTypeToCheck::IdentityRegistration
         )),
         "Identity registration account should not be affected by normal payment"
+    );
+
+    // But BlockchainIdentities should be in the affected accounts
+    assert!(
+        result.affected_accounts.iter().any(|acc| matches!(
+            acc.account_type_match.to_account_type_to_check(),
+            AccountTypeToCheck::BlockchainIdentitiesECDSA
+                | AccountTypeToCheck::BlockchainIdentitiesECDSAHash160
+                | AccountTypeToCheck::BlockchainIdentitiesBLS
+                | AccountTypeToCheck::BlockchainIdentitiesBLSHash160
+        )),
+        "BlockchainIdentities account should be affected by normal payment to shared-path address"
     );
 }
 

@@ -62,6 +62,14 @@ pub struct AccountCollection {
     pub asset_lock_address_topup: Option<Account>,
     /// Asset lock shielded address top-up account (optional)
     pub asset_lock_shielded_address_topup: Option<Account>,
+    /// Blockchain identities ECDSA account
+    pub blockchain_identities_ecdsa: Option<Account>,
+    /// Blockchain identities ECDSA_HASH160 account
+    pub blockchain_identities_ecdsa_hash160: Option<Account>,
+    /// Blockchain identities BLS account
+    pub blockchain_identities_bls: Option<Account>,
+    /// Blockchain identities BLS_HASH160 account
+    pub blockchain_identities_bls_hash160: Option<Account>,
     /// Provider voting keys (optional)
     pub provider_voting_keys: Option<Account>,
     /// Provider owner keys (optional)
@@ -93,6 +101,10 @@ impl AccountCollection {
             identity_invitation: None,
             asset_lock_address_topup: None,
             asset_lock_shielded_address_topup: None,
+            blockchain_identities_ecdsa: None,
+            blockchain_identities_ecdsa_hash160: None,
+            blockchain_identities_bls: None,
+            blockchain_identities_bls_hash160: None,
             provider_voting_keys: None,
             provider_owner_keys: None,
             #[cfg(feature = "bls")]
@@ -146,6 +158,18 @@ impl AccountCollection {
             }
             AccountType::AssetLockShieldedAddressTopUp => {
                 self.asset_lock_shielded_address_topup = Some(account);
+            }
+            AccountType::BlockchainIdentitiesECDSA => {
+                self.blockchain_identities_ecdsa = Some(account);
+            }
+            AccountType::BlockchainIdentitiesECDSAHash160 => {
+                self.blockchain_identities_ecdsa_hash160 = Some(account);
+            }
+            AccountType::BlockchainIdentitiesBLS => {
+                self.blockchain_identities_bls = Some(account);
+            }
+            AccountType::BlockchainIdentitiesBLSHash160 => {
+                self.blockchain_identities_bls_hash160 = Some(account);
             }
             AccountType::ProviderVotingKeys => {
                 self.provider_voting_keys = Some(account);
@@ -246,6 +270,14 @@ impl AccountCollection {
             AccountType::AssetLockShieldedAddressTopUp => {
                 self.asset_lock_shielded_address_topup.is_some()
             }
+            AccountType::BlockchainIdentitiesECDSA => self.blockchain_identities_ecdsa.is_some(),
+            AccountType::BlockchainIdentitiesECDSAHash160 => {
+                self.blockchain_identities_ecdsa_hash160.is_some()
+            }
+            AccountType::BlockchainIdentitiesBLS => self.blockchain_identities_bls.is_some(),
+            AccountType::BlockchainIdentitiesBLSHash160 => {
+                self.blockchain_identities_bls_hash160.is_some()
+            }
             AccountType::ProviderVotingKeys => self.provider_voting_keys.is_some(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.is_some(),
             #[cfg(feature = "bls")]
@@ -319,6 +351,14 @@ impl AccountCollection {
             AccountType::AssetLockShieldedAddressTopUp => {
                 self.asset_lock_shielded_address_topup.as_ref()
             }
+            AccountType::BlockchainIdentitiesECDSA => self.blockchain_identities_ecdsa.as_ref(),
+            AccountType::BlockchainIdentitiesECDSAHash160 => {
+                self.blockchain_identities_ecdsa_hash160.as_ref()
+            }
+            AccountType::BlockchainIdentitiesBLS => self.blockchain_identities_bls.as_ref(),
+            AccountType::BlockchainIdentitiesBLSHash160 => {
+                self.blockchain_identities_bls_hash160.as_ref()
+            }
             AccountType::ProviderVotingKeys => self.provider_voting_keys.as_ref(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_ref(),
             AccountType::ProviderOperatorKeys => None, // BLSAccount, use bls_account_of_type
@@ -385,6 +425,14 @@ impl AccountCollection {
             AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_mut(),
             AccountType::AssetLockShieldedAddressTopUp => {
                 self.asset_lock_shielded_address_topup.as_mut()
+            }
+            AccountType::BlockchainIdentitiesECDSA => self.blockchain_identities_ecdsa.as_mut(),
+            AccountType::BlockchainIdentitiesECDSAHash160 => {
+                self.blockchain_identities_ecdsa_hash160.as_mut()
+            }
+            AccountType::BlockchainIdentitiesBLS => self.blockchain_identities_bls.as_mut(),
+            AccountType::BlockchainIdentitiesBLSHash160 => {
+                self.blockchain_identities_bls_hash160.as_mut()
             }
             AccountType::ProviderVotingKeys => self.provider_voting_keys.as_mut(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_mut(),
@@ -457,6 +505,19 @@ impl AccountCollection {
             accounts.push(account);
         }
 
+        if let Some(account) = &self.blockchain_identities_ecdsa {
+            accounts.push(account);
+        }
+        if let Some(account) = &self.blockchain_identities_ecdsa_hash160 {
+            accounts.push(account);
+        }
+        if let Some(account) = &self.blockchain_identities_bls {
+            accounts.push(account);
+        }
+        if let Some(account) = &self.blockchain_identities_bls_hash160 {
+            accounts.push(account);
+        }
+
         if let Some(account) = &self.provider_voting_keys {
             accounts.push(account);
         }
@@ -502,6 +563,19 @@ impl AccountCollection {
         }
 
         if let Some(account) = &mut self.asset_lock_shielded_address_topup {
+            accounts.push(account);
+        }
+
+        if let Some(account) = &mut self.blockchain_identities_ecdsa {
+            accounts.push(account);
+        }
+        if let Some(account) = &mut self.blockchain_identities_ecdsa_hash160 {
+            accounts.push(account);
+        }
+        if let Some(account) = &mut self.blockchain_identities_bls {
+            accounts.push(account);
+        }
+        if let Some(account) = &mut self.blockchain_identities_bls_hash160 {
             accounts.push(account);
         }
 
@@ -607,6 +681,10 @@ impl AccountCollection {
             && self.identity_invitation.is_none()
             && self.asset_lock_address_topup.is_none()
             && self.asset_lock_shielded_address_topup.is_none()
+            && self.blockchain_identities_ecdsa.is_none()
+            && self.blockchain_identities_ecdsa_hash160.is_none()
+            && self.blockchain_identities_bls.is_none()
+            && self.blockchain_identities_bls_hash160.is_none()
             && self.provider_voting_keys.is_none()
             && self.provider_owner_keys.is_none();
 
@@ -634,6 +712,10 @@ impl AccountCollection {
         self.identity_invitation = None;
         self.asset_lock_address_topup = None;
         self.asset_lock_shielded_address_topup = None;
+        self.blockchain_identities_ecdsa = None;
+        self.blockchain_identities_ecdsa_hash160 = None;
+        self.blockchain_identities_bls = None;
+        self.blockchain_identities_bls_hash160 = None;
         self.provider_voting_keys = None;
         self.provider_owner_keys = None;
         #[cfg(feature = "bls")]

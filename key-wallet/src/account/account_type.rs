@@ -59,6 +59,14 @@ pub enum AccountType {
     /// Asset lock shielded address top-up funding (subfeature 5)
     /// Path: m/9'/coinType'/5'/5'/index'
     AssetLockShieldedAddressTopUp,
+    /// m/9'/coinType'/5'/0' -- ECDSA identity authentication keys
+    BlockchainIdentitiesECDSA,
+    /// m/9'/coinType'/5'/1' -- ECDSA_HASH160 identity authentication keys
+    BlockchainIdentitiesECDSAHash160,
+    /// m/9'/coinType'/5'/2' -- BLS identity authentication keys
+    BlockchainIdentitiesBLS,
+    /// m/9'/coinType'/5'/3' -- BLS_HASH160 identity authentication keys
+    BlockchainIdentitiesBLSHash160,
     /// Provider voting keys (DIP-3)
     /// Path: `m/9'/5'/3'/1'/[key_index]`
     ProviderVotingKeys,
@@ -129,6 +137,16 @@ impl TryFrom<AccountType> for AccountTypeToCheck {
             AccountType::AssetLockShieldedAddressTopUp => {
                 Ok(AccountTypeToCheck::AssetLockShieldedAddressTopUp)
             }
+            AccountType::BlockchainIdentitiesECDSA => {
+                Ok(AccountTypeToCheck::BlockchainIdentitiesECDSA)
+            }
+            AccountType::BlockchainIdentitiesECDSAHash160 => {
+                Ok(AccountTypeToCheck::BlockchainIdentitiesECDSAHash160)
+            }
+            AccountType::BlockchainIdentitiesBLS => Ok(AccountTypeToCheck::BlockchainIdentitiesBLS),
+            AccountType::BlockchainIdentitiesBLSHash160 => {
+                Ok(AccountTypeToCheck::BlockchainIdentitiesBLSHash160)
+            }
             AccountType::ProviderVotingKeys => Ok(AccountTypeToCheck::ProviderVotingKeys),
             AccountType::ProviderOwnerKeys => Ok(AccountTypeToCheck::ProviderOwnerKeys),
             AccountType::ProviderOperatorKeys => Ok(AccountTypeToCheck::ProviderOperatorKeys),
@@ -182,6 +200,10 @@ impl AccountType {
             | Self::IdentityInvitation
             | Self::AssetLockAddressTopUp
             | Self::AssetLockShieldedAddressTopUp
+            | Self::BlockchainIdentitiesECDSA
+            | Self::BlockchainIdentitiesECDSAHash160
+            | Self::BlockchainIdentitiesBLS
+            | Self::BlockchainIdentitiesBLSHash160
             | Self::ProviderVotingKeys
             | Self::ProviderOwnerKeys
             | Self::ProviderOperatorKeys
@@ -231,6 +253,10 @@ impl AccountType {
             Self::AssetLockShieldedAddressTopUp {
                 ..
             } => DerivationPathReference::BlockchainAssetLockShieldedAddressTopupFunding,
+            Self::BlockchainIdentitiesECDSA
+            | Self::BlockchainIdentitiesECDSAHash160
+            | Self::BlockchainIdentitiesBLS
+            | Self::BlockchainIdentitiesBLSHash160 => DerivationPathReference::BlockchainIdentities,
             Self::ProviderVotingKeys {
                 ..
             } => DerivationPathReference::ProviderVotingKeys,
@@ -377,6 +403,26 @@ impl AccountType {
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
                 }
+            }
+            Self::BlockchainIdentitiesECDSA
+            | Self::BlockchainIdentitiesECDSAHash160
+            | Self::BlockchainIdentitiesBLS
+            | Self::BlockchainIdentitiesBLSHash160 => {
+                let subfeature = match self {
+                    Self::BlockchainIdentitiesECDSA => 0,
+                    Self::BlockchainIdentitiesECDSAHash160 => 1,
+                    Self::BlockchainIdentitiesBLS => 2,
+                    Self::BlockchainIdentitiesBLSHash160 => 3,
+                    _ => unreachable!(),
+                };
+                Ok(DerivationPath::from(vec![
+                    ChildNumber::from_hardened_idx(9).map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(coin_type)
+                        .map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(5).map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(subfeature)
+                        .map_err(crate::error::Error::Bip32)?,
+                ]))
             }
             Self::ProviderVotingKeys => {
                 // DIP-3: m/9'/5'/3'/1' (base path, actual key index added when deriving)

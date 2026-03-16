@@ -100,6 +100,22 @@ typedef enum {
      Asset lock shielded address top-up funding (subfeature 5)
      */
     ASSET_LOCK_SHIELDED_ADDRESS_TOP_UP = 15,
+    /*
+     Blockchain identity ECDSA keys (DIP-9) - Path: m/9'/coinType'/5'/0'
+     */
+    BLOCKCHAIN_IDENTITIES_ECDSA = 16,
+    /*
+     Blockchain identity ECDSA Hash160 keys (DIP-9) - Path: m/9'/coinType'/5'/1'
+     */
+    BLOCKCHAIN_IDENTITIES_ECDSA_HASH160 = 17,
+    /*
+     Blockchain identity BLS keys (DIP-9) - Path: m/9'/coinType'/5'/2'
+     */
+    BLOCKCHAIN_IDENTITIES_BLS = 18,
+    /*
+     Blockchain identity BLS Hash160 keys (DIP-9) - Path: m/9'/coinType'/5'/3'
+     */
+    BLOCKCHAIN_IDENTITIES_BLS_HASH160 = 19,
 } FFIAccountType;
 
 /*

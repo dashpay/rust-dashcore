@@ -243,6 +243,22 @@ impl ManagedCoreAccount {
                 addresses,
                 ..
             }
+            | ManagedAccountType::BlockchainIdentitiesECDSA {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesBLS {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesBLSHash160 {
+                addresses,
+                ..
+            }
             | ManagedAccountType::ProviderVotingKeys {
                 addresses,
                 ..
@@ -626,6 +642,22 @@ impl ManagedCoreAccount {
                 addresses,
                 ..
             }
+            | ManagedAccountType::BlockchainIdentitiesECDSA {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesBLS {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesBLSHash160 {
+                addresses,
+                ..
+            }
             | ManagedAccountType::ProviderVotingKeys {
                 addresses,
                 ..
@@ -720,6 +752,22 @@ impl ManagedCoreAccount {
                 ..
             }
             | ManagedAccountType::AssetLockShieldedAddressTopUp {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesECDSA {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesBLS {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesBLSHash160 {
                 addresses,
                 ..
             }
@@ -957,6 +1005,22 @@ impl ManagedCoreAccount {
                 ..
             }
             | ManagedAccountType::AssetLockShieldedAddressTopUp {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesECDSA {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesBLS {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::BlockchainIdentitiesBLSHash160 {
                 addresses,
                 ..
             }

@@ -70,6 +70,26 @@ pub enum ManagedAccountType {
         /// Asset lock shielded address top-up address pool
         addresses: AddressPool,
     },
+    /// m/9'/coinType'/5'/0' -- ECDSA identity authentication keys
+    BlockchainIdentitiesECDSA {
+        /// Address pool
+        addresses: AddressPool,
+    },
+    /// m/9'/coinType'/5'/1' -- ECDSA_HASH160 identity authentication keys
+    BlockchainIdentitiesECDSAHash160 {
+        /// Address pool
+        addresses: AddressPool,
+    },
+    /// m/9'/coinType'/5'/2' -- BLS identity authentication keys
+    BlockchainIdentitiesBLS {
+        /// Address pool
+        addresses: AddressPool,
+    },
+    /// m/9'/coinType'/5'/3' -- BLS_HASH160 identity authentication keys
+    BlockchainIdentitiesBLSHash160 {
+        /// Address pool
+        addresses: AddressPool,
+    },
     /// Provider voting keys (DIP-3)
     /// Path: `m/9'/5'/3'/1'/[key_index]`
     ProviderVotingKeys {
@@ -161,6 +181,18 @@ impl ManagedAccountType {
             | Self::AssetLockShieldedAddressTopUp {
                 ..
             }
+            | Self::BlockchainIdentitiesECDSA {
+                ..
+            }
+            | Self::BlockchainIdentitiesECDSAHash160 {
+                ..
+            }
+            | Self::BlockchainIdentitiesBLS {
+                ..
+            }
+            | Self::BlockchainIdentitiesBLSHash160 {
+                ..
+            }
             | Self::ProviderVotingKeys {
                 ..
             }
@@ -242,6 +274,22 @@ impl ManagedAccountType {
                 addresses,
                 ..
             }
+            | Self::BlockchainIdentitiesECDSA {
+                addresses,
+                ..
+            }
+            | Self::BlockchainIdentitiesECDSAHash160 {
+                addresses,
+                ..
+            }
+            | Self::BlockchainIdentitiesBLS {
+                addresses,
+                ..
+            }
+            | Self::BlockchainIdentitiesBLSHash160 {
+                addresses,
+                ..
+            }
             | Self::ProviderVotingKeys {
                 addresses,
                 ..
@@ -310,6 +358,22 @@ impl ManagedAccountType {
                 ..
             }
             | Self::AssetLockShieldedAddressTopUp {
+                addresses,
+                ..
+            }
+            | Self::BlockchainIdentitiesECDSA {
+                addresses,
+                ..
+            }
+            | Self::BlockchainIdentitiesECDSAHash160 {
+                addresses,
+                ..
+            }
+            | Self::BlockchainIdentitiesBLS {
+                addresses,
+                ..
+            }
+            | Self::BlockchainIdentitiesBLSHash160 {
                 addresses,
                 ..
             }
@@ -432,6 +496,18 @@ impl ManagedAccountType {
             Self::AssetLockShieldedAddressTopUp {
                 ..
             } => AccountType::AssetLockShieldedAddressTopUp,
+            Self::BlockchainIdentitiesECDSA {
+                ..
+            } => AccountType::BlockchainIdentitiesECDSA,
+            Self::BlockchainIdentitiesECDSAHash160 {
+                ..
+            } => AccountType::BlockchainIdentitiesECDSAHash160,
+            Self::BlockchainIdentitiesBLS {
+                ..
+            } => AccountType::BlockchainIdentitiesBLS,
+            Self::BlockchainIdentitiesBLSHash160 {
+                ..
+            } => AccountType::BlockchainIdentitiesBLSHash160,
             Self::ProviderVotingKeys {
                 ..
             } => AccountType::ProviderVotingKeys,
@@ -637,6 +713,41 @@ impl ManagedAccountType {
 
                 Ok(Self::AssetLockShieldedAddressTopUp {
                     addresses: pool,
+                })
+            }
+            AccountType::BlockchainIdentitiesECDSA
+            | AccountType::BlockchainIdentitiesECDSAHash160
+            | AccountType::BlockchainIdentitiesBLS
+            | AccountType::BlockchainIdentitiesBLSHash160 => {
+                let path = account_type
+                    .derivation_path(network)
+                    .unwrap_or_else(|_| DerivationPath::master());
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+
+                Ok(match account_type {
+                    AccountType::BlockchainIdentitiesECDSA => Self::BlockchainIdentitiesECDSA {
+                        addresses: pool,
+                    },
+                    AccountType::BlockchainIdentitiesECDSAHash160 => {
+                        Self::BlockchainIdentitiesECDSAHash160 {
+                            addresses: pool,
+                        }
+                    }
+                    AccountType::BlockchainIdentitiesBLS => Self::BlockchainIdentitiesBLS {
+                        addresses: pool,
+                    },
+                    AccountType::BlockchainIdentitiesBLSHash160 => {
+                        Self::BlockchainIdentitiesBLSHash160 {
+                            addresses: pool,
+                        }
+                    }
+                    _ => unreachable!(),
                 })
             }
             AccountType::ProviderVotingKeys => {

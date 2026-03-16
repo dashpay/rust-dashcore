@@ -75,6 +75,10 @@ impl TransactionRouter {
                 vec![
                     AccountTypeToCheck::StandardBIP44,
                     AccountTypeToCheck::StandardBIP32,
+                    AccountTypeToCheck::BlockchainIdentitiesECDSA,
+                    AccountTypeToCheck::BlockchainIdentitiesECDSAHash160,
+                    AccountTypeToCheck::BlockchainIdentitiesBLS,
+                    AccountTypeToCheck::BlockchainIdentitiesBLSHash160,
                     AccountTypeToCheck::DashpayReceivingFunds,
                     AccountTypeToCheck::DashpayExternalAccount,
                 ]
@@ -179,6 +183,10 @@ pub enum AccountTypeToCheck {
     IdentityInvitation,
     AssetLockAddressTopUp,
     AssetLockShieldedAddressTopUp,
+    BlockchainIdentitiesECDSA,
+    BlockchainIdentitiesECDSAHash160,
+    BlockchainIdentitiesBLS,
+    BlockchainIdentitiesBLSHash160,
     ProviderVotingKeys,
     ProviderOwnerKeys,
     ProviderOperatorKeys,
@@ -234,6 +242,18 @@ impl TryFrom<ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::AssetLockShieldedAddressTopUp {
                 ..
             } => Ok(AccountTypeToCheck::AssetLockShieldedAddressTopUp),
+            ManagedAccountType::BlockchainIdentitiesECDSA {
+                ..
+            } => Ok(AccountTypeToCheck::BlockchainIdentitiesECDSA),
+            ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                ..
+            } => Ok(AccountTypeToCheck::BlockchainIdentitiesECDSAHash160),
+            ManagedAccountType::BlockchainIdentitiesBLS {
+                ..
+            } => Ok(AccountTypeToCheck::BlockchainIdentitiesBLS),
+            ManagedAccountType::BlockchainIdentitiesBLSHash160 {
+                ..
+            } => Ok(AccountTypeToCheck::BlockchainIdentitiesBLSHash160),
             ManagedAccountType::ProviderVotingKeys {
                 ..
             } => Ok(AccountTypeToCheck::ProviderVotingKeys),
@@ -299,6 +319,18 @@ impl TryFrom<&ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::AssetLockShieldedAddressTopUp {
                 ..
             } => Ok(AccountTypeToCheck::AssetLockShieldedAddressTopUp),
+            ManagedAccountType::BlockchainIdentitiesECDSA {
+                ..
+            } => Ok(AccountTypeToCheck::BlockchainIdentitiesECDSA),
+            ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                ..
+            } => Ok(AccountTypeToCheck::BlockchainIdentitiesECDSAHash160),
+            ManagedAccountType::BlockchainIdentitiesBLS {
+                ..
+            } => Ok(AccountTypeToCheck::BlockchainIdentitiesBLS),
+            ManagedAccountType::BlockchainIdentitiesBLSHash160 {
+                ..
+            } => Ok(AccountTypeToCheck::BlockchainIdentitiesBLSHash160),
             ManagedAccountType::ProviderVotingKeys {
                 ..
             } => Ok(AccountTypeToCheck::ProviderVotingKeys),

@@ -92,6 +92,22 @@ pub enum CoreAccountTypeMatch {
     AssetLockShieldedAddressTopUp {
         involved_addresses: Vec<AddressInfo>,
     },
+    /// Blockchain identities ECDSA account
+    BlockchainIdentitiesECDSA {
+        involved_addresses: Vec<AddressInfo>,
+    },
+    /// Blockchain identities ECDSA_HASH160 account
+    BlockchainIdentitiesECDSAHash160 {
+        involved_addresses: Vec<AddressInfo>,
+    },
+    /// Blockchain identities BLS account
+    BlockchainIdentitiesBLS {
+        involved_addresses: Vec<AddressInfo>,
+    },
+    /// Blockchain identities BLS_HASH160 account
+    BlockchainIdentitiesBLSHash160 {
+        involved_addresses: Vec<AddressInfo>,
+    },
     /// Provider voting keys account (no index)
     ProviderVotingKeys {
         involved_addresses: Vec<AddressInfo>,
@@ -159,6 +175,18 @@ impl CoreAccountTypeMatch {
                 involved_addresses,
             }
             | CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::BlockchainIdentitiesECDSA {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::BlockchainIdentitiesECDSAHash160 {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::BlockchainIdentitiesBLS {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::BlockchainIdentitiesBLSHash160 {
                 involved_addresses,
             }
             | CoreAccountTypeMatch::ProviderVotingKeys {
@@ -245,6 +273,18 @@ impl CoreAccountTypeMatch {
             CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
                 ..
             } => AccountTypeToCheck::AssetLockShieldedAddressTopUp,
+            CoreAccountTypeMatch::BlockchainIdentitiesECDSA {
+                ..
+            } => AccountTypeToCheck::BlockchainIdentitiesECDSA,
+            CoreAccountTypeMatch::BlockchainIdentitiesECDSAHash160 {
+                ..
+            } => AccountTypeToCheck::BlockchainIdentitiesECDSAHash160,
+            CoreAccountTypeMatch::BlockchainIdentitiesBLS {
+                ..
+            } => AccountTypeToCheck::BlockchainIdentitiesBLS,
+            CoreAccountTypeMatch::BlockchainIdentitiesBLSHash160 {
+                ..
+            } => AccountTypeToCheck::BlockchainIdentitiesBLSHash160,
             CoreAccountTypeMatch::ProviderVotingKeys {
                 ..
             } => AccountTypeToCheck::ProviderVotingKeys,
@@ -359,6 +399,30 @@ impl ManagedAccountCollection {
                 .asset_lock_shielded_address_topup
                 .as_ref()
                 .and_then(|account| account.check_asset_lock_transaction_for_match(tx, None))
+                .into_iter()
+                .collect(),
+            AccountTypeToCheck::BlockchainIdentitiesECDSA => self
+                .blockchain_identities_ecdsa
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None))
+                .into_iter()
+                .collect(),
+            AccountTypeToCheck::BlockchainIdentitiesECDSAHash160 => self
+                .blockchain_identities_ecdsa_hash160
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None))
+                .into_iter()
+                .collect(),
+            AccountTypeToCheck::BlockchainIdentitiesBLS => self
+                .blockchain_identities_bls
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None))
+                .into_iter()
+                .collect(),
+            AccountTypeToCheck::BlockchainIdentitiesBLSHash160 => self
+                .blockchain_identities_bls_hash160
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None))
                 .into_iter()
                 .collect(),
             AccountTypeToCheck::ProviderVotingKeys => self
@@ -638,6 +702,26 @@ impl ManagedCoreAccount {
                 ManagedAccountType::AssetLockShieldedAddressTopUp {
                     ..
                 } => CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::BlockchainIdentitiesECDSA {
+                    ..
+                } => CoreAccountTypeMatch::BlockchainIdentitiesECDSA {
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::BlockchainIdentitiesECDSAHash160 {
+                    ..
+                } => CoreAccountTypeMatch::BlockchainIdentitiesECDSAHash160 {
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::BlockchainIdentitiesBLS {
+                    ..
+                } => CoreAccountTypeMatch::BlockchainIdentitiesBLS {
+                    involved_addresses: involved_other_addresses,
+                },
+                ManagedAccountType::BlockchainIdentitiesBLSHash160 {
+                    ..
+                } => CoreAccountTypeMatch::BlockchainIdentitiesBLSHash160 {
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::ProviderVotingKeys {
