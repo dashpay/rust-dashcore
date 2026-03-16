@@ -1,0 +1,29 @@
+name: CodeRabbit Review Label
+
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    if: github.event.review.user.login == 'coderabbitai[bot]'
+    steps:
+      - name: Add or remove ready-for-review label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          EVENT_ACTION: ${{ github.event.action }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT_ACTION" = "submitted" ] && [ "$REVIEW_STATE" = "approved" ]; then
+            echo "CodeRabbit approved, adding ready-for-review label."
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "ready-for-review"
+          elif [ "$EVENT_ACTION" = "dismissed" ] || [ "$REVIEW_STATE" = "changes_requested" ]; then
+            echo "CodeRabbit review dismissed or changes requested, removing ready-for-review label."
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "ready-for-review" || true
+          fi
