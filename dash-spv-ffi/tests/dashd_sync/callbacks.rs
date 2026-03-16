@@ -117,9 +117,9 @@ extern "C" fn on_sync_start(manager_id: FFIManagerId, user_data: *mut c_void) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.sync_start_count.fetch_add(1, Ordering::SeqCst);
     let seq = tracker.sequence_counter.fetch_add(1, Ordering::SeqCst);
     tracker.sync_start_seq.store(seq, Ordering::SeqCst);
+    tracker.sync_start_count.fetch_add(1, Ordering::SeqCst);
     tracing::debug!("on_sync_start: manager={:?}, seq={}", manager_id, seq);
 }
 
@@ -127,8 +127,8 @@ extern "C" fn on_block_headers_stored(tip_height: u32, user_data: *mut c_void) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.block_headers_stored_count.fetch_add(1, Ordering::SeqCst);
     tracker.last_header_tip.store(tip_height, Ordering::SeqCst);
+    tracker.block_headers_stored_count.fetch_add(1, Ordering::SeqCst);
     tracing::debug!("on_block_headers_stored: tip={}", tip_height);
 }
 
@@ -136,10 +136,10 @@ extern "C" fn on_block_header_sync_complete(tip_height: u32, user_data: *mut c_v
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.block_header_sync_complete_count.fetch_add(1, Ordering::SeqCst);
     tracker.last_header_tip.store(tip_height, Ordering::SeqCst);
     let seq = tracker.sequence_counter.fetch_add(1, Ordering::SeqCst);
     tracker.header_complete_seq.store(seq, Ordering::SeqCst);
+    tracker.block_header_sync_complete_count.fetch_add(1, Ordering::SeqCst);
     tracing::info!("on_block_header_sync_complete: tip={}, seq={}", tip_height, seq);
 }
 
@@ -152,11 +152,11 @@ extern "C" fn on_filter_headers_stored(
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.filter_headers_stored_count.fetch_add(1, Ordering::SeqCst);
     tracker.last_filter_tip.store(tip_height, Ordering::SeqCst);
     if let Ok(mut ranges) = tracker.filter_header_ranges.lock() {
         ranges.push((start_height, end_height, tip_height));
     }
+    tracker.filter_headers_stored_count.fetch_add(1, Ordering::SeqCst);
     tracing::debug!(
         "on_filter_headers_stored: start={}, end={}, tip={}",
         start_height,
@@ -169,10 +169,10 @@ extern "C" fn on_filter_headers_sync_complete(tip_height: u32, user_data: *mut c
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.filter_headers_sync_complete_count.fetch_add(1, Ordering::SeqCst);
     tracker.last_filter_tip.store(tip_height, Ordering::SeqCst);
     let seq = tracker.sequence_counter.fetch_add(1, Ordering::SeqCst);
     tracker.filter_header_complete_seq.store(seq, Ordering::SeqCst);
+    tracker.filter_headers_sync_complete_count.fetch_add(1, Ordering::SeqCst);
     tracing::info!("on_filter_headers_sync_complete: tip={}, seq={}", tip_height, seq);
 }
 
@@ -188,10 +188,10 @@ extern "C" fn on_filters_sync_complete(tip_height: u32, user_data: *mut c_void) 
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.filters_sync_complete_count.fetch_add(1, Ordering::SeqCst);
     tracker.last_filter_tip.store(tip_height, Ordering::SeqCst);
     let seq = tracker.sequence_counter.fetch_add(1, Ordering::SeqCst);
     tracker.filters_sync_complete_seq.store(seq, Ordering::SeqCst);
+    tracker.filters_sync_complete_count.fetch_add(1, Ordering::SeqCst);
     tracing::info!("on_filters_sync_complete: tip={}, seq={}", tip_height, seq);
 }
 
@@ -216,10 +216,10 @@ extern "C" fn on_block_processed(
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.block_processed_count.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut heights) = tracker.processed_block_heights.lock() {
         heights.push(height);
     }
+    tracker.block_processed_count.fetch_add(1, Ordering::SeqCst);
     tracing::debug!("on_block_processed: height={}, new_addresses={}", height, new_address_count);
 }
 
@@ -267,21 +267,21 @@ extern "C" fn on_manager_error(
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.manager_error_count.fetch_add(1, Ordering::SeqCst);
     let error_str = unsafe { cstr_or_unknown(error) };
     tracing::error!("on_manager_error: manager={:?}, error={}", manager_id, error_str);
     tracker.errors.lock().unwrap_or_else(|e| e.into_inner()).push(error_str);
+    tracker.manager_error_count.fetch_add(1, Ordering::SeqCst);
 }
 
 extern "C" fn on_sync_complete(header_tip: u32, cycle: u32, user_data: *mut c_void) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.sync_complete_count.fetch_add(1, Ordering::SeqCst);
     tracker.last_header_tip.store(header_tip, Ordering::SeqCst);
     tracker.last_sync_cycle.store(cycle, Ordering::SeqCst);
     let seq = tracker.sequence_counter.fetch_add(1, Ordering::SeqCst);
     tracker.sync_complete_seq.store(seq, Ordering::SeqCst);
+    tracker.sync_complete_count.fetch_add(1, Ordering::SeqCst);
     tracing::info!("on_sync_complete: header_tip={}, cycle={}, seq={}", header_tip, cycle, seq);
 }
 
@@ -289,12 +289,12 @@ extern "C" fn on_peer_connected(address: *const c_char, user_data: *mut c_void) 
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.peer_connected_count.fetch_add(1, Ordering::SeqCst);
     let addr_str = unsafe { cstr_or_unknown(address) };
     tracing::info!("on_peer_connected: {}", addr_str);
     if let Ok(mut peers) = tracker.connected_peers.lock() {
         peers.push(addr_str);
     }
+    tracker.peer_connected_count.fetch_add(1, Ordering::SeqCst);
 }
 
 extern "C" fn on_peer_disconnected(address: *const c_char, user_data: *mut c_void) {
@@ -310,9 +310,9 @@ extern "C" fn on_peers_updated(connected_count: u32, best_height: u32, user_data
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.peers_updated_count.fetch_add(1, Ordering::SeqCst);
     tracker.last_connected_peer_count.store(connected_count, Ordering::SeqCst);
     tracker.last_best_height.store(best_height, Ordering::SeqCst);
+    tracker.peers_updated_count.fetch_add(1, Ordering::SeqCst);
     tracing::debug!("on_peers_updated: connected={}, best_height={}", connected_count, best_height);
 }
 
@@ -327,7 +327,6 @@ extern "C" fn on_transaction_received(
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
     if !txid.is_null() {
         let txid_bytes = unsafe { *txid };
         if let Ok(mut txids) = tracker.received_txids.lock() {
@@ -337,6 +336,7 @@ extern "C" fn on_transaction_received(
     if let Ok(mut amounts) = tracker.received_amounts.lock() {
         amounts.push(amount);
     }
+    tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
     tracing::info!(
         "on_transaction_received: wallet={}, account={}, amount={}",
@@ -357,9 +357,9 @@ extern "C" fn on_balance_updated(
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.balance_updated_count.fetch_add(1, Ordering::SeqCst);
     tracker.last_spendable.store(spendable, Ordering::SeqCst);
     tracker.last_unconfirmed.store(unconfirmed, Ordering::SeqCst);
+    tracker.balance_updated_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
     tracing::info!(
         "on_balance_updated: wallet={}, spendable={}, unconfirmed={}, immature={}, locked={}",
