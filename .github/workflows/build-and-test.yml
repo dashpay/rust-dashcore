@@ -6,9 +6,6 @@ on:
       os:
         required: true
         type: string
-      groups:
-        required: true
-        type: string
       coverage:
         required: false
         type: boolean
@@ -30,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ${{ fromJson(inputs.groups) }}
+        group: ["core", "spv", "wallet", "ffi", "rpc"]
     env:
       RUST_BACKTRACE: 1
     steps:
