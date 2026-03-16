@@ -153,9 +153,11 @@ extern "C" fn on_filter_headers_stored(
         return;
     };
     tracker.last_filter_tip.store(tip_height, Ordering::SeqCst);
-    if let Ok(mut ranges) = tracker.filter_header_ranges.lock() {
-        ranges.push((start_height, end_height, tip_height));
-    }
+    tracker.filter_header_ranges.lock().unwrap_or_else(|e| e.into_inner()).push((
+        start_height,
+        end_height,
+        tip_height,
+    ));
     tracker.filter_headers_stored_count.fetch_add(1, Ordering::SeqCst);
     tracing::debug!(
         "on_filter_headers_stored: start={}, end={}, tip={}",
@@ -216,9 +218,7 @@ extern "C" fn on_block_processed(
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    if let Ok(mut heights) = tracker.processed_block_heights.lock() {
-        heights.push(height);
-    }
+    tracker.processed_block_heights.lock().unwrap_or_else(|e| e.into_inner()).push(height);
     tracker.block_processed_count.fetch_add(1, Ordering::SeqCst);
     tracing::debug!("on_block_processed: height={}, new_addresses={}", height, new_address_count);
 }
@@ -291,9 +291,7 @@ extern "C" fn on_peer_connected(address: *const c_char, user_data: *mut c_void) 
     };
     let addr_str = unsafe { cstr_or_unknown(address) };
     tracing::info!("on_peer_connected: {}", addr_str);
-    if let Ok(mut peers) = tracker.connected_peers.lock() {
-        peers.push(addr_str);
-    }
+    tracker.connected_peers.lock().unwrap_or_else(|e| e.into_inner()).push(addr_str);
     tracker.peer_connected_count.fetch_add(1, Ordering::SeqCst);
 }
 
@@ -329,13 +327,9 @@ extern "C" fn on_transaction_received(
     };
     if !txid.is_null() {
         let txid_bytes = unsafe { *txid };
-        if let Ok(mut txids) = tracker.received_txids.lock() {
-            txids.push(txid_bytes);
-        }
+        tracker.received_txids.lock().unwrap_or_else(|e| e.into_inner()).push(txid_bytes);
     }
-    if let Ok(mut amounts) = tracker.received_amounts.lock() {
-        amounts.push(amount);
-    }
+    tracker.received_amounts.lock().unwrap_or_else(|e| e.into_inner()).push(amount);
     tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
     tracing::info!(
