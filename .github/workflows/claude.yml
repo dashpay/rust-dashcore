@@ -1,0 +1,110 @@
+name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && github.event.action == 'assigned' && github.event.assignee.login == 'claude')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout Dash Core reference
+        uses: actions/checkout@v4
+        with:
+          repository: dashpay/dash
+          path: .reference/dash
+          sparse-checkout: src
+          fetch-depth: 1
+
+      - name: Checkout Dash DIPs
+        uses: actions/checkout@v4
+        with:
+          repository: dashpay/dips
+          path: .reference/dips
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          assignee_trigger: "claude"
+          settings: |
+            {
+              "permissions": {
+                "allow": [
+                  "Bash(cargo *)",
+                  "Bash(rustup *)",
+                  "Bash(git *)",
+                  "Bash(gh *)"
+                ]
+              }
+            }
+          claude_args: |
+            --max-turns 50
+            --append-system-prompt "## Code Review Guidelines
+
+            You are reviewing a Dash cryptocurrency protocol library written in Rust. This is security-sensitive code.
+
+            ### Review Process
+            When reviewing a PR, launch 3 independent subagents in parallel, each with a different perspective:
+            1. Rust Systems Agent: focuses on correctness, error handling, type safety, memory safety, and compilation (runs cargo clippy/check). When the PR touches FFI code, also reviews C ABI safety, null pointer checks, and destroy/free pairing.
+            2. Dash Protocol Agent: focuses on protocol compliance by cross-referencing changes against Dash Core C++ (.reference/dash/src/) and DIPs (.reference/dips/). Checks P2P message formats, serialization, consensus rules, and DIP adherence. When the PR does not touch protocol code, this agent should still verify the changes do not accidentally break protocol assumptions.
+            3. Code Quality Agent: focuses on test coverage, code style rules (see below), visibility modifiers, import organization, duplication, and scope creep.
+            After all three agents complete, consolidate their findings into a single review. Deduplicate overlapping concerns, prioritize by severity, and post as one cohesive review.
+
+            ### Review Focus
+            - Correctness: verify logic, edge cases, and error handling
+            - Safety: check for memory safety issues especially in FFI boundaries (dash-spv-ffi, key-wallet-ffi)
+            - Security: flag any potential for private key leakage, command injection, or unsafe deserialization
+            - Code quality: verify proper error types (thiserror), no hardcoded values, correct visibility modifiers
+            - Tests: check that new code has adequate test coverage and that edge cases are tested
+            - Run cargo clippy and cargo check when reviewing Rust changes to catch compilation issues
+
+            ### Dash Protocol Reference
+            When the PR touches protocol-level code (transactions, blocks, masternodes, quorums, ChainLocks, InstantSend, special transactions, X11, P2P network messages, peer management, or any network protocol handling), cross-reference against:
+            - Dash Core C++ implementation at .reference/dash/src/ (especially net.cpp, net_processing.cpp, protocol.h for P2P)
+            - Dash Improvement Proposals at .reference/dips/
+            Verify that the Rust implementation correctly follows the Dash Core P2P protocol: message formats, serialization, handshake sequences, version negotiation, inventory handling, and service flags must match the C++ reference. Flag any deviations from the protocol or the relevant DIPs.
+
+            ### Code Style Rules (enforce these strictly)
+            - Comments must document what code does, never what it fixed or replaced. No references to previous implementations or solved problems.
+            - Avoid numeric type suffixes (e.g., 1u32, 0usize) when the type is clear from context.
+            - Use the most restrictive visibility possible. Default to private (pub(crate), pub(super), or no modifier). Never use pub if pub(crate) suffices.
+            - All imports must be at the top of the file/module. Flag any inline fully-qualified paths (e.g., crate::foo::Bar::method()) when a top-level use import would work.
+            - Only add comments when they provide meaningful context that is not obvious from the code itself. Do not comment self-explanatory code or simple one-liners.
+            - No numbered comments or references to line numbers in comments.
+            - Reuse existing data structures and code. Flag duplication that could use existing types or helpers.
+            - Proper error handling is required. No temporary fixes, no swallowing errors, no unwrap() in non-test code without justification.
+            - Changes should be minimal and focused. Flag any unnecessary refactoring, feature additions, or scope creep beyond what the PR description states.
+
+            ### What Not To Do
+            - Do not nitpick formatting if it passes cargo fmt
+            - Do not suggest adding emojis
+            - Do not use uppercase emphasis in review comments
+            - Do not suggest changes that are unrelated to the PR's stated purpose"
