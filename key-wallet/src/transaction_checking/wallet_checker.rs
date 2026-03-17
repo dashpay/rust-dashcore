@@ -5,6 +5,7 @@
 
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
@@ -189,6 +190,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         account.mark_utxos_instant_send(&txid);
                     }
                 }
+                self.update_balance();
                 return result;
             }
             // Only proceed if the new context is a block confirmation
@@ -255,6 +257,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 "New wallet transaction detected"
             );
         }
+
+        self.update_balance();
 
         result
     }

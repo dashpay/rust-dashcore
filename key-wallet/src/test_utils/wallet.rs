@@ -8,7 +8,6 @@ use crate::transaction_checking::{
 };
 use crate::utxo::Utxo;
 use crate::wallet::initialization::WalletAccountCreationOptions;
-use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::ExtendedPubKey;
 
@@ -74,17 +73,13 @@ impl TestWalletContext {
         self.bip44_account().utxos.values().next().expect("Should have UTXO")
     }
 
-    /// Processes a transaction: runs `check_core_transaction` with `update_state = true`
-    /// and refreshes the cached balance for relevant results.
+    /// Processes a transaction: runs `check_core_transaction` with `update_state = true`.
     pub async fn check_transaction_and_update_balance(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,
     ) -> TransactionCheckResult {
-        let result =
-            self.managed_wallet.check_core_transaction(tx, context, &mut self.wallet, true).await;
-        self.managed_wallet.update_balance();
-        result
+        self.managed_wallet.check_core_transaction(tx, context, &mut self.wallet, true).await
     }
 
     /// Funds the wallet's receive address via a mempool transaction and
