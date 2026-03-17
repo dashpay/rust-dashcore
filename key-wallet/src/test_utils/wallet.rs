@@ -79,7 +79,7 @@ impl TestWalletContext {
         tx: &Transaction,
         context: TransactionContext,
     ) -> TransactionCheckResult {
-        self.managed_wallet.check_core_transaction(tx, context, &mut self.wallet, true).await
+        self.managed_wallet.check_core_transaction(tx, context, &mut self.wallet, true, true).await
     }
 
     /// Funds the wallet's receive address via a mempool transaction and
@@ -87,8 +87,7 @@ impl TestWalletContext {
     pub async fn with_mempool_funding(mut self, amount: u64) -> (Self, Transaction) {
         let tx = Transaction::dummy(&self.receive_address, 0..1, &[amount]);
 
-        let result =
-            self.check_transaction(&tx, TransactionContext::Mempool).await;
+        let result = self.check_transaction(&tx, TransactionContext::Mempool).await;
         assert!(result.is_relevant);
         assert!(result.is_new_transaction);
 

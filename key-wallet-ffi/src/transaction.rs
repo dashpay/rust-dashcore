@@ -485,8 +485,9 @@ pub unsafe extern "C" fn wallet_check_transaction(
         };
 
         // Block on the async check_transaction call
-        let check_result = tokio::runtime::Handle::current()
-            .block_on(managed_info.check_core_transaction(&tx, context, wallet_mut, update_state));
+        let check_result = tokio::runtime::Handle::current().block_on(
+            managed_info.check_core_transaction(&tx, context, wallet_mut, update_state, true),
+        );
 
         // If we updated state, we need to update the wallet's managed info
         // Note: This would require storing ManagedWalletInfo in FFIWallet

@@ -31,7 +31,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 timestamp: Some(timestamp),
             };
 
-            let check_result = self.check_transaction_in_all_wallets(tx, context, true).await;
+            let check_result =
+                self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
             if !check_result.affected_wallets.is_empty() {
                 if check_result.is_new_transaction {
@@ -53,10 +54,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let context = TransactionContext::Mempool;
 
         // Check transaction against all wallets
-        self.check_transaction_in_all_wallets(
-            tx, context, true, // update state
-        )
-        .await;
+        self.check_transaction_in_all_wallets(tx, context, true, true).await;
     }
 
     fn monitored_addresses(&self) -> Vec<Address> {

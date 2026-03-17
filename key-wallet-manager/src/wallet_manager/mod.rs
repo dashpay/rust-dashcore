@@ -499,6 +499,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         tx: &Transaction,
         context: TransactionContext,
         update_state_if_found: bool,
+        update_balance: bool,
     ) -> CheckTransactionsResult {
         let mut result = CheckTransactionsResult::default();
 
@@ -513,7 +514,13 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
             if let (Some(wallet), Some(wallet_info)) = (wallet_opt, wallet_info_opt) {
                 let check_result = wallet_info
-                    .check_core_transaction(tx, context, wallet, update_state_if_found)
+                    .check_core_transaction(
+                        tx,
+                        context,
+                        wallet,
+                        update_state_if_found,
+                        update_balance,
+                    )
                     .await;
 
                 // If the transaction is relevant

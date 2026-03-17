@@ -117,6 +117,10 @@ pub trait WalletTransactionChecker {
     /// If `update_state` is true, updates account state (transactions, UTXOs, balances, addresses).
     /// If `update_state` is false, only checks relevance without modifying state (useful for previews).
     ///
+    /// If `update_balance` is true, refreshes the cached wallet balance after mutations.
+    /// Callers that batch multiple transactions (e.g. block processing) can pass `false`
+    /// and refresh once at the end via `update_synced_height`.
+    ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
     async fn check_core_transaction(
@@ -125,6 +129,7 @@ pub trait WalletTransactionChecker {
         context: TransactionContext,
         wallet: &mut Wallet,
         update_state: bool,
+        update_balance: bool,
     ) -> TransactionCheckResult;
 }
 
@@ -136,6 +141,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         context: TransactionContext,
         wallet: &mut Wallet,
         update_state: bool,
+        update_balance: bool,
     ) -> TransactionCheckResult {
         // Classify the transaction
         let tx_type = TransactionRouter::classify_transaction(tx);
@@ -190,7 +196,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         account.mark_utxos_instant_send(&txid);
                     }
                 }
-                self.update_balance();
+                if update_balance {
+                    self.update_balance();
+                }
                 return result;
             }
             // Only proceed if the new context is a block confirmation
@@ -258,7 +266,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             );
         }
 
-        self.update_balance();
+        if update_balance {
+            self.update_balance();
+        }
 
         result
     }
@@ -302,7 +312,7 @@ mod tests {
 
         let mut wallet_mut = wallet;
         let result =
-            managed_wallet.check_core_transaction(&tx, context, &mut wallet_mut, true).await;
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet_mut, true, true).await;
 
         // Should return default result with no relevance
         assert!(!result.is_relevant);
@@ -383,7 +393,7 @@ mod tests {
 
             // This should exercise BIP32 account branch in the update logic
             let result =
-                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
             // Should be relevant since it's our address
             assert!(result.is_relevant);
@@ -420,7 +430,7 @@ mod tests {
 
             // This should exercise CoinJoin account branch in the update logic
             let result =
-                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
             // Since this is not a coinjoin looking transaction, we should not pick up on it.
             assert!(!result.is_relevant);
@@ -467,8 +477,9 @@ mod tests {
             timestamp: Some(1234567890),
         };
 
-        let result =
-            managed_wallet.check_core_transaction(&coinbase_tx, context, &mut wallet, true).await;
+        let result = managed_wallet
+            .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
+            .await;
         // Set synced_height to block where coinbase was received to trigger balance updates.
         managed_wallet.update_synced_height(block_height);
 
@@ -523,7 +534,7 @@ mod tests {
         };
 
         let funding_result = managed_wallet
-            .check_core_transaction(&funding_tx, funding_context, &mut wallet, true)
+            .check_core_transaction(&funding_tx, funding_context, &mut wallet, true, true)
             .await;
         assert!(funding_result.is_relevant, "Funding transaction must be relevant");
         assert_eq!(funding_result.total_received, funding_value);
@@ -559,7 +570,7 @@ mod tests {
         };
 
         let spend_result = managed_wallet
-            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true)
+            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
             .await;
 
         assert!(spend_result.is_relevant, "Spend transaction should be detected");
@@ -621,8 +632,9 @@ mod tests {
         };
 
         // Process the coinbase transaction
-        let result =
-            managed_wallet.check_core_transaction(&coinbase_tx, context, &mut wallet, true).await;
+        let result = managed_wallet
+            .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
+            .await;
         // Set synced_height to block where coinbase was received to trigger balance updates.
         managed_wallet.update_synced_height(block_height);
 
@@ -699,7 +711,8 @@ mod tests {
         // Test with Mempool context
         let context = TransactionContext::Mempool;
 
-        let result = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+        let result =
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -734,7 +747,8 @@ mod tests {
         };
 
         // First processing - should be marked as new
-        let result1 = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+        let result1 =
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
         assert!(result1.is_relevant, "Transaction should be relevant");
         assert!(
@@ -758,7 +772,8 @@ mod tests {
         );
 
         // Second processing (simulating rescan) - should be marked as existing
-        let result2 = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+        let result2 =
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
         assert!(result2.is_relevant, "Transaction should still be relevant on rescan");
         assert!(
@@ -839,7 +854,7 @@ mod tests {
         };
 
         let spend_result = managed_wallet
-            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true)
+            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
             .await;
 
         // Spending tx should be detected because of the change output
@@ -868,7 +883,7 @@ mod tests {
         };
 
         let fund_result = managed_wallet
-            .check_core_transaction(&funding_tx, fund_context, &mut wallet, true)
+            .check_core_transaction(&funding_tx, fund_context, &mut wallet, true, true)
             .await;
 
         // Funding tx should be detected
@@ -947,8 +962,7 @@ mod tests {
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
 
         // Stage 2: IS lock
-        let result =
-            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
@@ -959,8 +973,7 @@ mod tests {
         assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
 
         // Duplicate IS lock should be a no-op
-        let result_dup =
-            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result_dup = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(result_dup.is_relevant);
         assert!(!result_dup.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
@@ -992,8 +1005,7 @@ mod tests {
 
         // Stage 5: late IS lock on already-confirmed tx should be ignored
         let balance_before = ctx.managed_wallet.balance();
-        let result =
-            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), balance_before.spendable());
@@ -1007,8 +1019,7 @@ mod tests {
         let txid = tx.txid();
 
         // Arrive directly as IS (skipping plain mempool)
-        let result =
-            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(result.is_relevant);
         assert!(result.is_new_transaction);
         assert_eq!(result.total_received, 150_000);
@@ -1019,8 +1030,7 @@ mod tests {
         assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
 
         // A follow-up IS lock should be a no-op
-        let result2 =
-            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result2 = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(!result2.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
@@ -1084,8 +1094,7 @@ mod tests {
         let txid = tx.txid();
 
         // First, process the tx as mempool to get the AccountMatch
-        let result =
-            ctx.check_transaction(&tx, TransactionContext::Mempool).await;
+        let result = ctx.check_transaction(&tx, TransactionContext::Mempool).await;
         assert!(result.is_relevant);
         let account_match = result.affected_accounts[0].clone();
 

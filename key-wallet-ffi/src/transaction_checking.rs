@@ -209,8 +209,9 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     };
 
     // Block on the async check_transaction call
-    let check_result = tokio::runtime::Handle::current()
-        .block_on(managed_wallet.check_core_transaction(&tx, context, wallet_mut, update_state));
+    let check_result = tokio::runtime::Handle::current().block_on(
+        managed_wallet.check_core_transaction(&tx, context, wallet_mut, update_state, true),
+    );
 
     // Convert the result to FFI format
     let affected_accounts = if check_result.affected_accounts.is_empty() {

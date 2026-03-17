@@ -233,7 +233,8 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result: is_relevant={}, received={}",
@@ -369,7 +370,8 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (voting): is_relevant={}, received={}",
@@ -506,7 +508,8 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (operator): is_relevant={}, received={}",
@@ -710,7 +713,8 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (platform): is_relevant={}, received={}",
@@ -833,7 +837,8 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // Should be recognized as relevant due to voting and operator keys
     assert!(result.is_relevant, "Provider update registrar should be relevant");
@@ -927,7 +932,8 @@ async fn test_provider_revocation_classification_and_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // Should be recognized as relevant due to collateral return
     assert!(result.is_relevant, "Provider revocation with collateral return should be relevant");
