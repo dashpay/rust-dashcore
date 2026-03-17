@@ -123,7 +123,7 @@ async fn test_identity_registration_account_routing() {
     };
 
     // First check without updating state
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_core_transaction(&tx, context, &wallet, true).await;
 
     println!(
         "Identity registration transaction result: is_relevant={}, received={}, credit_conversion={}",
@@ -157,7 +157,7 @@ async fn test_identity_registration_account_routing() {
 async fn test_normal_payment_to_identity_address_not_detected() {
     let network = Network::Testnet;
 
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
@@ -201,10 +201,7 @@ async fn test_normal_payment_to_identity_address_not_detected() {
 
     let result = managed_wallet_info
         .check_core_transaction(
-            &normal_tx,
-            context,
-            &mut wallet,
-            true, // update state
+            &normal_tx, context, &wallet, true, // update state
         )
         .await;
 

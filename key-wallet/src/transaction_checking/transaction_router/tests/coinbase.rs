@@ -41,7 +41,7 @@ fn create_coinbase_transaction() -> Transaction {
 async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     let TestWalletContext {
         managed_wallet: mut managed_wallet_info,
-        mut wallet,
+        wallet,
         receive_address,
         ..
     } = TestWalletContext::new_random();
@@ -70,7 +70,7 @@ async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
         .check_core_transaction(
             &coinbase_tx,
             context,
-            &mut wallet,
+            &wallet,
             true, // update state
         )
         .await;
@@ -98,7 +98,7 @@ async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
 async fn test_coinbase_transaction_routing_to_bip44_change_address() {
     let TestWalletContext {
         managed_wallet: mut managed_wallet_info,
-        mut wallet,
+        wallet,
         xpub,
         ..
     } = TestWalletContext::new_random();
@@ -134,7 +134,7 @@ async fn test_coinbase_transaction_routing_to_bip44_change_address() {
         .check_core_transaction(
             &coinbase_tx,
             context,
-            &mut wallet,
+            &wallet,
             true, // update state
         )
         .await;
@@ -162,7 +162,7 @@ async fn test_coinbase_transaction_routing_to_bip44_change_address() {
 async fn test_update_state_flag_behavior() {
     let TestWalletContext {
         managed_wallet: mut managed_wallet_info,
-        mut wallet,
+        wallet,
         receive_address: address,
         ..
     } = TestWalletContext::new_random();
@@ -192,8 +192,7 @@ async fn test_update_state_flag_behavior() {
     };
 
     // First check with update_state = false
-    let result1 =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false).await;
+    let result1 = managed_wallet_info.check_core_transaction(&tx, context, &wallet, false).await;
 
     assert!(result1.is_relevant);
 
@@ -217,10 +216,7 @@ async fn test_update_state_flag_behavior() {
     // Now check with update_state = true
     let result2 = managed_wallet_info
         .check_core_transaction(
-            &tx,
-            context,
-            &mut wallet,
-            true, // update state
+            &tx, context, &wallet, true, // update state
         )
         .await;
 
@@ -289,7 +285,7 @@ fn test_coinbase_routing() {
 async fn test_coinbase_transaction_with_payload_routing() {
     let TestWalletContext {
         managed_wallet: mut managed_wallet_info,
-        mut wallet,
+        wallet,
         receive_address: address,
         ..
     } = TestWalletContext::new_random();
@@ -325,7 +321,7 @@ async fn test_coinbase_transaction_with_payload_routing() {
     };
 
     let result =
-        managed_wallet_info.check_core_transaction(&coinbase_tx, context, &mut wallet, true).await;
+        managed_wallet_info.check_core_transaction(&coinbase_tx, context, &wallet, true).await;
 
     assert!(result.is_relevant, "Coinbase with payload should be relevant");
     assert_eq!(result.total_received, 5000000000, "Should have received block reward");

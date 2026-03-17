@@ -71,7 +71,7 @@ fn test_asset_unlock_classification() {
 async fn test_asset_unlock_transaction_routing() {
     let TestWalletContext {
         managed_wallet: mut managed_wallet_info,
-        mut wallet,
+        wallet,
         receive_address: address,
         ..
     } = TestWalletContext::new_random();
@@ -117,7 +117,7 @@ async fn test_asset_unlock_transaction_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_core_transaction(&tx, context, &wallet, true).await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction should be recognized as relevant");
@@ -142,7 +142,7 @@ async fn test_asset_unlock_transaction_routing() {
 async fn test_asset_unlock_routing_to_bip32_account() {
     let TestWalletContext {
         managed_wallet: mut managed_wallet_info,
-        mut wallet,
+        wallet,
         receive_address: address,
         ..
     } = TestWalletContext::new_random();
@@ -178,7 +178,7 @@ async fn test_asset_unlock_routing_to_bip32_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result = managed_wallet_info.check_core_transaction(&tx, context, &wallet, true).await;
 
     // Should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction to BIP32 account should be relevant");

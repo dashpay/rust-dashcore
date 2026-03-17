@@ -506,9 +506,9 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         let wallet_ids: Vec<WalletId> = self.wallets.keys().cloned().collect();
 
         for wallet_id in wallet_ids {
-            // Get mutable references to both wallet and wallet_info
+            // Get wallet (immutable) and wallet_info (mutable) references
             // We need to use split borrowing to get around Rust's borrow checker
-            let wallet_opt = self.wallets.get_mut(&wallet_id);
+            let wallet_opt = self.wallets.get(&wallet_id);
             let wallet_info_opt = self.wallet_infos.get_mut(&wallet_id);
 
             if let (Some(wallet), Some(wallet_info)) = (wallet_opt, wallet_info_opt) {
