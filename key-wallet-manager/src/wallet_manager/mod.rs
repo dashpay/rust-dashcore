@@ -970,15 +970,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         Ok(wallet_info.balance())
     }
 
-    /// Update the cached balance for a specific wallet
-    pub fn update_wallet_balance(&mut self, wallet_id: &WalletId) -> Result<(), WalletError> {
-        let managed_info =
-            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-
-        managed_info.update_balance();
-        Ok(())
-    }
-
     /// Update wallet metadata
     pub fn update_wallet_metadata(
         &mut self,
