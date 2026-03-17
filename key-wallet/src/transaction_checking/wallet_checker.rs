@@ -917,7 +917,7 @@ mod tests {
             timestamp: Some(1700000000),
         };
 
-        let result = ctx.check_transaction_and_update_balance(&tx, block_context).await;
+        let result = ctx.check_transaction(&tx, block_context).await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction, "Re-processing should mark as existing");
 
@@ -948,7 +948,7 @@ mod tests {
 
         // Stage 2: IS lock
         let result =
-            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
@@ -960,7 +960,7 @@ mod tests {
 
         // Duplicate IS lock should be a no-op
         let result_dup =
-            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(result_dup.is_relevant);
         assert!(!result_dup.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
@@ -972,7 +972,7 @@ mod tests {
             block_hash: Some(block_hash),
             timestamp: Some(1700000000),
         };
-        let result = ctx.check_transaction_and_update_balance(&tx, block_context).await;
+        let result = ctx.check_transaction(&tx, block_context).await;
         assert!(!result.is_new_transaction);
         assert!(ctx.transaction(&txid).is_confirmed());
         assert_eq!(ctx.transaction(&txid).height, Some(1000));
@@ -985,7 +985,7 @@ mod tests {
             block_hash: Some(block_hash),
             timestamp: Some(1700000000),
         };
-        let result = ctx.check_transaction_and_update_balance(&tx, cl_context).await;
+        let result = ctx.check_transaction(&tx, cl_context).await;
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
@@ -993,7 +993,7 @@ mod tests {
         // Stage 5: late IS lock on already-confirmed tx should be ignored
         let balance_before = ctx.managed_wallet.balance();
         let result =
-            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), balance_before.spendable());
@@ -1008,7 +1008,7 @@ mod tests {
 
         // Arrive directly as IS (skipping plain mempool)
         let result =
-            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(result.is_relevant);
         assert!(result.is_new_transaction);
         assert_eq!(result.total_received, 150_000);
@@ -1020,7 +1020,7 @@ mod tests {
 
         // A follow-up IS lock should be a no-op
         let result2 =
-            ctx.check_transaction_and_update_balance(&tx, TransactionContext::InstantSend).await;
+            ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
         assert!(!result2.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);

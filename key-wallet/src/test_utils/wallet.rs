@@ -74,7 +74,7 @@ impl TestWalletContext {
     }
 
     /// Processes a transaction: runs `check_core_transaction` with `update_state = true`.
-    pub async fn check_transaction_and_update_balance(
+    pub async fn check_transaction(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,
@@ -88,7 +88,7 @@ impl TestWalletContext {
         let tx = Transaction::dummy(&self.receive_address, 0..1, &[amount]);
 
         let result =
-            self.check_transaction_and_update_balance(&tx, TransactionContext::Mempool).await;
+            self.check_transaction(&tx, TransactionContext::Mempool).await;
         assert!(result.is_relevant);
         assert!(result.is_new_transaction);
 
