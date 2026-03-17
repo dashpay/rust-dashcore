@@ -384,6 +384,11 @@ impl ManagedCoreAccount {
         account_match: &AccountMatch,
         context: TransactionContext,
     ) -> bool {
+        if !self.transactions.contains_key(&tx.txid()) {
+            self.record_transaction(tx, account_match, context);
+            return true;
+        }
+
         let mut changed = false;
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
             if !tx_record.is_confirmed() {

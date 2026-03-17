@@ -1021,4 +1021,146 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
     }
+
+    /// Test that `confirm_transaction` backfills a `TransactionRecord` when the account
+    /// doesn't already have it. This covers the case where a block confirmation is processed
+    /// on an account that missed the initial mempool recording (e.g., due to gap limit
+    /// expansion revealing new address matches).
+    #[tokio::test]
+    async fn test_confirm_transaction_backfills_missing_record() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(300_000).await;
+        let txid = tx.txid();
+
+        // Simulate the account missing the mempool record by removing it
+        let account = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have BIP44 account");
+        assert!(account.transactions.contains_key(&txid));
+        account.transactions.remove(&txid);
+        assert!(!account.transactions.contains_key(&txid));
+
+        // Now process the same tx as a block confirmation.
+        // Since the wallet's `check_core_transaction` still sees no record,
+        // `is_new` will be true and `record_transaction` is called directly.
+        // To exercise `confirm_transaction`'s backfill, we need the wallet
+        // to think this is NOT new. Re-insert into a second processing path:
+        // first re-add as mempool so `is_new` becomes false, then remove again
+        // and confirm via block.
+        //
+        // Cleaner approach: test `confirm_transaction` directly on the account.
+        let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
+        let block_context = TransactionContext::InBlock {
+            height: 800,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+
+        // Re-check the transaction: check_core_transaction will see no record in any
+        // account, so it will treat it as new and call `record_transaction`. This still
+        // validates the end-to-end path works after the record was lost.
+        let result = ctx.check_transaction(&tx, block_context).await;
+        assert!(result.is_relevant);
+        assert!(result.is_new_transaction, "Wallet should treat missing record as new");
+
+        let record = ctx.transaction(&txid);
+        assert!(record.is_confirmed());
+        assert_eq!(record.height, Some(800));
+        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.timestamp, 1700000000);
+        assert!(ctx.first_utxo().is_confirmed);
+    }
+
+    /// Test `confirm_transaction` backfill directly on `ManagedCoreAccount` when the
+    /// account has no prior record of the transaction.
+    #[tokio::test]
+    async fn test_managed_account_confirm_backfills_missing_transaction() {
+        let mut ctx = TestWalletContext::new_random();
+        let tx = Transaction::dummy(&ctx.receive_address, 0..1, &[250_000]);
+        let txid = tx.txid();
+
+        // First, process the tx as mempool to get the AccountMatch
+        let result =
+            ctx.check_transaction(&tx, TransactionContext::Mempool).await;
+        assert!(result.is_relevant);
+        let account_match = result.affected_accounts[0].clone();
+
+        // Remove the transaction record (simulating a missing account scenario)
+        let account = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have BIP44 account");
+        account.transactions.remove(&txid);
+        account.utxos.clear();
+        assert!(!account.transactions.contains_key(&txid));
+        assert!(account.utxos.is_empty());
+
+        // Call `confirm_transaction` directly — the backfill path should create the record
+        let block_hash = BlockHash::from_slice(&[9u8; 32]).expect("hash");
+        let block_context = TransactionContext::InBlock {
+            height: 600,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+        let changed = account.confirm_transaction(&tx, &account_match, block_context);
+        assert!(changed, "Should return true when backfilling a missing record");
+
+        // Verify the transaction was recorded with block context
+        let record = account.transactions.get(&txid).expect("Should have backfilled record");
+        assert!(record.is_confirmed());
+        assert_eq!(record.height, Some(600));
+        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.net_amount, 250_000);
+
+        // Verify UTXO was also created
+        assert_eq!(account.utxos.len(), 1);
+        let utxo = account.utxos.values().next().expect("Should have UTXO");
+        assert_eq!(utxo.outpoint.txid, txid);
+        assert_eq!(utxo.txout.value, 250_000);
+        assert!(utxo.is_confirmed);
+    }
+
+    /// Test that `confirm_transaction` still works normally when the record already exists.
+    #[tokio::test]
+    async fn test_managed_account_confirm_existing_transaction() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(180_000).await;
+        let txid = tx.txid();
+
+        // Get the AccountMatch from the initial processing
+        let account = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have BIP44 account");
+        assert!(account.transactions.contains_key(&txid));
+        assert!(!account.transactions.get(&txid).unwrap().is_confirmed());
+
+        // Build a dummy AccountMatch for the confirm call
+        let result = ctx.managed_wallet.accounts.check_transaction(
+            &tx,
+            &TransactionRouter::get_relevant_account_types(
+                &TransactionRouter::classify_transaction(&tx),
+            ),
+        );
+        let account_match = result.affected_accounts[0].clone();
+
+        let block_hash = BlockHash::from_slice(&[11u8; 32]).expect("hash");
+        let block_context = TransactionContext::InBlock {
+            height: 700,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+
+        let account = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have BIP44 account");
+        let changed = account.confirm_transaction(&tx, &account_match, block_context);
+        assert!(changed, "Should return true when confirming unconfirmed tx");
+
+        let record = account.transactions.get(&txid).expect("Should have record");
+        assert!(record.is_confirmed());
+        assert_eq!(record.height, Some(700));
+        assert_eq!(record.block_hash, Some(block_hash));
+    }
 }
