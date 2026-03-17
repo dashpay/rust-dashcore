@@ -240,6 +240,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
                 any_changed = true;
             }
         }
+        if any_changed {
+            self.update_balance();
+        }
         any_changed
     }
 }
