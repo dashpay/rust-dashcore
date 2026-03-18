@@ -234,6 +234,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool {
+        if !self.instant_send_locks.insert(*txid) {
+            return false;
+        }
         let mut any_changed = false;
         for account in self.accounts.all_accounts_mut() {
             if account.mark_utxos_instant_send(txid) {

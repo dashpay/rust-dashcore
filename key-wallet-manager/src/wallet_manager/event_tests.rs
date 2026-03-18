@@ -195,6 +195,73 @@ async fn test_process_instant_send_lock_for_unknown_txid() {
 }
 
 #[tokio::test]
+async fn test_mixed_instantsend_paths_no_duplicate_events() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+    let tx = create_tx_paying_to(&addr, 0xf0);
+
+    // Mempool first
+    manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    drain_events(&mut rx);
+
+    // IS lock via process_instant_send_lock (network IS lock message)
+    manager.process_instant_send_lock(tx.txid());
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            WalletEvent::TransactionStatusChanged {
+                wallet_id: wid,
+                status: TransactionContext::InstantSend,
+                ..
+            } if *wid == wallet_id
+        )),
+        "expected TransactionStatusChanged(InstantSend) with correct wallet_id, got {:?}",
+        events
+    );
+
+    // Same IS lock via check_transaction_in_all_wallets (block/tx processing path)
+    // should be suppressed — no duplicate event
+    manager
+        .check_transaction_in_all_wallets(&tx, TransactionContext::InstantSend, true, true)
+        .await;
+    assert_no_events(&mut rx);
+}
+
+#[tokio::test]
+async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+    let tx = create_tx_paying_to(&addr, 0xf1);
+
+    // Mempool first
+    manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    drain_events(&mut rx);
+
+    // IS lock via check_transaction_in_all_wallets first
+    manager
+        .check_transaction_in_all_wallets(&tx, TransactionContext::InstantSend, true, true)
+        .await;
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            WalletEvent::TransactionStatusChanged {
+                wallet_id: wid,
+                status: TransactionContext::InstantSend,
+                ..
+            } if *wid == wallet_id
+        )),
+        "expected TransactionStatusChanged(InstantSend) with correct wallet_id, got {:?}",
+        events
+    );
+
+    // Same IS lock via process_instant_send_lock — should be suppressed
+    manager.process_instant_send_lock(tx.txid());
+    assert_no_events(&mut rx);
+}
+
+#[tokio::test]
 async fn test_process_block_emits_events() {
     use dashcore::blockdata::block::{Block, Header, Version};
     use dashcore::hashes::Hash;
