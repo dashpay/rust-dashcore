@@ -100,9 +100,9 @@ impl WalletInterface for MockWallet {
     }
 
     fn process_instant_send_lock(&mut self, txid: Txid) {
-        if let Ok(mut changes) = self.status_changes.try_lock() {
-            changes.push((txid, TransactionContext::InstantSend));
-        }
+        let mut changes =
+            self.status_changes.try_lock().expect("status_changes lock contention in test helper");
+        changes.push((txid, TransactionContext::InstantSend));
     }
 }
 
