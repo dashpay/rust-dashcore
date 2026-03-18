@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 
-//! Bitcoin amounts.
+//! Dash amounts.
 //!
 //! This module mainly introduces the [Amount] and [SignedAmount] types.
 //! We refer to the documentation on the types for more information.
@@ -20,12 +20,12 @@ use crate::prelude::*;
 /// use core::str::FromStr;
 /// use dashcore::Amount;
 ///
-/// assert_eq!(Amount::from_str("1 BTC").unwrap(), Amount::from_sat(100_000_000));
-/// assert_eq!(Amount::from_str("1 cBTC").unwrap(), Amount::from_sat(1_000_000));
-/// assert_eq!(Amount::from_str("1 mBTC").unwrap(), Amount::from_sat(100_000));
-/// assert_eq!(Amount::from_str("1 uBTC").unwrap(), Amount::from_sat(100));
-/// assert_eq!(Amount::from_str("10 nBTC").unwrap(), Amount::from_sat(1));
-/// assert_eq!(Amount::from_str("10000 pBTC").unwrap(), Amount::from_sat(1));
+/// assert_eq!(Amount::from_str("1 DASH").unwrap(), Amount::from_sat(100_000_000));
+/// assert_eq!(Amount::from_str("1 cDASH").unwrap(), Amount::from_sat(1_000_000));
+/// assert_eq!(Amount::from_str("1 mDASH").unwrap(), Amount::from_sat(100_000));
+/// assert_eq!(Amount::from_str("1 uDASH").unwrap(), Amount::from_sat(100));
+/// assert_eq!(Amount::from_str("10 nDASH").unwrap(), Amount::from_sat(1));
+/// assert_eq!(Amount::from_str("10000 pDASH").unwrap(), Amount::from_sat(1));
 /// assert_eq!(Amount::from_str("1 bit").unwrap(), Amount::from_sat(100));
 /// assert_eq!(Amount::from_str("1 sat").unwrap(), Amount::from_sat(1));
 /// assert_eq!(Amount::from_str("1000 msats").unwrap(), Amount::from_sat(1));
@@ -120,7 +120,7 @@ impl FromStr for Denomination {
     /// Convert from a str to Denomination.
     ///
     /// Any combination of upper and/or lower case, excluding uppercase of SI(m, u, n, p) is considered valid.
-    /// - Singular: BTC, mBTC, uBTC, nBTC, pBTC
+    /// - Singular: DASH, mDASH, uDASH, nDASH, pDASH
     /// - Plural or singular: sat, satoshi, bit, msat
     ///
     /// Due to ambiguity between mega and milli, pico and peta we prohibit usage of leading capital 'M', 'P'.
@@ -604,7 +604,7 @@ impl Amount {
 
     /// Create an object that implements [`fmt::Display`] dynamically selecting denomination.
     ///
-    /// This will use BTC for values greater than or equal to 1 BTC and satoshis otherwise. To
+    /// This will use DASH for values greater than or equal to 1 DASH and satoshis otherwise. To
     /// avoid confusion the denomination is always shown.
     pub fn display_dynamic(self) -> Display {
         Display {
@@ -796,7 +796,7 @@ impl core::iter::Sum for Amount {
 ///
 /// * Ability to select denomination
 /// * Show or hide denomination
-/// * Dynamically-selected denomination - show in sats if less than 1 BTC.
+/// * Dynamically-selected denomination - show in sats if less than 1 DASH.
 ///
 /// However this can still be combined with `fmt::Formatter` options to precisely control zeros,
 /// padding, alignment... The formatting works like floats from `core` but note that precision will
@@ -982,7 +982,7 @@ impl SignedAmount {
 
     /// Create an object that implements [`fmt::Display`] dynamically selecting denomination.
     ///
-    /// This will use BTC for values greater than or equal to 1 BTC and satoshis otherwise. To
+    /// This will use DASH for values greater than or equal to 1 DASH and satoshis otherwise. To
     /// avoid confusion the denomination is always shown.
     pub fn display_dynamic(self) -> Display {
         Display {
@@ -1423,7 +1423,7 @@ pub mod serde {
     }
 
     pub mod as_btc {
-        //! Serialize and deserialize [`Amount`](crate::Amount) as JSON numbers denominated in BTC.
+        //! Serialize and deserialize [`Amount`](crate::Amount) as JSON numbers denominated in DASH.
         //! Use with `#[serde(with = "amount::serde::as_btc")]`.
 
         use serde::{Deserializer, Serializer};
@@ -1439,7 +1439,7 @@ pub mod serde {
         }
 
         pub mod opt {
-            //! Serialize and deserialize `Option<Amount>` as JSON numbers denominated in BTC.
+            //! Serialize and deserialize `Option<Amount>` as JSON numbers denominated in DASH.
             //! Use with `#[serde(default, with = "amount::serde::as_btc::opt")]`.
 
             use core::fmt;
