@@ -127,7 +127,7 @@ jobs:
             echo "=== Checking PR #$PR_NUMBER ==="
 
             # Check if CodeRabbit has approved
-            CODERABBIT_STATE=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUMBER/reviews" --jq '
+            CODERABBIT_STATE=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" | jq -rs '
               add
               | map(select(.user.login == "coderabbitai[bot]"))
               | sort_by(.submitted_at)
