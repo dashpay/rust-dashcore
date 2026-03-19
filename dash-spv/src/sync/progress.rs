@@ -282,21 +282,27 @@ mod tests {
         MasternodesProgress,
     };
 
-    /// Prove that `is_synced()` returns false when masternodes are not Synced,
-    /// even though all other core managers (headers, filter_headers, filters,
-    /// blocks) are Synced.
+    /// Masternode sync failure should NOT block `is_synced()` for the purpose
+    /// of downstream managers (mempool, chainlock, instant-send).
     ///
-    /// This is the root cause of the production bug: when MasternodeManager
-    /// fails on testnet with "Required rotated chain lock sig at h - 0 not
-    /// present", it never reaches `Synced`. Because `is_synced()` checks
-    /// masternodes, it returns false, `SyncComplete` is never emitted by the
-    /// coordinator, and downstream managers (mempool, instant-send) never
-    /// activate.
+    /// Production bug: on Dash testnet, MasternodeManager fails with "Required
+    /// rotated chain lock sig at h - 0 not present" and never reaches Synced.
+    /// Because `is_synced()` includes masternodes, it returns false,
+    /// `SyncComplete` is never emitted, and MempoolManager never activates —
+    /// the wallet never sees unconfirmed transactions.
+    ///
+    /// Expected fix: `is_synced()` should return true when all chain-sync
+    /// managers (headers, filter_headers, filters, blocks) are Synced, even if
+    /// masternodes is still syncing or has failed. Masternode sync is needed
+    /// for IS lock validation but should not gate mempool monitoring.
+    ///
+    /// This test FAILS until the fix is applied.
     #[test]
-    fn test_is_synced_blocked_by_masternode_failure() {
+    #[ignore = "fails until is_synced() decouples masternode sync from chain sync"]
+    fn test_is_synced_not_blocked_by_masternode_failure() {
         let mut progress = SyncProgress::default();
 
-        // Set all five core managers to Synced.
+        // Set all four chain-sync managers to Synced.
         let mut headers = BlockHeadersProgress::default();
         headers.set_state(SyncState::Synced);
         progress.update_headers(headers);
@@ -313,34 +319,17 @@ mod tests {
         blocks.set_state(SyncState::Synced);
         progress.update_blocks(blocks);
 
-        let mut masternodes = MasternodesProgress::default();
-        masternodes.set_state(SyncState::Synced);
-        progress.update_masternodes(masternodes);
-
-        // Baseline: all Synced => is_synced() is true.
-        assert!(progress.is_synced(), "expected is_synced() == true when all managers are Synced");
-
-        // Now simulate masternode failure: set masternodes back to Syncing.
+        // Masternodes stuck in Syncing (simulates testnet failure).
         let mut mn_failed = MasternodesProgress::default();
         mn_failed.set_state(SyncState::Syncing);
         progress.update_masternodes(mn_failed);
 
-        // BUG: is_synced() returns false because masternodes is not Synced,
-        // even though headers, filter_headers, filters, and blocks are all
-        // Synced. This blocks SyncComplete from ever being emitted.
+        // EXPECTED: is_synced() returns true — chain sync is complete,
+        // masternode sync should not block mempool activation.
         assert!(
-            !progress.is_synced(),
-            "expected is_synced() == false when masternodes is Syncing (the bug)"
-        );
-
-        // Also verify WaitForEvents has the same effect.
-        let mn_waiting = MasternodesProgress::default();
-        // Default state is WaitForEvents
-        progress.update_masternodes(mn_waiting);
-
-        assert!(
-            !progress.is_synced(),
-            "expected is_synced() == false when masternodes is WaitForEvents"
+            progress.is_synced(),
+            "is_synced() should return true when chain sync is complete, \
+             even if masternodes are still syncing"
         );
     }
 }

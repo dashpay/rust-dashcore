@@ -598,56 +598,63 @@ mod tests {
         assert!(found_filter_load, "expected FilterLoad after confirmed txids");
     }
 
-    /// Prove that MempoolManager does NOT activate on FiltersSyncComplete --
-    /// it only activates on SyncComplete. Combined with the
-    /// `test_is_synced_blocked_by_masternode_failure` test in progress.rs, this
-    /// proves the full cascade: masternode failure -> no SyncComplete -> mempool
-    /// never activates -> wallet never sees unconfirmed transactions.
+    /// MempoolManager should activate on FiltersSyncComplete when chain sync
+    /// is done — it should not require SyncComplete (which depends on
+    /// masternode sync).
+    ///
+    /// Production bug: when MasternodeManager fails on testnet, SyncComplete
+    /// is never emitted, and MempoolManager stays in WaitForEvents forever.
+    /// The wallet never sees unconfirmed transactions.
+    ///
+    /// Expected fix: MempoolManager should treat FiltersSyncComplete as a
+    /// sufficient activation trigger, since mempool monitoring only requires
+    /// the filter chain (headers + filters + blocks) to be synced.
+    ///
+    /// This test FAILS until the fix is applied.
     #[tokio::test]
-    async fn test_mempool_not_activated_by_filters_sync_complete() {
+    #[ignore = "fails until MempoolManager activates on FiltersSyncComplete"]
+    async fn test_mempool_activates_on_filters_sync_complete() {
         let (mut manager, requests, _rx) = create_test_manager();
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        // Send FiltersSyncComplete -- this is the last filter-chain event.
+        // FiltersSyncComplete means the chain is fully synced — mempool
+        // monitoring should be safe to start.
         let event = SyncEvent::FiltersSyncComplete {
             tip_height: 1000,
         };
-        let events = manager.handle_sync_event(&event, &requests).await.unwrap();
-        assert!(events.is_empty());
+        manager.handle_sync_event(&event, &requests).await.unwrap();
 
-        // BUG: MempoolManager is still in WaitForEvents. FiltersSyncComplete
-        // does not activate it -- only SyncComplete does.
+        // EXPECTED: mempool activates after FiltersSyncComplete.
         assert_eq!(
             manager.state(),
-            SyncState::WaitForEvents,
-            "mempool must NOT activate on FiltersSyncComplete"
+            SyncState::Synced,
+            "mempool should activate on FiltersSyncComplete (currently requires SyncComplete)"
         );
-
-        // Now send SyncComplete -- this is what actually activates mempool.
-        let event = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
-        };
-        manager.handle_sync_event(&event, &requests).await.unwrap();
-        assert_eq!(manager.state(), SyncState::Synced, "mempool must activate on SyncComplete");
     }
 
-    /// Prove that MempoolManager stays in WaitForEvents after receiving every
-    /// sync event EXCEPT SyncComplete. This is the observable production bug:
-    /// when MasternodeManager fails, the coordinator never emits SyncComplete,
-    /// so the mempool monitor never starts, and the wallet never sees
-    /// unconfirmed transactions as spendable.
+    /// MempoolManager should activate even when MasternodeManager fails and
+    /// SyncComplete is never emitted.
+    ///
+    /// This reproduces the exact event sequence observed on Dash testnet:
+    /// headers sync, filter sync complete, blocks processed, but masternodes
+    /// fail with "Required rotated chain lock sig at h - 0 not present".
+    /// The coordinator never emits SyncComplete, so MempoolManager stays dead.
+    ///
+    /// Expected: mempool should be active after FiltersSyncComplete regardless
+    /// of masternode sync state. IS lock validation depends on masternodes, but
+    /// mempool transaction detection does not.
+    ///
+    /// This test FAILS until the fix is applied.
     #[tokio::test]
-    async fn test_mempool_stays_dead_without_sync_complete() {
+    #[ignore = "fails until MempoolManager decouples from masternode sync"]
+    async fn test_mempool_activates_despite_masternode_failure() {
         let (mut manager, requests, _rx) = create_test_manager();
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        // Fire every sync event that would occur during a successful sync --
-        // except SyncComplete (which the coordinator withholds when masternodes
-        // fail).
-        let events_without_sync_complete: Vec<SyncEvent> = vec![
+        // Replay exact testnet event sequence (no SyncComplete).
+        let testnet_events: Vec<SyncEvent> = vec![
             SyncEvent::BlockHeaderSyncComplete {
                 tip_height: 1000,
             },
@@ -669,27 +676,18 @@ mod tests {
             },
         ];
 
-        for event in &events_without_sync_complete {
+        for event in &testnet_events {
             manager.handle_sync_event(event, &requests).await.unwrap();
         }
 
-        // BUG: MempoolManager is still in WaitForEvents. It never activated
-        // because SyncComplete was never sent.
+        // EXPECTED: mempool is active — it should have activated on
+        // FiltersSyncComplete, independently of masternode sync.
         assert_eq!(
             manager.state(),
-            SyncState::WaitForEvents,
-            "mempool must stay in WaitForEvents when SyncComplete never arrives"
+            SyncState::Synced,
+            "mempool should be active after chain sync completes, \
+             even when masternodes fail (currently stays in WaitForEvents)"
         );
-
-        // Verify zero mempool activity.
-        let progress = manager.progress();
-        if let crate::sync::SyncManagerProgress::Mempool(p) = progress {
-            assert_eq!(p.received(), 0, "no transactions should have been received");
-            assert_eq!(p.relevant(), 0, "no transactions should be relevant");
-            assert_eq!(p.tracked(), 0, "no transactions should be tracked");
-        } else {
-            panic!("expected Mempool progress variant");
-        }
     }
 
     #[tokio::test]
