@@ -331,6 +331,17 @@ where
     pub fn sync_duration(&self) -> Option<Duration> {
         self.sync_start_time.map(|start| start.elapsed())
     }
+
+    /// Send a sync event to all managers.
+    ///
+    /// Used to notify managers of external changes (e.g., wallet addresses changed)
+    /// that aren't triggered by the normal sync pipeline.
+    pub fn send_sync_event(
+        &self,
+        event: SyncEvent,
+    ) -> Result<usize, Box<broadcast::error::SendError<SyncEvent>>> {
+        self.sync_event_sender.send(event).map_err(Box::new)
+    }
 }
 
 impl<H, FH, F, B, M, W> std::fmt::Debug for SyncCoordinator<H, FH, F, B, M, W>

@@ -34,4 +34,14 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub async fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {
         self.network.lock().await.subscribe_network_events()
     }
+
+    /// Notify the SPV client that wallet addresses have changed.
+    ///
+    /// This triggers a mempool bloom filter rebuild so that newly added
+    /// addresses (from new wallets, DashPay contact registration, etc.)
+    /// are monitored for incoming transactions.
+    pub async fn notify_wallet_addresses_changed(&self) {
+        let coordinator = self.sync_coordinator.lock().await;
+        let _ = coordinator.send_sync_event(SyncEvent::WalletAddressesChanged);
+    }
 }

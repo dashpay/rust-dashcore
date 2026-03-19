@@ -426,6 +426,7 @@ impl FFISyncEventCallbacks {
                     cb(*header_tip, *cycle, self.user_data);
                 }
             }
+            SyncEvent::WalletAddressesChanged => {}
         }
     }
 }

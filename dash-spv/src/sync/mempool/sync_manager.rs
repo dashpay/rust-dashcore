@@ -105,6 +105,12 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 self.mark_instant_send(&instant_lock.txid).await;
                 Ok(vec![])
             }
+            SyncEvent::WalletAddressesChanged => {
+                if self.state() == SyncState::Synced {
+                    self.rebuild_filter(requests).await?;
+                }
+                Ok(vec![])
+            }
             _ => Ok(vec![]),
         }
     }

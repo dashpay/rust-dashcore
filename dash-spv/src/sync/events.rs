@@ -159,6 +159,12 @@ pub enum SyncEvent {
         /// Sync cycle (0 = initial, 1+ = incremental)
         cycle: u32,
     },
+
+    /// Signal that wallet addresses have changed (new wallet added, addresses registered).
+    ///
+    /// Emitted by: External caller via `DashSpvClient::notify_wallet_addresses_changed()`
+    /// Consumed by: `MempoolManager` (to rebuild its bloom filter)
+    WalletAddressesChanged,
 }
 
 impl SyncEvent {
@@ -248,6 +254,7 @@ impl SyncEvent {
             } => {
                 format!("SyncComplete(tip={}, cycle={})", header_tip, cycle)
             }
+            SyncEvent::WalletAddressesChanged => "WalletAddressesChanged".to_string(),
         }
     }
 }
