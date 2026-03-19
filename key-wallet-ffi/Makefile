@@ -14,12 +14,6 @@ test:
 # Clean build artifacts
 clean:
 	cargo clean
-	rm -f include/key_wallet_ffi.h
-
-# Generate C header
-header:
-	cargo build --release
-	@echo "Generated header at include/key_wallet_ffi.h"
 
 # Update FFI documentation
 update-docs:
@@ -32,7 +26,7 @@ check-docs:
 	@bash scripts/check_ffi_docs.sh
 
 # Generate all documentation
-docs: header update-docs
+docs: update-docs
 	@echo "All documentation generated"
 
 # Build for iOS
@@ -40,7 +34,7 @@ ios:
 	./build-ios.sh
 
 # Full build with documentation
-full: clean build header update-docs
+full: clean build update-docs
 	@echo "Full build complete with documentation"
 
 # Help
@@ -49,7 +43,6 @@ help:
 	@echo "  make build       - Build the library"
 	@echo "  make test        - Run tests"
 	@echo "  make clean       - Clean build artifacts"
-	@echo "  make header      - Generate C header"
 	@echo "  make update-docs - Update FFI API documentation"
 	@echo "  make check-docs  - Check if FFI docs are up to date"
 	@echo "  make docs        - Generate all documentation"

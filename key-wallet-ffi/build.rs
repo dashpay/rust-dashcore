@@ -35,7 +35,7 @@ fn main() {
             println!("cargo:warning=Generated C header at {:?}", output_path);
         }
         Err(e) => {
-            println!("cargo:warning=Failed to generate C header: {}", e);
+            panic!("Failed to generate C header via cbindgen: {}", e);
         }
     }
 }

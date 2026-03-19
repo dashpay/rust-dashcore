@@ -46,5 +46,9 @@ cobertura.xml
 # Python
 __pycache__/
 
+# Generated FFI headers (produced by build.rs via cbindgen)
+dash-spv-ffi/include/
+key-wallet-ffi/include/
+
 # Build scripts artifacts
 *.log
