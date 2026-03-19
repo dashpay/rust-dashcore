@@ -10,6 +10,7 @@ use dashcore::{
     ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
+use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use secp256k1::{Message, Secp256k1, SecretKey};
 
@@ -123,19 +124,49 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 
         manager_ref.runtime.block_on(async {
             let mut manager = manager_ref.manager.write().await;
+            let wallet_id = wallet_ref.inner().wallet_id;
 
-            let managed_wallet = manager.get_wallet_info_mut(&wallet_ref.inner().wallet_id);
-
-            let Some(managed_wallet) = managed_wallet else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Could not obtain ManagedWalletInfo for the provided wallet".to_string(),
-                );
-                return false;
+            // Get change address through the manager
+            let change_address = match manager.get_change_address(
+                &wallet_id,
+                account_index,
+                AccountTypePreference::BIP44,
+                true,
+            ) {
+                Ok(result) => match result.address {
+                    Some(addr) => addr,
+                    None => {
+                        FFIError::set_error(
+                            error,
+                            FFIErrorCode::WalletError,
+                            "No change address available".to_string(),
+                        );
+                        return false;
+                    }
+                },
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Failed to get change address: {}", e),
+                    );
+                    return false;
+                }
             };
 
-            // Get the managed account
+            // Get the managed account for UTXOs and signing data
+            let managed_wallet = match manager.get_wallet_info_mut(&wallet_id) {
+                Some(info) => info,
+                None => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidInput,
+                        "Could not obtain ManagedWalletInfo for the provided wallet".to_string(),
+                    );
+                    return false;
+                }
+            };
+
             let managed_account =
                 match managed_wallet.accounts.standard_bip44_accounts.get_mut(&account_index) {
                     Some(account) => account,
@@ -144,19 +175,6 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                             error,
                             FFIErrorCode::WalletError,
                             format!("Account {} not found", account_index),
-                        );
-                        return false;
-                    }
-                };
-
-            let wallet_account =
-                match wallet_ref.inner().accounts.standard_bip44_accounts.get(&account_index) {
-                    Some(account) => account,
-                    None => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::WalletError,
-                            format!("Wallet account {} not found", account_index),
                         );
                         return false;
                     }
@@ -228,20 +246,6 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                     }
                 };
             }
-
-            // Get change address (next internal address)
-            let xpub = wallet_account.extended_public_key();
-            let change_address = match managed_account.next_change_address(Some(&xpub), true) {
-                Ok(addr) => addr,
-                Err(e) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("Failed to get change address: {}", e),
-                    );
-                    return false;
-                }
-            };
 
             tx_builder = tx_builder
                 .set_change_address(change_address)

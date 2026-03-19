@@ -142,6 +142,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             let key_source = KeySource::Public(xpub);
+            let rev_before = result.new_addresses.len();
             for pool in account.account_type.address_pools_mut() {
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(addrs) => result.new_addresses.extend(addrs),
@@ -154,6 +155,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         );
                     }
                 }
+            }
+            if result.new_addresses.len() > rev_before {
+                account.bump_monitor_revision();
             }
         }
 

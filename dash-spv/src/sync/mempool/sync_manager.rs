@@ -50,7 +50,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
     ) -> SyncResult<Vec<SyncEvent>> {
         match msg.inner() {
             NetworkMessage::Inv(inv) => self.handle_inv(inv, msg.peer_address(), requests).await,
-            NetworkMessage::Tx(tx) => self.handle_tx(tx.clone(), requests).await,
+            NetworkMessage::Tx(tx) => self.handle_tx(tx.clone()).await,
             _ => Ok(vec![]),
         }
     }
@@ -80,21 +80,13 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 Ok(vec![])
             }
             SyncEvent::BlockProcessed {
-                new_addresses,
                 confirmed_txids,
                 ..
             } => {
-                // Remove confirmed transactions from mempool
+                // Remove confirmed transactions from mempool.
+                // Bloom filter rebuild is handled by the tick's revision check.
                 if !confirmed_txids.is_empty() {
                     self.remove_confirmed(confirmed_txids).await;
-                }
-                if self.state() == SyncState::Synced
-                    && (!confirmed_txids.is_empty() || !new_addresses.is_empty())
-                {
-                    // Confirmed transactions change the wallet's UTXO set and
-                    // new addresses expand the monitored set. Both make the
-                    // bloom filter stale, so rebuild immediately.
-                    self.rebuild_filter(requests).await?;
                 }
                 Ok(vec![])
             }
@@ -122,6 +114,23 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
 
         // Send queued getdata requests now that slots may have freed up
         self.send_queued(requests).await?;
+
+        // Rebuild bloom filter if the wallet's monitored set has changed.
+        //
+        // We poll the revision counter rather than using push-based wallet events
+        // for simplicity: the revision lives on `ManagedCoreAccount` and auto-bumps
+        // on address generation and UTXO mutations, giving us a single source of
+        // truth without needing event emission after every wallet operation.
+        // Adding a push-based approach would require a new `select!` branch in the
+        // shared `SyncManager::run` loop or a `WalletEvent` bridge — complexity
+        // that isn't justified given the 100ms tick latency is negligible for bloom
+        // filter rebuilds and the read lock is non-contending.
+        let current_revision = self.wallet.read().await.monitor_revision();
+        if current_revision != self.last_monitor_revision {
+            tracing::info!("Wallet monitor revision changed, rebuilding bloom filter");
+            self.rebuild_filter(requests).await?;
+            self.last_monitor_revision = current_revision;
+        }
 
         Ok(vec![])
     }
@@ -191,7 +200,8 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager = MempoolManager::new(wallet, mempool_state, MempoolStrategy::FetchAll, 1000);
+        let manager =
+            MempoolManager::new(wallet, mempool_state, MempoolStrategy::FetchAll, 1000, 0);
 
         (manager, requests, rx)
     }
@@ -543,9 +553,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_block_processed_confirmed_txids_rebuilds_filter() {
+    async fn test_block_processed_confirmed_txids_does_not_eagerly_rebuild() {
         let mut mock = MockWallet::new();
-        // Wallet needs at least one address for the bloom filter to be built
         let script = dashcore::ScriptBuf::from_bytes(vec![
             0x76, 0xa9, 0x14, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
             0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0x88, 0xac,
@@ -558,7 +567,7 @@ mod tests {
         let requests = RequestSender::new(tx);
 
         let mut manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::BloomFilter, 1000);
+            MempoolManager::new(wallet, mempool_state, MempoolStrategy::BloomFilter, 1000, 0);
 
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
@@ -573,7 +582,8 @@ mod tests {
         // Drain activation messages
         while rx.try_recv().is_ok() {}
 
-        // BlockProcessed with confirmed txids should rebuild immediately
+        // BlockProcessed does not eagerly rebuild — the tick handles it via
+        // the revision check. Verify no FilterLoad is sent from the event handler.
         let event = SyncEvent::BlockProcessed {
             block_hash: dashcore::BlockHash::all_zeros(),
             height: 1001,
@@ -582,14 +592,10 @@ mod tests {
         };
         manager.handle_sync_event(&event, &requests).await.unwrap();
 
-        // Verify a FilterLoad was sent
-        let mut found_filter_load = false;
-        while let Ok(req) = rx.try_recv() {
-            if matches!(req, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _)) {
-                found_filter_load = true;
-            }
-        }
-        assert!(found_filter_load, "expected FilterLoad after confirmed txids");
+        let has_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|req| {
+            matches!(req, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))
+        });
+        assert!(!has_filter_load, "BlockProcessed should not eagerly rebuild filter");
     }
 
     #[tokio::test]
@@ -612,5 +618,237 @@ mod tests {
             confirmed_txids: vec![],
         };
         manager.handle_sync_event(&event, &requests).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_tick_rebuilds_filter_when_monitor_revision_changes() {
+        let addr = {
+            let script = dashcore::ScriptBuf::from_bytes(vec![
+                0x76, 0xa9, 0x14, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
+                0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0x88, 0xac,
+            ]);
+            dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap()
+        };
+
+        let mut mock = MockWallet::new();
+        mock.set_addresses(vec![addr.clone()]);
+        let initial_revision = mock.monitor_revision();
+        let wallet = Arc::new(RwLock::new(mock));
+        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
+        let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
+        let requests = RequestSender::new(tx);
+
+        let mut manager = MempoolManager::new(
+            wallet.clone(),
+            mempool_state,
+            MempoolStrategy::BloomFilter,
+            1000,
+            initial_revision,
+        );
+
+        let peer = test_socket_address(1);
+        manager.handle_peer_connected(peer);
+
+        // Activate — this snapshots the monitor revision
+        let sync = SyncEvent::SyncComplete {
+            header_tip: 1000,
+            cycle: 0,
+        };
+        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Synced);
+
+        // Drain activation messages
+        while rx.try_recv().is_ok() {}
+
+        // tick with unchanged revision should not rebuild
+        manager.tick(&requests).await.unwrap();
+        assert!(rx.try_recv().is_err(), "no messages expected when revision unchanged");
+
+        // Simulate wallet adding new addresses (bumps revision)
+        {
+            let mut w = wallet.write().await;
+            let addr2 = dashcore::Address::from_script(
+                &dashcore::ScriptBuf::from_bytes(vec![
+                    0x76, 0xa9, 0x14, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd,
+                    0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0x88, 0xac,
+                ]),
+                dashcore::Network::Testnet,
+            )
+            .unwrap();
+            w.set_addresses(vec![addr, addr2]);
+        }
+
+        // tick should detect stale filter and rebuild
+        manager.tick(&requests).await.unwrap();
+
+        let mut found_filter_load = false;
+        while let Ok(msg) = rx.try_recv() {
+            if matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _)) {
+                found_filter_load = true;
+            }
+        }
+        assert!(found_filter_load, "expected FilterLoad after monitor revision change");
+
+        // Subsequent tick should not rebuild again (revision was snapshotted)
+        manager.tick(&requests).await.unwrap();
+        assert!(rx.try_recv().is_err(), "no messages expected after revision re-snapshot");
+    }
+
+    #[tokio::test]
+    async fn test_tick_skips_rebuild_for_fetch_all_strategy() {
+        let wallet = Arc::new(RwLock::new(MockWallet::new()));
+        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
+        let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
+        let requests = RequestSender::new(tx);
+
+        let mut manager =
+            MempoolManager::new(wallet.clone(), mempool_state, MempoolStrategy::FetchAll, 1000, 0);
+
+        let peer = test_socket_address(1);
+        manager.handle_peer_connected(peer);
+
+        let sync = SyncEvent::SyncComplete {
+            header_tip: 1000,
+            cycle: 0,
+        };
+        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        while rx.try_recv().is_ok() {}
+
+        // Bump revision
+        {
+            let mut w = wallet.write().await;
+            w.set_addresses(vec![dashcore::Address::dummy(dashcore::Network::Testnet, 0)]);
+        }
+
+        // tick should not send any filter messages for FetchAll
+        manager.tick(&requests).await.unwrap();
+        let mut found_filter = false;
+        while let Ok(msg) = rx.try_recv() {
+            if matches!(
+                msg,
+                NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _)
+                    | NetworkRequest::SendMessageToPeer(NetworkMessage::FilterClear, _)
+            ) {
+                found_filter = true;
+            }
+        }
+        assert!(!found_filter, "FetchAll should not send filter messages on revision change");
+    }
+
+    #[tokio::test]
+    async fn test_tick_rebuilds_filter_when_outpoints_change() {
+        let addr = {
+            let script = dashcore::ScriptBuf::from_bytes(vec![
+                0x76, 0xa9, 0x14, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
+                0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0x88, 0xac,
+            ]);
+            dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap()
+        };
+
+        let mut mock = MockWallet::new();
+        mock.set_addresses(vec![addr]);
+        let initial_revision = mock.monitor_revision();
+        let wallet = Arc::new(RwLock::new(mock));
+        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
+        let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
+        let requests = RequestSender::new(tx);
+
+        let mut manager = MempoolManager::new(
+            wallet.clone(),
+            mempool_state,
+            MempoolStrategy::BloomFilter,
+            1000,
+            initial_revision,
+        );
+
+        let peer = test_socket_address(1);
+        manager.handle_peer_connected(peer);
+
+        let sync = SyncEvent::SyncComplete {
+            header_tip: 1000,
+            cycle: 0,
+        };
+        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        while rx.try_recv().is_ok() {}
+
+        // Simulate UTXO set change (new outpoint added)
+        {
+            let mut w = wallet.write().await;
+            w.set_outpoints(vec![dashcore::OutPoint {
+                txid: dashcore::Txid::from_byte_array([0xee; 32]),
+                vout: 0,
+            }]);
+        }
+
+        // tick should detect the revision change and rebuild
+        manager.tick(&requests).await.unwrap();
+
+        let found_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
+            matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))
+        });
+        assert!(found_filter_load, "expected FilterLoad after outpoint change");
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_does_not_eagerly_rebuild_filter() {
+        let mut mock = MockWallet::new();
+        mock.set_mempool_relevant(true);
+        let script = dashcore::ScriptBuf::from_bytes(vec![
+            0x76, 0xa9, 0x14, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
+            0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0x88, 0xac,
+        ]);
+        let addr = dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap();
+        mock.set_addresses(vec![addr]);
+        let initial_revision = mock.monitor_revision();
+        let wallet = Arc::new(RwLock::new(mock));
+        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
+        let (tx_chan, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
+        let requests = RequestSender::new(tx_chan);
+
+        let mut manager = MempoolManager::new(
+            wallet.clone(),
+            mempool_state,
+            MempoolStrategy::BloomFilter,
+            1000,
+            initial_revision,
+        );
+
+        let peer = test_socket_address(1);
+        manager.handle_peer_connected(peer);
+
+        let sync = SyncEvent::SyncComplete {
+            header_tip: 1000,
+            cycle: 0,
+        };
+        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        while rx.try_recv().is_ok() {}
+
+        // handle_tx with a relevant transaction should NOT eagerly rebuild
+        let tx = dashcore::Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        manager.handle_tx(tx).await.unwrap();
+
+        let has_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
+            matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))
+        });
+        assert!(!has_filter_load, "handle_tx should not eagerly rebuild filter");
+
+        // But the next tick should catch it if the wallet revision changed
+        // (MockWallet bumps revision when set_mempool_relevant triggers processing)
+        {
+            let mut w = wallet.write().await;
+            w.set_addresses(vec![dashcore::Address::dummy(dashcore::Network::Testnet, 0)]);
+        }
+        manager.tick(&requests).await.unwrap();
+
+        let found_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
+            matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))
+        });
+        assert!(found_filter_load, "tick should rebuild after revision change");
     }
 }

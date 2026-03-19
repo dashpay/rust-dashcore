@@ -91,6 +91,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.watched_outpoints()
     }
 
+    fn monitor_revision(&self) -> u64 {
+        self.monitor_revision()
+    }
+
     async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
         // Aggregate across all managed wallets. If any wallet considers it relevant,
         // compute net = total_received - total_sent and collect involved addresses.
@@ -225,8 +229,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::StandardAccountType;
     use crate::manager::test_helpers::*;
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
     use crate::wallet::managed_wallet_info::ManagedWalletInfo;
+    use crate::AccountType;
     use dashcore::block::{Header, Version};
     use dashcore::hashes::Hash;
     use dashcore::pow::CompactTarget;
@@ -368,6 +376,105 @@ mod tests {
         assert!(
             result.involved_addresses.contains(&addr),
             "involved_addresses should contain the target address"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_monitor_revision_bumps_and_stability() {
+        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+        let mut expected_rev = 0u64;
+        assert_eq!(manager.monitor_revision(), expected_rev);
+
+        // create_wallet_from_mnemonic bumps
+        let wallet_id = manager
+            .create_wallet_from_mnemonic(
+                TEST_MNEMONIC,
+                "",
+                0,
+                WalletAccountCreationOptions::Default,
+            )
+            .unwrap();
+        expected_rev += 1;
+        assert_eq!(manager.monitor_revision(), expected_rev, "after create_wallet_from_mnemonic");
+
+        // create_account bumps
+        manager
+            .create_account(
+                &wallet_id,
+                AccountType::Standard {
+                    index: 1,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                None,
+            )
+            .unwrap();
+        expected_rev += 1;
+        assert_eq!(manager.monitor_revision(), expected_rev, "after create_account");
+
+        // get_receive_address bumps (when address is generated)
+        let result =
+            manager.get_receive_address(&wallet_id, 0, AccountTypePreference::PreferBIP44, true);
+        if result.is_ok() && result.unwrap().address.is_some() {
+            expected_rev += 1;
+            assert_eq!(manager.monitor_revision(), expected_rev, "after get_receive_address");
+        }
+
+        // get_change_address bumps (when address is generated)
+        let result =
+            manager.get_change_address(&wallet_id, 0, AccountTypePreference::PreferBIP44, true);
+        if result.is_ok() && result.unwrap().address.is_some() {
+            expected_rev += 1;
+            assert_eq!(manager.monitor_revision(), expected_rev, "after get_change_address");
+        }
+
+        // update_synced_height does NOT bump
+        manager.update_synced_height(1000);
+        assert_eq!(manager.monitor_revision(), expected_rev, "after update_synced_height");
+
+        // process_mempool_transaction bumps from UTXO changes and possibly
+        // new addresses generated via gap limit maintenance
+        let rev_before_mempool = manager.monitor_revision();
+        let addr = manager.monitored_addresses()[0].clone();
+        let tx = create_tx_paying_to(&addr, 0xd0);
+        let _result = manager.process_mempool_transaction(&tx, false).await;
+        assert!(
+            manager.monitor_revision() > rev_before_mempool,
+            "mempool tx paying to our address should bump revision (UTXO added)"
+        );
+        let rev_after_mempool = manager.monitor_revision();
+
+        // process_instant_send_lock does NOT bump (no outpoint set change)
+        manager.process_instant_send_lock(tx.txid());
+        assert_eq!(
+            manager.monitor_revision(),
+            rev_after_mempool,
+            "after process_instant_send_lock"
+        );
+
+        // process_block bumps from UTXO changes and possibly new addresses
+        let rev_before_block = manager.monitor_revision();
+        let tx2 = create_tx_paying_to(&addr, 0xd1);
+        let block = make_block(vec![tx2]);
+        let _result = manager.process_block(&block, 100).await;
+        assert!(
+            manager.monitor_revision() > rev_before_block,
+            "block with tx paying to our address should bump revision (UTXO added)"
+        );
+
+        // remove_wallet absorbs the wallet's account-level revision + 1
+        let rev_before_remove = manager.monitor_revision();
+        manager.remove_wallet(&wallet_id).unwrap();
+        assert!(
+            manager.monitor_revision() > rev_before_remove,
+            "remove_wallet should bump revision"
+        );
+
+        // create_wallet_with_random_mnemonic bumps structural revision
+        let rev_before = manager.monitor_revision();
+        manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default).unwrap();
+        assert!(
+            manager.monitor_revision() > rev_before,
+            "create_wallet_with_random_mnemonic should bump revision"
         );
     }
 }

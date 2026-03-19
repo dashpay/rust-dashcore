@@ -98,6 +98,10 @@ pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
     wallet_infos: BTreeMap<WalletId, T>,
+    /// Structural revision counter incremented when wallets or accounts are
+    /// added/removed. Combined with per-wallet account-level revisions to
+    /// produce the total monitor revision.
+    structural_revision: u64,
     /// Event sender for wallet events
     #[cfg(feature = "std")]
     event_sender: broadcast::Sender<WalletEvent>,
@@ -112,6 +116,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             filter_committed_height: 0,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
+            structural_revision: 0,
             #[cfg(feature = "std")]
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
         }
@@ -129,6 +134,17 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     #[cfg(feature = "std")]
     pub fn event_sender(&self) -> &broadcast::Sender<WalletEvent> {
         &self.event_sender
+    }
+
+    /// Return the total monitor revision (structural + per-wallet account revisions).
+    pub fn monitor_revision(&self) -> u64 {
+        self.structural_revision
+            + self.wallet_infos.values().map(|w| w.monitor_revision()).sum::<u64>()
+    }
+
+    /// Increment the structural revision for wallet/account additions or removals.
+    fn bump_structural_revision(&mut self) {
+        self.structural_revision += 1;
     }
 
     /// Create a new wallet from mnemonic and add it to the manager
@@ -182,6 +198,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet_mut);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -288,6 +305,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         self.wallets.insert(wallet_id, final_wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.bump_structural_revision();
 
         Ok((serialized_bytes, wallet_id))
     }
@@ -321,6 +339,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -353,6 +372,9 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             self.wallets.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
         let info =
             self.wallet_infos.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        // Absorb the removed wallet's account-level revision so the total
+        // stays monotonically increasing even though we lost a contributor.
+        self.structural_revision += info.monitor_revision() + 1;
         Ok((wallet, info))
     }
 
@@ -413,6 +435,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -460,6 +483,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -504,6 +528,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -614,7 +639,10 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         wallet
             .add_account(account_type, account_xpub)
-            .map_err(|e| WalletError::AccountCreation(e.to_string()))
+            .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
+
+        self.bump_structural_revision();
+        Ok(())
     }
 
     /// Get all accounts in a specific wallet

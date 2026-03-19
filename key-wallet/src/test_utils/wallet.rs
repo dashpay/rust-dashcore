@@ -42,6 +42,8 @@ pub struct MockWallet {
     mempool_new_addresses: Vec<Address>,
     /// Recorded status change notifications for test assertions.
     status_changes: Arc<Mutex<Vec<(Txid, TransactionContext)>>>,
+    /// Monitor revision counter for staleness detection.
+    monitor_revision: u64,
 }
 
 impl Default for MockWallet {
@@ -64,6 +66,7 @@ impl MockWallet {
             outpoints: Vec::new(),
             mempool_new_addresses: Vec::new(),
             status_changes: Arc::new(Mutex::new(Vec::new())),
+            monitor_revision: 0,
         }
     }
 
@@ -75,11 +78,13 @@ impl MockWallet {
     /// Set the addresses returned by monitored_addresses.
     pub fn set_addresses(&mut self, addresses: Vec<Address>) {
         self.addresses = addresses;
+        self.monitor_revision += 1;
     }
 
     /// Set the outpoints returned by watched_outpoints.
     pub fn set_outpoints(&mut self, outpoints: Vec<OutPoint>) {
         self.outpoints = outpoints;
+        self.monitor_revision += 1;
     }
 
     /// Set new addresses returned by process_mempool_transaction.
@@ -175,6 +180,10 @@ impl WalletInterface for MockWallet {
 
     fn update_synced_height(&mut self, height: CoreBlockHeight) {
         self.synced_height = height;
+    }
+
+    fn monitor_revision(&self) -> u64 {
+        self.monitor_revision
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {

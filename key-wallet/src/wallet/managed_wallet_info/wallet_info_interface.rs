@@ -94,6 +94,12 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts.
     /// Returns `true` if any UTXO was newly marked.
     fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool;
+
+    /// Return the aggregated monitor revision across all accounts.
+    /// Increments whenever the monitored address set changes.
+    fn monitor_revision(&self) -> u64 {
+        0
+    }
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -247,5 +253,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
             self.update_balance();
         }
         any_changed
+    }
+
+    fn monitor_revision(&self) -> u64 {
+        self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
     }
 }

@@ -19,6 +19,7 @@ fn test_wallet_manager_creation() {
     // WalletManager::new returns Self, not Result
     assert_eq!(manager.synced_height(), 0);
     assert_eq!(manager.wallet_count(), 0); // No wallets created yet
+    assert_eq!(manager.monitor_revision(), 0);
 }
 
 #[test]
@@ -26,6 +27,7 @@ fn test_wallet_manager_from_mnemonic() {
     // Create from a test mnemonic
     let mnemonic = Mnemonic::generate(12, Language::English).unwrap();
     let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+    assert_eq!(manager.monitor_revision(), 0);
 
     // Create a wallet from mnemonic
     let wallet_result = manager.create_wallet_from_mnemonic(
@@ -36,6 +38,7 @@ fn test_wallet_manager_from_mnemonic() {
     );
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     assert_eq!(manager.wallet_count(), 1);
+    assert_eq!(manager.monitor_revision(), 1);
 }
 
 #[test]
@@ -47,6 +50,7 @@ fn test_account_management() {
         manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default);
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     let wallet_id = wallet_result.unwrap();
+    assert_eq!(manager.monitor_revision(), 1);
 
     // Add accounts to the wallet
     // Note: Index 0 already exists from wallet creation, so use index 1
@@ -59,6 +63,7 @@ fn test_account_management() {
         None,
     );
     assert!(result.is_ok());
+    assert_eq!(manager.monitor_revision(), 2);
 
     // Get accounts from wallet - Default creates 11 accounts (including PlatformPayment), plus the one we added
     let accounts = manager.get_accounts(&wallet_id);

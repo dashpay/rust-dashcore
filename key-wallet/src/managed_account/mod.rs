@@ -64,6 +64,10 @@ pub struct ManagedCoreAccount {
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
+    /// Revision counter incremented when the monitored address set changes
+    /// (e.g. new addresses generated). Used to detect bloom filter staleness.
+    #[cfg_attr(feature = "serde", serde(skip_serializing))]
+    monitor_revision: u64,
 }
 
 impl ManagedCoreAccount {
@@ -78,7 +82,18 @@ impl ManagedCoreAccount {
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            monitor_revision: 0,
         }
+    }
+
+    /// Return the current monitor revision.
+    pub fn monitor_revision(&self) -> u64 {
+        self.monitor_revision
+    }
+
+    /// Increment the monitor revision to signal that the monitored address set changed.
+    pub fn bump_monitor_revision(&mut self) {
+        self.monitor_revision += 1;
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
@@ -315,6 +330,7 @@ impl ManagedCoreAccount {
                     .collect();
 
                 let txid = tx.txid();
+                let mut utxos_changed = false;
 
                 // Insert UTXOs for outputs paying to our addresses
                 for (vout, output) in tx.output.iter().enumerate() {
@@ -355,6 +371,7 @@ impl ManagedCoreAccount {
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend);
                             self.utxos.insert(outpoint, utxo);
+                            utxos_changed = true;
                         }
                     }
                 }
@@ -369,7 +386,12 @@ impl ManagedCoreAccount {
                             txid = %tx.txid(),
                             "Removed spent UTXO"
                         );
+                        utxos_changed = true;
                     }
+                }
+
+                if utxos_changed {
+                    self.monitor_revision += 1;
                 }
             }
             _ => {}
@@ -505,12 +527,15 @@ impl ManagedCoreAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            external_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                crate::error::Error::NoKeySource => {
-                    "No unused addresses available and no key source provided"
-                }
-                _ => "Failed to generate receive address",
-            })
+            let addr =
+                external_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate receive address",
+                })?;
+            self.monitor_revision += 1;
+            Ok(addr)
         } else {
             Err("Cannot generate receive address for non-standard account type")
         }
@@ -536,12 +561,15 @@ impl ManagedCoreAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            internal_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                crate::error::Error::NoKeySource => {
-                    "No unused addresses available and no key source provided"
-                }
-                _ => "Failed to generate change address",
-            })
+            let addr =
+                internal_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate change address",
+                })?;
+            self.monitor_revision += 1;
+            Ok(addr)
         } else {
             Err("Cannot generate change address for non-standard account type")
         }
@@ -1120,6 +1148,7 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
             transactions: helper.transactions,
             utxos: helper.utxos,
             spent_outpoints,
+            monitor_revision: 0,
         })
     }
 }

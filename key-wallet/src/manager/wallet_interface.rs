@@ -117,6 +117,13 @@ pub trait WalletInterface: Send + Sync + 'static {
         }
     }
 
+    /// Return a revision counter that increments whenever the set of monitored
+    /// addresses or watched outpoints changes. The mempool manager uses this to
+    /// detect when its bloom filter is stale without requiring an external signal.
+    fn monitor_revision(&self) -> u64 {
+        0
+    }
+
     /// Subscribe to wallet events (e.g. transactions received, balance changes).
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent>;
 
