@@ -273,3 +273,74 @@ pub trait ProgressPercentage {
         (self.current_height() as f64 / self.target_height() as f64).min(1.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sync::{
+        BlockHeadersProgress, BlocksProgress, FilterHeadersProgress, FiltersProgress,
+        MasternodesProgress,
+    };
+
+    /// Prove that `is_synced()` returns false when masternodes are not Synced,
+    /// even though all other core managers (headers, filter_headers, filters,
+    /// blocks) are Synced.
+    ///
+    /// This is the root cause of the production bug: when MasternodeManager
+    /// fails on testnet with "Required rotated chain lock sig at h - 0 not
+    /// present", it never reaches `Synced`. Because `is_synced()` checks
+    /// masternodes, it returns false, `SyncComplete` is never emitted by the
+    /// coordinator, and downstream managers (mempool, instant-send) never
+    /// activate.
+    #[test]
+    fn test_is_synced_blocked_by_masternode_failure() {
+        let mut progress = SyncProgress::default();
+
+        // Set all five core managers to Synced.
+        let mut headers = BlockHeadersProgress::default();
+        headers.set_state(SyncState::Synced);
+        progress.update_headers(headers);
+
+        let mut filter_headers = FilterHeadersProgress::default();
+        filter_headers.set_state(SyncState::Synced);
+        progress.update_filter_headers(filter_headers);
+
+        let mut filters = FiltersProgress::default();
+        filters.set_state(SyncState::Synced);
+        progress.update_filters(filters);
+
+        let mut blocks = BlocksProgress::default();
+        blocks.set_state(SyncState::Synced);
+        progress.update_blocks(blocks);
+
+        let mut masternodes = MasternodesProgress::default();
+        masternodes.set_state(SyncState::Synced);
+        progress.update_masternodes(masternodes);
+
+        // Baseline: all Synced => is_synced() is true.
+        assert!(progress.is_synced(), "expected is_synced() == true when all managers are Synced");
+
+        // Now simulate masternode failure: set masternodes back to Syncing.
+        let mut mn_failed = MasternodesProgress::default();
+        mn_failed.set_state(SyncState::Syncing);
+        progress.update_masternodes(mn_failed);
+
+        // BUG: is_synced() returns false because masternodes is not Synced,
+        // even though headers, filter_headers, filters, and blocks are all
+        // Synced. This blocks SyncComplete from ever being emitted.
+        assert!(
+            !progress.is_synced(),
+            "expected is_synced() == false when masternodes is Syncing (the bug)"
+        );
+
+        // Also verify WaitForEvents has the same effect.
+        let mn_waiting = MasternodesProgress::default();
+        // Default state is WaitForEvents
+        progress.update_masternodes(mn_waiting);
+
+        assert!(
+            !progress.is_synced(),
+            "expected is_synced() == false when masternodes is WaitForEvents"
+        );
+    }
+}
