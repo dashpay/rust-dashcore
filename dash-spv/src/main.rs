@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use clap::{Arg, Command};
 use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, MempoolStrategy, Network};
+use key_wallet::manager::WalletManager;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::WalletManager;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]

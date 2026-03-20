@@ -21,8 +21,8 @@ use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 
 use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
-use key_wallet_manager::wallet_interface::WalletInterface;
-use key_wallet_manager::wallet_manager::{check_compact_filters_for_addresses, FilterMatchKey};
+use key_wallet::manager::WalletInterface;
+use key_wallet::manager::{check_compact_filters_for_addresses, FilterMatchKey};
 use tokio::sync::RwLock;
 
 /// Batch size for processing filters.
@@ -771,7 +771,7 @@ mod tests {
         PersistentFilterStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
-    use key_wallet_manager::test_utils::MockWallet;
+    use key_wallet::test_utils::MockWallet;
     use tokio::sync::mpsc::unbounded_channel;
 
     type TestFiltersManager = FiltersManager<

@@ -48,7 +48,6 @@ use crate::hash_types::{
 use crate::io::{self, Cursor, Read};
 use crate::network::message_qrinfo::QuorumSnapshot;
 use crate::network::message_sml::{DeletedQuorum, MnListDiff, QuorumCLSigObject};
-#[cfg(feature = "std")]
 use crate::network::{
     address::{AddrV2Message, Address},
     message_blockdata::Inventory,
@@ -171,7 +170,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::Error::*;
@@ -755,11 +753,8 @@ impl_vec!(MasternodeListEntry);
 impl_vec!(MnListDiff);
 impl_vec!(QuorumSnapshot);
 
-#[cfg(feature = "std")]
 impl_vec!(Inventory);
-#[cfg(feature = "std")]
 impl_vec!((u32, Address));
-#[cfg(feature = "std")]
 impl_vec!(AddrV2Message);
 
 pub(crate) fn consensus_encode_with_size<S: io::Write>(
@@ -1161,7 +1156,6 @@ mod tests {
 
     use super::*;
     use crate::consensus::{Decodable, Encodable, deserialize_partial};
-    #[cfg(feature = "std")]
     use crate::network::{Address, message_blockdata::Inventory};
     use crate::{TxIn, TxOut};
 
@@ -1455,9 +1449,7 @@ mod tests {
         test_len_is_max_vec::<TxIn>();
         test_len_is_max_vec::<Vec<u8>>();
         test_len_is_max_vec::<u64>();
-        #[cfg(feature = "std")]
         test_len_is_max_vec::<(u32, Address)>();
-        #[cfg(feature = "std")]
         test_len_is_max_vec::<Inventory>();
     }
 

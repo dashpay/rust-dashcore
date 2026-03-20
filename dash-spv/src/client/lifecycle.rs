@@ -28,7 +28,7 @@ use crate::sync::{
 use crate::types::MempoolState;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
-use key_wallet_manager::wallet_interface::WalletInterface;
+use key_wallet::manager::WalletInterface;
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.

@@ -20,8 +20,10 @@ use crate::account::ManagedAccountCollection;
 use crate::Network;
 use alloc::string::String;
 use dashcore::prelude::CoreBlockHeight;
+use dashcore::Txid;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Information about a managed wallet
 ///
@@ -45,6 +47,9 @@ pub struct ManagedWalletInfo {
     pub accounts: ManagedAccountCollection,
     /// Cached wallet core balance - should be updated when accounts change
     pub balance: WalletCoreBalance,
+    /// Transactions that have received an InstantSend lock.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) instant_send_locks: HashSet<Txid>,
 }
 
 impl ManagedWalletInfo {
@@ -58,6 +63,7 @@ impl ManagedWalletInfo {
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::new(),
             balance: WalletCoreBalance::default(),
+            instant_send_locks: HashSet::new(),
         }
     }
 
@@ -71,6 +77,7 @@ impl ManagedWalletInfo {
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::new(),
             balance: WalletCoreBalance::default(),
+            instant_send_locks: HashSet::new(),
         }
     }
 
@@ -84,6 +91,7 @@ impl ManagedWalletInfo {
             metadata: WalletMetadata::default(),
             accounts: ManagedAccountCollection::from_account_collection(&wallet.accounts),
             balance: WalletCoreBalance::default(),
+            instant_send_locks: HashSet::new(),
         }
     }
 

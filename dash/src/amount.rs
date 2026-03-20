@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 
-//! Bitcoin amounts.
+//! Dash amounts.
 //!
 //! This module mainly introduces the [Amount] and [SignedAmount] types.
 //! We refer to the documentation on the types for more information.
@@ -20,12 +20,12 @@ use crate::prelude::*;
 /// use core::str::FromStr;
 /// use dashcore::Amount;
 ///
-/// assert_eq!(Amount::from_str("1 BTC").unwrap(), Amount::from_sat(100_000_000));
-/// assert_eq!(Amount::from_str("1 cBTC").unwrap(), Amount::from_sat(1_000_000));
-/// assert_eq!(Amount::from_str("1 mBTC").unwrap(), Amount::from_sat(100_000));
-/// assert_eq!(Amount::from_str("1 uBTC").unwrap(), Amount::from_sat(100));
-/// assert_eq!(Amount::from_str("10 nBTC").unwrap(), Amount::from_sat(1));
-/// assert_eq!(Amount::from_str("10000 pBTC").unwrap(), Amount::from_sat(1));
+/// assert_eq!(Amount::from_str("1 DASH").unwrap(), Amount::from_sat(100_000_000));
+/// assert_eq!(Amount::from_str("1 cDASH").unwrap(), Amount::from_sat(1_000_000));
+/// assert_eq!(Amount::from_str("1 mDASH").unwrap(), Amount::from_sat(100_000));
+/// assert_eq!(Amount::from_str("1 uDASH").unwrap(), Amount::from_sat(100));
+/// assert_eq!(Amount::from_str("10 nDASH").unwrap(), Amount::from_sat(1));
+/// assert_eq!(Amount::from_str("10000 pDASH").unwrap(), Amount::from_sat(1));
 /// assert_eq!(Amount::from_str("1 bit").unwrap(), Amount::from_sat(100));
 /// assert_eq!(Amount::from_str("1 sat").unwrap(), Amount::from_sat(1));
 /// assert_eq!(Amount::from_str("1000 msats").unwrap(), Amount::from_sat(1));
@@ -72,12 +72,12 @@ impl Denomination {
     /// Returns stringly representation of this
     fn as_str(self) -> &'static str {
         match self {
-            Denomination::Dash => "BTC",
-            Denomination::CentiDash => "cBTC",
-            Denomination::MilliDash => "mBTC",
-            Denomination::MicroDash => "uBTC",
-            Denomination::NanoDash => "nBTC",
-            Denomination::PicoDash => "pBTC",
+            Denomination::Dash => "DASH",
+            Denomination::CentiDash => "cDASH",
+            Denomination::MilliDash => "mDASH",
+            Denomination::MicroDash => "uDASH",
+            Denomination::NanoDash => "nDASH",
+            Denomination::PicoDash => "pDASH",
             Denomination::Bit => "bits",
             Denomination::Satoshi => "satoshi",
             Denomination::MilliSatoshi => "msat",
@@ -87,12 +87,12 @@ impl Denomination {
     /// The different str forms of denominations that are recognized.
     fn forms(s: &str) -> Option<Self> {
         match s {
-            "BTC" | "btc" => Some(Denomination::Dash),
-            "cBTC" | "cbtc" => Some(Denomination::CentiDash),
-            "mBTC" | "mbtc" => Some(Denomination::MilliDash),
-            "uBTC" | "ubtc" => Some(Denomination::MicroDash),
-            "nBTC" | "nbtc" => Some(Denomination::NanoDash),
-            "pBTC" | "pbtc" => Some(Denomination::PicoDash),
+            "DASH" | "dash" => Some(Denomination::Dash),
+            "cDASH" | "cdash" => Some(Denomination::CentiDash),
+            "mDASH" | "mdash" => Some(Denomination::MilliDash),
+            "uDASH" | "udash" => Some(Denomination::MicroDash),
+            "nDASH" | "ndash" => Some(Denomination::NanoDash),
+            "pDASH" | "pdash" => Some(Denomination::PicoDash),
             "bit" | "bits" | "BIT" | "BITS" => Some(Denomination::Bit),
             "SATOSHI" | "satoshi" | "SATOSHIS" | "satoshis" | "SAT" | "sat" | "SATS" | "sats" => {
                 Some(Denomination::Satoshi)
@@ -106,7 +106,7 @@ impl Denomination {
 /// These form are ambiguous and could have many meanings.  For example, M could denote Mega or Milli.
 /// If any of these forms are used, an error type PossiblyConfusingDenomination is returned.
 const CONFUSING_FORMS: [&str; 9] =
-    ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MBTC", "Mbtc", "PBTC"];
+    ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MDASH", "MDash", "PDASH"];
 
 impl fmt::Display for Denomination {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -120,7 +120,7 @@ impl FromStr for Denomination {
     /// Convert from a str to Denomination.
     ///
     /// Any combination of upper and/or lower case, excluding uppercase of SI(m, u, n, p) is considered valid.
-    /// - Singular: BTC, mBTC, uBTC, nBTC, pBTC
+    /// - Singular: DASH, mDASH, uDASH, nDASH, pDASH
     /// - Plural or singular: sat, satoshi, bit, msat
     ///
     /// Due to ambiguity between mega and milli, pico and peta we prohibit usage of leading capital 'M', 'P'.
@@ -188,7 +188,6 @@ impl fmt::Display for ParseAmountError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for ParseAmountError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::ParseAmountError::*;
@@ -604,7 +603,7 @@ impl Amount {
 
     /// Create an object that implements [`fmt::Display`] dynamically selecting denomination.
     ///
-    /// This will use BTC for values greater than or equal to 1 BTC and satoshis otherwise. To
+    /// This will use DASH for values greater than or equal to 1 DASH and satoshis otherwise. To
     /// avoid confusion the denomination is always shown.
     pub fn display_dynamic(self) -> Display {
         Display {
@@ -692,7 +691,7 @@ impl default::Default for Amount {
 
 impl fmt::Debug for Amount {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Amount({:.8} BTC)", self.to_dash())
+        write!(f, "Amount({:.8} DASH)", self.to_dash())
     }
 }
 
@@ -796,7 +795,7 @@ impl core::iter::Sum for Amount {
 ///
 /// * Ability to select denomination
 /// * Show or hide denomination
-/// * Dynamically-selected denomination - show in sats if less than 1 BTC.
+/// * Dynamically-selected denomination - show in sats if less than 1 DASH.
 ///
 /// However this can still be combined with `fmt::Formatter` options to precisely control zeros,
 /// padding, alignment... The formatting works like floats from `core` but note that precision will
@@ -982,7 +981,7 @@ impl SignedAmount {
 
     /// Create an object that implements [`fmt::Display`] dynamically selecting denomination.
     ///
-    /// This will use BTC for values greater than or equal to 1 BTC and satoshis otherwise. To
+    /// This will use DASH for values greater than or equal to 1 DASH and satoshis otherwise. To
     /// avoid confusion the denomination is always shown.
     pub fn display_dynamic(self) -> Display {
         Display {
@@ -1112,7 +1111,7 @@ impl default::Default for SignedAmount {
 
 impl fmt::Debug for SignedAmount {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SignedAmount({:.8} BTC)", self.to_btc())
+        write!(f, "SignedAmount({:.8} DASH)", self.to_btc())
     }
 }
 
@@ -1423,7 +1422,7 @@ pub mod serde {
     }
 
     pub mod as_btc {
-        //! Serialize and deserialize [`Amount`](crate::Amount) as JSON numbers denominated in BTC.
+        //! Serialize and deserialize [`Amount`](crate::Amount) as JSON numbers denominated in DASH.
         //! Use with `#[serde(with = "amount::serde::as_btc")]`.
 
         use serde::{Deserializer, Serializer};
@@ -1439,7 +1438,7 @@ pub mod serde {
         }
 
         pub mod opt {
-            //! Serialize and deserialize `Option<Amount>` as JSON numbers denominated in BTC.
+            //! Serialize and deserialize `Option<Amount>` as JSON numbers denominated in DASH.
             //! Use with `#[serde(default, with = "amount::serde::as_btc::opt")]`.
 
             use core::fmt;
@@ -1615,7 +1614,6 @@ mod verification {
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
-    #[cfg(feature = "std")]
     use std::panic;
 
     #[cfg(feature = "serde")]
@@ -1625,7 +1623,7 @@ mod tests {
 
     #[test]
     fn from_str_zero() {
-        let denoms = vec!["BTC", "mBTC", "uBTC", "nBTC", "pBTC", "bits", "sats", "msats"];
+        let denoms = vec!["DASH", "mDASH", "uDASH", "nDASH", "pDASH", "bits", "sats", "msats"];
         for denom in denoms {
             for v in &["0", "000"] {
                 let s = format!("{} {}", v, denom);
@@ -1666,7 +1664,6 @@ mod tests {
         assert_eq!(b, ssat(1));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_overflows() {
         // panic on overflow
@@ -1794,16 +1791,16 @@ mod tests {
         assert_eq!(Amount::ONE_SAT.to_string_in(D::Dash), "0.00000001");
         assert_eq!(SignedAmount::from_sat(-42).to_string_in(D::Dash), "-0.00000042");
 
-        assert_eq!(Amount::ONE_BTC.to_string_with_denomination(D::Dash), "1 BTC");
+        assert_eq!(Amount::ONE_BTC.to_string_with_denomination(D::Dash), "1 DASH");
         assert_eq!(Amount::ONE_SAT.to_string_with_denomination(D::MilliSatoshi), "1000 msat");
         assert_eq!(
             SignedAmount::ONE_BTC.to_string_with_denomination(D::Satoshi),
             "100000000 satoshi"
         );
-        assert_eq!(Amount::ONE_SAT.to_string_with_denomination(D::Dash), "0.00000001 BTC");
+        assert_eq!(Amount::ONE_SAT.to_string_with_denomination(D::Dash), "0.00000001 DASH");
         assert_eq!(
             SignedAmount::from_sat(-42).to_string_with_denomination(D::Dash),
-            "-0.00000042 BTC"
+            "-0.00000042 DASH"
         );
     }
 
@@ -1958,22 +1955,22 @@ mod tests {
     }
 
     check_format_non_negative_show_denom! {
-        Dash, " BTC";
-        btc_check_fmt_non_negative_show_denom_0, 1, "{:14.1}", "0.00000001";
-        btc_check_fmt_non_negative_show_denom_1, 1, "{:14.8}", "0.00000001";
-        btc_check_fmt_non_negative_show_denom_2, 1, "{:15}", " 0.00000001";
-        btc_check_fmt_non_negative_show_denom_3, 1, "{:015}", "00.00000001";
+        Dash, " DASH";
+        btc_check_fmt_non_negative_show_denom_0, 1, "{:15.1}", "0.00000001";
+        btc_check_fmt_non_negative_show_denom_1, 1, "{:15.8}", "0.00000001";
+        btc_check_fmt_non_negative_show_denom_2, 1, "{:16}", " 0.00000001";
+        btc_check_fmt_non_negative_show_denom_3, 1, "{:016}", "00.00000001";
         btc_check_fmt_non_negative_show_denom_4, 1, "{:.9}", "0.000000010";
-        btc_check_fmt_non_negative_show_denom_5, 1, "{:15.9}", "0.000000010";
-        btc_check_fmt_non_negative_show_denom_6, 1, "{:16.9}", " 0.000000010";
-        btc_check_fmt_non_negative_show_denom_7, 1, "{:016.9}", "00.000000010";
+        btc_check_fmt_non_negative_show_denom_5, 1, "{:16.9}", "0.000000010";
+        btc_check_fmt_non_negative_show_denom_6, 1, "{:17.9}", " 0.000000010";
+        btc_check_fmt_non_negative_show_denom_7, 1, "{:017.9}", "00.000000010";
     }
 
     check_format_non_negative_show_denom! {
-        Dash, " BTC ";
-        btc_check_fmt_non_negative_show_denom_align_0, 1, "{:<15}", "0.00000001";
-        btc_check_fmt_non_negative_show_denom_align_1, 1, "{:^15}", "0.00000001";
-        btc_check_fmt_non_negative_show_denom_align_2, 1, "{:^16}", " 0.00000001";
+        Dash, " DASH ";
+        btc_check_fmt_non_negative_show_denom_align_0, 1, "{:<16}", "0.00000001";
+        btc_check_fmt_non_negative_show_denom_align_1, 1, "{:^16}", "0.00000001";
+        btc_check_fmt_non_negative_show_denom_align_2, 1, "{:^17}", " 0.00000001";
     }
 
     check_format_non_negative! {
@@ -2009,11 +2006,14 @@ mod tests {
     fn from_str() {
         use super::ParseAmountError as E;
 
-        assert_eq!(Amount::from_str("x BTC"), Err(E::InvalidCharacter('x')));
-        assert_eq!(Amount::from_str("xBTC"), Err(E::UnknownDenomination("xBTC".into())));
-        assert_eq!(Amount::from_str("5 BTC BTC"), Err(E::UnknownDenomination("BTC BTC".into())));
-        assert_eq!(Amount::from_str("5BTC BTC"), Err(E::InvalidCharacter('B')));
-        assert_eq!(Amount::from_str("5 5 BTC"), Err(E::UnknownDenomination("5 BTC".into())));
+        assert_eq!(Amount::from_str("x DASH"), Err(E::InvalidCharacter('x')));
+        assert_eq!(Amount::from_str("xDASH"), Err(E::UnknownDenomination("xDASH".into())));
+        assert_eq!(
+            Amount::from_str("5 DASH DASH"),
+            Err(E::UnknownDenomination("DASH DASH".into()))
+        );
+        assert_eq!(Amount::from_str("5DASH DASH"), Err(E::InvalidCharacter('D')));
+        assert_eq!(Amount::from_str("5 5 DASH"), Err(E::UnknownDenomination("5 DASH".into())));
 
         #[track_caller]
         fn case(s: &str, expected: Result<Amount, ParseAmountError>) {
@@ -2029,20 +2029,20 @@ mod tests {
 
         case("5 BCH", Err(E::UnknownDenomination("BCH".to_owned())));
 
-        case("-1 BTC", Err(E::Negative));
-        case("-0.0 BTC", Err(E::Negative));
-        case("0.123456789 BTC", Err(E::TooPrecise));
+        case("-1 DASH", Err(E::Negative));
+        case("-0.0 DASH", Err(E::Negative));
+        case("0.123456789 DASH", Err(E::TooPrecise));
         scase("-0.1 satoshi", Err(E::TooPrecise));
-        case("0.123456 mBTC", Err(E::TooPrecise));
+        case("0.123456 mDASH", Err(E::TooPrecise));
         scase("-1.001 bits", Err(E::TooPrecise));
-        scase("-200000000000 BTC", Err(E::TooBig));
+        scase("-200000000000 DASH", Err(E::TooBig));
         case("18446744073709551616 sat", Err(E::TooBig));
 
         case(".5 bits", Ok(Amount::from_sat(50)));
         scase("-.5 bits", Ok(SignedAmount::from_sat(-50)));
-        case("0.00253583 BTC", Ok(Amount::from_sat(253583)));
+        case("0.00253583 DASH", Ok(Amount::from_sat(253583)));
         scase("-5 satoshi", Ok(SignedAmount::from_sat(-5)));
-        case("0.10000000 BTC", Ok(Amount::from_sat(100_000_00)));
+        case("0.10000000 DASH", Ok(Amount::from_sat(100_000_00)));
         scase("-100 bits", Ok(SignedAmount::from_sat(-10_000)));
     }
 
@@ -2138,8 +2138,8 @@ mod tests {
         assert_eq!(Amount::from_str(&denom(amt, D::PicoDash)), Ok(amt));
 
         assert_eq!(
-            Amount::from_str("42 satoshi BTC"),
-            Err(ParseAmountError::UnknownDenomination("satoshi BTC".into())),
+            Amount::from_str("42 satoshi DASH"),
+            Err(ParseAmountError::UnknownDenomination("satoshi DASH".into())),
         );
         assert_eq!(
             SignedAmount::from_str("-42 satoshi BTC"),
@@ -2364,8 +2364,8 @@ mod tests {
     fn denomination_string_acceptable_forms() {
         // Non-exhaustive list of valid forms.
         let valid = vec![
-            "BTC", "btc", "mBTC", "mbtc", "uBTC", "ubtc", "SATOSHI", "satoshi", "SATOSHIS",
-            "satoshis", "SAT", "sat", "SATS", "sats", "bit", "bits", "nBTC", "pBTC",
+            "DASH", "dash", "mDASH", "mdash", "uDASH", "udash", "SATOSHI", "satoshi", "SATOSHIS",
+            "satoshis", "SAT", "sat", "SATS", "sats", "bit", "bits", "nDASH", "pDASH",
         ];
         for denom in valid.iter() {
             assert!(Denomination::from_str(denom).is_ok());
@@ -2374,7 +2374,8 @@ mod tests {
 
     #[test]
     fn disallow_confusing_forms() {
-        let confusing = ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MBTC", "Mbtc", "PBTC"];
+        let confusing =
+            ["Msat", "Msats", "MSAT", "MSATS", "MSat", "MSats", "MDASH", "MDash", "PDASH"];
         for denom in confusing.iter() {
             match Denomination::from_str(denom) {
                 Ok(_) => panic!("from_str should error for {}", denom),
@@ -2387,7 +2388,7 @@ mod tests {
     #[test]
     fn disallow_unknown_denomination() {
         // Non-exhaustive list of unknown forms.
-        let unknown = ["NBTC", "UBTC", "ABC", "abc", "cBtC", "Sat", "Sats"];
+        let unknown = ["NDASH", "UDASH", "ABC", "abc", "cBtC", "Sat", "Sats"];
         for denom in unknown.iter() {
             match Denomination::from_str(denom) {
                 Ok(_) => panic!("from_str should error for {}", denom),

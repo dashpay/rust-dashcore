@@ -3,7 +3,6 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::{HandshakeManager, NetworkManager, Peer, PeerNetworkManager};
 use dash_spv::{ClientConfig, Network};
 
@@ -17,11 +16,8 @@ async fn test_handshake_with_mainnet_peer() {
 
     match result {
         Ok(mut connection) => {
-            let mut handshake_manager = HandshakeManager::new(
-                Network::Mainnet,
-                MempoolStrategy::BloomFilter,
-                Some("handshake_test".parse().unwrap()),
-            );
+            let mut handshake_manager =
+                HandshakeManager::new(Network::Mainnet, Some("handshake_test".parse().unwrap()));
             handshake_manager.perform_handshake(&mut connection).await.expect("Handshake failed");
             println!("✓ Handshake successful with peer {}", peer_addr);
             assert!(

@@ -58,7 +58,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
                         "Received {} ChainLock announcements, requesting via getdata",
                         chainlocks_to_request.len()
                     );
-                    requests.request_inventory(chainlocks_to_request.clone())?;
+                    requests
+                        .request_inventory(chainlocks_to_request.clone(), msg.peer_address())?;
 
                     for item in &chainlocks_to_request {
                         if let Inventory::ChainLock(hash) = item {

@@ -10,7 +10,7 @@ license = "CC0-1.0"
 
 [features]
 default = ["std"]
-std = ["dashcore_hashes/std", "secp256k1/std", "bip39/std", "getrandom", "rand"]
+std = ["secp256k1/std", "bip39/std", "getrandom", "rand"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
 bip38 = ["scrypt", "aes", "bs58", "rand"]
@@ -20,7 +20,7 @@ test-utils = ["dashcore/test-utils"]
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
-dashcore_hashes = { path = "../hashes", default-features = false }
+dashcore_hashes = { path = "../hashes" }
 dashcore = { path="../dash" }
 secp256k1 = { version = "0.30.0", default-features = false, features = ["hashes", "recovery"] }
 bip39 = { version = "2.2.0", default-features = false, features = ["chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
@@ -43,10 +43,11 @@ hex = { version = "0.4"}
 zeroize = { version = "1.8", features = ["derive"] }
 tracing = "0.1"
 async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
+rayon = { version = "1.11" }
 
 [dev-dependencies]
 dashcore = { path="../dash", features = ["test-utils"] }
 hex = "0.4"
 key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
-tokio = { version = "1", features = ["macros", "rt"] }
 test-case = "3.3"

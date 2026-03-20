@@ -21,7 +21,6 @@
 //!
 
 use core::fmt;
-#[cfg(feature = "std")]
 use std::error;
 
 #[cfg(feature = "bincode")]
@@ -201,7 +200,6 @@ impl fmt::Display for ParseOutPointError {
     }
 }
 
-#[cfg(feature = "std")]
 impl error::Error for ParseOutPointError {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {

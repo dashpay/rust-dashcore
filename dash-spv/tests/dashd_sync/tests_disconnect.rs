@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::helpers::run_disconnect_loop;
 use super::setup::{create_and_start_client, create_non_exclusive_test_config, TestContext};
+use dash_spv::test_utils::TestChain;
 
 /// Verify sync completes successfully despite peer disconnections mid-sync.
 ///
@@ -11,7 +12,7 @@ use super::setup::{create_and_start_client, create_non_exclusive_test_config, Te
 /// (automatic reconnection). After all disconnections, waits for full sync.
 #[tokio::test]
 async fn test_sync_with_peer_disconnection() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 
@@ -29,7 +30,7 @@ async fn test_sync_with_peer_disconnection() {
 /// mechanism (known addresses + DNS fallback) instead of the exclusive peer list.
 #[tokio::test]
 async fn test_sync_with_peer_disconnection_non_exclusive() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 

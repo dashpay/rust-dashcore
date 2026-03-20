@@ -12,8 +12,8 @@ use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient};
 use dashcore::Network;
+use key_wallet::manager::WalletManager;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
 ) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager> {
@@ -83,6 +83,3 @@ async fn test_wallet_manager_basic_operations() {
     let balance = wallet_manager.get_total_balance();
     assert_eq!(balance, 0);
 }
-
-// Note: More comprehensive wallet tests should be in the key-wallet-manager crate
-// since that's where the wallet logic now resides

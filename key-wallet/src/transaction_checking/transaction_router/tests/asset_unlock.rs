@@ -1,20 +1,19 @@
 //! Tests for asset unlock transaction handling
 
-use super::helpers::create_test_transaction;
+use super::helpers::test_addr;
+use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
 use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
-use crate::wallet::initialization::WalletAccountCreationOptions;
-use crate::wallet::{ManagedWalletInfo, Wallet};
-use crate::Network;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{BlockHash, OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 
 #[test]
 fn test_asset_unlock_routing() {
@@ -37,7 +36,8 @@ fn test_asset_unlock_routing() {
 #[test]
 fn test_asset_unlock_classification() {
     // Test that AssetUnlock transactions are properly classified
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     // Create an asset unlock payload
     let base = AssetUnlockBasePayload {
@@ -69,31 +69,15 @@ fn test_asset_unlock_classification() {
 
 #[tokio::test]
 async fn test_asset_unlock_transaction_routing() {
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with default options");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get the BIP44 account
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Expected BIP44 account at index 0 to exist");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    // Get an address from standard account (where unlocked funds go)
-    let address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create an asset unlock transaction
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -133,7 +117,8 @@ async fn test_asset_unlock_transaction_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction should be recognized as relevant");
@@ -156,31 +141,16 @@ async fn test_asset_unlock_transaction_routing() {
 
 #[tokio::test]
 async fn test_asset_unlock_routing_to_bip32_account() {
-    // Test AssetUnlock routing to BIP32 accounts
-
-    // Create wallet with default options (includes both BIP44 and BIP32)
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get address from BIP44 account (we'll use BIP44 to test the routing)
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    // Get the account's xpub from wallet
-    let account =
-        wallet.accounts.standard_bip44_accounts.get(&0).expect("Expected BIP44 account at index 0");
-    let xpub = account.account_xpub;
-
-    let address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create an asset unlock transaction to our address
-    let mut tx = create_test_transaction(0, vec![]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..0, &[]);
     tx.output.push(TxOut {
         value: 200_000_000, // 2 DASH unlocked
         script_pubkey: address.script_pubkey(),
@@ -209,7 +179,8 @@ async fn test_asset_unlock_routing_to_bip32_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // Should be recognized as relevant
     assert!(result.is_relevant, "Asset unlock transaction to BIP32 account should be relevant");

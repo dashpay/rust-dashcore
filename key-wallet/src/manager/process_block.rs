@@ -1,15 +1,14 @@
-use crate::wallet_interface::{BlockProcessingResult, WalletInterface};
-use crate::WalletEvent;
-use crate::WalletManager;
+use crate::manager::wallet_interface::{BlockProcessingResult, WalletInterface};
+use crate::manager::{WalletEvent, WalletManager};
+use crate::transaction_checking::transaction_router::TransactionRouter;
+use crate::transaction_checking::TransactionContext;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use alloc::string::String;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction};
-use key_wallet::transaction_checking::transaction_router::TransactionRouter;
-use key_wallet::transaction_checking::TransactionContext;
-use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use tokio::sync::broadcast;
 
 #[async_trait]
@@ -31,7 +30,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 timestamp: Some(timestamp),
             };
 
-            let check_result = self.check_transaction_in_all_wallets(tx, context, true).await;
+            let check_result =
+                self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
             if !check_result.affected_wallets.is_empty() {
                 if check_result.is_new_transaction {
@@ -53,10 +53,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let context = TransactionContext::Mempool;
 
         // Check transaction against all wallets
-        self.check_transaction_in_all_wallets(
-            tx, context, true, // update state
-        )
-        .await;
+        self.check_transaction_in_all_wallets(tx, context, true, true).await;
     }
 
     fn monitored_addresses(&self) -> Vec<Address> {
@@ -114,25 +111,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     fn update_synced_height(&mut self, height: CoreBlockHeight) {
         self.synced_height = height;
 
-        // Update each wallet and emit BalanceUpdated events if balance changed
-        for (wallet_id, info) in self.wallet_infos.iter_mut() {
-            let old_balance = info.balance();
-            info.update_synced_height(height);
-            let new_balance = info.balance();
+        let snapshot = self.snapshot_balances();
 
-            // Emit event if balance changed
-            #[cfg(feature = "std")]
-            if old_balance != new_balance {
-                let event = WalletEvent::BalanceUpdated {
-                    wallet_id: *wallet_id,
-                    spendable: new_balance.spendable(),
-                    unconfirmed: new_balance.unconfirmed(),
-                    immature: new_balance.immature(),
-                    locked: new_balance.locked(),
-                };
-                let _ = self.event_sender.send(event);
-            }
+        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
+            info.update_synced_height(height);
         }
+
+        self.emit_balance_changes(&snapshot);
     }
 
     fn filter_committed_height(&self) -> CoreBlockHeight {
@@ -183,8 +168,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wallet::managed_wallet_info::ManagedWalletInfo;
     use dashcore::Network;
-    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
     #[tokio::test]
     async fn test_synced_height() {

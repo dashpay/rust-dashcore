@@ -10,7 +10,6 @@ use dashcore::network::message_network::VersionMessage;
 use dashcore::Network;
 // Hash trait not needed in current implementation
 
-use crate::client::config::MempoolStrategy;
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::peer::Peer;
 use crate::network::Message;
@@ -40,17 +39,12 @@ pub struct HandshakeManager {
     version_received: bool,
     verack_received: bool,
     version_sent: bool,
-    mempool_strategy: MempoolStrategy,
     user_agent: Option<String>,
 }
 
 impl HandshakeManager {
     /// Create a new handshake manager.
-    pub fn new(
-        network: Network,
-        mempool_strategy: MempoolStrategy,
-        user_agent: Option<String>,
-    ) -> Self {
+    pub fn new(network: Network, user_agent: Option<String>) -> Self {
         Self {
             _network: network,
             state: HandshakeState::Init,
@@ -60,7 +54,6 @@ impl HandshakeManager {
             version_received: false,
             verack_received: false,
             version_sent: false,
-            mempool_strategy,
             user_agent,
         }
     }
@@ -291,11 +284,8 @@ impl HandshakeManager {
             sender: dashcore::network::address::Address::new(&local_addr, services),
             nonce: rand::random(),
             user_agent: ua,
-            start_height: 0, // SPV client starts at 0
-            relay: match self.mempool_strategy {
-                MempoolStrategy::FetchAll => true, // Want all transactions for FetchAll strategy
-                _ => false,                        // Don't want relay for other strategies
-            },
+            start_height: 0,              // SPV client starts at 0
+            relay: false,                 // relay enabled on demand via filterload/filterclear
             mn_auth_challenge: [0; 32],   // Not a masternode
             masternode_connection: false, // Not connecting to masternode
         })

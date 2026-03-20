@@ -30,7 +30,6 @@
 //!
 //! ## Available feature flags
 //!
-//! * `std` - the usual dependency on `std` (default).
 //! * `secp-recovery` - enables calculating public key from a signature and message.
 //! * `signer` - enables singing and validation ECDSA helpers.
 //! * `base64` - (dependency), enables encoding of PSBTs and message signatures.
@@ -39,11 +38,8 @@
 //! * `bincode` - (dependency), implements bincode serialization and deserialization.
 //! * `serde` - (dependency), implements `serde`-based serialization and deserialization.
 //! * `secp-lowmemory` - optimizations for low-memory devices.
-//! * `no-std` - enables additional features required for this crate to be usable
-//!   without std. Does **not** disable `std`. Depends on `core2`.
 //!
 
-#![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 // Experimental features we need.
 #![cfg_attr(bench, feature(test))]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
@@ -51,9 +47,6 @@
 // #![warn(missing_docs)]
 // Instead of littering the codebase for non-fuzzing code just globally allow.
 #![cfg_attr(fuzzing, allow(dead_code, unused_imports))]
-
-#[cfg(not(any(feature = "std", feature = "no-std")))]
-compile_error!("at least one of the `std` or `no-std` features must be enabled");
 
 // Disable 16-bit support at least for now as we can't guarantee it yet.
 #[cfg(target_pointer_width = "16")]
@@ -123,18 +116,9 @@ pub mod string;
 pub mod taproot;
 pub mod util;
 
-// May depend on crate features and we don't want to bother with it
-#[allow(unused)]
-#[cfg(feature = "std")]
 use std::error::Error as StdError;
-#[cfg(feature = "std")]
-pub use std::io;
 
-#[allow(unused)]
-#[cfg(not(feature = "std"))]
-use core2::error::Error as StdError;
-#[cfg(not(feature = "std"))]
-use core2::io;
+pub use std::io;
 
 pub use crate::address::{Address, AddressType};
 pub use crate::amount::{Amount, Denomination, SignedAmount};
@@ -162,55 +146,13 @@ pub use crate::transaction::outpoint::OutPoint;
 pub use crate::transaction::txin::TxIn;
 pub use crate::transaction::txout::TxOut;
 
-#[cfg(not(feature = "std"))]
-mod io_extras {
-    /// A writer which will move data into the void.
-    pub struct Sink {
-        _priv: (),
-    }
-
-    /// Creates an instance of a writer which will successfully consume all data.
-    pub const fn sink() -> Sink {
-        Sink {
-            _priv: (),
-        }
-    }
-
-    impl core2::io::Write for Sink {
-        #[inline]
-        fn write(&mut self, buf: &[u8]) -> core2::io::Result<usize> {
-            Ok(buf.len())
-        }
-
-        #[inline]
-        fn flush(&mut self) -> core2::io::Result<()> {
-            Ok(())
-        }
-    }
-}
-
 #[rustfmt::skip]
 pub mod prelude {
-    #[cfg(all(not(feature = "std"), not(test)))]
-    pub use alloc::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Borrow, Cow, ToOwned}, slice, rc};
-
-    #[cfg(all(not(feature = "std"), not(test), target_has_atomic = "ptr"))]
-    pub use alloc::sync;
-
-    #[cfg(any(feature = "std", test))]
     pub use std::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Borrow, Cow, ToOwned}, slice, rc, sync};
 
-    #[cfg(all(not(feature = "std"), not(test)))]
-    pub use alloc::collections::{BTreeMap, BTreeSet, btree_map, BinaryHeap};
-
-    #[cfg(any(feature = "std", test))]
     pub use std::collections::{BTreeMap, BTreeSet, btree_map, BinaryHeap};
 
-    #[cfg(feature = "std")]
     pub use std::io::sink;
-
-    #[cfg(not(feature = "std"))]
-    pub use crate::io_extras::sink;
 
     pub use internals::hex::display::DisplayHex;
 

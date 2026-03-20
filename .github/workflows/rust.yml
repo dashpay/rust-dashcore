@@ -45,51 +45,40 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
-  verify-execution:
-    name: Verify Test Execution
+  verify-groups:
+    name: Verify Test Groups
     runs-on: ubuntu-latest
-    outputs:
-      groups: ${{ steps.verify.outputs.groups }}
     steps:
       - uses: actions/checkout@v6
       - run: pip install pyyaml
-      - name: Verify all crates are assigned and get matrix
-        id: verify
+      - name: Verify group config and hardcoded matrix
         run: python .github/scripts/ci_config.py verify-groups
 
   test-ubuntu:
     name: Ubuntu
-    needs: verify-execution
     uses: ./.github/workflows/build-and-test.yml
     with:
       os: ubuntu-latest
-      groups: ${{ needs.verify-execution.outputs.groups }}
       coverage: true
     secrets: inherit
 
   test-ubuntu-arm:
     name: Ubuntu ARM
-    needs: verify-execution
     uses: ./.github/workflows/build-and-test.yml
     with:
       os: ubuntu-22.04-arm
-      groups: ${{ needs.verify-execution.outputs.groups }}
 
   test-macos:
     name: macOS
-    needs: verify-execution
     uses: ./.github/workflows/build-and-test.yml
     with:
       os: macos-latest
-      groups: ${{ needs.verify-execution.outputs.groups }}
 
   test-windows:
     name: Windows
-    needs: verify-execution
     uses: ./.github/workflows/build-and-test.yml
     with:
       os: windows-latest
-      groups: ${{ needs.verify-execution.outputs.groups }}
 
   integrations_tests:
     name: Integration Tests

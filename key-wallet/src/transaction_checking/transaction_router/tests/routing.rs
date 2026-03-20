@@ -1,8 +1,10 @@
 //! Tests for transaction routing logic
 
+use super::helpers::test_addr;
 use crate::account::{AccountType, StandardAccountType};
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
@@ -10,30 +12,9 @@ use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-
-/// Helper to create a basic transaction
-fn create_basic_transaction() -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 100000,
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    }
-}
+use dashcore::{BlockHash, ScriptBuf, TxOut};
 
 #[test]
 fn test_standard_transaction_routing() {
@@ -46,32 +27,16 @@ fn test_standard_transaction_routing() {
 
 #[tokio::test]
 async fn test_transaction_routing_to_bip44_account() {
-    // Create a wallet with a BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with default options");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get the account's xpub for address derivation from the wallet's first BIP44 account
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Expected BIP44 account at index 0 to exist");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    // Get an address from the BIP44 account
-    let address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create a transaction that sends to this address
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add an output to our address
     tx.output.push(TxOut {
@@ -95,6 +60,7 @@ async fn test_transaction_routing_to_bip44_account() {
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -139,7 +105,8 @@ async fn test_transaction_routing_to_bip32_account() {
     };
 
     // Create a transaction that sends to this address
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add an output to our address
     tx.output.push(TxOut {
@@ -157,7 +124,8 @@ async fn test_transaction_routing_to_bip32_account() {
     };
 
     // Check with update_state = false
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false, true).await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Transaction should be relevant to the BIP32 account");
@@ -182,6 +150,7 @@ async fn test_transaction_routing_to_bip32_account() {
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -251,7 +220,8 @@ async fn test_transaction_routing_to_coinjoin_account() {
     };
 
     // Create a CoinJoin-like transaction (multiple inputs/outputs with same denominations)
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add multiple outputs with CoinJoin denominations
     tx.output.push(TxOut {
@@ -275,7 +245,8 @@ async fn test_transaction_routing_to_coinjoin_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // This test may fail if CoinJoin detection is not properly implemented
     println!(
@@ -352,7 +323,8 @@ async fn test_transaction_affects_multiple_accounts() {
         .expect("Failed to generate receive address for BIP32 account");
 
     // Create a transaction that sends to multiple accounts
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add outputs to different accounts
     tx.output.push(TxOut {
@@ -383,6 +355,7 @@ async fn test_transaction_affects_multiple_accounts() {
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -400,7 +373,7 @@ async fn test_transaction_affects_multiple_accounts() {
 
     // Test with update_state = false to ensure state isn't modified
     let result2 =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false).await;
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false, true).await;
 
     assert_eq!(
         result2.total_received, result.total_received,

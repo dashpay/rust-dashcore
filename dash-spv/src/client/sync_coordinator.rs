@@ -5,7 +5,7 @@ use crate::error::Result;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncProgress;
-use key_wallet_manager::wallet_interface::WalletInterface;
+use key_wallet::manager::WalletInterface;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 

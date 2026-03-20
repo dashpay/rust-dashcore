@@ -90,6 +90,10 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
     fn update_synced_height(&mut self, current_height: u32);
+
+    /// Mark UTXOs for a transaction as InstantSend-locked across all accounts.
+    /// Returns `true` if any UTXO was newly marked.
+    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool;
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -227,5 +231,18 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.metadata.synced_height = current_height;
         // Update cached balance
         self.update_balance();
+    }
+
+    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool {
+        let mut any_changed = false;
+        for account in self.accounts.all_accounts_mut() {
+            if account.mark_utxos_instant_send(txid) {
+                any_changed = true;
+            }
+        }
+        if any_changed {
+            self.update_balance();
+        }
+        any_changed
     }
 }

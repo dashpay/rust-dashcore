@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use dash_spv::test_utils::DashdTestContext;
+use dash_spv::test_utils::{DashdTestContext, TestChain};
 use dashcore::hashes::Hash;
 use dashcore::Amount;
 
@@ -13,7 +13,7 @@ use super::context::FFITestContext;
 #[test]
 fn test_ffi_sync_then_generate_blocks() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
         eprintln!("Skipping test (dashd context unavailable)");
         return;
     };
@@ -47,6 +47,7 @@ fn test_ffi_sync_then_generate_blocks() {
 
         // Generate a block containing a wallet transaction and wait for sync.
         let cycle_before = ctx.tracker().last_sync_cycle.load(Ordering::SeqCst);
+        let tx_received_before = ctx.tracker().transaction_received_count.load(Ordering::SeqCst);
         let receive_address = ctx.get_receive_address(&wallet_id);
         let send_amount = Amount::from_sat(100_000_000);
         let txid = dashd.node.send_to_address(&receive_address, send_amount);
@@ -63,6 +64,13 @@ fn test_ffi_sync_then_generate_blocks() {
             "Single block should produce exactly one sync cycle: before={}, after={}",
             cycle_before,
             cycle_after_first
+        );
+
+        // Wait for wallet callback (travels on a separate channel from sync events)
+        ctx.tracker().wait_for_callback(
+            &ctx.tracker().transaction_received_count,
+            tx_received_before,
+            "transaction_received",
         );
 
         // Verify the transaction was received via wallet callback
@@ -124,7 +132,7 @@ fn test_ffi_sync_then_generate_blocks() {
 #[test]
 fn test_ffi_multiple_transactions_in_single_block() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
         eprintln!("Skipping test (dashd context unavailable)");
         return;
     };
@@ -208,7 +216,7 @@ fn test_ffi_multiple_transactions_in_single_block() {
 #[test]
 fn test_ffi_multiple_transactions_across_blocks() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Minimal)) else {
         eprintln!("Skipping test (dashd context unavailable)");
         return;
     };

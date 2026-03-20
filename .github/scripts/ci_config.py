@@ -11,6 +11,7 @@ Subcommands:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -95,9 +96,34 @@ def verify_groups(args):
 
     print(f"All {len(workspace_crates)} workspace crates are assigned to test groups")
 
-    # Output groups for GitHub Actions matrix
-    github_output("groups", json.dumps(list(groups.keys())))
+    # Verify the hardcoded matrix in build-and-test.yml matches ci-groups.yml
+    workflow_file = Path(".github/workflows/build-and-test.yml")
+    expected = sorted(groups.keys())
 
+    try:
+        with open(workflow_file) as f:
+            content = f.read()
+    except FileNotFoundError:
+        github_error(f"Workflow file not found: {workflow_file}")
+        return 1
+
+    match = re.search(r'group:\s*\[([^\]]+)\]', content)
+    if not match:
+        github_error(f"No hardcoded group matrix found in {workflow_file}")
+        return 1
+
+    actual = sorted(
+        name.strip().strip('"').strip("'") for name in match.group(1).split(",")
+    )
+
+    if actual != expected:
+        github_error(
+            f"Hardcoded matrix {actual} does not match ci-groups.yml {expected}. "
+            f"Update the group list in {workflow_file}."
+        )
+        return 1
+
+    print(f"Hardcoded matrix matches ci-groups.yml: {expected}")
     return 0
 
 
@@ -120,17 +146,18 @@ def run_group_tests(args):
     for crate in crates:
         github_group_start(f"Testing {crate}")
 
-        if coverage:
-            cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
-        else:
-            cmd = ["cargo", "test", "-p", crate, "--all-features"]
-        result = subprocess.run(cmd)
+        try:
+            if coverage:
+                cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
+            else:
+                cmd = ["cargo", "test", "-p", crate, "--all-features"]
+            result = subprocess.run(cmd)
 
-        github_group_end()
-
-        if result.returncode != 0:
-            failed.append(crate)
-            github_error(f"Test failed for {crate} on {args.os}")
+            if result.returncode != 0:
+                failed.append(crate)
+                github_error(f"Test failed for {crate} on {args.os}")
+        finally:
+            github_group_end()
 
     if failed:
         print("\n" + "=" * 40)

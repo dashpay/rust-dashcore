@@ -15,14 +15,16 @@ use dashcore::blockdata::transaction::special_transaction::provider_update_regis
 use dashcore::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{BlockHash, OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 
 #[test]
 fn test_provider_update_registrar_classification() {
     // Test ProviderUpdateRegistrar classification
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     let payload = ProviderUpdateRegistrarPayload {
         version: 1,
@@ -50,7 +52,8 @@ fn test_provider_update_registrar_classification() {
 #[test]
 fn test_provider_update_service_classification() {
     // Test ProviderUpdateService classification
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     let payload = ProviderUpdateServicePayload {
         version: 1,
@@ -81,7 +84,8 @@ fn test_provider_update_service_classification() {
 #[test]
 fn test_provider_update_revocation_classification() {
     // Test ProviderUpdateRevocation classification
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     let payload = ProviderUpdateRevocationPayload {
         version: 1,
@@ -169,7 +173,7 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         });
 
     // Create a ProRegTx transaction
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -229,7 +233,8 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result: is_relevant={}, received={}",
@@ -305,7 +310,7 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         });
 
     // Create a ProRegTx transaction
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -365,7 +370,8 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (voting): is_relevant={}, received={}",
@@ -442,7 +448,7 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         });
 
     // Create a ProRegTx transaction
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -502,7 +508,8 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (operator): is_relevant={}, received={}",
@@ -641,7 +648,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         });
 
     // Create a ProRegTx transaction with platform fields (HighPerformance/EvoNode)
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -706,7 +713,8 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (platform): is_relevant={}, received={}",
@@ -735,7 +743,8 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
 
 #[test]
 fn test_provider_update_service_with_operator_key() {
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     // Create provider update service payload
     use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
@@ -800,7 +809,8 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         .next_bls_operator_key(None, true)
         .expect("expected operator key");
 
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     // Create provider update registrar payload
     use dashcore::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
@@ -827,7 +837,8 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // Should be recognized as relevant due to voting and operator keys
     assert!(result.is_relevant, "Provider update registrar should be relevant");
@@ -873,7 +884,8 @@ async fn test_provider_revocation_classification_and_routing() {
         .next_receive_address(Some(&xpub), true)
         .expect("Failed to generate receive address");
 
-    let mut tx = create_test_transaction(1, vec![1_000_000_000]); // 10 DASH returned collateral
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[1_000_000_000]); // 10 DASH returned collateral
 
     // Add output for returned collateral
     tx.output.push(TxOut {
@@ -920,7 +932,8 @@ async fn test_provider_revocation_classification_and_routing() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // Should be recognized as relevant due to collateral return
     assert!(result.is_relevant, "Provider revocation with collateral return should be relevant");

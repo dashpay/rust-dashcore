@@ -2,12 +2,12 @@
 """Cross-platform setup script for dashd and test blockchain data.
 
 Downloads the Dash Core binary and regtest test data for integration tests.
-Outputs DASHD_PATH and DASHD_DATADIR lines suitable for appending to GITHUB_ENV
+Outputs DASHD_PATH and DASHD_TEST_DATA lines suitable for appending to GITHUB_ENV
 or evaluating in a shell.
 
 Environment variables:
     DASHVERSION        - Dash Core version (default: 23.1.0)
-    TEST_DATA_VERSION  - Test data release version (default: v0.0.2)
+    TEST_DATA_VERSION  - Test data release version (default: v0.0.3)
     TEST_DATA_REPO     - GitHub repo for test data (default: dashpay/regtest-blockchain)
     CACHE_DIR          - Cache directory (default: ~/.rust-dashcore-test)
 """
@@ -22,7 +22,7 @@ import zipfile
 
 # Keep these defaults in sync with .github/workflows/build-and-test.yml
 DASHVERSION = os.environ.get("DASHVERSION", "23.1.0")
-TEST_DATA_VERSION = os.environ.get("TEST_DATA_VERSION", "v0.0.2")
+TEST_DATA_VERSION = os.environ.get("TEST_DATA_VERSION", "v0.0.3")
 TEST_DATA_REPO = os.environ.get("TEST_DATA_REPO", "dashpay/regtest-blockchain")
 
 
@@ -115,23 +115,30 @@ def setup_dashd(cache_dir):
     return dashd_bin
 
 
-def setup_test_data(cache_dir):
-    """Download and extract test blockchain data. Returns the datadir path."""
-    test_data_dir = os.path.join(
-        cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}", "regtest-40000"
-    )
+VARIANTS = ["regtest-40000", "regtest-200"]
+
+
+def setup_test_data(cache_dir, variant):
+    """Download and extract a single test blockchain variant.
+
+    Args:
+        cache_dir: Root cache directory for all test assets.
+        variant: Directory name of the test data (e.g. "regtest-40000" or "regtest-200").
+    """
+    parent_dir = os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}")
+    test_data_dir = os.path.join(parent_dir, variant)
     blocks_dir = os.path.join(test_data_dir, "regtest", "blocks")
 
     if os.path.isdir(blocks_dir):
-        log(f"Test blockchain data {TEST_DATA_VERSION} already available")
-        return test_data_dir
+        log(f"Test blockchain data {variant} ({TEST_DATA_VERSION}) already available")
+        return
 
-    log(f"Downloading test blockchain data {TEST_DATA_VERSION}...")
-    parent_dir = os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}")
+    log(f"Downloading test blockchain data {variant} ({TEST_DATA_VERSION})...")
     os.makedirs(parent_dir, exist_ok=True)
 
-    archive_path = os.path.join(cache_dir, "regtest-40000.tar.gz")
-    url = f"https://github.com/{TEST_DATA_REPO}/releases/download/{TEST_DATA_VERSION}/regtest-40000.tar.gz"
+    archive_name = f"{variant}.tar.gz"
+    archive_path = os.path.join(cache_dir, archive_name)
+    url = f"https://github.com/{TEST_DATA_REPO}/releases/download/{TEST_DATA_VERSION}/{archive_name}"
     download(url, archive_path)
     extract(archive_path, parent_dir)
     os.remove(archive_path)
@@ -141,19 +148,20 @@ def setup_test_data(cache_dir):
 
     log(f"Downloaded test data to {test_data_dir}")
 
-    return test_data_dir
-
 
 def main():
     cache_dir = get_cache_dir()
     os.makedirs(cache_dir, exist_ok=True)
 
     dashd_path = setup_dashd(cache_dir)
-    datadir = setup_test_data(cache_dir)
+    for variant in VARIANTS:
+        setup_test_data(cache_dir, variant)
+
+    datadir = os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}")
 
     # Output lines for GITHUB_ENV or shell eval
     print(f"DASHD_PATH={dashd_path}")
-    print(f"DASHD_DATADIR={datadir}")
+    print(f"DASHD_TEST_DATA={datadir}")
 
 
 if __name__ == "__main__":

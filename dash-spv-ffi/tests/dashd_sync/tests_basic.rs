@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
-use dash_spv::test_utils::DashdTestContext;
+use dash_spv::test_utils::{DashdTestContext, TestChain};
 
 use super::context::FFITestContext;
 
 #[test]
 fn test_wallet_sync_via_ffi() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let Some(dashd) = rt.block_on(DashdTestContext::new()) else {
+    let Some(dashd) = rt.block_on(DashdTestContext::new(TestChain::Full)) else {
         eprintln!("Skipping test (dashd context unavailable)");
         return;
     };

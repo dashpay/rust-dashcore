@@ -6,9 +6,6 @@ on:
       os:
         required: true
         type: string
-      groups:
-        required: true
-        type: string
       coverage:
         required: false
         type: boolean
@@ -21,7 +18,7 @@ permissions:
 env:
   DASHVERSION: "23.1.0"
   TEST_DATA_REPO: "dashpay/regtest-blockchain"
-  TEST_DATA_VERSION: "v0.0.2"
+  TEST_DATA_VERSION: "v0.0.3"
 
 jobs:
   test:
@@ -30,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ${{ fromJson(inputs.groups) }}
+        group: ["core", "spv", "wallet", "ffi", "rpc"]
     env:
       RUST_BACKTRACE: 1
     steps:
@@ -66,7 +63,7 @@ jobs:
       - name: Run tests
         id: tests
         env:
-          DASHD_TEST_RETAIN_DIR: ${{ (matrix.group == 'spv' || matrix.group == 'ffi') && '/tmp/dashd-test-logs' || '' }}
+          DASHD_TEST_RETAIN_DIR: ${{ (matrix.group == 'spv' || matrix.group == 'ffi') && format('{0}/dashd-test-logs', runner.temp) || '' }}
         run: >
           python .github/scripts/ci_config.py run-group ${{ matrix.group }}
           --os ${{ inputs.os }}
@@ -90,6 +87,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.group }}-test-logs-${{ inputs.os }}
-          path: /tmp/dashd-test-logs/
+          path: ${{ runner.temp }}/dashd-test-logs/
           retention-days: 7
           if-no-files-found: ignore

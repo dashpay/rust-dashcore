@@ -183,6 +183,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                 },
             }
         }
+        FFITransactionContext::InstantSend => TransactionContext::InstantSend,
     };
 
     // Check the transaction - wallet is now required
@@ -208,8 +209,9 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     };
 
     // Block on the async check_transaction call
-    let check_result = tokio::runtime::Handle::current()
-        .block_on(managed_wallet.check_core_transaction(&tx, context, wallet_mut, update_state));
+    let check_result = tokio::runtime::Handle::current().block_on(
+        managed_wallet.check_core_transaction(&tx, context, wallet_mut, update_state, true),
+    );
 
     // Convert the result to FFI format
     let affected_accounts = if check_result.affected_accounts.is_empty() {
@@ -683,7 +685,8 @@ mod tests {
     fn test_transaction_context_conversion() {
         // Test that FFI transaction context values match expectations
         assert_eq!(FFITransactionContext::Mempool as u32, 0);
-        assert_eq!(FFITransactionContext::InBlock as u32, 1);
-        assert_eq!(FFITransactionContext::InChainLockedBlock as u32, 2);
+        assert_eq!(FFITransactionContext::InstantSend as u32, 1);
+        assert_eq!(FFITransactionContext::InBlock as u32, 2);
+        assert_eq!(FFITransactionContext::InChainLockedBlock as u32, 3);
     }
 }

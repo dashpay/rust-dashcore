@@ -10,11 +10,12 @@ use super::helpers::{get_spendable_balance, is_progress_event, wait_for_sync};
 use dash_spv::test_utils::SYNC_TIMEOUT;
 
 use super::setup::{create_and_start_client, create_test_wallet, TestContext};
+use dash_spv::test_utils::TestChain;
 
 /// Verify sync state is identical after stopping and restarting with same storage.
 #[tokio::test]
 async fn test_sync_restart_consistency() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 
@@ -51,7 +52,7 @@ async fn test_sync_restart_consistency() {
 /// Verify correct rescan behavior when restarting with a fresh wallet but existing storage.
 #[tokio::test]
 async fn test_sync_restart_with_fresh_wallet() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 
@@ -97,7 +98,7 @@ async fn test_sync_restart_with_fresh_wallet() {
 /// full sync lifecycle.
 #[tokio::test]
 async fn test_sync_with_multiple_restarts() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 
@@ -162,7 +163,7 @@ async fn test_sync_with_multiple_restarts() {
 /// Uses a seeded RNG to sleep a random duration (50-500ms) after starting, then restarts.
 #[tokio::test]
 async fn test_sync_with_random_restarts() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 

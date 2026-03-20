@@ -2,7 +2,7 @@ use crate::sync::ManagerIdentifier;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::{Address, BlockHash};
-use key_wallet_manager::wallet_manager::FilterMatchKey;
+use key_wallet::manager::FilterMatchKey;
 use std::collections::BTreeSet;
 
 /// Events that managers can emit and subscribe to.

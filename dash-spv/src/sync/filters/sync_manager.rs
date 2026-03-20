@@ -9,7 +9,7 @@ use crate::sync::{
 };
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use key_wallet_manager::wallet_interface::WalletInterface;
+use key_wallet::manager::WalletInterface;
 
 #[async_trait]
 impl<

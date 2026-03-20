@@ -1,10 +1,10 @@
 #[cfg(feature = "bincode")]
 #[cfg(test)]
 mod tests {
+    use key_wallet::manager::WalletManager;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet::Network;
-    use key_wallet_manager::wallet_manager::WalletManager;
 
     #[test]
     fn test_create_wallet_return_serialized_bytes() {

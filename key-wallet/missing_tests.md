@@ -1,6 +1,6 @@
-# Missing Tests in key-wallet-manager
+# Missing Tests in key-wallet
 
-## 1. WalletManager Multi-Wallet Tests (`wallet_manager.rs`)
+## 1. WalletManager Multi-Wallet Tests
 
 ### Multi-Wallet Management
 - `test_create_multiple_wallets` - Create and manage multiple wallets

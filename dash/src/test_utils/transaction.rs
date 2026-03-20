@@ -3,6 +3,17 @@ use std::ops::Range;
 use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
 
 impl Transaction {
+    /// Creates a transaction with no inputs or outputs.
+    pub fn dummy_empty() -> Transaction {
+        Transaction {
+            version: 1,
+            lock_time: 0,
+            input: Vec::new(),
+            output: Vec::new(),
+            special_transaction_payload: None,
+        }
+    }
+
     pub fn dummy(
         address: &Address,
         inputs_ids_range: Range<u8>,

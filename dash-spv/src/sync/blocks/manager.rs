@@ -12,7 +12,7 @@ use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, BlockStorage};
 use crate::sync::{BlocksProgress, SyncEvent, SyncManager, SyncState};
-use key_wallet_manager::wallet_interface::WalletInterface;
+use key_wallet::manager::WalletInterface;
 
 /// Blocks manager for downloading and processing matching blocks.
 ///
@@ -164,8 +164,8 @@ mod tests {
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
-    use key_wallet_manager::test_utils::MockWallet;
-    use key_wallet_manager::wallet_manager::FilterMatchKey;
+    use key_wallet::manager::FilterMatchKey;
+    use key_wallet::test_utils::MockWallet;
     use std::collections::BTreeSet;
 
     type TestBlocksManager =

@@ -1,9 +1,9 @@
 use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncProgress};
 use dash_spv::test_utils::DashCoreNode;
+use key_wallet::manager::{WalletId, WalletManager};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;

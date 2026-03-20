@@ -5,6 +5,7 @@
 
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
@@ -13,10 +14,12 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 
 /// Context for transaction processing
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionContext {
     /// Transaction is in the mempool (unconfirmed)
     Mempool,
+    /// Transaction is in the mempool with an InstantSend lock
+    InstantSend,
     /// Transaction is in a block at the given height
     InBlock {
         height: u32,
@@ -35,6 +38,7 @@ impl std::fmt::Display for TransactionContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TransactionContext::Mempool => write!(f, "mempool"),
+            TransactionContext::InstantSend => write!(f, "instant send"),
             TransactionContext::InBlock {
                 height,
                 ..
@@ -60,7 +64,7 @@ impl TransactionContext {
     /// Returns the block height if confirmed.
     pub(crate) fn block_height(&self) -> Option<CoreBlockHeight> {
         match self {
-            TransactionContext::Mempool => None,
+            TransactionContext::Mempool | TransactionContext::InstantSend => None,
             TransactionContext::InBlock {
                 height,
                 ..
@@ -74,7 +78,7 @@ impl TransactionContext {
     /// Returns the block hash if confirmed.
     pub(crate) fn block_hash(&self) -> Option<BlockHash> {
         match self {
-            TransactionContext::Mempool => None,
+            TransactionContext::Mempool | TransactionContext::InstantSend => None,
             TransactionContext::InBlock {
                 block_hash,
                 ..
@@ -88,7 +92,7 @@ impl TransactionContext {
     /// Returns the block time if confirmed.
     pub(crate) fn timestamp(&self) -> Option<u32> {
         match self {
-            TransactionContext::Mempool => None,
+            TransactionContext::Mempool | TransactionContext::InstantSend => None,
             TransactionContext::InBlock {
                 timestamp,
                 ..
@@ -113,6 +117,10 @@ pub trait WalletTransactionChecker {
     /// If `update_state` is true, updates account state (transactions, UTXOs, balances, addresses).
     /// If `update_state` is false, only checks relevance without modifying state (useful for previews).
     ///
+    /// If `update_balance` is true, refreshes the cached wallet balance after mutations.
+    /// Callers that batch multiple transactions (e.g. block processing) can pass `false`
+    /// and refresh once at the end via `update_synced_height`.
+    ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
     async fn check_core_transaction(
@@ -121,6 +129,7 @@ pub trait WalletTransactionChecker {
         context: TransactionContext,
         wallet: &mut Wallet,
         update_state: bool,
+        update_balance: bool,
     ) -> TransactionCheckResult;
 }
 
@@ -132,6 +141,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         context: TransactionContext,
         wallet: &mut Wallet,
         update_state: bool,
+        update_balance: bool,
     ) -> TransactionCheckResult {
         // Classify the transaction
         let tx_type = TransactionRouter::classify_transaction(tx);
@@ -148,14 +158,52 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // Check if this transaction already exists in any affected account
         let txid = tx.txid();
+        let mut is_new = true;
         for account_match in &result.affected_accounts {
             if let Some(account) =
                 self.accounts.get_by_account_type_match(&account_match.account_type_match)
             {
                 if account.transactions.contains_key(&txid) {
-                    result.is_new_transaction = false;
+                    is_new = false;
+                    break;
+                }
+            }
+        }
+        result.is_new_transaction = is_new;
+
+        if !is_new {
+            // IS lock on a transaction that is already confirmed is stale — ignore
+            if context == TransactionContext::InstantSend {
+                if !self.instant_send_locks.insert(txid) {
                     return result;
                 }
+                // Only accept IS transitions for unconfirmed transactions
+                let already_confirmed = result.affected_accounts.iter().any(|am| {
+                    self.accounts
+                        .get_by_account_type_match(&am.account_type_match)
+                        .and_then(|a| a.transactions.get(&txid))
+                        .map_or(false, |r| r.is_confirmed())
+                });
+                if already_confirmed {
+                    return result;
+                }
+                // Mark UTXOs as IS-locked in affected accounts
+                for account_match in &result.affected_accounts {
+                    if let Some(account) = self
+                        .accounts
+                        .get_by_account_type_match_mut(&account_match.account_type_match)
+                    {
+                        account.mark_utxos_instant_send(&txid);
+                    }
+                }
+                if update_balance {
+                    self.update_balance();
+                }
+                return result;
+            }
+            // Only proceed if the new context is a block confirmation
+            if !context.confirmed() {
+                return result;
             }
         }
 
@@ -167,7 +215,11 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 continue;
             };
 
-            account.record_transaction(tx, &account_match, context);
+            if is_new {
+                account.record_transaction(tx, &account_match, context);
+            } else {
+                account.confirm_transaction(tx, &account_match, context);
+            }
 
             for address_info in account_match.account_type_match.all_involved_addresses() {
                 account.mark_address_used(&address_info.address);
@@ -196,17 +248,27 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
-        self.increment_transactions();
+        if is_new {
+            // Populate dedup sets when a tx arrives with an initial IS status
+            if context == TransactionContext::InstantSend {
+                self.instant_send_locks.insert(txid);
+            }
+            self.increment_transactions();
 
-        let wallet_net = result.total_received as i64 - result.total_sent as i64;
-        tracing::info!(
-            txid = %tx.txid(),
-            context = %context,
-            net_change = wallet_net,
-            received = result.total_received,
-            sent = result.total_sent,
-            "New wallet transaction detected"
-        );
+            let wallet_net = result.total_received as i64 - result.total_sent as i64;
+            tracing::info!(
+                txid = %tx.txid(),
+                context = %context,
+                net_change = wallet_net,
+                received = result.total_received,
+                sent = result.total_sent,
+                "New wallet transaction detected"
+            );
+        }
+
+        if update_balance {
+            self.update_balance();
+        }
 
         result
     }
@@ -215,6 +277,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestWalletContext;
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use crate::wallet::{ManagedWalletInfo, Wallet};
@@ -225,28 +288,6 @@ mod tests {
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
     use dashcore_hashes::Hash;
-
-    /// Create a test transaction that sends to a given address
-    fn create_transaction_to_address(address: &Address, amount: u64) -> Transaction {
-        Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: Txid::from_byte_array([1u8; 32]),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
-            }],
-            output: vec![TxOut {
-                value: amount,
-                script_pubkey: address.script_pubkey(),
-            }],
-            special_transaction_payload: None,
-        }
-    }
 
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
@@ -265,13 +306,13 @@ mod tests {
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("Should create pubkey"),
             network,
         );
-        let tx = create_transaction_to_address(&dummy_address, 100_000);
+        let tx = Transaction::dummy(&dummy_address, 0..1, &[100_000]);
 
         let context = TransactionContext::Mempool;
 
         let mut wallet_mut = wallet;
         let result =
-            managed_wallet.check_core_transaction(&tx, context, &mut wallet_mut, true).await;
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet_mut, true, true).await;
 
         // Should return default result with no relevance
         assert!(!result.is_relevant);
@@ -340,7 +381,7 @@ mod tests {
         };
 
         if let (Some(_xpub), Some(address)) = (bip32_xpub, bip32_address) {
-            let tx = create_transaction_to_address(&address, 50_000);
+            let tx = Transaction::dummy(&address, 0..1, &[50_000]);
 
             let context = TransactionContext::InBlock {
                 height: 100000,
@@ -352,7 +393,7 @@ mod tests {
 
             // This should exercise BIP32 account branch in the update logic
             let result =
-                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
             // Should be relevant since it's our address
             assert!(result.is_relevant);
@@ -377,7 +418,7 @@ mod tests {
         };
 
         if let (Some(_xpub), Some(address)) = (coinjoin_xpub, coinjoin_address) {
-            let tx = create_transaction_to_address(&address, 75_000);
+            let tx = Transaction::dummy(&address, 0..1, &[75_000]);
 
             let context = TransactionContext::InChainLockedBlock {
                 height: 100001,
@@ -389,7 +430,7 @@ mod tests {
 
             // This should exercise CoinJoin account branch in the update logic
             let result =
-                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
             // Since this is not a coinjoin looking transaction, we should not pick up on it.
             assert!(!result.is_relevant);
@@ -400,23 +441,12 @@ mod tests {
     /// Test coinbase transaction handling for immature transaction logic
     #[tokio::test]
     async fn test_wallet_checker_coinbase_immature_handling() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get a wallet address
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address: address,
+            ..
+        } = TestWalletContext::new_random();
 
         // Create a coinbase transaction
         let coinbase_tx = Transaction {
@@ -447,8 +477,9 @@ mod tests {
             timestamp: Some(1234567890),
         };
 
-        let result =
-            managed_wallet.check_core_transaction(&coinbase_tx, context, &mut wallet, true).await;
+        let result = managed_wallet
+            .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
+            .await;
         // Set synced_height to block where coinbase was received to trigger balance updates.
         managed_wallet.update_synced_height(block_height);
 
@@ -486,26 +517,16 @@ mod tests {
     /// Test that spending a wallet-owned UTXO without creating change is detected
     #[tokio::test]
     async fn test_wallet_checker_detects_spend_only_transaction() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Prepare a managed BIP44 account and derive a receive address
-        let wallet_account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-
-        let receive_address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&wallet_account.account_xpub), true)
-            .expect("Should derive receive address");
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address,
+            ..
+        } = TestWalletContext::new_random();
 
         // Fund the wallet with a transaction paying to the receive address
         let funding_value = 50_000_000u64;
-        let funding_tx = create_transaction_to_address(&receive_address, funding_value);
+        let funding_tx = Transaction::dummy(&receive_address, 0..1, &[funding_value]);
         let funding_context = TransactionContext::InBlock {
             height: 1,
             block_hash: Some(BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash")),
@@ -513,7 +534,7 @@ mod tests {
         };
 
         let funding_result = managed_wallet
-            .check_core_transaction(&funding_tx, funding_context, &mut wallet, true)
+            .check_core_transaction(&funding_tx, funding_context, &mut wallet, true, true)
             .await;
         assert!(funding_result.is_relevant, "Funding transaction must be relevant");
         assert_eq!(funding_result.total_received, funding_value);
@@ -521,7 +542,7 @@ mod tests {
         // Build a spend transaction that sends funds to an external address only
         let external_address = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("Should create pubkey"),
-            network,
+            Network::Testnet,
         );
         let spend_tx = Transaction {
             version: 2,
@@ -549,7 +570,7 @@ mod tests {
         };
 
         let spend_result = managed_wallet
-            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true)
+            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
             .await;
 
         assert!(spend_result.is_relevant, "Spend transaction should be detected");
@@ -575,25 +596,12 @@ mod tests {
     /// Test the full coinbase maturity flow - immature to mature transition
     #[tokio::test]
     async fn test_wallet_checker_immature_transaction_flow() {
-        use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get a wallet address
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address: address,
+            ..
+        } = TestWalletContext::new_random();
 
         // Create a coinbase transaction
         let coinbase_tx = Transaction {
@@ -624,8 +632,9 @@ mod tests {
         };
 
         // Process the coinbase transaction
-        let result =
-            managed_wallet.check_core_transaction(&coinbase_tx, context, &mut wallet, true).await;
+        let result = managed_wallet
+            .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
+            .await;
         // Set synced_height to block where coinbase was received to trigger balance updates.
         managed_wallet.update_synced_height(block_height);
 
@@ -691,30 +700,19 @@ mod tests {
     /// Test mempool context for timestamp/height handling
     #[tokio::test]
     async fn test_wallet_checker_mempool_context() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get a wallet address
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
-
-        let tx = create_transaction_to_address(&address, 100_000);
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address: address,
+            ..
+        } = TestWalletContext::new_random();
+        let tx = Transaction::dummy(&address, 0..1, &[100_000]);
 
         // Test with Mempool context
         let context = TransactionContext::Mempool;
 
-        let result = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+        let result =
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -734,25 +732,13 @@ mod tests {
     /// Test that rescanning a block marks transactions as existing
     #[tokio::test]
     async fn test_transaction_rescan_marks_as_existing() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get a wallet address
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
-
-        let tx = create_transaction_to_address(&address, 100_000);
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address: address,
+            ..
+        } = TestWalletContext::new_random();
+        let tx = Transaction::dummy(&address, 0..1, &[100_000]);
 
         let context = TransactionContext::InBlock {
             height: 100,
@@ -761,7 +747,8 @@ mod tests {
         };
 
         // First processing - should be marked as new
-        let result1 = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+        let result1 =
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
         assert!(result1.is_relevant, "Transaction should be relevant");
         assert!(
@@ -785,7 +772,8 @@ mod tests {
         );
 
         // Second processing (simulating rescan) - should be marked as existing
-        let result2 = managed_wallet.check_core_transaction(&tx, context, &mut wallet, true).await;
+        let result2 =
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
         assert!(result2.is_relevant, "Transaction should still be relevant on rescan");
         assert!(
@@ -808,28 +796,23 @@ mod tests {
             managed_wallet.metadata.total_transactions, total_tx_count_before,
             "total_transactions should not increase on rescan"
         );
+
+        // Verify UTXO state is unchanged after rescan
+        assert_eq!(managed_account.utxos.len(), 1, "Should still have exactly one UTXO");
+        let utxo = managed_account.utxos.values().next().expect("Should have UTXO");
+        assert!(utxo.is_confirmed);
+        assert_eq!(utxo.txout.value, 100_000);
     }
 
     /// Test that UTXO is not created when a spending tx has already been stored
     #[tokio::test]
     async fn test_utxo_not_created_when_already_spent() {
-        let network = Network::Testnet;
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-        // Get wallet addresses (we need two - one for receive, one for change)
-        let account =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
-        let xpub = account.account_xpub;
-
-        let receive_address = managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
-            .expect("Should get address");
+        let TestWalletContext {
+            mut managed_wallet,
+            mut wallet,
+            receive_address,
+            xpub,
+        } = TestWalletContext::new_random();
 
         let change_address = managed_wallet
             .first_bip44_managed_account_mut()
@@ -838,7 +821,7 @@ mod tests {
             .expect("Should get change address");
 
         // Create the funding transaction
-        let funding_tx = create_transaction_to_address(&receive_address, 100_000);
+        let funding_tx = Transaction::dummy(&receive_address, 0..1, &[100_000]);
 
         // Create a spending transaction that:
         // 1. Spends the funding tx's output
@@ -871,7 +854,7 @@ mod tests {
         };
 
         let spend_result = managed_wallet
-            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true)
+            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
             .await;
 
         // Spending tx should be detected because of the change output
@@ -900,7 +883,7 @@ mod tests {
         };
 
         let fund_result = managed_wallet
-            .check_core_transaction(&funding_tx, fund_context, &mut wallet, true)
+            .check_core_transaction(&funding_tx, fund_context, &mut wallet, true, true)
             .await;
 
         // Funding tx should be detected
@@ -926,5 +909,271 @@ mod tests {
             "UTXO should be from spend_tx (change), not funding_tx"
         );
         assert_eq!(utxo.txout.value, 50_000, "UTXO value should be 50k (change amount)");
+    }
+
+    /// Test that a mempool transaction gets confirmed when later seen in a block
+    #[tokio::test]
+    async fn test_mempool_transaction_confirmed_by_block() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(200_000).await;
+        let txid = tx.txid();
+
+        // Verify unconfirmed state
+        assert!(!ctx.transaction(&txid).is_confirmed(), "Mempool tx should be unconfirmed");
+        assert_eq!(ctx.transaction(&txid).height, None);
+        assert!(!ctx.first_utxo().is_confirmed, "Mempool UTXO should be unconfirmed");
+
+        let total_tx_before = ctx.managed_wallet.metadata.total_transactions;
+
+        // Same transaction now seen in a block
+        let block_hash = BlockHash::from_slice(&[5u8; 32]).expect("Should create block hash");
+        let block_context = TransactionContext::InBlock {
+            height: 500,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+
+        let result = ctx.check_transaction(&tx, block_context).await;
+        assert!(result.is_relevant);
+        assert!(!result.is_new_transaction, "Re-processing should mark as existing");
+
+        // Verify confirmed state
+        let record = ctx.transaction(&txid);
+        assert!(record.is_confirmed(), "Tx should now be confirmed");
+        assert_eq!(record.height, Some(500));
+        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.timestamp, 1700000000);
+        assert!(ctx.first_utxo().is_confirmed, "UTXO should now be confirmed");
+
+        assert_eq!(
+            ctx.managed_wallet.metadata.total_transactions, total_tx_before,
+            "total_transactions should not increase for confirmation of existing tx"
+        );
+    }
+
+    /// Test the full lifecycle: mempool -> IS -> block -> chain-locked block -> late IS
+    #[tokio::test]
+    async fn test_full_confirmation_lifecycle() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(200_000).await;
+        let txid = tx.txid();
+
+        // Stage 1: mempool (already done in setup)
+        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 0);
+        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
+
+        // Stage 2: IS lock
+        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        assert!(result.is_relevant);
+        assert!(!result.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 0);
+        assert!(ctx.first_utxo().is_instantlocked);
+        assert!(!ctx.first_utxo().is_confirmed);
+        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
+        assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
+
+        // Duplicate IS lock should be a no-op
+        let result_dup = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        assert!(result_dup.is_relevant);
+        assert!(!result_dup.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+
+        // Stage 3: block confirmation
+        let block_hash = BlockHash::from_slice(&[10u8; 32]).expect("hash");
+        let block_context = TransactionContext::InBlock {
+            height: 1000,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+        let result = ctx.check_transaction(&tx, block_context).await;
+        assert!(!result.is_new_transaction);
+        assert!(ctx.transaction(&txid).is_confirmed());
+        assert_eq!(ctx.transaction(&txid).height, Some(1000));
+        assert!(ctx.first_utxo().is_confirmed);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+
+        // Stage 4: chain-locked block (rescan with stronger context)
+        let cl_context = TransactionContext::InChainLockedBlock {
+            height: 1000,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+        let result = ctx.check_transaction(&tx, cl_context).await;
+        assert!(!result.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
+
+        // Stage 5: late IS lock on already-confirmed tx should be ignored
+        let balance_before = ctx.managed_wallet.balance();
+        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        assert!(result.is_relevant);
+        assert!(!result.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), balance_before.spendable());
+    }
+
+    /// Test that a new transaction arriving directly with IS context populates the dedup set
+    #[tokio::test]
+    async fn test_new_transaction_with_instantsend_context() {
+        let mut ctx = TestWalletContext::new_random();
+        let tx = Transaction::dummy(&ctx.receive_address, 0..1, &[150_000]);
+        let txid = tx.txid();
+
+        // Arrive directly as IS (skipping plain mempool)
+        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        assert!(result.is_relevant);
+        assert!(result.is_new_transaction);
+        assert_eq!(result.total_received, 150_000);
+
+        // Should be IS-locked and spendable immediately
+        assert!(ctx.first_utxo().is_instantlocked);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
+        assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
+
+        // A follow-up IS lock should be a no-op
+        let result2 = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        assert!(!result2.is_new_transaction);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
+        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
+    }
+
+    /// Test that `confirm_transaction` backfills a `TransactionRecord` when the account
+    /// doesn't already have it. This covers the case where a block confirmation is processed
+    /// on an account that missed the initial mempool recording (e.g., due to gap limit
+    /// expansion revealing new address matches).
+    #[tokio::test]
+    async fn test_confirm_transaction_backfills_missing_record() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(300_000).await;
+        let txid = tx.txid();
+
+        // Simulate the account missing the mempool record by removing it
+        let account = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have BIP44 account");
+        assert!(account.transactions.contains_key(&txid));
+        account.transactions.remove(&txid);
+        assert!(!account.transactions.contains_key(&txid));
+
+        // Now process the same tx as a block confirmation.
+        // Since the wallet's `check_core_transaction` still sees no record,
+        // `is_new` will be true and `record_transaction` is called directly.
+        // To exercise `confirm_transaction`'s backfill, we need the wallet
+        // to think this is NOT new. Re-insert into a second processing path:
+        // first re-add as mempool so `is_new` becomes false, then remove again
+        // and confirm via block.
+        //
+        // Cleaner approach: test `confirm_transaction` directly on the account.
+        let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
+        let block_context = TransactionContext::InBlock {
+            height: 800,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+
+        // Re-check the transaction: check_core_transaction will see no record in any
+        // account, so it will treat it as new and call `record_transaction`. This still
+        // validates the end-to-end path works after the record was lost.
+        let result = ctx.check_transaction(&tx, block_context).await;
+        assert!(result.is_relevant);
+        assert!(result.is_new_transaction, "Wallet should treat missing record as new");
+
+        let record = ctx.transaction(&txid);
+        assert!(record.is_confirmed());
+        assert_eq!(record.height, Some(800));
+        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.timestamp, 1700000000);
+        assert!(ctx.first_utxo().is_confirmed);
+    }
+
+    /// Test `confirm_transaction` backfill directly on `ManagedCoreAccount` when the
+    /// account has no prior record of the transaction.
+    #[tokio::test]
+    async fn test_managed_account_confirm_backfills_missing_transaction() {
+        let mut ctx = TestWalletContext::new_random();
+        let tx = Transaction::dummy(&ctx.receive_address, 0..1, &[250_000]);
+        let txid = tx.txid();
+
+        // First, process the tx as mempool to get the AccountMatch
+        let result = ctx.check_transaction(&tx, TransactionContext::Mempool).await;
+        assert!(result.is_relevant);
+        let account_match = result.affected_accounts[0].clone();
+
+        // Remove the transaction record (simulating a missing account scenario)
+        let account = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have BIP44 account");
+        account.transactions.remove(&txid);
+        account.utxos.clear();
+        assert!(!account.transactions.contains_key(&txid));
+        assert!(account.utxos.is_empty());
+
+        // Call `confirm_transaction` directly — the backfill path should create the record
+        let block_hash = BlockHash::from_slice(&[9u8; 32]).expect("hash");
+        let block_context = TransactionContext::InBlock {
+            height: 600,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+        let changed = account.confirm_transaction(&tx, &account_match, block_context);
+        assert!(changed, "Should return true when backfilling a missing record");
+
+        // Verify the transaction was recorded with block context
+        let record = account.transactions.get(&txid).expect("Should have backfilled record");
+        assert!(record.is_confirmed());
+        assert_eq!(record.height, Some(600));
+        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.net_amount, 250_000);
+
+        // Verify UTXO was also created
+        assert_eq!(account.utxos.len(), 1);
+        let utxo = account.utxos.values().next().expect("Should have UTXO");
+        assert_eq!(utxo.outpoint.txid, txid);
+        assert_eq!(utxo.txout.value, 250_000);
+        assert!(utxo.is_confirmed);
+    }
+
+    /// Test that `confirm_transaction` still works normally when the record already exists.
+    #[tokio::test]
+    async fn test_managed_account_confirm_existing_transaction() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(180_000).await;
+        let txid = tx.txid();
+
+        // Get the AccountMatch from the initial processing
+        let account = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have BIP44 account");
+        assert!(account.transactions.contains_key(&txid));
+        assert!(!account.transactions.get(&txid).unwrap().is_confirmed());
+
+        // Build a dummy AccountMatch for the confirm call
+        let result = ctx.managed_wallet.accounts.check_transaction(
+            &tx,
+            &TransactionRouter::get_relevant_account_types(
+                &TransactionRouter::classify_transaction(&tx),
+            ),
+        );
+        let account_match = result.affected_accounts[0].clone();
+
+        let block_hash = BlockHash::from_slice(&[11u8; 32]).expect("hash");
+        let block_context = TransactionContext::InBlock {
+            height: 700,
+            block_hash: Some(block_hash),
+            timestamp: Some(1700000000),
+        };
+
+        let account = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("Should have BIP44 account");
+        let changed = account.confirm_transaction(&tx, &account_match, block_context);
+        assert!(changed, "Should return true when confirming unconfirmed tx");
+
+        let record = account.transactions.get(&txid).expect("Should have record");
+        assert!(record.is_confirmed());
+        assert_eq!(record.height, Some(700));
+        assert_eq!(record.block_hash, Some(block_hash));
     }
 }

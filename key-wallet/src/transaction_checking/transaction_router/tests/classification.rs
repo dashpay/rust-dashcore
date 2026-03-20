@@ -11,6 +11,7 @@ use dashcore::blockdata::transaction::special_transaction::provider_update_regis
 use dashcore::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use dashcore::hashes::Hash;
@@ -19,16 +20,19 @@ use dashcore::Txid;
 #[test]
 fn test_classify_standard_transaction() {
     // Standard payment with 1 input, 2 outputs
-    let tx = create_test_transaction(1, vec![50_000_000, 49_000_000]);
+    let addr = test_addr();
+    let tx = Transaction::dummy(&addr, 0..1, &[50_000_000, 49_000_000]);
     assert_eq!(TransactionRouter::classify_transaction(&tx), TransactionType::Standard);
 }
 
 #[test]
 fn test_classify_coinjoin_transaction() {
     // CoinJoin with multiple inputs and denomination outputs
-    let tx = create_test_transaction(
-        5,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..5,
+        &[
             100_000_000, // 1 DASH denomination
             100_000_000, // 1 DASH denomination
             10_000_000,  // 0.1 DASH denomination
@@ -48,16 +52,19 @@ fn test_classify_asset_lock_transaction() {
 #[test]
 fn test_not_coinjoin_few_inputs() {
     // Not enough inputs to be CoinJoin
-    let tx = create_test_transaction(2, vec![100_000_000, 100_000_000]);
+    let addr = test_addr();
+    let tx = Transaction::dummy(&addr, 0..2, &[100_000_000, 100_000_000]);
     assert_eq!(TransactionRouter::classify_transaction(&tx), TransactionType::Standard);
 }
 
 #[test]
 fn test_not_coinjoin_no_denominations() {
     // Many inputs/outputs but no standard denominations
-    let tx = create_test_transaction(
-        4,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..4,
+        &[
             123_456_789, // Non-standard amount
             987_654_321, // Non-standard amount
             555_555_555, // Non-standard amount
@@ -69,7 +76,8 @@ fn test_not_coinjoin_no_denominations() {
 
 #[test]
 fn test_classify_provider_update_registrar_transaction() {
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
     // Create a provider update registrar payload
     let payload = ProviderUpdateRegistrarPayload {
         version: 1,
@@ -92,7 +100,8 @@ fn test_classify_provider_update_registrar_transaction() {
 
 #[test]
 fn test_classify_provider_update_service_transaction() {
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
     // Create a provider update service payload
     let payload = ProviderUpdateServicePayload {
         version: 1,
@@ -118,7 +127,8 @@ fn test_classify_provider_update_service_transaction() {
 
 #[test]
 fn test_classify_provider_update_revocation_transaction() {
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
     // Create a provider update revocation payload
     let payload = ProviderUpdateRevocationPayload {
         version: 1,
@@ -138,7 +148,8 @@ fn test_classify_provider_update_revocation_transaction() {
 
 #[test]
 fn test_classify_asset_unlock_transaction() {
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
     // Create an asset unlock payload
     let base = AssetUnlockBasePayload {
         version: 1,
@@ -161,7 +172,8 @@ fn test_classify_asset_unlock_transaction() {
 
 #[test]
 fn test_classify_coinbase_transaction() {
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
     // Create a coinbase payload
     let payload = CoinbasePayload {
         version: 3,

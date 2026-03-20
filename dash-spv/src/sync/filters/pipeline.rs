@@ -279,7 +279,7 @@ mod tests {
     use dashcore::block::Header;
     use dashcore::network::message::NetworkMessage;
     use dashcore_hashes::Hash;
-    use key_wallet_manager::wallet_manager::FilterMatchKey;
+    use key_wallet::manager::FilterMatchKey;
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::mpsc::unbounded_channel;
@@ -785,7 +785,9 @@ mod tests {
 
         // Verify message was sent
         let request = rx.try_recv().unwrap();
-        let NetworkRequest::SendMessage(msg) = request;
+        let NetworkRequest::SendMessage(msg) = request else {
+            panic!("Expected SendMessage variant");
+        };
         if let NetworkMessage::GetCFilters(gcf) = msg {
             assert_eq!(gcf.start_height, 0);
             assert_eq!(gcf.filter_type, 0);

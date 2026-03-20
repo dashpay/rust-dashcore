@@ -11,7 +11,7 @@ use crate::network::RequestSender;
 use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
 use dashcore::blockdata::block::Block;
 use dashcore::BlockHash;
-use key_wallet_manager::wallet_manager::FilterMatchKey;
+use key_wallet::manager::FilterMatchKey;
 
 /// Maximum number of concurrent block downloads.
 const MAX_CONCURRENT_BLOCK_DOWNLOADS: usize = 20;

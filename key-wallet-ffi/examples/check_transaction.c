@@ -15,8 +15,9 @@ typedef enum {
 
 typedef enum {
     Mempool = 0,
-    InBlock = 1,
-    InChainLockedBlock = 2
+    InstantSend = 1,
+    InBlock = 2,
+    InChainLockedBlock = 3
 } FFITransactionContext;
 
 typedef struct {

@@ -31,6 +31,24 @@ fn find_available_port() -> u16 {
     panic!("failed to find an available port after {} attempts", MAX_PORT_ATTEMPTS);
 }
 
+/// Selects which pre-built regtest blockchain to use for integration tests.
+#[derive(Debug, Clone, Copy)]
+pub enum TestChain {
+    /// Full 40,000-block regtest chain (wallet integration tests).
+    Full,
+    /// Minimal 200-block regtest chain (faster tests).
+    Minimal,
+}
+
+impl TestChain {
+    pub(crate) fn variant_dir(self) -> &'static str {
+        match self {
+            TestChain::Full => "regtest-40000",
+            TestChain::Minimal => "regtest-200",
+        }
+    }
+}
+
 /// Configuration for Dash Core node.
 pub struct DashCoreConfig {
     /// Path to dashd binary
@@ -46,12 +64,13 @@ pub struct DashCoreConfig {
 }
 
 impl DashCoreConfig {
-    /// Create a config from environment variables with dynamically allocated ports.
+    /// Create a config for the given test chain variant under `DASHD_TEST_DATA`.
     ///
-    /// Reads `DASHD_PATH` and `DASHD_DATADIR`. Panics if either variable
-    /// is not set or if the dashd binary doesn't exist.
-    pub fn from_env() -> Self {
-        let error = "DASHD_PATH and DASHD_DATADIR environment variables are required. \
+    /// `DASHD_TEST_DATA` points to the root directory containing all variants
+    /// (e.g. `regtest-40000`, `regtest-200`). Returns `None` if the variant
+    /// directory doesn't exist. Panics if env vars are missing.
+    pub fn from_env(chain: TestChain) -> Option<Self> {
+        let error = "DASHD_PATH and DASHD_TEST_DATA environment variables are required. \
              Either run `eval $(python3 contrib/setup-dashd.py)` to set them up, \
              or set SKIP_DASHD_TESTS=1 to skip these tests. \
              In CI, the setup-dashd step in build-and-test.yml handles this automatically.";
@@ -63,15 +82,20 @@ impl DashCoreConfig {
             dashd_path.display()
         );
 
-        let datadir = std::env::var("DASHD_DATADIR").ok().map(PathBuf::from).expect(error);
+        let base_datadir = std::env::var("DASHD_TEST_DATA").ok().map(PathBuf::from).expect(error);
+        let datadir = base_datadir.join(chain.variant_dir());
 
-        Self {
+        if !datadir.exists() {
+            return None;
+        }
+
+        Some(Self {
             dashd_path,
             datadir,
             wallet: "default".to_string(),
             p2p_port: find_available_port(),
             rpc_port: find_available_port(),
-        }
+        })
     }
 }
 

@@ -191,10 +191,9 @@ impl From<key_wallet::Error> for FFIError {
     }
 }
 
-/// Convert key_wallet_manager::WalletError to FFIError
-impl From<key_wallet_manager::wallet_manager::WalletError> for FFIError {
-    fn from(err: key_wallet_manager::wallet_manager::WalletError) -> Self {
-        use key_wallet_manager::wallet_manager::WalletError;
+impl From<key_wallet::manager::WalletError> for FFIError {
+    fn from(err: key_wallet::manager::WalletError) -> Self {
+        use key_wallet::manager::WalletError;
 
         let (code, msg) = match &err {
             WalletError::WalletCreation(msg) => {
