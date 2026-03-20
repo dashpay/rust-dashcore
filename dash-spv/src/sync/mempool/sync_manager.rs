@@ -61,7 +61,9 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
-            SyncEvent::SyncComplete {
+            // Activate as soon as filter sync completes — the wallet's address
+            // and UTXO set is fully populated at this point.
+            SyncEvent::FiltersSyncComplete {
                 ..
             } => {
                 if self.state() != SyncState::Synced {
@@ -69,11 +71,11 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                     let has_activated = self.peers.values().any(|v| v.is_some());
                     if has_activated {
                         self.set_state(SyncState::Synced);
-                        tracing::info!("Mempool manager activated on all peers");
+                        tracing::info!("Mempool manager activated after filter sync");
                         return Ok(vec![]);
                     } else {
                         tracing::warn!(
-                            "Sync complete but no peers available for mempool activation"
+                            "Filter sync complete but no peers available for mempool activation"
                         );
                     }
                 }
@@ -225,14 +227,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_sync_complete_activates() {
+    async fn test_filters_sync_complete_activates() {
         let (mut manager, requests, _rx) = create_test_manager();
         let peer = crate::test_utils::test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let event = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let event = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
 
         let events = manager.handle_sync_event(&event, &requests).await.unwrap();
@@ -242,21 +243,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_sync_complete_subsequent_cycles() {
+    async fn test_filters_sync_complete_subsequent_is_noop() {
         let (mut manager, requests, _rx) = create_test_manager();
         manager.handle_peer_connected(crate::test_utils::test_socket_address(1));
 
         // Activate first
-        let event0 = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let event0 = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&event0, &requests).await.unwrap();
 
-        // Subsequent cycles should not change state
-        let event1 = SyncEvent::SyncComplete {
-            header_tip: 1001,
-            cycle: 1,
+        // Subsequent filter sync completions should not change state
+        let event1 = SyncEvent::FiltersSyncComplete {
+            tip_height: 1001,
         };
         let events = manager.handle_sync_event(&event1, &requests).await.unwrap();
         assert!(events.is_empty());
@@ -270,9 +269,8 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Initial activation
-        let event = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let event = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         let events = manager.handle_sync_event(&event, &requests).await.unwrap();
         assert!(events.is_empty());
@@ -282,9 +280,8 @@ mod tests {
         manager.set_state(SyncState::WaitForEvents);
 
         // Re-sync should re-activate
-        let event = SyncEvent::SyncComplete {
-            header_tip: 1001,
-            cycle: 1,
+        let event = SyncEvent::FiltersSyncComplete {
+            tip_height: 1001,
         };
         let events = manager.handle_sync_event(&event, &requests).await.unwrap();
         assert!(events.is_empty());
@@ -298,9 +295,8 @@ mod tests {
         manager.handle_peer_connected(peer1);
 
         // Activate via SyncComplete
-        let event = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let event = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&event, &requests).await.unwrap();
         assert!(matches!(manager.peers.get(&peer1), Some(Some(_))));
@@ -359,9 +355,8 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Activate
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
 
@@ -410,9 +405,8 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Activate
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
 
@@ -459,9 +453,8 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Activate
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
 
@@ -478,9 +471,8 @@ mod tests {
     async fn test_sync_complete_no_peers_stays_inactive() {
         let (mut manager, requests, _rx) = create_test_manager();
 
-        let event = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let event = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         let events = manager.handle_sync_event(&event, &requests).await.unwrap();
 
@@ -509,9 +501,8 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Activate via SyncComplete
-        let event = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let event = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&event, &requests).await.unwrap();
         assert_eq!(manager.state(), SyncState::Synced);
@@ -573,9 +564,8 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Activate
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
 
@@ -604,9 +594,8 @@ mod tests {
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
 
@@ -650,9 +639,8 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Activate — this snapshots the monitor revision
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
         assert_eq!(manager.state(), SyncState::Synced);
@@ -707,9 +695,8 @@ mod tests {
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
         while rx.try_recv().is_ok() {}
@@ -764,9 +751,8 @@ mod tests {
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
         while rx.try_recv().is_ok() {}
@@ -816,9 +802,8 @@ mod tests {
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let sync = SyncEvent::SyncComplete {
-            header_tip: 1000,
-            cycle: 0,
+        let sync = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
         while rx.try_recv().is_ok() {}
