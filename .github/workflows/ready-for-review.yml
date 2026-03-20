@@ -1,6 +1,8 @@
 name: Ready for Review Label
 
 on:
+  pull_request:
+    types: [ready_for_review]
   pull_request_review:
     types: [submitted, dismissed]
   workflow_run:
@@ -16,49 +18,8 @@ permissions:
   checks: read
 
 jobs:
-  # Handle CodeRabbit review events
-  on-review:
-    runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'pull_request_review' &&
-      github.event.review.user.login == 'coderabbitai[bot]'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: .github/scripts
-          sparse-checkout-cone-mode: true
-      - name: Evaluate label
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REVIEW_STATE: ${{ github.event.review.state }}
-          EVENT_ACTION: ${{ github.event.action }}
-          REPO: ${{ github.repository }}
-        run: |
-          # On dismissal or changes requested, always remove label
-          if [ "$EVENT_ACTION" = "dismissed" ] || [ "$REVIEW_STATE" = "changes_requested" ]; then
-            echo "CodeRabbit review dismissed or changes requested, removing label."
-            gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "ready-for-review" || true
-            exit 0
-          fi
-
-          # On approval, check if all CI checks have also passed
-          if [ "$EVENT_ACTION" = "submitted" ] && [ "$REVIEW_STATE" = "approved" ]; then
-            echo "CodeRabbit approved. Checking CI status..."
-
-            CI_STATUS=$(.github/scripts/check_ci_status.sh "$PR_NUMBER" "$REPO")
-
-            echo "CI status: $CI_STATUS"
-            if [ "$CI_STATUS" = "all_passed" ]; then
-              echo "All conditions met. Adding ready-for-review label."
-              gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "ready-for-review"
-            else
-              echo "CI checks not all passing ($CI_STATUS). Label not added."
-            fi
-          fi
-
-  # Handle CI workflow completions
-  on-ci-complete:
+  # Ensure all pull_request-triggered workflows are monitored by workflow_run
+  validate-triggers:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_run'
     steps:
@@ -109,14 +70,43 @@ jobs:
           fi
 
           echo "All pull_request workflows are covered by workflow_run triggers."
-      - name: Evaluate label for associated PRs
+
+  evaluate:
+    runs-on: ubuntu-latest
+    # Skip non-CodeRabbit reviews
+    if: >-
+      github.event_name != 'pull_request_review' ||
+      github.event.review.user.login == 'coderabbitai[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: true
+      - name: Evaluate label
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          PR_NUMBER_DIRECT: ${{ github.event.pull_request.number }}
           PULL_REQUESTS_JSON: ${{ toJson(github.event.workflow_run.pull_requests) }}
         run: |
-          # Get PR numbers associated with this workflow run
-          PR_NUMBERS=$(echo "$PULL_REQUESTS_JSON" | jq -r '.[].number')
+          # On review dismissal or changes requested, remove label and exit
+          if [ "$EVENT_NAME" = "pull_request_review" ]; then
+            if [ "$EVENT_ACTION" = "dismissed" ] || [ "$REVIEW_STATE" = "changes_requested" ]; then
+              echo "CodeRabbit review dismissed or changes requested, removing label."
+              gh pr edit "$PR_NUMBER_DIRECT" --repo "$REPO" --remove-label "ready-for-review" || true
+              exit 0
+            fi
+          fi
+
+          # Collect PR numbers depending on the event type
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            PR_NUMBERS=$(echo "$PULL_REQUESTS_JSON" | jq -r '.[].number')
+          else
+            PR_NUMBERS="$PR_NUMBER_DIRECT"
+          fi
 
           if [ -z "$PR_NUMBERS" ]; then
             echo "No associated pull requests found, skipping."
@@ -125,6 +115,13 @@ jobs:
 
           for PR_NUMBER in $PR_NUMBERS; do
             echo "=== Checking PR #$PR_NUMBER ==="
+
+            # Skip draft PRs
+            IS_DRAFT=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json isDraft --jq '.isDraft')
+            if [ "$IS_DRAFT" = "true" ]; then
+              echo "PR is a draft. Skipping."
+              continue
+            fi
 
             # Check if CodeRabbit has approved
             CODERABBIT_STATE=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" | jq -rs '
@@ -146,7 +143,7 @@ jobs:
 
             echo "CI status: $CI_STATUS"
             if [ "$CI_STATUS" = "all_passed" ]; then
-              echo "Both conditions met. Adding ready-for-review label."
+              echo "All conditions met. Adding ready-for-review label."
               gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "ready-for-review"
             else
               echo "CI checks not all passing ($CI_STATUS). Removing label if present."

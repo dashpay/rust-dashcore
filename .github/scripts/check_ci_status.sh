@@ -9,7 +9,7 @@ PR_NUMBER="$1"
 REPO="$2"
 
 gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,bucket --jq '
-  [.[] | select(.name | test("^(on-review|on-ci-complete)$") | not)] |
+  [.[] | select(.name | test("^(validate-triggers|evaluate)$") | not)] |
   if length == 0 then "no_checks"
   elif all(.bucket == "pass" or .bucket == "skipping") then "all_passed"
   elif any(.bucket == "fail") then "has_failures"
