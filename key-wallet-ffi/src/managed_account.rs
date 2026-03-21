@@ -729,18 +729,16 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
         // Copy net amount
         ffi_record.net_amount = record.net_amount;
 
-        // Copy height (0 if unconfirmed)
-        ffi_record.height = record.height.unwrap_or(0);
-
-        // Copy block hash (zeros if unconfirmed)
-        if let Some(block_hash) = record.block_hash {
-            ffi_record.block_hash = block_hash.to_byte_array();
+        // Copy block info (height, hash, timestamp)
+        if let Some(ref info) = record.block_info {
+            ffi_record.height = info.height();
+            ffi_record.block_hash = info.block_hash().to_byte_array();
+            ffi_record.timestamp = info.timestamp() as u64;
         } else {
+            ffi_record.height = 0;
             ffi_record.block_hash = [0u8; 32];
+            ffi_record.timestamp = 0;
         }
-
-        // Copy timestamp
-        ffi_record.timestamp = record.timestamp;
 
         // Copy fee (0 if unknown)
         ffi_record.fee = record.fee.unwrap_or(0);

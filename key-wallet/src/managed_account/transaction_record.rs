@@ -3,9 +3,10 @@
 //! This module contains the transaction record structure used to track
 //! transactions associated with accounts.
 
+use crate::transaction_checking::BlockInfo;
 use alloc::string::String;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{BlockHash, Txid};
+use dashcore::Txid;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -17,12 +18,8 @@ pub struct TransactionRecord {
     pub transaction: Transaction,
     /// Transaction ID
     pub txid: Txid,
-    /// Block height (if confirmed)
-    pub height: Option<u32>,
-    /// Block hash (if confirmed)
-    pub block_hash: Option<BlockHash>,
-    /// Timestamp
-    pub timestamp: u64,
+    /// Block info (height, hash, timestamp) if confirmed
+    pub block_info: Option<BlockInfo>,
     /// Net amount for this account
     pub net_amount: i64,
     /// Fee paid (if we created it)
@@ -34,15 +31,13 @@ pub struct TransactionRecord {
 }
 
 impl TransactionRecord {
-    /// Create a new transaction record
-    pub fn new(transaction: Transaction, timestamp: u64, net_amount: i64, is_ours: bool) -> Self {
+    /// Create a new unconfirmed transaction record
+    pub fn new(transaction: Transaction, net_amount: i64, is_ours: bool) -> Self {
         let txid = transaction.txid();
         Self {
             transaction,
             txid,
-            height: None,
-            block_hash: None,
-            timestamp,
+            block_info: None,
             net_amount,
             fee: None,
             label: None,
@@ -53,9 +48,7 @@ impl TransactionRecord {
     /// Create a confirmed transaction record
     pub fn new_confirmed(
         transaction: Transaction,
-        height: u32,
-        block_hash: BlockHash,
-        timestamp: u64,
+        block_info: BlockInfo,
         net_amount: i64,
         is_ours: bool,
     ) -> Self {
@@ -63,9 +56,7 @@ impl TransactionRecord {
         Self {
             transaction,
             txid,
-            height: Some(height),
-            block_hash: Some(block_hash),
-            timestamp,
+            block_info: Some(block_info),
             net_amount,
             fee: None,
             label: None,
@@ -75,23 +66,25 @@ impl TransactionRecord {
 
     /// Calculate the number of confirmations based on current chain height
     pub fn confirmations(&self, current_height: u32) -> u32 {
-        match self.height {
-            Some(tx_height) if current_height >= tx_height => {
-                // Add 1 because the block itself counts as 1 confirmation
-                (current_height - tx_height) + 1
-            }
-            _ => 0, // Unconfirmed or invalid height
+        match self.block_info {
+            Some(ref info) if current_height >= info.height => (current_height - info.height) + 1,
+            _ => 0,
         }
     }
 
     /// Check if the transaction is confirmed (has at least 1 confirmation)
     pub fn is_confirmed(&self) -> bool {
-        self.height.is_some()
+        self.block_info.is_some()
     }
 
     /// Check if the transaction has at least the specified number of confirmations
     pub fn has_confirmations(&self, required: u32, current_height: u32) -> bool {
         self.confirmations(current_height) >= required
+    }
+
+    /// Block height if confirmed
+    pub fn height(&self) -> Option<u32> {
+        self.block_info.as_ref().map(|info| info.height)
     }
 
     /// Set the fee for this transaction
@@ -105,15 +98,13 @@ impl TransactionRecord {
     }
 
     /// Mark transaction as confirmed
-    pub fn mark_confirmed(&mut self, height: u32, block_hash: BlockHash) {
-        self.height = Some(height);
-        self.block_hash = Some(block_hash);
+    pub fn mark_confirmed(&mut self, block_info: BlockInfo) {
+        self.block_info = Some(block_info);
     }
 
     /// Mark transaction as unconfirmed (e.g., due to reorg)
     pub fn mark_unconfirmed(&mut self) {
-        self.height = None;
-        self.block_hash = None;
+        self.block_info = None;
     }
 
     /// Check if this is an incoming transaction (positive net amount)
@@ -136,14 +127,22 @@ impl TransactionRecord {
 mod tests {
     use super::*;
     use dashcore::hashes::Hash;
+    use dashcore::BlockHash;
+
+    fn test_block_info(height: u32) -> BlockInfo {
+        BlockInfo {
+            height,
+            block_hash: BlockHash::all_zeros(),
+            timestamp: 1234567890,
+        }
+    }
 
     #[test]
     fn test_transaction_record_creation() {
         let tx = Transaction::dummy_empty();
-        let record = TransactionRecord::new(tx.clone(), 1234567890, 50000, true);
+        let record = TransactionRecord::new(tx.clone(), 50000, true);
 
         assert_eq!(record.txid, tx.txid());
-        assert_eq!(record.timestamp, 1234567890);
         assert_eq!(record.net_amount, 50000);
         assert!(record.is_ours);
         assert!(!record.is_confirmed());
@@ -152,14 +151,14 @@ mod tests {
     #[test]
     fn test_confirmations_calculation() {
         let tx = Transaction::dummy_empty();
-        let mut record = TransactionRecord::new(tx, 1234567890, 50000, true);
+        let mut record = TransactionRecord::new(tx, 50000, true);
 
         // Unconfirmed transaction
         assert_eq!(record.confirmations(100), 0);
         assert!(!record.is_confirmed());
 
         // Mark as confirmed at height 95
-        record.mark_confirmed(95, BlockHash::all_zeros());
+        record.mark_confirmed(test_block_info(95));
         assert!(record.is_confirmed());
 
         // At height 100, should have 6 confirmations (100 - 95 + 1)
@@ -178,12 +177,12 @@ mod tests {
     fn test_incoming_outgoing() {
         let tx = Transaction::dummy_empty();
 
-        let incoming = TransactionRecord::new(tx.clone(), 1234567890, 50000, false);
+        let incoming = TransactionRecord::new(tx.clone(), 50000, false);
         assert!(incoming.is_incoming());
         assert!(!incoming.is_outgoing());
         assert_eq!(incoming.amount(), 50000);
 
-        let outgoing = TransactionRecord::new(tx.clone(), 1234567890, -50000, true);
+        let outgoing = TransactionRecord::new(tx.clone(), -50000, true);
         assert!(!outgoing.is_incoming());
         assert!(outgoing.is_outgoing());
         assert_eq!(outgoing.amount(), 50000);
@@ -191,36 +190,31 @@ mod tests {
 
     #[test]
     fn test_confirmed_transaction_creation() {
+        let info = test_block_info(100);
         let tx = Transaction::dummy_empty();
-        let block_hash = BlockHash::all_zeros();
-        let record =
-            TransactionRecord::new_confirmed(tx.clone(), 100, block_hash, 1234567890, 50000, true);
+        let record = TransactionRecord::new_confirmed(tx.clone(), info, 50000, true);
 
-        assert_eq!(record.height, Some(100));
-        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.height(), Some(100));
         assert!(record.is_confirmed());
     }
 
     #[test]
     fn test_mark_unconfirmed() {
         let tx = Transaction::dummy_empty();
-        let block_hash = BlockHash::all_zeros();
-        let mut record =
-            TransactionRecord::new_confirmed(tx, 100, block_hash, 1234567890, 50000, true);
+        let mut record = TransactionRecord::new_confirmed(tx, test_block_info(100), 50000, true);
 
         assert!(record.is_confirmed());
 
         // Simulate reorg
         record.mark_unconfirmed();
         assert!(!record.is_confirmed());
-        assert_eq!(record.height, None);
-        assert_eq!(record.block_hash, None);
+        assert_eq!(record.block_info, None);
     }
 
     #[test]
     fn test_labels_and_fees() {
         let tx = Transaction::dummy_empty();
-        let mut record = TransactionRecord::new(tx, 1234567890, -50000, true);
+        let mut record = TransactionRecord::new(tx, -50000, true);
 
         assert_eq!(record.fee, None);
         assert_eq!(record.label, None);

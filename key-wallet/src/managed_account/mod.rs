@@ -344,13 +344,9 @@ impl ManagedCoreAccount {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
                             };
-                            let mut utxo = Utxo::new(
-                                outpoint,
-                                txout,
-                                addr,
-                                context.block_height().unwrap_or(0),
-                                tx.is_coin_base(),
-                            );
+                            let block_height = context.block_info().map_or(0, |info| info.height);
+                            let mut utxo =
+                                Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
                             utxo.is_confirmed = context.confirmed();
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend);
@@ -392,12 +388,9 @@ impl ManagedCoreAccount {
         let mut changed = false;
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
             if !tx_record.is_confirmed() {
-                if let (Some(height), Some(hash)) = (context.block_height(), context.block_hash()) {
-                    tx_record.mark_confirmed(height, hash);
+                if let Some(info) = context.block_info() {
+                    tx_record.mark_confirmed(*info);
                     changed = true;
-                }
-                if let Some(ts) = context.timestamp() {
-                    tx_record.timestamp = ts as u64;
                 }
             }
         }
@@ -416,9 +409,7 @@ impl ManagedCoreAccount {
         let tx_record = TransactionRecord {
             transaction: tx.clone(),
             txid: tx.txid(),
-            height: context.block_height(),
-            block_hash: context.block_hash(),
-            timestamp: context.timestamp().unwrap_or(0) as u64,
+            block_info: context.block_info().copied(),
             net_amount,
             fee: None,
             label: None,

@@ -13,6 +13,41 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 
+/// Block metadata for confirmed transactions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BlockInfo {
+    /// The height of the block in the chain.
+    pub(crate) height: CoreBlockHeight,
+    /// The hash identifying the block.
+    pub(crate) block_hash: BlockHash,
+    /// The block's timestamp as a Unix epoch value.
+    pub(crate) timestamp: u32,
+}
+
+impl BlockInfo {
+    /// Creates a new `BlockInfo` with the given block metadata.
+    pub fn new(height: CoreBlockHeight, block_hash: BlockHash, timestamp: u32) -> Self {
+        Self {
+            height,
+            block_hash,
+            timestamp,
+        }
+    }
+
+    pub fn height(&self) -> CoreBlockHeight {
+        self.height
+    }
+
+    pub fn block_hash(&self) -> BlockHash {
+        self.block_hash
+    }
+
+    pub fn timestamp(&self) -> u32 {
+        self.timestamp
+    }
+}
+
 /// Context for transaction processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionContext {
@@ -20,18 +55,10 @@ pub enum TransactionContext {
     Mempool,
     /// Transaction is in the mempool with an InstantSend lock
     InstantSend,
-    /// Transaction is in a block at the given height
-    InBlock {
-        height: u32,
-        block_hash: Option<BlockHash>,
-        timestamp: Option<u32>,
-    },
-    /// Transaction is in a chain-locked block at the given height
-    InChainLockedBlock {
-        height: u32,
-        block_hash: Option<BlockHash>,
-        timestamp: Option<u32>,
-    },
+    /// Transaction is in a block
+    InBlock(BlockInfo),
+    /// Transaction is in a chain-locked block
+    InChainLockedBlock(BlockInfo),
 }
 
 impl std::fmt::Display for TransactionContext {
@@ -39,15 +66,9 @@ impl std::fmt::Display for TransactionContext {
         match self {
             TransactionContext::Mempool => write!(f, "mempool"),
             TransactionContext::InstantSend => write!(f, "instant send"),
-            TransactionContext::InBlock {
-                height,
-                ..
-            } => write!(f, "block {}", height),
-            TransactionContext::InChainLockedBlock {
-                height,
-                ..
-            } => {
-                write!(f, "chainlocked block {}", height)
+            TransactionContext::InBlock(info) => write!(f, "block {}", info.height),
+            TransactionContext::InChainLockedBlock(info) => {
+                write!(f, "chainlocked block {}", info.height)
             }
         }
     }
@@ -56,51 +77,16 @@ impl std::fmt::Display for TransactionContext {
 impl TransactionContext {
     /// Returns the confirmation state.
     pub(crate) fn confirmed(&self) -> bool {
-        matches!(
-            self,
-            TransactionContext::InChainLockedBlock { .. } | TransactionContext::InBlock { .. }
-        )
+        matches!(self, TransactionContext::InChainLockedBlock(_) | TransactionContext::InBlock(_))
     }
-    /// Returns the block height if confirmed.
-    pub(crate) fn block_height(&self) -> Option<CoreBlockHeight> {
+
+    /// Returns the block info if confirmed.
+    pub(crate) fn block_info(&self) -> Option<&BlockInfo> {
         match self {
             TransactionContext::Mempool | TransactionContext::InstantSend => None,
-            TransactionContext::InBlock {
-                height,
-                ..
+            TransactionContext::InBlock(info) | TransactionContext::InChainLockedBlock(info) => {
+                Some(info)
             }
-            | TransactionContext::InChainLockedBlock {
-                height,
-                ..
-            } => Some(*height),
-        }
-    }
-    /// Returns the block hash if confirmed.
-    pub(crate) fn block_hash(&self) -> Option<BlockHash> {
-        match self {
-            TransactionContext::Mempool | TransactionContext::InstantSend => None,
-            TransactionContext::InBlock {
-                block_hash,
-                ..
-            }
-            | TransactionContext::InChainLockedBlock {
-                block_hash,
-                ..
-            } => *block_hash,
-        }
-    }
-    /// Returns the block time if confirmed.
-    pub(crate) fn timestamp(&self) -> Option<u32> {
-        match self {
-            TransactionContext::Mempool | TransactionContext::InstantSend => None,
-            TransactionContext::InBlock {
-                timestamp,
-                ..
-            }
-            | TransactionContext::InChainLockedBlock {
-                timestamp,
-                ..
-            } => *timestamp,
         }
     }
 }
@@ -383,13 +369,11 @@ mod tests {
         if let (Some(_xpub), Some(address)) = (bip32_xpub, bip32_address) {
             let tx = Transaction::dummy(&address, 0..1, &[50_000]);
 
-            let context = TransactionContext::InBlock {
+            let context = TransactionContext::InBlock(BlockInfo {
                 height: 100000,
-                block_hash: Some(
-                    BlockHash::from_slice(&[0u8; 32]).expect("Should create block hash"),
-                ),
-                timestamp: Some(1234567890),
-            };
+                block_hash: BlockHash::from_slice(&[0u8; 32]).expect("Should create block hash"),
+                timestamp: 1234567890,
+            });
 
             // This should exercise BIP32 account branch in the update logic
             let result =
@@ -420,13 +404,11 @@ mod tests {
         if let (Some(_xpub), Some(address)) = (coinjoin_xpub, coinjoin_address) {
             let tx = Transaction::dummy(&address, 0..1, &[75_000]);
 
-            let context = TransactionContext::InChainLockedBlock {
+            let context = TransactionContext::InChainLockedBlock(BlockInfo {
                 height: 100001,
-                block_hash: Some(
-                    BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
-                ),
-                timestamp: Some(1234567891),
-            };
+                block_hash: BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+                timestamp: 1234567891,
+            });
 
             // This should exercise CoinJoin account branch in the update logic
             let result =
@@ -471,11 +453,11 @@ mod tests {
         let block_height = 100000;
 
         // Test with InBlock context
-        let context = TransactionContext::InBlock {
+        let context = TransactionContext::InBlock(BlockInfo {
             height: block_height,
-            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567890),
-        };
+            block_hash: BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+            timestamp: 1234567890,
+        });
 
         let result = managed_wallet
             .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
@@ -527,11 +509,11 @@ mod tests {
         // Fund the wallet with a transaction paying to the receive address
         let funding_value = 50_000_000u64;
         let funding_tx = Transaction::dummy(&receive_address, 0..1, &[funding_value]);
-        let funding_context = TransactionContext::InBlock {
+        let funding_context = TransactionContext::InBlock(BlockInfo {
             height: 1,
-            block_hash: Some(BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1_650_000_000),
-        };
+            block_hash: BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash"),
+            timestamp: 1_650_000_000,
+        });
 
         let funding_result = managed_wallet
             .check_core_transaction(&funding_tx, funding_context, &mut wallet, true, true)
@@ -563,11 +545,11 @@ mod tests {
             special_transaction_payload: None,
         };
 
-        let spend_context = TransactionContext::InBlock {
+        let spend_context = TransactionContext::InBlock(BlockInfo {
             height: 2,
-            block_hash: Some(BlockHash::from_slice(&[3u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1_650_000_100),
-        };
+            block_hash: BlockHash::from_slice(&[3u8; 32]).expect("Should create block hash"),
+            timestamp: 1_650_000_100,
+        });
 
         let spend_result = managed_wallet
             .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
@@ -625,11 +607,11 @@ mod tests {
 
         let block_height = 100000;
 
-        let context = TransactionContext::InBlock {
+        let context = TransactionContext::InBlock(BlockInfo {
             height: block_height,
-            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567890),
-        };
+            block_hash: BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+            timestamp: 1234567890,
+        });
 
         // Process the coinbase transaction
         let result = managed_wallet
@@ -724,9 +706,7 @@ mod tests {
 
         let stored_tx =
             managed_account.transactions.get(&tx.txid()).expect("Should have stored transaction");
-        assert_eq!(stored_tx.height, None, "Mempool transaction should have no height");
-        assert_eq!(stored_tx.block_hash, None, "Mempool transaction should have no block hash");
-        assert_eq!(stored_tx.timestamp, 0, "Mempool transaction should have timestamp 0");
+        assert_eq!(stored_tx.block_info, None, "Mempool transaction should have no block info");
     }
 
     /// Test that rescanning a block marks transactions as existing
@@ -740,11 +720,11 @@ mod tests {
         } = TestWalletContext::new_random();
         let tx = Transaction::dummy(&address, 0..1, &[100_000]);
 
-        let context = TransactionContext::InBlock {
+        let context = TransactionContext::InBlock(BlockInfo {
             height: 100,
-            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567890),
-        };
+            block_hash: BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+            timestamp: 1234567890,
+        });
 
         // First processing - should be marked as new
         let result1 =
@@ -847,11 +827,11 @@ mod tests {
 
         // Process spending tx FIRST (out of order)
         // This time it HAS an output to our wallet, so it should be stored
-        let spend_context = TransactionContext::InBlock {
+        let spend_context = TransactionContext::InBlock(BlockInfo {
             height: 100,
-            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567890),
-        };
+            block_hash: BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+            timestamp: 1234567890,
+        });
 
         let spend_result = managed_wallet
             .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
@@ -876,11 +856,11 @@ mod tests {
         assert_eq!(account.utxos.len(), 1, "Should have one UTXO (change output)");
 
         // Now process the funding tx (which was spent by spend_tx that we already stored)
-        let fund_context = TransactionContext::InBlock {
+        let fund_context = TransactionContext::InBlock(BlockInfo {
             height: 99,
-            block_hash: Some(BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567880),
-        };
+            block_hash: BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash"),
+            timestamp: 1234567880,
+        });
 
         let fund_result = managed_wallet
             .check_core_transaction(&funding_tx, fund_context, &mut wallet, true, true)
@@ -919,18 +899,18 @@ mod tests {
 
         // Verify unconfirmed state
         assert!(!ctx.transaction(&txid).is_confirmed(), "Mempool tx should be unconfirmed");
-        assert_eq!(ctx.transaction(&txid).height, None);
+        assert_eq!(ctx.transaction(&txid).block_info, None);
         assert!(!ctx.first_utxo().is_confirmed, "Mempool UTXO should be unconfirmed");
 
         let total_tx_before = ctx.managed_wallet.metadata.total_transactions;
 
         // Same transaction now seen in a block
         let block_hash = BlockHash::from_slice(&[5u8; 32]).expect("Should create block hash");
-        let block_context = TransactionContext::InBlock {
+        let block_context = TransactionContext::InBlock(BlockInfo {
             height: 500,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+            block_hash,
+            timestamp: 1700000000,
+        });
 
         let result = ctx.check_transaction(&tx, block_context).await;
         assert!(result.is_relevant);
@@ -939,9 +919,9 @@ mod tests {
         // Verify confirmed state
         let record = ctx.transaction(&txid);
         assert!(record.is_confirmed(), "Tx should now be confirmed");
-        assert_eq!(record.height, Some(500));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(500));
+        assert_eq!(record.block_info.unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info.unwrap().timestamp, 1700000000);
         assert!(ctx.first_utxo().is_confirmed, "UTXO should now be confirmed");
 
         assert_eq!(
@@ -980,24 +960,24 @@ mod tests {
 
         // Stage 3: block confirmation
         let block_hash = BlockHash::from_slice(&[10u8; 32]).expect("hash");
-        let block_context = TransactionContext::InBlock {
+        let block_context = TransactionContext::InBlock(BlockInfo {
             height: 1000,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+            block_hash,
+            timestamp: 1700000000,
+        });
         let result = ctx.check_transaction(&tx, block_context).await;
         assert!(!result.is_new_transaction);
         assert!(ctx.transaction(&txid).is_confirmed());
-        assert_eq!(ctx.transaction(&txid).height, Some(1000));
+        assert_eq!(ctx.transaction(&txid).height(), Some(1000));
         assert!(ctx.first_utxo().is_confirmed);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
 
         // Stage 4: chain-locked block (rescan with stronger context)
-        let cl_context = TransactionContext::InChainLockedBlock {
+        let cl_context = TransactionContext::InChainLockedBlock(BlockInfo {
             height: 1000,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+            block_hash,
+            timestamp: 1700000000,
+        });
         let result = ctx.check_transaction(&tx, cl_context).await;
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
@@ -1064,11 +1044,11 @@ mod tests {
         //
         // Cleaner approach: test `confirm_transaction` directly on the account.
         let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
-        let block_context = TransactionContext::InBlock {
+        let block_context = TransactionContext::InBlock(BlockInfo {
             height: 800,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+            block_hash,
+            timestamp: 1700000000,
+        });
 
         // Re-check the transaction: check_core_transaction will see no record in any
         // account, so it will treat it as new and call `record_transaction`. This still
@@ -1079,9 +1059,9 @@ mod tests {
 
         let record = ctx.transaction(&txid);
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(800));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(800));
+        assert_eq!(record.block_info.unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info.unwrap().timestamp, 1700000000);
         assert!(ctx.first_utxo().is_confirmed);
     }
 
@@ -1110,20 +1090,20 @@ mod tests {
 
         // Call `confirm_transaction` directly — the backfill path should create the record
         let block_hash = BlockHash::from_slice(&[9u8; 32]).expect("hash");
-        let block_context = TransactionContext::InBlock {
+        let block_context = TransactionContext::InBlock(BlockInfo {
             height: 600,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+            block_hash,
+            timestamp: 1700000000,
+        });
         let changed = account.confirm_transaction(&tx, &account_match, block_context);
         assert!(changed, "Should return true when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
         let record = account.transactions.get(&txid).expect("Should have backfilled record");
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(600));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(600));
+        assert_eq!(record.block_info.unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info.unwrap().timestamp, 1700000000);
         assert_eq!(record.net_amount, 250_000);
 
         // Verify UTXO was also created
@@ -1158,11 +1138,11 @@ mod tests {
         let account_match = result.affected_accounts[0].clone();
 
         let block_hash = BlockHash::from_slice(&[11u8; 32]).expect("hash");
-        let block_context = TransactionContext::InBlock {
+        let block_context = TransactionContext::InBlock(BlockInfo {
             height: 700,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+            block_hash,
+            timestamp: 1700000000,
+        });
 
         let account = ctx
             .managed_wallet
@@ -1173,7 +1153,7 @@ mod tests {
 
         let record = account.transactions.get(&txid).expect("Should have record");
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(700));
-        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.height(), Some(700));
+        assert_eq!(record.block_info.unwrap().block_hash, block_hash);
     }
 }

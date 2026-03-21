@@ -4,7 +4,7 @@ use super::helpers::*;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
@@ -225,13 +225,12 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
+    let context = TransactionContext::InBlock(BlockInfo {
         height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+        block_hash: BlockHash::from_slice(&[0u8; 32])
+            .expect("Failed to create block hash from bytes"),
+        timestamp: 1234567890,
+    });
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
@@ -362,13 +361,12 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
+    let context = TransactionContext::InBlock(BlockInfo {
         height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+        block_hash: BlockHash::from_slice(&[0u8; 32])
+            .expect("Failed to create block hash from bytes"),
+        timestamp: 1234567890,
+    });
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
@@ -500,13 +498,12 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
+    let context = TransactionContext::InBlock(BlockInfo {
         height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+        block_hash: BlockHash::from_slice(&[0u8; 32])
+            .expect("Failed to create block hash from bytes"),
+        timestamp: 1234567890,
+    });
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
@@ -705,13 +702,12 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
+    let context = TransactionContext::InBlock(BlockInfo {
         height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+        block_hash: BlockHash::from_slice(&[0u8; 32])
+            .expect("Failed to create block hash from bytes"),
+        timestamp: 1234567890,
+    });
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
@@ -831,11 +827,11 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
     tx.special_transaction_payload =
         Some(TransactionPayload::ProviderUpdateRegistrarPayloadType(payload));
 
-    let context = TransactionContext::InBlock {
+    let context = TransactionContext::InBlock(BlockInfo {
         height: 100000,
-        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash")),
-        timestamp: Some(1234567890),
-    };
+        block_hash: BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash"),
+        timestamp: 1234567890,
+    });
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
@@ -926,11 +922,11 @@ async fn test_provider_revocation_classification_and_routing() {
         "Should NOT route to provider owner keys"
     );
 
-    let context = TransactionContext::InBlock {
+    let context = TransactionContext::InBlock(BlockInfo {
         height: 100000,
-        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash")),
-        timestamp: Some(1234567890),
-    };
+        block_hash: BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash"),
+        timestamp: 1234567890,
+    });
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;

@@ -10,11 +10,12 @@ use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::{managed_wallet_info_free, FFIManagedWalletInfo};
+use crate::transaction_context_from_ffi;
 use crate::types::{FFITransactionContext, FFIWallet};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
-    account_checker::CoreAccountTypeMatch, TransactionContext, WalletTransactionChecker,
+    account_checker::CoreAccountTypeMatch, WalletTransactionChecker,
 };
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
@@ -141,50 +142,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     };
 
     // Build the transaction context
-    let context = match context_type {
-        FFITransactionContext::Mempool => TransactionContext::Mempool,
-        FFITransactionContext::InBlock => {
-            let block_hash = if !block_hash.is_null() {
-                use dashcore::hashes::Hash;
-                let hash_bytes = slice::from_raw_parts(block_hash, 32);
-                let mut hash_array = [0u8; 32];
-                hash_array.copy_from_slice(hash_bytes);
-                Some(dashcore::BlockHash::from_byte_array(hash_array))
-            } else {
-                None
-            };
-            TransactionContext::InBlock {
-                height: block_height,
-                block_hash,
-                timestamp: if timestamp > 0 {
-                    Some(timestamp as u32)
-                } else {
-                    None
-                },
-            }
-        }
-        FFITransactionContext::InChainLockedBlock => {
-            let block_hash = if !block_hash.is_null() {
-                use dashcore::hashes::Hash;
-                let hash_bytes = slice::from_raw_parts(block_hash, 32);
-                let mut hash_array = [0u8; 32];
-                hash_array.copy_from_slice(hash_bytes);
-                Some(dashcore::BlockHash::from_byte_array(hash_array))
-            } else {
-                None
-            };
-            TransactionContext::InChainLockedBlock {
-                height: block_height,
-                block_hash,
-                timestamp: if timestamp > 0 {
-                    Some(timestamp as u32)
-                } else {
-                    None
-                },
-            }
-        }
-        FFITransactionContext::InstantSend => TransactionContext::InstantSend,
-    };
+    let context = transaction_context_from_ffi(context_type, block_height, block_hash, timestamp);
 
     // Check the transaction - wallet is now required
     if wallet.is_null() {

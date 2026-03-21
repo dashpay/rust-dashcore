@@ -142,6 +142,7 @@ pub use crate::account::FFIAccount;
 pub use crate::account::FFIBLSAccount;
 #[cfg(feature = "eddsa")]
 pub use crate::account::FFIEdDSAAccount;
+use crate::transaction_context_from_ffi;
 
 /// Standard account subtype
 #[repr(C)]
@@ -726,12 +727,8 @@ impl From<TransactionContext> for FFITransactionContext {
         match ctx {
             TransactionContext::Mempool => FFITransactionContext::Mempool,
             TransactionContext::InstantSend => FFITransactionContext::InstantSend,
-            TransactionContext::InBlock {
-                ..
-            } => FFITransactionContext::InBlock,
-            TransactionContext::InChainLockedBlock {
-                ..
-            } => FFITransactionContext::InChainLockedBlock,
+            TransactionContext::InBlock(_) => FFITransactionContext::InBlock,
+            TransactionContext::InChainLockedBlock(_) => FFITransactionContext::InChainLockedBlock,
         }
     }
 }
@@ -783,55 +780,13 @@ impl FFITransactionContextDetails {
 
     /// Convert to the native TransactionContext
     pub fn to_transaction_context(&self) -> TransactionContext {
-        match self.context_type {
-            FFITransactionContext::Mempool => TransactionContext::Mempool,
-            FFITransactionContext::InBlock => {
-                let block_hash = if self.block_hash.is_null() {
-                    None
-                } else {
-                    // Convert the 32-byte hash to BlockHash
-                    let mut hash_bytes = [0u8; 32];
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(self.block_hash, hash_bytes.as_mut_ptr(), 32);
-                    }
-                    use dashcore::hashes::Hash;
-                    Some(dashcore::BlockHash::from_byte_array(hash_bytes))
-                };
-
-                TransactionContext::InBlock {
-                    height: self.height,
-                    block_hash,
-                    timestamp: if self.timestamp == 0 {
-                        None
-                    } else {
-                        Some(self.timestamp)
-                    },
-                }
-            }
-            FFITransactionContext::InChainLockedBlock => {
-                let block_hash = if self.block_hash.is_null() {
-                    None
-                } else {
-                    // Convert the 32-byte hash to BlockHash
-                    let mut hash_bytes = [0u8; 32];
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(self.block_hash, hash_bytes.as_mut_ptr(), 32);
-                    }
-                    use dashcore::hashes::Hash;
-                    Some(dashcore::BlockHash::from_byte_array(hash_bytes))
-                };
-
-                TransactionContext::InChainLockedBlock {
-                    height: self.height,
-                    block_hash,
-                    timestamp: if self.timestamp == 0 {
-                        None
-                    } else {
-                        Some(self.timestamp)
-                    },
-                }
-            }
-            FFITransactionContext::InstantSend => TransactionContext::InstantSend,
+        unsafe {
+            transaction_context_from_ffi(
+                self.context_type,
+                self.height,
+                self.block_hash,
+                self.timestamp as u64,
+            )
         }
     }
 }
