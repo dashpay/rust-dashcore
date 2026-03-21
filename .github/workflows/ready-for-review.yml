@@ -2,7 +2,7 @@ name: Ready for Review Label
 
 on:
   pull_request:
-    types: [ready_for_review]
+    types: [ready_for_review, labeled]
   pull_request_review:
     types: [submitted, dismissed]
   workflow_run:
@@ -90,6 +90,7 @@ jobs:
           EVENT_ACTION: ${{ github.event.action }}
           REVIEW_STATE: ${{ github.event.review.state }}
           PR_NUMBER_DIRECT: ${{ github.event.pull_request.number }}
+          LABEL_NAME: ${{ github.event.label.name }}
           PULL_REQUESTS_JSON: ${{ toJson(github.event.workflow_run.pull_requests) }}
         run: |
           # On review dismissal or changes requested, remove label and exit
@@ -99,6 +100,15 @@ jobs:
               gh pr edit "$PR_NUMBER_DIRECT" --repo "$REPO" --remove-label "ready-for-review" || true
               exit 0
             fi
+          fi
+
+          # On merge-conflict label, remove ready-for-review and exit
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$EVENT_ACTION" = "labeled" ]; then
+            if [ "$LABEL_NAME" = "merge-conflict" ]; then
+              echo "Merge conflict detected, removing ready-for-review label."
+              gh pr edit "$PR_NUMBER_DIRECT" --repo "$REPO" --remove-label "ready-for-review" || true
+            fi
+            exit 0
           fi
 
           # Collect PR numbers depending on the event type
