@@ -110,15 +110,27 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     }
 }
 
+/// Maximum time to wait for the run task to exit cooperatively before aborting.
+const RUN_TASK_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl FFIDashSpvClient {
-    /// Cancel the run task and wait for it to finish.
-    fn cancel_run_task(&self) {
+    /// Wait for the run task to finish cooperatively, aborting only on timeout.
+    ///
+    /// The caller must cancel `shutdown_token` before calling this so that
+    /// `DashSpvClient::run()` exits its loop and cleans up monitor tasks.
+    /// Only falls back to `abort()` if the task doesn't exit within the timeout.
+    fn wait_for_run_task(&self) {
         let task = self.run_task.lock().unwrap().take();
         if let Some(task) = task {
-            task.abort();
-            self.runtime.block_on(async {
-                let _ = task.await;
-            });
+            let finished = self
+                .runtime
+                .block_on(async { tokio::time::timeout(RUN_TASK_SHUTDOWN_TIMEOUT, task).await });
+            if finished.is_err() {
+                tracing::warn!(
+                    "Run task did not exit within {:?}, aborting",
+                    RUN_TASK_SHUTDOWN_TIMEOUT
+                );
+            }
         }
     }
 }
@@ -126,7 +138,7 @@ impl FFIDashSpvClient {
 fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
     client.shutdown_token.cancel();
 
-    client.cancel_run_task();
+    client.wait_for_run_task();
 
     let result = client.runtime.block_on(async { client.inner.stop().await });
 
@@ -342,8 +354,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
             let _ = client.inner.stop().await;
         });
 
-        // Abort and await the run task
-        client.cancel_run_task();
+        // Wait for the run task to finish (cooperative, with timeout fallback)
+        client.wait_for_run_task();
 
         tracing::info!("FFI client destroyed and all tasks cleaned up");
     }
