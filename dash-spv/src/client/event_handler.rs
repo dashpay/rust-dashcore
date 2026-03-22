@@ -35,11 +35,14 @@ pub trait EventHandler: Send + Sync + 'static {
 impl EventHandler for () {}
 
 /// Spawns a task that monitors a broadcast channel and dispatches events to the handler.
+///
+/// `on_failure` is cancelled if the receiver lags, signalling the run loop to stop.
 pub(crate) fn spawn_broadcast_monitor<E, H, F>(
     name: &'static str,
     mut receiver: broadcast::Receiver<E>,
     handler: Arc<H>,
     shutdown: CancellationToken,
+    on_failure: CancellationToken,
     dispatch_fn: F,
 ) -> JoinHandle<()>
 where
@@ -54,8 +57,21 @@ where
                 result = receiver.recv() => {
                     match result {
                         Ok(event) => dispatch_fn(&handler, &event),
-                        Err(broadcast::error::RecvError::Closed) => break,
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) if shutdown.is_cancelled() => break,
+                        Err(broadcast::error::RecvError::Closed) => {
+                            let msg = format!("{} monitor channel closed unexpectedly", name);
+                            tracing::error!("{}", msg);
+                            handler.on_error(&msg);
+                            on_failure.cancel();
+                            break;
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            let msg = format!("{} monitor lagged, missed {} events", name, n);
+                            tracing::error!("{}", msg);
+                            handler.on_error(&msg);
+                            on_failure.cancel();
+                            break;
+                        }
                     }
                 }
                 _ = shutdown.cancelled() => break,
@@ -72,6 +88,7 @@ pub(crate) fn spawn_progress_monitor<H: EventHandler>(
     mut receiver: watch::Receiver<SyncProgress>,
     handler: Arc<H>,
     shutdown: CancellationToken,
+    on_failure: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         tracing::debug!("Progress monitoring task started");
@@ -83,7 +100,14 @@ pub(crate) fn spawn_progress_monitor<H: EventHandler>(
                 result = receiver.changed() => {
                     match result {
                         Ok(()) => handler.on_progress(&receiver.borrow_and_update()),
-                        Err(_) => break,
+                        Err(_) if shutdown.is_cancelled() => break,
+                        Err(_) => {
+                            let msg = "Progress monitor channel closed unexpectedly";
+                            tracing::error!("{}", msg);
+                            handler.on_error(msg);
+                            on_failure.cancel();
+                            break;
+                        }
                     }
                 }
                 _ = shutdown.cancelled() => break,
@@ -172,6 +196,7 @@ mod tests {
             rx,
             handler.clone(),
             shutdown.clone(),
+            CancellationToken::new(),
             |h: &RecordingHandler, event: &SyncEvent| h.on_sync_event(event),
         );
 
@@ -208,6 +233,7 @@ mod tests {
             rx,
             handler.clone(),
             shutdown.clone(),
+            CancellationToken::new(),
             |h: &RecordingHandler, event: &SyncEvent| h.on_sync_event(event),
         );
 
@@ -218,28 +244,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broadcast_monitor_exits_on_channel_close() {
+    async fn broadcast_monitor_fails_on_unexpected_channel_close() {
         let (tx, rx) = broadcast::channel::<SyncEvent>(16);
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let on_failure = CancellationToken::new();
 
         let task = spawn_broadcast_monitor(
             "test",
             rx,
             handler.clone(),
             shutdown.clone(),
+            on_failure.clone(),
             |h: &RecordingHandler, event: &SyncEvent| h.on_sync_event(event),
         );
 
+        // Drop sender without cancelling shutdown — this is unexpected
         drop(tx);
         task.await.unwrap();
+
+        assert_eq!(handler.error_count.load(Ordering::SeqCst), 1);
+        assert!(on_failure.is_cancelled());
     }
 
     #[tokio::test]
-    async fn broadcast_monitor_handles_lagged_receiver() {
+    async fn broadcast_monitor_exits_on_lagged_receiver() {
         let (tx, rx) = broadcast::channel(2);
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let on_failure = CancellationToken::new();
 
         // Send more messages than the buffer can hold before spawning the monitor
         tx.send(SyncEvent::BlockHeadersStored {
@@ -260,22 +293,17 @@ mod tests {
             rx,
             handler.clone(),
             shutdown.clone(),
+            on_failure.clone(),
             |h: &RecordingHandler, event: &SyncEvent| h.on_sync_event(event),
         );
 
-        // Send one more after the monitor starts
-        tx.send(SyncEvent::BlockHeadersStored {
-            tip_height: 4,
-        })
-        .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        shutdown.cancel();
+        // The monitor should exit on its own due to the lagged error
         task.await.unwrap();
 
-        // The monitor should have received at least the last message (and possibly
-        // one from the lagged recovery). The key thing is it doesn't crash.
-        assert!(handler.sync_count.load(Ordering::SeqCst) >= 1);
+        // No sync events should have been dispatched, but on_error must have fired
+        assert_eq!(handler.sync_count.load(Ordering::SeqCst), 0);
+        assert_eq!(handler.error_count.load(Ordering::SeqCst), 1);
+        assert!(on_failure.is_cancelled());
     }
 
     #[tokio::test]
@@ -284,7 +312,8 @@ mod tests {
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
 
-        let task = spawn_progress_monitor(rx, handler.clone(), shutdown.clone());
+        let task =
+            spawn_progress_monitor(rx, handler.clone(), shutdown.clone(), CancellationToken::new());
 
         // Give the task time to send initial progress
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -302,21 +331,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn progress_monitor_exits_on_sender_drop() {
+    async fn progress_monitor_fails_on_unexpected_sender_drop() {
         let (tx, rx) = watch::channel(SyncProgress::default());
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let on_failure = CancellationToken::new();
 
-        let task = spawn_progress_monitor(rx, handler.clone(), shutdown.clone());
+        let task =
+            spawn_progress_monitor(rx, handler.clone(), shutdown.clone(), on_failure.clone());
 
         // Give it time to send initial
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
+        // Drop sender without cancelling shutdown — this is unexpected
         drop(tx);
         task.await.unwrap();
 
-        // At least the initial progress was sent
+        // At least the initial progress was sent, plus on_error fired
         assert!(handler.progress_count.load(Ordering::SeqCst) >= 1);
+        assert_eq!(handler.error_count.load(Ordering::SeqCst), 1);
+        assert!(on_failure.is_cancelled());
     }
 
     #[tokio::test]
@@ -330,6 +364,7 @@ mod tests {
             rx,
             handler.clone(),
             shutdown.clone(),
+            CancellationToken::new(),
             |h: &RecordingHandler, event: &NetworkEvent| h.on_network_event(event),
         );
 

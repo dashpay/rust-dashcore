@@ -39,6 +39,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         tracing::info!("Starting continuous network monitoring...");
 
         let monitor_shutdown = CancellationToken::new();
+        let monitor_failure = CancellationToken::new();
 
         // Subscribe to channels
         let sync_event_rx = self.subscribe_sync_events().await;
@@ -52,6 +53,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
             sync_event_rx,
             handler.clone(),
             monitor_shutdown.clone(),
+            monitor_failure.clone(),
             |h, event| h.on_sync_event(event),
         );
 
@@ -60,6 +62,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
             network_event_rx,
             handler.clone(),
             monitor_shutdown.clone(),
+            monitor_failure.clone(),
             |h, event| h.on_network_event(event),
         );
 
@@ -68,11 +71,16 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
             wallet_event_rx,
             handler.clone(),
             monitor_shutdown.clone(),
+            monitor_failure.clone(),
             |h, event| h.on_wallet_event(event),
         );
 
-        let progress_task =
-            spawn_progress_monitor(progress_rx, handler.clone(), monitor_shutdown.clone());
+        let progress_task = spawn_progress_monitor(
+            progress_rx,
+            handler.clone(),
+            monitor_shutdown.clone(),
+            monitor_failure.clone(),
+        );
 
         // Run the sync loop
         let mut sync_coordinator_tick_interval = tokio::time::interval(SYNC_COORDINATOR_TICK_MS);
@@ -92,6 +100,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
                 _ = token.cancelled() => {
                     tracing::debug!("DashSpvClient run loop cancelled");
                     break None
+                }
+                _ = monitor_failure.cancelled() => {
+                    break Some(crate::SpvError::ChannelFailure(
+                        "event monitor".into(),
+                        "broadcast receiver lagged".into(),
+                    ))
                 }
             };
 
