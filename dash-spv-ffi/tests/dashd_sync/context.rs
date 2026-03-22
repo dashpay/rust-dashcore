@@ -11,9 +11,8 @@ use dash_spv::logging::{LogFileConfig, LoggingConfig, LoggingGuard};
 use dash_spv::test_utils::{retain_test_dir, SYNC_TIMEOUT};
 use dash_spv_ffi::client::{
     dash_spv_ffi_client_destroy, dash_spv_ffi_client_get_wallet_manager, dash_spv_ffi_client_new,
-    dash_spv_ffi_client_run, dash_spv_ffi_client_set_network_event_callbacks,
-    dash_spv_ffi_client_set_sync_event_callbacks, dash_spv_ffi_client_set_wallet_event_callbacks,
-    dash_spv_ffi_client_stop, dash_spv_ffi_wallet_manager_free, FFIDashSpvClient,
+    dash_spv_ffi_client_run, dash_spv_ffi_client_stop, dash_spv_ffi_wallet_manager_free,
+    FFIDashSpvClient,
 };
 use dash_spv_ffi::config::{
     dash_spv_ffi_config_add_peer, dash_spv_ffi_config_destroy, dash_spv_ffi_config_new,
@@ -21,6 +20,7 @@ use dash_spv_ffi::config::{
     dash_spv_ffi_config_set_restrict_to_configured_peers, FFIClientConfig,
 };
 use dash_spv_ffi::types::FFIWalletManager as FFIWalletManagerOpaque;
+use dash_spv_ffi::FFIEventCallbacks;
 use dashcore::hashes::Hash;
 use dashcore::{Address, Txid};
 use key_wallet_ffi::managed_account::{
@@ -129,7 +129,15 @@ impl FFITestContext {
         let result = dash_spv_ffi_config_set_restrict_to_configured_peers(config, true);
         assert_eq!(result, 0, "Failed to restrict peers");
 
-        let client = dash_spv_ffi_client_new(config);
+        let tracker = Arc::new(CallbackTracker::default());
+        let callbacks = FFIEventCallbacks {
+            sync: create_sync_callbacks(&tracker),
+            network: create_network_callbacks(&tracker),
+            wallet: create_wallet_callbacks(&tracker),
+            ..FFIEventCallbacks::default()
+        };
+
+        let client = dash_spv_ffi_client_new(config, callbacks);
         assert!(!client.is_null(), "Failed to create FFI client");
 
         let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
@@ -145,7 +153,7 @@ impl FFITestContext {
             session: SessionState {
                 client,
                 wallet_manager,
-                tracker: Arc::new(CallbackTracker::default()),
+                tracker,
             },
         }
     }
@@ -214,41 +222,12 @@ impl FFITestContext {
         (confirmed, unconfirmed)
     }
 
-    /// Set up sync event callbacks and run the client.
+    /// Run the client (callbacks were registered at creation time).
     ///
     /// # Safety
     ///
     /// Calls FFI client functions through raw pointers held by the context.
-    pub(super) unsafe fn run_with_sync_callbacks(&self) {
-        let sync_callbacks = create_sync_callbacks(&self.session.tracker);
-        let result =
-            dash_spv_ffi_client_set_sync_event_callbacks(self.session.client, sync_callbacks);
-        assert_eq!(result, 0, "Failed to set sync event callbacks");
-
-        self.snapshot_sync_baseline();
-        let result = dash_spv_ffi_client_run(self.session.client);
-        assert_eq!(result, 0, "Failed to run FFI client");
-    }
-
-    /// Set up sync, network, and wallet event callbacks, then run the client.
-    ///
-    /// # Safety
-    ///
-    /// Calls FFI client functions through raw pointers held by the context.
-    pub(super) unsafe fn run_with_all_callbacks(&self) {
-        let sync_cbs = create_sync_callbacks(&self.session.tracker);
-        let network_cbs = create_network_callbacks(&self.session.tracker);
-        let wallet_cbs = create_wallet_callbacks(&self.session.tracker);
-
-        let result = dash_spv_ffi_client_set_sync_event_callbacks(self.session.client, sync_cbs);
-        assert_eq!(result, 0, "Failed to set sync event callbacks");
-        let result =
-            dash_spv_ffi_client_set_network_event_callbacks(self.session.client, network_cbs);
-        assert_eq!(result, 0, "Failed to set network event callbacks");
-        let result =
-            dash_spv_ffi_client_set_wallet_event_callbacks(self.session.client, wallet_cbs);
-        assert_eq!(result, 0, "Failed to set wallet event callbacks");
-
+    pub(super) unsafe fn run(&self) {
         self.snapshot_sync_baseline();
         let result = dash_spv_ffi_client_run(self.session.client);
         assert_eq!(result, 0, "Failed to run FFI client");
@@ -422,7 +401,15 @@ impl FFITestContext {
         drop(self.session);
 
         // Recreate client from same config (same storage dir and peers)
-        let client = dash_spv_ffi_client_new(fixed.config);
+        let tracker = Arc::new(CallbackTracker::default());
+        let callbacks = FFIEventCallbacks {
+            sync: create_sync_callbacks(&tracker),
+            network: create_network_callbacks(&tracker),
+            wallet: create_wallet_callbacks(&tracker),
+            ..FFIEventCallbacks::default()
+        };
+
+        let client = dash_spv_ffi_client_new(fixed.config, callbacks);
         assert!(!client.is_null(), "Failed to recreate FFI client");
 
         let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
@@ -433,7 +420,7 @@ impl FFITestContext {
             session: SessionState {
                 client,
                 wallet_manager,
-                tracker: Arc::new(CallbackTracker::default()),
+                tracker,
             },
         }
     }

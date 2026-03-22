@@ -28,7 +28,7 @@ mod tests {
             );
 
             // Create a client
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Get wallet manager
@@ -64,7 +64,7 @@ mod tests {
                 CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
             );
 
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);

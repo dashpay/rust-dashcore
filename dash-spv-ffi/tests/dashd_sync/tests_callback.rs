@@ -21,7 +21,7 @@ fn test_all_callbacks_during_sync() {
         let tracker = ctx.tracker().clone();
 
         ctx.add_wallet(&dashd.wallet.mnemonic);
-        ctx.run_with_all_callbacks();
+        ctx.run();
         tracing::info!("FFI client running with all callback types");
 
         ctx.wait_for_sync(dashd.initial_height);
@@ -250,7 +250,7 @@ fn test_callbacks_post_sync_transactions_and_disconnect() {
         let tracker = ctx.tracker().clone();
 
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
-        ctx.run_with_all_callbacks();
+        ctx.run();
 
         // Wait for initial sync
         ctx.wait_for_sync(dashd.initial_height);

@@ -31,7 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client with all components
-    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(())).await?;
 
     // The wallet will automatically be notified of:
     // - New blocks via process_block()

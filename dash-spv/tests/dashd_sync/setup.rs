@@ -1,6 +1,6 @@
 use dash_spv::network::NetworkEvent;
 use dash_spv::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
-use dash_spv::test_utils::{retain_test_dir, DashdTestContext, TestChain};
+use dash_spv::test_utils::{retain_test_dir, DashdTestContext, TestChain, TestEventHandler};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
@@ -242,8 +242,12 @@ impl Drop for TestContext {
 }
 
 /// Type alias for the SPV client used in tests.
-pub(super) type TestClient =
-    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>;
+pub(super) type TestClient = DashSpvClient<
+    WalletManager<ManagedWalletInfo>,
+    PeerNetworkManager,
+    DiskStorageManager,
+    TestEventHandler,
+>;
 
 /// A `ClientHandle` is a utility structure that manages the state and handles for a `TestClient`
 /// required to interact with the synchronization process, various event channels, and cancellation capabilities.
@@ -274,7 +278,10 @@ impl ClientHandle {
     }
 }
 
-/// Creates a new SPV client and starts it.
+/// Creates a new SPV client and starts it with a `TestEventHandler`.
+///
+/// The handler bridges events back to channels so tests can use `tokio::select!`
+/// patterns while going through the `EventHandler` trait.
 pub(super) async fn create_and_start_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
@@ -284,17 +291,20 @@ pub(super) async fn create_and_start_client(
     let storage_manager =
         DiskStorageManager::new(config).await.expect("Failed to create storage manager");
 
-    let client = DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet)
-        .await
-        .expect("Failed to create client");
+    let handler = Arc::new(TestEventHandler::new());
+    let progress_receiver = handler.subscribe_progress();
+    let sync_event_receiver = handler.subscribe_sync_events();
+    let network_event_receiver = handler.subscribe_network_events();
 
-    let progress_receiver = client.subscribe_progress().await;
-    let sync_event_receiver = client.subscribe_sync_events().await;
-    let network_event_receiver = client.subscribe_network_events().await;
+    let client =
+        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, handler)
+            .await
+            .expect("Failed to create client");
+
     let cancel_token = CancellationToken::new();
     let run_token = cancel_token.clone();
-
     let run_client = client.clone();
+
     let run_handle = tokio::task::spawn(async move { run_client.run(run_token).await });
 
     ClientHandle {

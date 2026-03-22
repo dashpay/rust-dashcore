@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
-use super::{ClientConfig, DashSpvClient};
+use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
@@ -30,13 +30,16 @@ use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
 use key_wallet::manager::WalletInterface;
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
+    DashSpvClient<W, N, S, H>
+{
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
     pub async fn new(
         config: ClientConfig,
         network: N,
         mut storage: S,
         wallet: Arc<RwLock<W>>,
+        event_handler: Arc<H>,
     ) -> Result<Self> {
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
@@ -140,10 +143,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             running: Arc::new(RwLock::new(false)),
             mempool_state,
             mempool_filter: Arc::new(RwLock::new(None)),
+            event_handler,
         };
 
         // Load wallet data from storage
         client.load_wallet_data().await?;
+
+        // Emit initial progress so callers get immediate feedback
+        let initial_progress = client.sync_coordinator.lock().await.progress().clone();
+        client.event_handler.on_progress(&initial_progress);
 
         // Initialize mempool filter if mempool tracking is enabled
         {

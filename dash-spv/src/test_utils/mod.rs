@@ -2,6 +2,7 @@ mod chain_tip;
 mod chain_work;
 mod checkpoint;
 mod context;
+mod event_handler;
 mod filter;
 mod fs_helpers;
 mod network;
@@ -14,6 +15,7 @@ use std::time::Duration;
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub use context::DashdTestContext;
+pub use event_handler::TestEventHandler;
 pub use fs_helpers::retain_test_dir;
 pub use network::{test_socket_address, MockNetworkManager};
 pub use node::{DashCoreNode, TestChain, WalletFile};

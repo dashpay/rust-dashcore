@@ -4,17 +4,15 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 49
+**Total Functions**: 39
 
 ## Table of Contents
 
 - [Client Management](#client-management)
 - [Configuration](#configuration)
 - [Synchronization](#synchronization)
-- [Wallet Operations](#wallet-operations)
 - [Transaction Management](#transaction-management)
 - [Platform Integration](#platform-integration)
-- [Event Callbacks](#event-callbacks)
 - [Error Handling](#error-handling)
 - [Utility Functions](#utility-functions)
 
@@ -55,24 +53,13 @@ Functions: 16
 
 ### Synchronization
 
-Functions: 5
+Functions: 3
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_clear_sync_event_callbacks` | Clear sync event callbacks | client |
 | `dash_spv_ffi_client_get_manager_sync_progress` | Get the current manager-based sync progress | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
-| `dash_spv_ffi_client_set_sync_event_callbacks` | Set sync event callbacks for push-based event notifications | client |
 | `dash_spv_ffi_sync_progress_destroy` | Destroy an `FFISyncProgress` object and all its nested pointers | types |
-
-### Wallet Operations
-
-Functions: 2
-
-| Function | Description | Module |
-|----------|-------------|--------|
-| `dash_spv_ffi_client_clear_wallet_event_callbacks` | Clear wallet event callbacks | client |
-| `dash_spv_ffi_client_set_wallet_event_callbacks` | Set wallet event callbacks for push-based event notifications | client |
 
 ### Transaction Management
 
@@ -90,19 +77,6 @@ Functions: 2
 |----------|-------------|--------|
 | `ffi_dash_spv_get_platform_activation_height` | Gets the platform activation height from the Core chain  # Safety  This... | platform_integration |
 | `ffi_dash_spv_get_quorum_public_key` | Gets a quorum public key from the Core chain  # Safety  This function is... | platform_integration |
-
-### Event Callbacks
-
-Functions: 6
-
-| Function | Description | Module |
-|----------|-------------|--------|
-| `dash_spv_ffi_client_clear_client_error_callback` | Clear the client error callback | client |
-| `dash_spv_ffi_client_clear_network_event_callbacks` | Clear network event callbacks | client |
-| `dash_spv_ffi_client_clear_progress_callback` | Clear progress callback | client |
-| `dash_spv_ffi_client_set_client_error_callback` | Set a callback for fatal client errors (start failure, sync thread crash) | client |
-| `dash_spv_ffi_client_set_network_event_callbacks` | Set network event callbacks for push-based event notifications | client |
-| `dash_spv_ffi_client_set_progress_callback` | Set progress callback for sync progress updates | client |
 
 ### Error Handling
 
@@ -155,14 +129,14 @@ Destroy the client and free associated resources.  # Safety - `client` must be e
 #### `dash_spv_ffi_client_new`
 
 ```c
-dash_spv_ffi_client_new(config: *const FFIClientConfig,) -> *mut FFIDashSpvClient
+dash_spv_ffi_client_new(config: *const FFIClientConfig, callbacks: FFIEventCallbacks,) -> *mut FFIDashSpvClient
 ```
 
 **Description:**
-Create a new SPV client and return an opaque pointer.  # Safety - `config` must be a valid, non-null pointer for the duration of the call. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
+Create a new SPV client and return an opaque pointer.  # Safety - `config` must be a valid, non-null pointer for the duration of the call. - `callbacks` is taken by value (function pointers and `user_data` pointers are copied internally). The struct itself may be dropped after the call, but all `user_data` pointer targets must remain valid until `dash_spv_ffi_client_stop` or `dash_spv_ffi_client_destroy` is called. - Callback functions and `user_data` pointees must be safe to use from background threads; different callback groups may be invoked concurrently. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
 
 **Safety:**
-- `config` must be a valid, non-null pointer for the duration of the call. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
+- `config` must be a valid, non-null pointer for the duration of the call. - `callbacks` is taken by value (function pointers and `user_data` pointers are copied internally). The struct itself may be dropped after the call, but all `user_data` pointer targets must remain valid until `dash_spv_ffi_client_stop` or `dash_spv_ffi_client_destroy` is called. - Callback functions and `user_data` pointees must be safe to use from background threads; different callback groups may be invoked concurrently. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
 
 **Module:** `client`
 
@@ -426,22 +400,6 @@ dash_spv_ffi_config_testnet() -> *mut FFIClientConfig
 
 ### Synchronization - Detailed
 
-#### `dash_spv_ffi_client_clear_sync_event_callbacks`
-
-```c
-dash_spv_ffi_client_clear_sync_event_callbacks(client: *mut FFIDashSpvClient,) -> i32
-```
-
-**Description:**
-Clear sync event callbacks.  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_client_get_manager_sync_progress`
 
 ```c
@@ -474,22 +432,6 @@ Get the current sync progress snapshot.  # Safety - `client` must be a valid, no
 
 ---
 
-#### `dash_spv_ffi_client_set_sync_event_callbacks`
-
-```c
-dash_spv_ffi_client_set_sync_event_callbacks(client: *mut FFIDashSpvClient, callbacks: FFISyncEventCallbacks,) -> i32
-```
-
-**Description:**
-Set sync event callbacks for push-based event notifications.  The monitoring task is spawned when `dash_spv_ffi_client_run` is called. Call this before calling run().  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared. - Callbacks must be thread-safe as they may be called from a background task.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared. - Callbacks must be thread-safe as they may be called from a background task.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_sync_progress_destroy`
 
 ```c
@@ -503,40 +445,6 @@ Destroy an `FFISyncProgress` object and all its nested pointers.  # Safety - `pr
 - `progress` must be a pointer returned from this crate, or null.
 
 **Module:** `types`
-
----
-
-### Wallet Operations - Detailed
-
-#### `dash_spv_ffi_client_clear_wallet_event_callbacks`
-
-```c
-dash_spv_ffi_client_clear_wallet_event_callbacks(client: *mut FFIDashSpvClient,) -> i32
-```
-
-**Description:**
-Clear wallet event callbacks.  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_set_wallet_event_callbacks`
-
-```c
-dash_spv_ffi_client_set_wallet_event_callbacks(client: *mut FFIDashSpvClient, callbacks: FFIWalletEventCallbacks,) -> i32
-```
-
-**Description:**
-Set wallet event callbacks for push-based event notifications.  The monitoring task is spawned when `dash_spv_ffi_client_run` is called. Call this before calling run().  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared. - Callbacks must be thread-safe as they may be called from a background task.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared. - Callbacks must be thread-safe as they may be called from a background task.
-
-**Module:** `client`
 
 ---
 
@@ -589,104 +497,6 @@ Gets a quorum public key from the Core chain  # Safety  This function is unsafe 
 This function is unsafe because: - The caller must ensure all pointers are valid - quorum_hash must point to a 32-byte array - out_pubkey must point to a buffer of at least out_pubkey_size bytes - out_pubkey_size must be at least 48 bytes
 
 **Module:** `platform_integration`
-
----
-
-### Event Callbacks - Detailed
-
-#### `dash_spv_ffi_client_clear_client_error_callback`
-
-```c
-dash_spv_ffi_client_clear_client_error_callback(client: *mut FFIDashSpvClient,) -> i32
-```
-
-**Description:**
-Clear the client error callback.  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_clear_network_event_callbacks`
-
-```c
-dash_spv_ffi_client_clear_network_event_callbacks(client: *mut FFIDashSpvClient,) -> i32
-```
-
-**Description:**
-Clear network event callbacks.  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_clear_progress_callback`
-
-```c
-dash_spv_ffi_client_clear_progress_callback(client: *mut FFIDashSpvClient,) -> i32
-```
-
-**Description:**
-Clear progress callback.  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_set_client_error_callback`
-
-```c
-dash_spv_ffi_client_set_client_error_callback(client: *mut FFIDashSpvClient, callback: FFIClientErrorCallback,) -> i32
-```
-
-**Description:**
-Set a callback for fatal client errors (start failure, sync thread crash).  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callback` struct and its `user_data` must remain valid until the callback is cleared. - The callback must be thread-safe as it may be called from a background thread.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callback` struct and its `user_data` must remain valid until the callback is cleared. - The callback must be thread-safe as it may be called from a background thread.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_set_network_event_callbacks`
-
-```c
-dash_spv_ffi_client_set_network_event_callbacks(client: *mut FFIDashSpvClient, callbacks: FFINetworkEventCallbacks,) -> i32
-```
-
-**Description:**
-Set network event callbacks for push-based event notifications.  The monitoring task is spawned when `dash_spv_ffi_client_run` is called. Call this before calling run().  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared. - Callbacks must be thread-safe as they may be called from a background task.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared. - Callbacks must be thread-safe as they may be called from a background task.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_set_progress_callback`
-
-```c
-dash_spv_ffi_client_set_progress_callback(client: *mut FFIDashSpvClient, callback: crate::FFIProgressCallback,) -> i32
-```
-
-**Description:**
-Set progress callback for sync progress updates.  The monitoring task is spawned when `dash_spv_ffi_client_run` is called. Call this before calling run().  # Safety - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callback` struct and its `user_data` must remain valid until the callback is cleared. - The callback must be thread-safe as it may be called from a background task.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to an `FFIDashSpvClient`. - The `callback` struct and its `user_data` must remain valid until the callback is cleared. - The callback must be thread-safe as it may be called from a background task.
-
-**Module:** `client`
 
 ---
 
@@ -791,7 +601,7 @@ dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) -> i32
 ```
 
 **Description:**
-Start the SPV client and begin syncing in the background.  Subscribes to events, spawns monitoring threads, then spawns a background thread that calls `run()` (which handles start + sync loop + stop internally). Returns immediately after spawning.  Use event callbacks (set via `set_sync_event_callbacks`, `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive notifications. Configure callbacks before calling `run()`.  # Safety - `client` must be a valid, non-null pointer to a created client.  # Returns 0 on success, error code on failure.
+Start the SPV client and begin syncing in the background.  Uses the event callbacks provided at client creation time. Returns immediately after spawning the sync task.  # Safety - `client` must be a valid, non-null pointer to a created client.  # Returns 0 on success, error code on failure.
 
 **Safety:**
 - `client` must be a valid, non-null pointer to a created client.
@@ -943,10 +753,13 @@ Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
 // Create configuration
 FFIClientConfig* config = dash_spv_ffi_config_testnet();
 
-// Create client
-FFIDashSpvClient* client = dash_spv_ffi_client_new(config);
+// Build event callbacks (zero-init for no-op defaults)
+FFIEventCallbacks callbacks = { 0 };
 
-// Start the client and begin syncing
+// Create client with callbacks
+FFIDashSpvClient* client = dash_spv_ffi_client_new(config, callbacks);
+
+// Start syncing (uses callbacks provided at creation)
 int32_t result = dash_spv_ffi_client_run(client);
 if (result != 0) {
     const char* error = dash_spv_ffi_get_last_error();
@@ -964,22 +777,22 @@ dash_spv_ffi_config_destroy(config);
 ### Event Callbacks
 
 ```c
-void on_block(uint32_t height, const uint8_t (*hash)[32], void* user_data) {
-    printf("New block at height %u\n", height);
+void on_headers(uint32_t tip_height, void* user_data) {
+    printf("Headers stored up to height %u\n", tip_height);
 }
 
-void on_transaction(const uint8_t (*txid)[32], bool confirmed, 
-                    int64_t amount, const char* addresses, 
-                    uint32_t block_height, void* user_data) {
-    printf("Transaction: %lld duffs\n", amount);
+void on_tx(const char* wallet_id, uint32_t account_index,
+           const uint8_t (*txid)[32], int64_t amount,
+           const char* addresses, void* user_data) {
+    printf("Transaction: %lld duffs\n", (long long)amount);
 }
 
-// Set up callbacks
-FFIEventCallbacks callbacks = {
-    .on_block = on_block,
-    .on_transaction = on_transaction,
-    .user_data = NULL
-};
+// Build callbacks struct and pass to client_new()
+FFIEventCallbacks callbacks = { 0 };
+callbacks.sync.on_block_headers_stored = on_headers;
+callbacks.wallet.on_transaction_received = on_tx;
+FFIDashSpvClient* client = dash_spv_ffi_client_new(config, callbacks);
 
-dash_spv_ffi_client_set_event_callbacks(client, callbacks);
+// Start syncing (uses callbacks provided at creation)
+dash_spv_ffi_client_run(client);
 ```

@@ -1,7 +1,6 @@
 use crate::{
-    null_check, set_last_error, FFIClientConfig, FFIClientErrorCallback, FFIErrorCode,
-    FFINetworkEventCallbacks, FFIProgressCallback, FFISyncEventCallbacks, FFISyncProgress,
-    FFIWalletEventCallbacks, FFIWalletManager,
+    null_check, set_last_error, FFIClientConfig, FFIErrorCode, FFIEventCallbacks, FFISyncProgress,
+    FFIWalletManager,
 };
 // Import wallet types from key-wallet-ffi
 use key_wallet_ffi::FFIWalletManager as KeyWalletFFIWalletManager;
@@ -10,127 +9,42 @@ use dash_spv::storage::DiskStorageManager;
 use dash_spv::DashSpvClient;
 use tracing::dispatcher::{get_default, set_default};
 
-use std::mem::{forget, take};
+use std::mem::forget;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
-use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-
-/// Spawns a tokio task that monitors a broadcast channel and dispatches events to callbacks.
-fn spawn_broadcast_monitor<E, C, F>(
-    name: &'static str,
-    receiver: broadcast::Receiver<E>,
-    callbacks: Arc<Mutex<Option<C>>>,
-    shutdown: CancellationToken,
-    rt: &Runtime,
-    dispatch_fn: F,
-) -> JoinHandle<()>
-where
-    E: Clone + Send + 'static,
-    C: Clone + Send + 'static,
-    F: Fn(&C, &E) + Send + 'static,
-{
-    let mut receiver = receiver;
-    rt.spawn(async move {
-        tracing::debug!("{} monitoring task started", name);
-        loop {
-            tokio::select! {
-                result = receiver.recv() => {
-                    match result {
-                        Ok(event) => {
-                            let cb = callbacks.lock().unwrap().clone();
-                            if let Some(ref cb) = cb {
-                                dispatch_fn(cb, &event);
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    }
-                }
-                _ = shutdown.cancelled() => break,
-            }
-        }
-        tracing::debug!("{} monitoring task exiting", name);
-    })
-}
-
-/// Spawns a tokio task that monitors a watch channel for progress updates.
-///
-/// Sends the initial progress value, then monitors for changes.
-fn spawn_progress_monitor<P, C, F>(
-    receiver: watch::Receiver<P>,
-    callbacks: Arc<Mutex<Option<C>>>,
-    shutdown: CancellationToken,
-    rt: &Runtime,
-    dispatch_fn: F,
-) -> JoinHandle<()>
-where
-    P: Clone + Send + Sync + 'static,
-    C: Clone + Send + 'static,
-    F: Fn(&C, &P) + Send + 'static,
-{
-    let mut receiver = receiver;
-    rt.spawn(async move {
-        tracing::debug!("Progress monitoring task started");
-
-        // Send initial progress
-        {
-            let progress = receiver.borrow_and_update().clone();
-            let cb = callbacks.lock().unwrap().clone();
-            if let Some(ref cb) = cb {
-                dispatch_fn(cb, &progress);
-            }
-        }
-
-        loop {
-            tokio::select! {
-                result = receiver.changed() => {
-                    match result {
-                        Ok(()) => {
-                            let progress = receiver.borrow_and_update().clone();
-                            let cb = callbacks.lock().unwrap().clone();
-                            if let Some(ref cb) = cb {
-                                dispatch_fn(cb, &progress);
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-                _ = shutdown.cancelled() => break,
-            }
-        }
-        tracing::debug!("Progress monitoring task exiting");
-    })
-}
 
 /// FFI wrapper around `DashSpvClient`.
 type InnerClient = DashSpvClient<
     key_wallet::manager::WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo>,
     dash_spv::network::PeerNetworkManager,
     DiskStorageManager,
+    FFIEventCallbacks,
 >;
 
 pub struct FFIDashSpvClient {
     pub(crate) inner: InnerClient,
     pub(crate) runtime: Arc<Runtime>,
-    active_tasks: Mutex<Vec<JoinHandle<()>>>,
+    run_task: Mutex<Option<JoinHandle<()>>>,
     shutdown_token: CancellationToken,
-    sync_event_callbacks: Arc<Mutex<Option<FFISyncEventCallbacks>>>,
-    network_event_callbacks: Arc<Mutex<Option<FFINetworkEventCallbacks>>>,
-    wallet_event_callbacks: Arc<Mutex<Option<FFIWalletEventCallbacks>>>,
-    progress_callback: Arc<Mutex<Option<FFIProgressCallback>>>,
-    client_error_callback: Arc<Mutex<Option<FFIClientErrorCallback>>>,
 }
 
 /// Create a new SPV client and return an opaque pointer.
 ///
 /// # Safety
 /// - `config` must be a valid, non-null pointer for the duration of the call.
+/// - `callbacks` is taken by value (function pointers and `user_data` pointers
+///   are copied internally). The struct itself may be dropped after the call,
+///   but all `user_data` pointer targets must remain valid until
+///   `dash_spv_ffi_client_stop` or `dash_spv_ffi_client_destroy` is called.
+/// - Callback functions and `user_data` pointees must be safe to use from
+///   background threads; different callback groups may be invoked concurrently.
 /// - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_new(
     config: *const FFIClientConfig,
+    callbacks: FFIEventCallbacks,
 ) -> *mut FFIDashSpvClient {
     null_check!(config, std::ptr::null_mut());
 
@@ -171,7 +85,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 
         match (network, storage) {
             (Ok(network), Ok(storage)) => {
-                DashSpvClient::new(client_config, network, storage, wallet).await
+                DashSpvClient::new(client_config, network, storage, wallet, Arc::new(callbacks))
+                    .await
             }
             (Err(e), _) => Err(e),
             (_, Err(e)) => Err(dash_spv::SpvError::Storage(e)),
@@ -183,13 +98,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
             let ffi_client = FFIDashSpvClient {
                 inner: client,
                 runtime,
-                active_tasks: Mutex::new(Vec::new()),
+                run_task: Mutex::new(None),
                 shutdown_token: CancellationToken::new(),
-                sync_event_callbacks: Arc::new(Mutex::new(None)),
-                network_event_callbacks: Arc::new(Mutex::new(None)),
-                wallet_event_callbacks: Arc::new(Mutex::new(None)),
-                progress_callback: Arc::new(Mutex::new(None)),
-                client_error_callback: Arc::new(Mutex::new(None)),
             };
             Box::into_raw(Box::new(ffi_client))
         }
@@ -201,30 +111,22 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 }
 
 impl FFIDashSpvClient {
-    /// Abort all active monitoring tasks and wait for them to finish.
-    fn cancel_active_tasks(&self) {
-        let tasks = {
-            let mut guard = self.active_tasks.lock().unwrap();
-            take(&mut *guard)
-        };
-
-        for task in &tasks {
+    /// Cancel the run task and wait for it to finish.
+    fn cancel_run_task(&self) {
+        let task = self.run_task.lock().unwrap().take();
+        if let Some(task) = task {
             task.abort();
-        }
-
-        // Wait for all tasks to finish
-        self.runtime.block_on(async {
-            for task in tasks {
+            self.runtime.block_on(async {
                 let _ = task.await;
-            }
-        });
+            });
+        }
     }
 }
 
 fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
     client.shutdown_token.cancel();
 
-    client.cancel_active_tasks();
+    client.cancel_run_task();
 
     let result = client.runtime.block_on(async { client.inner.stop().await });
 
@@ -281,13 +183,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 
 /// Start the SPV client and begin syncing in the background.
 ///
-/// Subscribes to events, spawns monitoring threads, then spawns a background
-/// thread that calls `run()` (which handles start + sync loop + stop internally).
-/// Returns immediately after spawning.
-///
-/// Use event callbacks (set via `set_sync_event_callbacks`,
-/// `set_network_event_callbacks`, `set_wallet_event_callbacks`) to receive
-/// notifications. Configure callbacks before calling `run()`.
+/// Uses the event callbacks provided at client creation time. Returns
+/// immediately after spawning the sync task.
 ///
 /// # Safety
 /// - `client` must be a valid, non-null pointer to a created client.
@@ -300,87 +197,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
     let client = &(*client);
 
-    tracing::info!("dash_spv_ffi_client_run: setting up event monitoring");
+    tracing::info!("dash_spv_ffi_client_run: starting sync");
 
     let shutdown_token = client.shutdown_token.clone();
-
-    // Subscribe to events before spawning tasks
-    let (sync_event_rx, network_event_rx, progress_rx, wallet_event_rx) =
-        client.runtime.block_on(async {
-            let wallet_rx = client.inner.wallet().read().await.subscribe_events();
-            (
-                client.inner.subscribe_sync_events().await,
-                client.inner.subscribe_network_events().await,
-                client.inner.subscribe_progress().await,
-                wallet_rx,
-            )
-        });
-
-    // Spawn event monitoring tasks for each callback type that is set
-    let mut tasks = client.active_tasks.lock().unwrap();
-
-    if client.sync_event_callbacks.lock().unwrap().is_some() {
-        tasks.push(spawn_broadcast_monitor(
-            "Sync event",
-            sync_event_rx.resubscribe(),
-            client.sync_event_callbacks.clone(),
-            shutdown_token.clone(),
-            &client.runtime,
-            |cb, event| cb.dispatch(event),
-        ));
-    }
-
-    if client.network_event_callbacks.lock().unwrap().is_some() {
-        tasks.push(spawn_broadcast_monitor(
-            "Network event",
-            network_event_rx.resubscribe(),
-            client.network_event_callbacks.clone(),
-            shutdown_token.clone(),
-            &client.runtime,
-            |cb, event| cb.dispatch(event),
-        ));
-    }
-
-    if client.progress_callback.lock().unwrap().is_some() {
-        tasks.push(spawn_progress_monitor(
-            progress_rx.clone(),
-            client.progress_callback.clone(),
-            shutdown_token.clone(),
-            &client.runtime,
-            |cb, progress| cb.dispatch(progress),
-        ));
-    }
-
-    if client.wallet_event_callbacks.lock().unwrap().is_some() {
-        tasks.push(spawn_broadcast_monitor(
-            "Wallet event",
-            wallet_event_rx.resubscribe(),
-            client.wallet_event_callbacks.clone(),
-            shutdown_token.clone(),
-            &client.runtime,
-            |cb, event| cb.dispatch(event),
-        ));
-    }
-
-    let error_callback = client.client_error_callback.clone();
     let spv_client = client.inner.clone();
-    tasks.push(client.runtime.spawn(async move {
+
+    let task = client.runtime.spawn(async move {
         tracing::debug!("Sync task: starting run");
 
         if let Err(e) = spv_client.run(shutdown_token).await {
             tracing::error!("Sync task: error: {}", e);
-            let cb = error_callback.lock().unwrap().clone();
-            if let Some(ref cb) = cb {
-                cb.dispatch(&e.to_string());
-            }
         }
 
         tracing::debug!("Sync task: exiting");
-    }));
+    });
 
-    drop(tasks);
+    *client.run_task.lock().unwrap() = Some(task);
 
-    tracing::info!("dash_spv_ffi_client_run: background tasks spawned, returning");
+    tracing::info!("dash_spv_ffi_client_run: background task spawned, returning");
 
     FFIErrorCode::Success as i32
 }
@@ -508,10 +342,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
             let _ = client.inner.stop().await;
         });
 
-        // Abort and await all active tasks
-        client.cancel_active_tasks();
+        // Abort and await the run task
+        client.cancel_run_task();
 
-        tracing::info!("✅ FFI client destroyed and all tasks cleaned up");
+        tracing::info!("FFI client destroyed and all tasks cleaned up");
     }
 }
 
@@ -567,200 +401,4 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_manager_free(manager: *mut FFIWalle
     }
 
     key_wallet_ffi::wallet_manager::wallet_manager_free(manager as *mut KeyWalletFFIWalletManager);
-}
-
-// ============================================================================
-// Event Callback Functions
-// ============================================================================
-
-/// Set sync event callbacks for push-based event notifications.
-///
-/// The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
-/// Call this before calling run().
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-/// - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
-/// - Callbacks must be thread-safe as they may be called from a background task.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_set_sync_event_callbacks(
-    client: *mut FFIDashSpvClient,
-    callbacks: FFISyncEventCallbacks,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.sync_event_callbacks.lock().unwrap() = Some(callbacks);
-
-    FFIErrorCode::Success as i32
-}
-
-/// Clear sync event callbacks.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_clear_sync_event_callbacks(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.sync_event_callbacks.lock().unwrap() = None;
-
-    FFIErrorCode::Success as i32
-}
-
-/// Set network event callbacks for push-based event notifications.
-///
-/// The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
-/// Call this before calling run().
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-/// - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
-/// - Callbacks must be thread-safe as they may be called from a background task.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_set_network_event_callbacks(
-    client: *mut FFIDashSpvClient,
-    callbacks: FFINetworkEventCallbacks,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.network_event_callbacks.lock().unwrap() = Some(callbacks);
-
-    FFIErrorCode::Success as i32
-}
-
-/// Clear network event callbacks.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_clear_network_event_callbacks(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.network_event_callbacks.lock().unwrap() = None;
-
-    FFIErrorCode::Success as i32
-}
-
-/// Set wallet event callbacks for push-based event notifications.
-///
-/// The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
-/// Call this before calling run().
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-/// - The `callbacks` struct and its `user_data` must remain valid until callbacks are cleared.
-/// - Callbacks must be thread-safe as they may be called from a background task.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_set_wallet_event_callbacks(
-    client: *mut FFIDashSpvClient,
-    callbacks: FFIWalletEventCallbacks,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.wallet_event_callbacks.lock().unwrap() = Some(callbacks);
-
-    FFIErrorCode::Success as i32
-}
-
-/// Clear wallet event callbacks.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_clear_wallet_event_callbacks(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.wallet_event_callbacks.lock().unwrap() = None;
-
-    FFIErrorCode::Success as i32
-}
-
-/// Set progress callback for sync progress updates.
-///
-/// The monitoring task is spawned when `dash_spv_ffi_client_run` is called.
-/// Call this before calling run().
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-/// - The `callback` struct and its `user_data` must remain valid until the callback is cleared.
-/// - The callback must be thread-safe as it may be called from a background task.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_set_progress_callback(
-    client: *mut FFIDashSpvClient,
-    callback: crate::FFIProgressCallback,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    let progress = client.runtime.block_on(async { client.inner.progress().await });
-    let mut cb_guard = client.progress_callback.lock().unwrap();
-    *cb_guard = Some(callback);
-    if let Some(ref cb) = *cb_guard {
-        cb.dispatch(&progress);
-    }
-
-    FFIErrorCode::Success as i32
-}
-
-/// Clear progress callback.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_clear_progress_callback(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.progress_callback.lock().unwrap() = None;
-
-    FFIErrorCode::Success as i32
-}
-
-/// Set a callback for fatal client errors (start failure, sync thread crash).
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-/// - The `callback` struct and its `user_data` must remain valid until the callback is cleared.
-/// - The callback must be thread-safe as it may be called from a background thread.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_set_client_error_callback(
-    client: *mut FFIDashSpvClient,
-    callback: FFIClientErrorCallback,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.client_error_callback.lock().unwrap() = Some(callback);
-
-    FFIErrorCode::Success as i32
-}
-
-/// Clear the client error callback.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer to an `FFIDashSpvClient`.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_clear_client_error_callback(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
-    null_check!(client);
-
-    let client = &(*client);
-    *client.client_error_callback.lock().unwrap() = None;
-
-    FFIErrorCode::Success as i32
 }

@@ -12,11 +12,13 @@ use crate::sync::{SyncEvent, SyncProgress};
 use key_wallet::manager::WalletInterface;
 use tokio::sync::broadcast;
 
-use super::DashSpvClient;
+use super::{DashSpvClient, EventHandler};
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
+    DashSpvClient<W, N, S, H>
+{
     /// Subscribe to sync progress updates via watch channel.
-    pub async fn subscribe_progress(&self) -> watch::Receiver<SyncProgress> {
+    pub(crate) async fn subscribe_progress(&self) -> watch::Receiver<SyncProgress> {
         self.sync_coordinator.lock().await.subscribe_progress()
     }
 
@@ -26,12 +28,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Subscribe to sync events from the sync coordinator.
-    pub async fn subscribe_sync_events(&self) -> broadcast::Receiver<SyncEvent> {
+    pub(crate) async fn subscribe_sync_events(&self) -> broadcast::Receiver<SyncEvent> {
         self.sync_coordinator.lock().await.subscribe_events()
     }
 
     /// Subscribe to network events.
-    pub async fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {
+    pub(crate) async fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {
         self.network.lock().await.subscribe_network_events()
     }
 }

@@ -364,8 +364,48 @@ fn main() {
                 .to_string()
         });
 
-        // Create client
-        let client = dash_spv_ffi_client_new(cfg);
+        // Build all event callbacks in a single struct
+        let callbacks = FFIEventCallbacks {
+            sync: FFISyncEventCallbacks {
+                on_sync_start: Some(on_sync_start),
+                on_block_headers_stored: Some(on_block_headers_stored),
+                on_block_header_sync_complete: Some(on_block_header_sync_complete),
+                on_filter_headers_stored: Some(on_filter_headers_stored),
+                on_filter_headers_sync_complete: Some(on_filter_headers_sync_complete),
+                on_filters_stored: Some(on_filters_stored),
+                on_filters_sync_complete: Some(on_filters_sync_complete),
+                on_blocks_needed: Some(on_blocks_needed),
+                on_block_processed: Some(on_block_processed),
+                on_masternode_state_updated: Some(on_masternode_state_updated),
+                on_chainlock_received: Some(on_chainlock_received),
+                on_instantlock_received: Some(on_instantlock_received),
+                on_manager_error: Some(on_manager_error),
+                on_sync_complete: Some(on_sync_complete),
+                user_data: ptr::null_mut(),
+            },
+            network: FFINetworkEventCallbacks {
+                on_peer_connected: Some(on_peer_connected),
+                on_peer_disconnected: Some(on_peer_disconnected),
+                on_peers_updated: Some(on_peers_updated),
+                user_data: ptr::null_mut(),
+            },
+            progress: FFIProgressCallback {
+                on_progress: Some(on_progress_update),
+                user_data: ptr::null_mut(),
+            },
+            wallet: FFIWalletEventCallbacks {
+                on_transaction_received: Some(on_transaction_received),
+                on_balance_updated: Some(on_balance_updated),
+                user_data: ptr::null_mut(),
+            },
+            error: FFIClientErrorCallback {
+                on_error: None,
+                user_data: ptr::null_mut(),
+            },
+        };
+
+        // Create client with event callbacks
+        let client = dash_spv_ffi_client_new(cfg, callbacks);
         if client.is_null() {
             eprintln!(
                 "Client create failed: {}",
@@ -401,80 +441,6 @@ fn main() {
 
             println!("Wallet created from mnemonic");
             dash_spv_ffi_wallet_manager_free(wallet_manager);
-        }
-
-        // Set up event callbacks
-        let sync_callbacks = FFISyncEventCallbacks {
-            on_sync_start: Some(on_sync_start),
-            on_block_headers_stored: Some(on_block_headers_stored),
-            on_block_header_sync_complete: Some(on_block_header_sync_complete),
-            on_filter_headers_stored: Some(on_filter_headers_stored),
-            on_filter_headers_sync_complete: Some(on_filter_headers_sync_complete),
-            on_filters_stored: Some(on_filters_stored),
-            on_filters_sync_complete: Some(on_filters_sync_complete),
-            on_blocks_needed: Some(on_blocks_needed),
-            on_block_processed: Some(on_block_processed),
-            on_masternode_state_updated: Some(on_masternode_state_updated),
-            on_chainlock_received: Some(on_chainlock_received),
-            on_instantlock_received: Some(on_instantlock_received),
-            on_manager_error: Some(on_manager_error),
-            on_sync_complete: Some(on_sync_complete),
-            user_data: ptr::null_mut(),
-        };
-
-        let network_callbacks = FFINetworkEventCallbacks {
-            on_peer_connected: Some(on_peer_connected),
-            on_peer_disconnected: Some(on_peer_disconnected),
-            on_peers_updated: Some(on_peers_updated),
-            user_data: ptr::null_mut(),
-        };
-
-        let wallet_callbacks = FFIWalletEventCallbacks {
-            on_transaction_received: Some(on_transaction_received),
-            on_balance_updated: Some(on_balance_updated),
-            user_data: ptr::null_mut(),
-        };
-
-        let rc = dash_spv_ffi_client_set_sync_event_callbacks(client, sync_callbacks);
-        if rc != FFIErrorCode::Success as i32 {
-            eprintln!(
-                "Failed to set sync callbacks: {}",
-                ffi_string_to_rust(dash_spv_ffi_get_last_error())
-            );
-            std::process::exit(1);
-        }
-
-        let rc = dash_spv_ffi_client_set_network_event_callbacks(client, network_callbacks);
-        if rc != FFIErrorCode::Success as i32 {
-            eprintln!(
-                "Failed to set network callbacks: {}",
-                ffi_string_to_rust(dash_spv_ffi_get_last_error())
-            );
-            std::process::exit(1);
-        }
-
-        let rc = dash_spv_ffi_client_set_wallet_event_callbacks(client, wallet_callbacks);
-        if rc != FFIErrorCode::Success as i32 {
-            eprintln!(
-                "Failed to set wallet callbacks: {}",
-                ffi_string_to_rust(dash_spv_ffi_get_last_error())
-            );
-            std::process::exit(1);
-        }
-
-        // Set up progress callback
-        let progress_callback = FFIProgressCallback {
-            on_progress: Some(on_progress_update),
-            user_data: ptr::null_mut(),
-        };
-
-        let rc = dash_spv_ffi_client_set_progress_callback(client, progress_callback);
-        if rc != FFIErrorCode::Success as i32 {
-            eprintln!(
-                "Failed to set progress callback: {}",
-                ffi_string_to_rust(dash_spv_ffi_get_last_error())
-            );
-            std::process::exit(1);
         }
 
         println!("Event and progress callbacks configured, starting sync...");

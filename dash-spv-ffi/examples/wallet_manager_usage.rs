@@ -16,7 +16,7 @@ fn main() {
         }
 
         // Create an SPV client
-        let client = dash_spv_ffi_client_new(config);
+        let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
         if client.is_null() {
             panic!("Failed to create client");
         }

@@ -7,6 +7,9 @@
 //! - `FFIWalletEventCallbacks` - Wallet manager events
 
 use crate::{dash_spv_ffi_sync_progress_destroy, FFISyncProgress};
+use dash_spv::network::NetworkEvent;
+use dash_spv::sync::{SyncEvent, SyncProgress};
+use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
 use key_wallet::manager::WalletEvent;
 use std::ffi::CString;
@@ -615,6 +618,49 @@ impl FFIClientErrorCallback {
             let c_error = CString::new(error).unwrap_or_default();
             cb(c_error.as_ptr(), self.user_data);
         }
+    }
+}
+
+// ============================================================================
+// FFIEventCallbacks - All callbacks in a single C-compatible struct
+// ============================================================================
+
+/// All event callbacks grouped into a single struct.
+///
+/// Pass this to `dash_spv_ffi_client_new`. Any callback group left at its
+/// default (all function pointers null) will simply not receive events.
+#[repr(C)]
+#[derive(Clone, Default)]
+pub struct FFIEventCallbacks {
+    pub sync: FFISyncEventCallbacks,
+    pub network: FFINetworkEventCallbacks,
+    pub progress: FFIProgressCallback,
+    pub wallet: FFIWalletEventCallbacks,
+    pub error: FFIClientErrorCallback,
+}
+
+unsafe impl Send for FFIEventCallbacks {}
+unsafe impl Sync for FFIEventCallbacks {}
+
+impl EventHandler for FFIEventCallbacks {
+    fn on_sync_event(&self, event: &SyncEvent) {
+        self.sync.dispatch(event);
+    }
+
+    fn on_network_event(&self, event: &NetworkEvent) {
+        self.network.dispatch(event);
+    }
+
+    fn on_progress(&self, progress: &SyncProgress) {
+        self.progress.dispatch(progress);
+    }
+
+    fn on_wallet_event(&self, event: &WalletEvent) {
+        self.wallet.dispatch(event);
+    }
+
+    fn on_error(&self, error: &str) {
+        self.error.dispatch(error);
     }
 }
 

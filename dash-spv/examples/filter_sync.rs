@@ -36,7 +36,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the client
-    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(())).await?;
 
     println!("Starting synchronization with filter support...");
     println!("Watching address: {:?}", watch_address);

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use super::ClientConfig;
+use crate::client::EventHandler;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
@@ -74,6 +75,7 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 /// - `W: WalletInterface` - Handles UTXO tracking, address management, transaction processing
 /// - `N: NetworkManager` - Manages peer connections, message routing, network protocol
 /// - `S: StorageManager` - Persistent storage for headers, filters, chain state
+/// - `H: EventHandler` - Receives push-based event notifications (defaults to `()` no-op)
 ///
 /// ## Common Configurations
 ///
@@ -104,7 +106,12 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 /// - Not reduce binary size (production has one instantiation anyway)
 ///
 /// The generic design is an intentional, beneficial architectural choice for a library.
-pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
+pub struct DashSpvClient<
+    W: WalletInterface,
+    N: NetworkManager,
+    S: StorageManager,
+    H: EventHandler = (),
+> {
     pub(super) config: Arc<RwLock<ClientConfig>>,
     pub(super) network: Arc<Mutex<N>>,
     pub(super) storage: Arc<Mutex<S>>,
@@ -115,9 +122,12 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) running: Arc<RwLock<bool>>,
     pub(super) mempool_state: Arc<RwLock<MempoolState>>,
     pub(super) mempool_filter: Arc<RwLock<Option<Arc<MempoolFilter>>>>,
+    pub(super) event_handler: Arc<H>,
 }
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler> Clone
+    for DashSpvClient<W, N, S, H>
+{
     fn clone(&self) -> Self {
         Self {
             config: Arc::clone(&self.config),
@@ -129,11 +139,14 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpv
             running: Arc::clone(&self.running),
             mempool_state: Arc::clone(&self.mempool_state),
             mempool_filter: Arc::clone(&self.mempool_filter),
+            event_handler: Arc::clone(&self.event_handler),
         }
     }
 }
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
+    DashSpvClient<W, N, S, H>
+{
     // ============ Simple Getters ============
 
     /// Get a reference to the wallet.

@@ -6,10 +6,37 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Arg, Command};
-use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, MempoolStrategy, Network};
-use key_wallet::manager::WalletManager;
+use dash_spv::network::NetworkEvent;
+use dash_spv::sync::{SyncEvent, SyncProgress};
+use dash_spv::{ClientConfig, DashSpvClient, EventHandler, LevelFilter, MempoolStrategy, Network};
+use key_wallet::manager::{WalletEvent, WalletManager};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use tokio_util::sync::CancellationToken;
+
+/// Logs all SPV client events via tracing.
+struct LoggingEventHandler;
+
+impl EventHandler for LoggingEventHandler {
+    fn on_sync_event(&self, event: &SyncEvent) {
+        tracing::info!("{}", event.description());
+    }
+
+    fn on_network_event(&self, event: &NetworkEvent) {
+        tracing::info!("{}", event.description());
+    }
+
+    fn on_progress(&self, progress: &SyncProgress) {
+        tracing::info!("Sync progress: {}", progress);
+    }
+
+    fn on_wallet_event(&self, event: &WalletEvent) {
+        tracing::info!("Wallet: {}", event.description());
+    }
+
+    fn on_error(&self, error: &str) {
+        tracing::error!("{}", error);
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -327,7 +354,14 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
         WalletManager<ManagedWalletInfo>,
         dash_spv::network::manager::PeerNetworkManager,
         S,
-    >::new(config.clone(), network_manager, storage_manager, wallet.clone())
+        LoggingEventHandler,
+    >::new(
+        config.clone(),
+        network_manager,
+        storage_manager,
+        wallet.clone(),
+        Arc::new(LoggingEventHandler),
+    )
     .await
     {
         Ok(client) => client,

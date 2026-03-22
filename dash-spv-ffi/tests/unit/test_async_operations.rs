@@ -20,7 +20,7 @@ mod tests {
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
 
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null(), "Failed to create client");
 
             (client, config, temp_dir)
@@ -113,7 +113,7 @@ mod tests {
 
             println!("Testing callback thread safety with concurrent invocations");
 
-            // Start the client
+            // Start the client with default (empty) callbacks
             let start_result = dash_spv_ffi_client_run(client);
             assert_eq!(start_result, 0);
             thread::sleep(Duration::from_millis(100));
@@ -292,8 +292,17 @@ mod tests {
                 user_data: &event_data as *const _ as *mut c_void,
             };
 
-            let result = dash_spv_ffi_client_set_sync_event_callbacks(client, sync_callbacks);
-            assert_eq!(result, FFIErrorCode::Success as i32);
+            // Build an FFIEventCallbacks with sync callbacks set
+            let callbacks = FFIEventCallbacks {
+                sync: sync_callbacks,
+                ..FFIEventCallbacks::default()
+            };
+
+            // Verify the struct is properly constructed (callbacks are now
+            // passed directly to run(), no separate set call needed)
+            assert!(callbacks.sync.on_sync_start.is_some());
+            assert!(callbacks.sync.on_block_headers_stored.is_some());
+            assert!(callbacks.sync.on_sync_complete.is_some());
 
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);

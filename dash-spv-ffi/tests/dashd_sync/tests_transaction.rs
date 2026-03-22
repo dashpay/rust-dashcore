@@ -26,7 +26,7 @@ fn test_ffi_sync_then_generate_blocks() {
         let ctx = FFITestContext::new(dashd.addr);
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
 
-        ctx.run_with_all_callbacks();
+        ctx.run();
         ctx.wait_for_sync(dashd.initial_height);
 
         assert_eq!(
@@ -145,7 +145,7 @@ fn test_ffi_multiple_transactions_in_single_block() {
         let ctx = FFITestContext::new(dashd.addr);
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
 
-        ctx.run_with_all_callbacks();
+        ctx.run();
         ctx.wait_for_sync(dashd.initial_height);
 
         let baseline_tx_count = ctx.transaction_count(&wallet_id);
@@ -229,7 +229,7 @@ fn test_ffi_multiple_transactions_across_blocks() {
         let ctx = FFITestContext::new(dashd.addr);
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
 
-        ctx.run_with_all_callbacks();
+        ctx.run();
         ctx.wait_for_sync(dashd.initial_height);
 
         let baseline_tx_count = ctx.transaction_count(&wallet_id);
