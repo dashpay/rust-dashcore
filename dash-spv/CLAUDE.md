@@ -54,18 +54,17 @@ cargo run --example filter_sync
 cargo test
 
 # Run specific test files
-cargo test --test handshake_test
 cargo test --test header_sync_test
 cargo test --test storage_test
 
 # Run individual test functions
-cargo test --test handshake_test test_handshake_with_mainnet_peer
+cargo test --test peer_test test_peer_connection
 
 # Run tests with output
 cargo test -- --nocapture
 
 # Run single test with debug output
-cargo test --test handshake_test test_handshake_with_mainnet_peer -- --nocapture
+cargo test --test peer_test test_peer_connection -- --nocapture
 ```
 
 ### Code Quality
@@ -187,10 +186,10 @@ Use domain-specific error types:
 **Common Debug Commands:**
 ```bash
 # Run with tracing output
-RUST_LOG=debug cargo test --test test_handshake_with_mainnet_peer -- --nocapture
+RUST_LOG=debug cargo test --test peer_test test_peer_connection -- --nocapture
 
-# Run specific test with verbose output  
-cargo test --test handshake_test test_handshake_with_mainnet_peer -- --nocapture --test-threads=1
+# Run specific test with verbose output
+cargo test --test peer_test test_peer_connection -- --nocapture --test-threads=1
 
 # Check storage state
 ls -la data*/headers/

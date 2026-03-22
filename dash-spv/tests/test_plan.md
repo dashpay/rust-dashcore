@@ -7,13 +7,7 @@ This document outlines a systematic testing approach for the Dash SPV client, or
 - **Network**: Dash mainnet
 - **Test Type**: Integration tests with real network connectivity
 
-## 1. Network Layer Tests ✅ (3/4 passing)
-
-### File: `tests/handshake_test.rs` (MOSTLY COMPLETED)
-- [x] **Basic handshake with mainnet peer** - Tests successful connection and handshake
-- [⚠️] **Handshake timeout handling** - Tests timeout behavior (timeout test needs adjustment)
-- [x] **Network manager lifecycle** - Tests creation, connection state management
-- [x] **Multiple connect/disconnect cycles** - Tests robustness of connection handling
+## 1. Network Layer Tests
 
 ### Planned Additional Network Tests
 - [ ] **Message sending and receiving** - Test basic message exchange after handshake
