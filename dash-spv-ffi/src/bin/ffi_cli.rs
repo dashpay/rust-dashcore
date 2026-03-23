@@ -252,6 +252,22 @@ extern "C" fn on_progress_update(progress: *const FFISyncProgress, _user_data: *
     println!();
 }
 
+// ============================================================================
+// Error Callback
+// ============================================================================
+
+extern "C" fn on_error(error: *const c_char, _user_data: *mut c_void) {
+    let msg = if error.is_null() {
+        "unknown error".to_string()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(error) }
+            .to_str()
+            .unwrap_or("invalid error string")
+            .to_string()
+    };
+    eprintln!("[FATAL] {}", msg);
+}
+
 fn main() {
     let matches = Command::new("dash-spv-ffi")
         .about("Run SPV sync via FFI using event callbacks")
@@ -418,7 +434,7 @@ fn main() {
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {
-                on_error: None,
+                on_error: Some(on_error),
                 user_data: ptr::null_mut(),
             },
         };
