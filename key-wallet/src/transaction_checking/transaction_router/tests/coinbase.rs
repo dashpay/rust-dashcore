@@ -5,7 +5,7 @@ use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use dashcore::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::BLSSignature;
@@ -56,14 +56,12 @@ async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     };
 
     // Check the transaction using the wallet's managed info
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32])
-                .expect("Failed to create block hash for transaction context"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32])
+            .expect("Failed to create block hash for transaction context"),
+        1234567890,
+    ));
 
     // Check the coinbase transaction
     let result = managed_wallet_info
@@ -121,14 +119,12 @@ async fn test_coinbase_transaction_routing_to_bip44_change_address() {
     };
 
     // Check the transaction using the wallet's managed info
-    let context = TransactionContext::InBlock {
-        height: 100001,
-        block_hash: Some(
-            BlockHash::from_slice(&[1u8; 32])
-                .expect("Failed to create block hash for transaction context"),
-        ),
-        timestamp: Some(1234567900),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100001,
+        BlockHash::from_slice(&[1u8; 32])
+            .expect("Failed to create block hash for transaction context"),
+        1234567900,
+    ));
 
     // Check the coinbase transaction
     let result = managed_wallet_info
@@ -185,13 +181,11 @@ async fn test_update_state_flag_behavior() {
         script_pubkey: address.script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
     // First check with update_state = false
     let result1 =
@@ -321,11 +315,11 @@ async fn test_coinbase_transaction_with_payload_routing() {
     let tx_type = TransactionRouter::classify_transaction(&coinbase_tx);
     assert_eq!(tx_type, TransactionType::Coinbase);
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash")),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash"),
+        1234567890,
+    ));
 
     let result = managed_wallet_info
         .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)

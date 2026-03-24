@@ -10,7 +10,7 @@ use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::{managed_wallet_info_free, FFIManagedWalletInfo};
-use crate::types::{FFITransactionContext, FFIWallet};
+use crate::types::{block_info_from_ffi, FFITransactionContext, FFIWallet};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
@@ -144,44 +144,12 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     let context = match context_type {
         FFITransactionContext::Mempool => TransactionContext::Mempool,
         FFITransactionContext::InBlock => {
-            let block_hash = if !block_hash.is_null() {
-                use dashcore::hashes::Hash;
-                let hash_bytes = slice::from_raw_parts(block_hash, 32);
-                let mut hash_array = [0u8; 32];
-                hash_array.copy_from_slice(hash_bytes);
-                Some(dashcore::BlockHash::from_byte_array(hash_array))
-            } else {
-                None
-            };
-            TransactionContext::InBlock {
-                height: block_height,
-                block_hash,
-                timestamp: if timestamp > 0 {
-                    Some(timestamp as u32)
-                } else {
-                    None
-                },
-            }
+            let info = block_info_from_ffi(block_height, block_hash, timestamp);
+            TransactionContext::InBlock(info)
         }
         FFITransactionContext::InChainLockedBlock => {
-            let block_hash = if !block_hash.is_null() {
-                use dashcore::hashes::Hash;
-                let hash_bytes = slice::from_raw_parts(block_hash, 32);
-                let mut hash_array = [0u8; 32];
-                hash_array.copy_from_slice(hash_bytes);
-                Some(dashcore::BlockHash::from_byte_array(hash_array))
-            } else {
-                None
-            };
-            TransactionContext::InChainLockedBlock {
-                height: block_height,
-                block_hash,
-                timestamp: if timestamp > 0 {
-                    Some(timestamp as u32)
-                } else {
-                    None
-                },
-            }
+            let info = block_info_from_ffi(block_height, block_hash, timestamp);
+            TransactionContext::InChainLockedBlock(info)
         }
         FFITransactionContext::InstantSend => TransactionContext::InstantSend,
     };

@@ -348,7 +348,7 @@ impl ManagedCoreAccount {
                                 outpoint,
                                 txout,
                                 addr,
-                                context.block_height().unwrap_or(0),
+                                context.block_info().map(|i| i.height).unwrap_or(0),
                                 tx.is_coin_base(),
                             );
                             utxo.is_confirmed = context.confirmed();
@@ -392,12 +392,10 @@ impl ManagedCoreAccount {
         let mut changed = false;
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
             if !tx_record.is_confirmed() {
-                if let (Some(height), Some(hash)) = (context.block_height(), context.block_hash()) {
-                    tx_record.mark_confirmed(height, hash);
+                if let Some(info) = context.block_info() {
+                    tx_record.mark_confirmed(info.height, info.block_hash);
+                    tx_record.timestamp = info.timestamp as u64;
                     changed = true;
-                }
-                if let Some(ts) = context.timestamp() {
-                    tx_record.timestamp = ts as u64;
                 }
             }
         }
@@ -413,12 +411,13 @@ impl ManagedCoreAccount {
         context: TransactionContext,
     ) {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
+        let block_info = context.block_info();
         let tx_record = TransactionRecord {
             transaction: tx.clone(),
             txid: tx.txid(),
-            height: context.block_height(),
-            block_hash: context.block_hash(),
-            timestamp: context.timestamp().unwrap_or(0) as u64,
+            height: block_info.map(|i| i.height),
+            block_hash: block_info.map(|i| i.block_hash),
+            timestamp: block_info.map(|i| i.timestamp as u64).unwrap_or(0),
             net_amount,
             fee: None,
             label: None,

@@ -1,7 +1,7 @@
 use crate::manager::wallet_interface::{BlockProcessingResult, WalletInterface};
 use crate::manager::{WalletEvent, WalletManager};
 use crate::transaction_checking::transaction_router::TransactionRouter;
-use crate::transaction_checking::TransactionContext;
+use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -19,16 +19,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         height: CoreBlockHeight,
     ) -> BlockProcessingResult {
         let mut result = BlockProcessingResult::default();
-        let block_hash = Some(block.block_hash());
-        let timestamp = block.header.time;
+        let info = BlockInfo::new(height, block.block_hash(), block.header.time);
 
         // Process each transaction using the base manager
         for tx in &block.txdata {
-            let context = TransactionContext::InBlock {
-                height,
-                block_hash,
-                timestamp: Some(timestamp),
-            };
+            let context = TransactionContext::InBlock(info);
 
             let check_result =
                 self.check_transaction_in_all_wallets(tx, context, true, false).await;

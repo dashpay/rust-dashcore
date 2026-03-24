@@ -5,7 +5,7 @@ use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
@@ -109,13 +109,11 @@ async fn test_asset_unlock_transaction_routing() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
-        height: 500100,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        500100,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
@@ -173,11 +171,11 @@ async fn test_asset_unlock_routing_to_bip32_account() {
     };
     tx.special_transaction_payload = Some(TransactionPayload::AssetUnlockPayloadType(payload));
 
-    let context = TransactionContext::InBlock {
-        height: 600100,
-        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash")),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        600100,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash"),
+        1234567890,
+    ));
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;

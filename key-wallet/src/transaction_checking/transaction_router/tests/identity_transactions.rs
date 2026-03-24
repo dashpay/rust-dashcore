@@ -5,7 +5,7 @@ use crate::account::AccountType;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
@@ -114,13 +114,11 @@ async fn test_identity_registration_account_routing() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
     // First check without updating state
     let result =
@@ -192,13 +190,11 @@ async fn test_normal_payment_to_identity_address_not_detected() {
         script_pubkey: address.script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
     let result = managed_wallet_info
         .check_core_transaction(
