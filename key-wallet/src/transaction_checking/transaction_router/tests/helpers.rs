@@ -1,9 +1,16 @@
 //! Helper functions for transaction router tests
 
+use crate::transaction_checking::BlockInfo;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{Address, Network, TxOut};
+use dashcore::hashes::Hash;
+use dashcore::{Address, BlockHash, Network, TxOut};
+
+/// Creates a `BlockInfo` with the given height and deterministic defaults.
+pub fn test_block_info(height: u32) -> BlockInfo {
+    BlockInfo::new(height, BlockHash::all_zeros(), 1234567890)
+}
 
 /// Returns a deterministic test address for creating dummy transactions.
 pub fn test_addr() -> Address {

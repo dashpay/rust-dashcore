@@ -35,7 +35,7 @@ fn receive_only_tx() -> Transaction {
 }
 
 fn record_from_tx(tx: &Transaction) -> TransactionRecord {
-    TransactionRecord::new(tx.clone(), 0, 0, false)
+    TransactionRecord::new(tx.clone(), 0, false)
 }
 
 #[test]

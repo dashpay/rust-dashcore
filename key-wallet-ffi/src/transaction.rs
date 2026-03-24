@@ -14,7 +14,9 @@ use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoIn
 use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{block_info_from_ffi, FFINetwork, FFITransactionContext, FFIWallet};
+use crate::types::{
+    transaction_context_from_ffi, FFIBlockInfo, FFINetwork, FFITransactionContext, FFIWallet,
+};
 use crate::FFIWalletManager;
 
 // MARK: - Transaction Types
@@ -388,9 +390,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
     tx_bytes: *const u8,
     tx_len: usize,
     context_type: FFITransactionContext,
-    block_height: u32,
-    block_hash: *const u8, // 32 bytes if not null
-    timestamp: u64,
+    block_info: FFIBlockInfo,
     update_state: bool,
     result_out: *mut FFITransactionCheckResult,
     error: *mut FFIError,
@@ -419,19 +419,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
         };
 
         // Build the transaction context
-        use key_wallet::transaction_checking::TransactionContext;
-        let context = match context_type {
-            FFITransactionContext::Mempool => TransactionContext::Mempool,
-            FFITransactionContext::InBlock => {
-                let info = block_info_from_ffi(block_height, block_hash, timestamp);
-                TransactionContext::InBlock(info)
-            }
-            FFITransactionContext::InChainLockedBlock => {
-                let info = block_info_from_ffi(block_height, block_hash, timestamp);
-                TransactionContext::InChainLockedBlock(info)
-            }
-            FFITransactionContext::InstantSend => TransactionContext::InstantSend,
-        };
+        let context = transaction_context_from_ffi(context_type, &block_info);
 
         // Create a ManagedWalletInfo from the wallet
         use key_wallet::transaction_checking::WalletTransactionChecker;

@@ -344,13 +344,9 @@ impl ManagedCoreAccount {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
                             };
-                            let mut utxo = Utxo::new(
-                                outpoint,
-                                txout,
-                                addr,
-                                context.block_info().map(|i| i.height).unwrap_or(0),
-                                tx.is_coin_base(),
-                            );
+                            let block_height = context.block_info().map_or(0, |info| info.height);
+                            let mut utxo =
+                                Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
                             utxo.is_confirmed = context.confirmed();
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend);
@@ -393,8 +389,7 @@ impl ManagedCoreAccount {
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
             if !tx_record.is_confirmed() {
                 if let Some(info) = context.block_info() {
-                    tx_record.mark_confirmed(info.height, info.block_hash);
-                    tx_record.timestamp = info.timestamp as u64;
+                    tx_record.mark_confirmed(*info);
                     changed = true;
                 }
             }
@@ -411,13 +406,10 @@ impl ManagedCoreAccount {
         context: TransactionContext,
     ) {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
-        let block_info = context.block_info();
         let tx_record = TransactionRecord {
             transaction: tx.clone(),
             txid: tx.txid(),
-            height: block_info.map(|i| i.height),
-            block_hash: block_info.map(|i| i.block_hash),
-            timestamp: block_info.map(|i| i.timestamp as u64).unwrap_or(0),
+            block_info: context.block_info().copied(),
             net_amount,
             fee: None,
             label: None,
