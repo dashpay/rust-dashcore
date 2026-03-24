@@ -124,6 +124,6 @@ pub(crate) async fn assert_context_suppressed(
     let records: Vec<_> = history.iter().filter(|r| r.txid == tx.txid()).collect();
     assert_eq!(records.len(), 1);
     if let Some(height) = expected_height {
-        assert_eq!(records[0].height, Some(height));
+        assert_eq!(records[0].height(), Some(height));
     }
 }

@@ -360,13 +360,9 @@ impl ManagedCoreAccount {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
                             };
-                            let mut utxo = Utxo::new(
-                                outpoint,
-                                txout,
-                                addr,
-                                context.block_info().map(|i| i.height).unwrap_or(0),
-                                tx.is_coin_base(),
-                            );
+                            let block_height = context.block_info().map_or(0, |info| info.height);
+                            let mut utxo =
+                                Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
                             utxo.is_confirmed = context.confirmed();
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend);
@@ -413,12 +409,14 @@ impl ManagedCoreAccount {
 
         let mut changed = false;
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
-            if !tx_record.is_confirmed() {
-                if let Some(info) = context.block_info() {
-                    tx_record.mark_confirmed(info.height, info.block_hash);
-                    tx_record.timestamp = info.timestamp as u64;
-                    changed = true;
-                }
+            if tx_record.context != context {
+                let was_confirmed = tx_record.context.confirmed();
+                tx_record.update_context(context);
+                // Only signal a change when confirmation status actually changes,
+                // not for upgrades within the confirmed state (e.g. InBlock → InChainLockedBlock).
+                // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
+                // wallet transaction events are properly handled
+                changed = !was_confirmed;
             }
         }
         self.update_utxos(tx, account_match, context);
@@ -433,18 +431,7 @@ impl ManagedCoreAccount {
         context: TransactionContext,
     ) {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
-        let block_info = context.block_info();
-        let tx_record = TransactionRecord {
-            transaction: tx.clone(),
-            txid: tx.txid(),
-            height: block_info.map(|i| i.height),
-            block_hash: block_info.map(|i| i.block_hash),
-            timestamp: block_info.map(|i| i.timestamp as u64).unwrap_or(0),
-            net_amount,
-            fee: None,
-            label: None,
-            is_ours: net_amount < 0,
-        };
+        let tx_record = TransactionRecord::new(tx.clone(), context, net_amount, net_amount < 0);
 
         self.transactions.insert(tx.txid(), tx_record);
 

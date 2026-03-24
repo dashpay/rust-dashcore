@@ -11,7 +11,7 @@ use dashcore::hashes::Hash;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFIAccountType;
+use crate::types::{FFIAccountType, FFITransactionContextDetails};
 use crate::wallet_manager::FFIWalletManager;
 use crate::FFINetwork;
 use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
@@ -666,12 +666,8 @@ pub struct FFITransactionRecord {
     pub txid: [u8; 32],
     /// Net amount for this account (positive = received, negative = sent)
     pub net_amount: i64,
-    /// Block height if confirmed, 0 if unconfirmed
-    pub height: u32,
-    /// Block hash if confirmed (32 bytes), all zeros if unconfirmed
-    pub block_hash: [u8; 32],
-    /// Unix timestamp
-    pub timestamp: u64,
+    /// Transaction context (mempool, instant-send, in-block, chain-locked + block info)
+    pub context: FFITransactionContextDetails,
     /// Fee if known, 0 if unknown
     pub fee: u64,
     /// Whether this is our transaction
@@ -729,18 +725,8 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
         // Copy net amount
         ffi_record.net_amount = record.net_amount;
 
-        // Copy height (0 if unconfirmed)
-        ffi_record.height = record.height.unwrap_or(0);
-
-        // Copy block hash (zeros if unconfirmed)
-        if let Some(block_hash) = record.block_hash {
-            ffi_record.block_hash = block_hash.to_byte_array();
-        } else {
-            ffi_record.block_hash = [0u8; 32];
-        }
-
-        // Copy timestamp
-        ffi_record.timestamp = record.timestamp;
+        // Copy transaction context
+        ffi_record.context = FFITransactionContextDetails::from(record.context);
 
         // Copy fee (0 if unknown)
         ffi_record.fee = record.fee.unwrap_or(0);

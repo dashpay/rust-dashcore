@@ -634,9 +634,11 @@ mod tests {
 
         let stored_tx =
             managed_account.transactions.get(&tx.txid()).expect("Should have stored transaction");
-        assert_eq!(stored_tx.height, None, "Mempool transaction should have no height");
-        assert_eq!(stored_tx.block_hash, None, "Mempool transaction should have no block hash");
-        assert_eq!(stored_tx.timestamp, 0, "Mempool transaction should have timestamp 0");
+        assert_eq!(
+            stored_tx.context,
+            TransactionContext::Mempool,
+            "Mempool transaction should have mempool context"
+        );
     }
 
     /// Test that rescanning a block marks transactions as existing
@@ -829,7 +831,7 @@ mod tests {
 
         // Verify unconfirmed state
         assert!(!ctx.transaction(&txid).is_confirmed(), "Mempool tx should be unconfirmed");
-        assert_eq!(ctx.transaction(&txid).height, None);
+        assert_eq!(ctx.transaction(&txid).context, TransactionContext::Mempool);
         assert!(!ctx.first_utxo().is_confirmed, "Mempool UTXO should be unconfirmed");
 
         let total_tx_before = ctx.managed_wallet.metadata.total_transactions;
@@ -846,9 +848,9 @@ mod tests {
         // Verify confirmed state
         let record = ctx.transaction(&txid);
         assert!(record.is_confirmed(), "Tx should now be confirmed");
-        assert_eq!(record.height, Some(500));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(500));
+        assert_eq!(record.block_info().unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info().unwrap().timestamp, 1700000000);
         assert!(ctx.first_utxo().is_confirmed, "UTXO should now be confirmed");
 
         assert_eq!(
@@ -892,7 +894,7 @@ mod tests {
         let result = ctx.check_transaction(&tx, block_context).await;
         assert!(!result.is_new_transaction);
         assert!(ctx.transaction(&txid).is_confirmed());
-        assert_eq!(ctx.transaction(&txid).height, Some(1000));
+        assert_eq!(ctx.transaction(&txid).height(), Some(1000));
         assert!(ctx.first_utxo().is_confirmed);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
 
@@ -977,9 +979,9 @@ mod tests {
 
         let record = ctx.transaction(&txid);
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(800));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(800));
+        assert_eq!(record.block_info().unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info().unwrap().timestamp, 1700000000);
         assert!(ctx.first_utxo().is_confirmed);
     }
 
@@ -1016,9 +1018,9 @@ mod tests {
         // Verify the transaction was recorded with block context
         let record = account.transactions.get(&txid).expect("Should have backfilled record");
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(600));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(600));
+        assert_eq!(record.block_info().unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info().unwrap().timestamp, 1700000000);
         assert_eq!(record.net_amount, 250_000);
 
         // Verify UTXO was also created
@@ -1065,7 +1067,7 @@ mod tests {
 
         let record = account.transactions.get(&txid).expect("Should have record");
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(700));
-        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.height(), Some(700));
+        assert_eq!(record.block_info().unwrap().block_hash, block_hash);
     }
 }

@@ -350,7 +350,7 @@ async fn test_process_instant_send_lock_after_block_confirmation() {
     let history = manager.wallet_transaction_history(&wallet_id).unwrap();
     let records: Vec<_> = history.iter().filter(|r| r.txid == tx.txid()).collect();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].height, Some(500));
+    assert_eq!(records[0].height(), Some(500));
 }
 
 #[tokio::test]

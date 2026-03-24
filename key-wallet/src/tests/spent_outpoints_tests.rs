@@ -5,6 +5,7 @@ use dashcore::{TxIn, Txid};
 
 use crate::account::TransactionRecord;
 use crate::managed_account::ManagedCoreAccount;
+use crate::transaction_checking::TransactionContext;
 
 /// Create a transaction that spends the given outpoints.
 fn spending_tx(spent: &[OutPoint]) -> Transaction {
@@ -35,7 +36,7 @@ fn receive_only_tx() -> Transaction {
 }
 
 fn record_from_tx(tx: &Transaction) -> TransactionRecord {
-    TransactionRecord::new(tx.clone(), 0, 0, false)
+    TransactionRecord::new(tx.clone(), TransactionContext::Mempool, 0, false)
 }
 
 #[test]

@@ -36,6 +36,7 @@ impl BlockInfo {
 
 /// Context for transaction processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TransactionContext {
     /// Transaction is in the mempool (unconfirmed)
     Mempool,
@@ -67,7 +68,7 @@ impl TransactionContext {
     }
 
     /// Returns the block info if confirmed.
-    pub(crate) fn block_info(&self) -> Option<&BlockInfo> {
+    pub fn block_info(&self) -> Option<&BlockInfo> {
         match self {
             TransactionContext::Mempool | TransactionContext::InstantSend => None,
             TransactionContext::InBlock(info) | TransactionContext::InChainLockedBlock(info) => {
