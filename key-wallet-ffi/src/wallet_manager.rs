@@ -772,7 +772,17 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     };
 
     // Convert FFI context to native TransactionContext
-    let context = unsafe { (*context).to_transaction_context() };
+    let context = match unsafe { (*context).to_transaction_context() } {
+        Some(ctx) => ctx,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Block info must not be zeroed for confirmed contexts".to_string(),
+            );
+            return false;
+        }
+    };
 
     // Get the manager
     let manager_ref = unsafe { &mut *manager };

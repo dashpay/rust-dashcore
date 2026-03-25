@@ -423,7 +423,17 @@ pub unsafe extern "C" fn wallet_check_transaction(
         };
 
         // Build the transaction context
-        let context = transaction_context_from_ffi(context_type, &block_info);
+        let context = match transaction_context_from_ffi(context_type, &block_info) {
+            Some(ctx) => ctx,
+            None => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Block info must not be zeroed for confirmed contexts".to_string(),
+                );
+                return false;
+            }
+        };
 
         // Create a ManagedWalletInfo from the wallet
         use key_wallet::transaction_checking::WalletTransactionChecker;

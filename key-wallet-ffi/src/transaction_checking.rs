@@ -139,7 +139,17 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     };
 
     // Build the transaction context
-    let context = transaction_context_from_ffi(context_type, &block_info);
+    let context = match transaction_context_from_ffi(context_type, &block_info) {
+        Some(ctx) => ctx,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Block info must not be zeroed for confirmed contexts".to_string(),
+            );
+            return false;
+        }
+    };
 
     // Check the transaction - wallet is now required
     if wallet.is_null() {

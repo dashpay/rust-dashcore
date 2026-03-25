@@ -46,16 +46,27 @@ impl From<BlockInfo> for FFIBlockInfo {
 }
 
 /// Convert an `FFIBlockInfo` and context type to a native `TransactionContext`.
+///
+/// Returns `None` when block info is all-zeros for confirmed contexts (`InBlock`,
+/// `InChainLockedBlock`), indicating invalid input from the FFI caller.
 pub(crate) fn transaction_context_from_ffi(
     context_type: FFITransactionContext,
     block_info: &FFIBlockInfo,
-) -> TransactionContext {
+) -> Option<TransactionContext> {
     match context_type {
-        FFITransactionContext::Mempool => TransactionContext::Mempool,
-        FFITransactionContext::InstantSend => TransactionContext::InstantSend,
-        FFITransactionContext::InBlock => TransactionContext::InBlock(block_info.to_block_info()),
+        FFITransactionContext::Mempool => Some(TransactionContext::Mempool),
+        FFITransactionContext::InstantSend => Some(TransactionContext::InstantSend),
+        FFITransactionContext::InBlock => {
+            if block_info.block_hash == [0u8; 32] && block_info.timestamp == 0 {
+                return None;
+            }
+            Some(TransactionContext::InBlock(block_info.to_block_info()))
+        }
         FFITransactionContext::InChainLockedBlock => {
-            TransactionContext::InChainLockedBlock(block_info.to_block_info())
+            if block_info.block_hash == [0u8; 32] && block_info.timestamp == 0 {
+                return None;
+            }
+            Some(TransactionContext::InChainLockedBlock(block_info.to_block_info()))
         }
     }
 }
@@ -822,8 +833,10 @@ impl FFITransactionContextDetails {
         }
     }
 
-    /// Convert to the native `TransactionContext`
-    pub fn to_transaction_context(&self) -> TransactionContext {
+    /// Convert to the native `TransactionContext`.
+    ///
+    /// Returns `None` when block info is all-zeros for confirmed contexts.
+    pub fn to_transaction_context(&self) -> Option<TransactionContext> {
         transaction_context_from_ffi(self.context_type, &self.block_info)
     }
 }
