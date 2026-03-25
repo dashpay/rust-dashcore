@@ -19,11 +19,13 @@
 //! from 80 bytes to as low as 37 bytes through stateful compression techniques.
 
 use crate::blockdata::block::{Header, Version};
+use crate::consensus::encode::MAX_VEC_SIZE;
 use crate::consensus::{Decodable, Encodable};
 use crate::hash_types::{BlockHash, TxMerkleNode};
 use crate::pow::CompactTarget;
 use crate::{VarInt, io};
 use core::fmt;
+use core::mem;
 use thiserror::Error;
 
 /// Bitfield flags for compressed header
@@ -560,7 +562,8 @@ impl Decodable for Headers2Message {
         r: &mut R,
     ) -> Result<Self, crate::consensus::encode::Error> {
         let count = VarInt::consensus_decode(r)?.0;
-        let mut headers = Vec::with_capacity(count as usize);
+        let max_capacity = MAX_VEC_SIZE / 4 / mem::size_of::<CompressedHeader>();
+        let mut headers = Vec::with_capacity(core::cmp::min(count as usize, max_capacity));
         for _ in 0..count {
             headers.push(CompressedHeader::consensus_decode(r)?);
         }
@@ -822,6 +825,24 @@ mod tests {
         assert_eq!(decompressed.len(), 2);
         assert_eq!(decompressed[0], header1);
         assert_eq!(decompressed[1], header2);
+    }
+
+    #[test]
+    fn test_headers2_message_capacity_overflow() {
+        use crate::consensus::encode::deserialize;
+        use crate::hashes::hex::FromHex;
+        use crate::network::message::RawNetworkMessage;
+
+        let crash_inputs: &[&str] = &[
+            "676574630068656164657273320000000900000001000000ffffffff0000fe00ff00ff00ff00ffff7f000000000000007fff000000000000000000000000000000000000000000000000008000000000000000000000",
+            "676574630068656164657273320000000900000001000000ffffffff000100000072656a6563740000000300000001000020ffff0000000100007b297e400000020000000000ff007f223d5d25ff00000000f5007c00",
+        ];
+
+        for hex in crash_inputs {
+            let data = Vec::from_hex(hex).expect("valid hex");
+            let result = deserialize::<RawNetworkMessage>(&data);
+            assert!(result.is_err(), "should return Err, not panic");
+        }
     }
 
     #[test]
