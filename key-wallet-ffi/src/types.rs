@@ -436,6 +436,14 @@ impl FFIAccountType {
 mod tests {
     use super::*;
 
+    fn valid_block_info() -> FFIBlockInfo {
+        FFIBlockInfo {
+            height: 1000,
+            block_hash: [0xab; 32],
+            timestamp: 1700000000,
+        }
+    }
+
     #[test]
     #[should_panic(expected = "DashpayReceivingFunds cannot be converted to AccountType")]
     fn test_dashpay_receiving_funds_to_account_type_panics() {
@@ -505,6 +513,57 @@ mod tests {
         let (ffi_type, index, _) = FFIAccountType::from_account_type(&standard_bip44);
         assert_eq!(ffi_type, FFIAccountType::StandardBIP44);
         assert_eq!(index, 5);
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_mempool_with_empty_block_info() {
+        let result =
+            transaction_context_from_ffi(FFITransactionContext::Mempool, &FFIBlockInfo::empty());
+        assert!(matches!(result, Some(TransactionContext::Mempool)));
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_instant_send_with_empty_block_info() {
+        let result = transaction_context_from_ffi(
+            FFITransactionContext::InstantSend,
+            &FFIBlockInfo::empty(),
+        );
+        assert!(matches!(result, Some(TransactionContext::InstantSend)));
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_in_block_with_empty_block_info() {
+        let result =
+            transaction_context_from_ffi(FFITransactionContext::InBlock, &FFIBlockInfo::empty());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_in_chain_locked_block_with_empty_block_info() {
+        let result = transaction_context_from_ffi(
+            FFITransactionContext::InChainLockedBlock,
+            &FFIBlockInfo::empty(),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_in_block_with_valid_block_info() {
+        let block_info = valid_block_info();
+        let result = transaction_context_from_ffi(FFITransactionContext::InBlock, &block_info);
+        let ctx = result.expect("should return Some for InBlock with valid block info");
+        assert!(matches!(ctx, TransactionContext::InBlock(info) if info.height() == 1000));
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_in_chain_locked_block_with_valid_block_info() {
+        let block_info = valid_block_info();
+        let result =
+            transaction_context_from_ffi(FFITransactionContext::InChainLockedBlock, &block_info);
+        let ctx = result.expect("should return Some for InChainLockedBlock with valid block info");
+        assert!(
+            matches!(ctx, TransactionContext::InChainLockedBlock(info) if info.height() == 1000)
+        );
     }
 }
 
