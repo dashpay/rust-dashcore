@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, BlockHash};
+#[cfg(feature = "parallel-filters")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::collections::{BTreeSet, HashMap};
 
@@ -34,15 +35,22 @@ pub fn check_compact_filters_for_addresses(
     let script_pubkey_bytes: Vec<Vec<u8>> =
         addresses.iter().map(|address| address.script_pubkey().to_bytes()).collect();
 
-    input
-        .into_par_iter()
-        .filter_map(|(key, filter)| {
-            filter
-                .match_any(key.hash(), script_pubkey_bytes.iter().map(|v| v.as_slice()))
-                .unwrap_or(false)
-                .then_some(key.clone())
-        })
-        .collect()
+    let match_filter = |(key, filter): (&FilterMatchKey, &BlockFilter)| {
+        filter
+            .match_any(key.hash(), script_pubkey_bytes.iter().map(|v| v.as_slice()))
+            .unwrap_or(false)
+            .then_some(key.clone())
+    };
+
+    #[cfg(feature = "parallel-filters")]
+    {
+        input.into_par_iter().filter_map(match_filter).collect()
+    }
+
+    #[cfg(not(feature = "parallel-filters"))]
+    {
+        input.iter().filter_map(match_filter).collect()
+    }
 }
 
 #[cfg(test)]
