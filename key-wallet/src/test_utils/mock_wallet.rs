@@ -6,7 +6,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
 use std::collections::BTreeMap;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{broadcast, Mutex};
 
 // Type alias for transaction effects map
@@ -28,7 +28,7 @@ pub struct MockWallet {
     /// New addresses returned by process_mempool_transaction.
     mempool_new_addresses: Vec<Address>,
     /// Recorded status change notifications for test assertions.
-    status_changes: Arc<Mutex<Vec<(Txid, TransactionContext)>>>,
+    status_changes: Arc<StdMutex<Vec<(Txid, TransactionContext)>>>,
     /// Monitor revision counter for staleness detection.
     monitor_revision: u64,
 }
@@ -52,7 +52,7 @@ impl MockWallet {
             addresses: Vec::new(),
             outpoints: Vec::new(),
             mempool_new_addresses: Vec::new(),
-            status_changes: Arc::new(Mutex::new(Vec::new())),
+            status_changes: Arc::new(StdMutex::new(Vec::new())),
             monitor_revision: 0,
         }
     }
@@ -79,7 +79,7 @@ impl MockWallet {
         self.mempool_new_addresses = addresses;
     }
 
-    pub fn status_changes(&self) -> Arc<Mutex<Vec<(Txid, TransactionContext)>>> {
+    pub fn status_changes(&self) -> Arc<StdMutex<Vec<(Txid, TransactionContext)>>> {
         self.status_changes.clone()
     }
 
@@ -178,8 +178,7 @@ impl WalletInterface for MockWallet {
     }
 
     fn process_instant_send_lock(&mut self, txid: Txid) {
-        let mut changes =
-            self.status_changes.try_lock().expect("status_changes lock contention in test helper");
+        let mut changes = self.status_changes.lock().unwrap();
         changes.push((txid, TransactionContext::InstantSend));
     }
 }
