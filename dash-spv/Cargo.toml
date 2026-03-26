@@ -12,7 +12,7 @@ rust-version = "1.89"
 # Core Dash libraries
 dashcore = { path = "../dash", features = ["serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation"] }
 dashcore_hashes = { path = "../hashes" }
-key-wallet = { path = "../key-wallet" }
+key-wallet = { path = "../key-wallet", features = ["parallel-filters"] }
 
 # BLS signatures
 blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900" }
