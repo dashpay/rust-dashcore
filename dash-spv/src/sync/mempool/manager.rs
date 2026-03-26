@@ -926,7 +926,7 @@ mod tests {
 
         let wallet = manager.wallet.read().await;
         let status_changes = wallet.status_changes();
-        let changes = status_changes.lock().await;
+        let changes = status_changes.lock().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].0, txid);
         assert_eq!(changes[0].1, TransactionContext::InstantSend);
@@ -942,7 +942,7 @@ mod tests {
         // No immediate wallet notification
         let wallet = manager.wallet.read().await;
         let status_changes = wallet.status_changes();
-        let changes = status_changes.lock().await;
+        let changes = status_changes.lock().unwrap();
         assert!(changes.is_empty());
 
         // But the txid is remembered for when the transaction arrives
