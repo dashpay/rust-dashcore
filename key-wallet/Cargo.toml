@@ -9,8 +9,9 @@ readme = "README.md"
 license = "CC0-1.0"
 
 [features]
-default = ["std"]
+default = ["std", "manager"]
 std = ["secp256k1/std", "bip39/std", "getrandom", "rand"]
+manager = ["dep:tokio", "dep:rayon"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
 bip38 = ["scrypt", "aes", "bs58", "rand"]
@@ -43,8 +44,8 @@ hex = { version = "0.4"}
 zeroize = { version = "1.8", features = ["derive"] }
 tracing = "0.1"
 async-trait = "0.1"
-tokio = { version = "1", features = ["macros", "rt", "sync"] }
-rayon = { version = "1.11" }
+tokio = { version = "1", features = ["macros", "rt", "sync"], optional = true }
+rayon = { version = "1.11", optional = true }
 
 [dev-dependencies]
 dashcore = { path="../dash", features = ["test-utils"] }

@@ -13,18 +13,27 @@ impl ManagedWalletInfo {
     }
 }
 
+#[cfg(feature = "manager")]
 use crate::manager::MempoolTransactionResult;
+#[cfg(feature = "manager")]
 use crate::manager::{BlockProcessingResult, WalletEvent, WalletInterface};
+#[cfg(feature = "manager")]
 use dashcore::address::NetworkUnchecked;
+#[cfg(feature = "manager")]
 use dashcore::prelude::CoreBlockHeight;
+#[cfg(feature = "manager")]
 use dashcore::{Block, OutPoint};
+#[cfg(feature = "manager")]
 use std::str::FromStr;
+#[cfg(feature = "manager")]
 use std::{collections::BTreeMap, sync::Arc};
+#[cfg(feature = "manager")]
 use tokio::sync::{broadcast, Mutex};
 
-// Type alias for transaction effects map
+#[cfg(feature = "manager")]
 type TransactionEffectsMap = Arc<Mutex<BTreeMap<Txid, (i64, Vec<String>)>>>;
 
+#[cfg(feature = "manager")]
 pub struct MockWallet {
     processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
     processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
@@ -46,12 +55,14 @@ pub struct MockWallet {
     monitor_revision: u64,
 }
 
+#[cfg(feature = "manager")]
 impl Default for MockWallet {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "manager")]
 impl MockWallet {
     pub fn new() -> Self {
         let (event_sender, _) = broadcast::channel(16);
@@ -110,6 +121,7 @@ impl MockWallet {
     }
 }
 
+#[cfg(feature = "manager")]
 #[async_trait::async_trait]
 impl WalletInterface for MockWallet {
     async fn process_block(&mut self, block: &Block, height: u32) -> BlockProcessingResult {
@@ -197,18 +209,21 @@ impl WalletInterface for MockWallet {
     }
 }
 
+#[cfg(feature = "manager")]
 /// Mock wallet that returns false for filter checks
 pub struct NonMatchingMockWallet {
     synced_height: CoreBlockHeight,
     event_sender: broadcast::Sender<WalletEvent>,
 }
 
+#[cfg(feature = "manager")]
 impl Default for NonMatchingMockWallet {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "manager")]
 impl NonMatchingMockWallet {
     pub fn new() -> Self {
         let (event_sender, _) = broadcast::channel(16);
@@ -219,6 +234,7 @@ impl NonMatchingMockWallet {
     }
 }
 
+#[cfg(feature = "manager")]
 #[async_trait::async_trait]
 impl WalletInterface for NonMatchingMockWallet {
     async fn process_block(&mut self, _block: &Block, _height: u32) -> BlockProcessingResult {
