@@ -2056,9 +2056,8 @@ pub struct GetMasternodePaymentsResult {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DMNState {
-    #[serde(default)]
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    pub service: Option<SocketAddr>,
+    #[serde_as(as = "DisplayFromStr")]
+    pub service: SocketAddr,
     pub registered_height: u32,
     #[serde(default, rename = "PoSeRevivedHeight", deserialize_with = "deserialize_u32_opt")]
     pub pose_revived_height: Option<u32>,
@@ -2090,7 +2089,7 @@ pub struct DMNState {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
 #[serde(try_from = "DMNStateDiffIntermediate")]
 pub struct DMNStateDiff {
-    pub service: Option<Option<SocketAddr>>,
+    pub service: Option<SocketAddr>,
     pub registered_height: Option<u32>,
     pub last_paid_height: Option<u32>,
     pub consecutive_payments: Option<i32>,
@@ -2175,7 +2174,7 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             .transpose()?;
 
         Ok(DMNStateDiff {
-            service: service.map(Some),
+            service,
             registered_height,
             last_paid_height,
             consecutive_payments,
@@ -2317,7 +2316,7 @@ impl DMNState {
             self.pub_key_operator = pub_key_operator;
         }
         if let Some(service) = service {
-            self.service = service;
+            self.service = service
         }
         if let Some(revocation_reason) = revocation_reason {
             self.revocation_reason = revocation_reason;
@@ -2367,9 +2366,8 @@ pub enum MasternodeState {
 pub struct MasternodeStatus {
     #[serde(default, deserialize_with = "deserialize_outpoint")]
     pub outpoint: dashcore::OutPoint,
-    #[serde(default)]
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    pub service: Option<SocketAddr>,
+    #[serde_as(as = "DisplayFromStr")]
+    pub service: SocketAddr,
     #[serde(rename = "proTxHash")]
     pub pro_tx_hash: ProTxHash,
     #[serde(rename = "type")]
@@ -3260,8 +3258,7 @@ mod tests {
     use serde_json::json;
 
     use crate::{
-        DMNState, ExtendedQuorumListResult, MasternodeListDiff, MasternodeStatus, MnSyncStatus,
-        QuorumType, deserialize_u32_opt,
+        ExtendedQuorumListResult, MasternodeListDiff, MnSyncStatus, QuorumType, deserialize_u32_opt,
     };
 
     #[test]
@@ -3453,139 +3450,5 @@ mod tests {
             serde_json::from_value(json_value).expect("expected to deserialize json");
 
         println!("{:#?}", result);
-    }
-
-    /// Core v24 regression: `service` is omitted when `-deprecatedrpc=service` is not set.
-    #[test]
-    fn deserialize_dmn_state_without_service() {
-        let json = json!({
-            "registeredHeight": 850310,
-            "lastPaidHeight": 0,
-            "consecutivePayments": 0,
-            "PoSePenalty": 0,
-            "PoSeRevivedHeight": -1,
-            "PoSeBanHeight": -1,
-            "revocationReason": 0,
-            "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
-            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
-            "payoutAddress": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
-            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
-        });
-
-        let result: DMNState =
-            serde_json::from_value(json).expect("should deserialize DMNState without service");
-        assert_eq!(result.service, None);
-        assert_eq!(result.registered_height, 850310);
-        assert_eq!(result.platform_p2p_port, None);
-        assert_eq!(result.platform_http_port, None);
-    }
-
-    /// Core v24 regression: `service` present should still deserialize correctly.
-    #[test]
-    fn deserialize_dmn_state_with_service() {
-        let json = json!({
-            "service": "194.135.88.228:6667",
-            "registeredHeight": 850310,
-            "lastPaidHeight": 0,
-            "consecutivePayments": 0,
-            "PoSePenalty": 0,
-            "PoSeRevivedHeight": -1,
-            "PoSeBanHeight": -1,
-            "revocationReason": 0,
-            "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
-            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
-            "payoutAddress": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
-            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
-        });
-
-        let result: DMNState =
-            serde_json::from_value(json).expect("should deserialize DMNState with service");
-        assert_eq!(result.service, Some("194.135.88.228:6667".parse().unwrap()));
-    }
-
-    /// Core v24 regression: `MasternodeStatus` without `service`.
-    #[test]
-    fn deserialize_masternode_status_without_service() {
-        let json = json!({
-            "outpoint": "0000000000000000000000000000000000000000000000000000000000000000-0",
-            "proTxHash": "c560a9be2be9db79e1aaa16e4dd3cd22bddcb0155f88aba68aa4797d375ef370",
-            "type": "Regular",
-            "collateralHash": "ff6226e6c97bfcf40b6d04e12e3f75678024988823bfba28cde2a9ac11b1a765",
-            "collateralIndex": 1,
-            "dmnState": {
-                "registeredHeight": 850310,
-                "lastPaidHeight": 0,
-                "consecutivePayments": 0,
-                "PoSePenalty": 0,
-                "PoSeRevivedHeight": -1,
-                "PoSeBanHeight": -1,
-                "revocationReason": 0,
-                "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
-                "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
-                "payoutAddress": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
-                "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
-            },
-            "state": "READY",
-            "status": "Ready"
-        });
-
-        let result: MasternodeStatus = serde_json::from_value(json)
-            .expect("should deserialize MasternodeStatus without service");
-        assert_eq!(result.service, None);
-        assert_eq!(result.dmn_state.service, None);
-    }
-
-    /// DMNState diff correctly captures clearing of service field.
-    #[test]
-    fn dmn_state_diff_clears_service() {
-        let with_service = DMNState {
-            service: Some("194.135.88.228:6667".parse().unwrap()),
-            registered_height: 850310,
-            pose_revived_height: None,
-            pose_ban_height: None,
-            revocation_reason: 0,
-            owner_address: [0u8; 20],
-            voting_address: [0u8; 20],
-            payout_address: [0u8; 20],
-            pub_key_operator: vec![0u8; 48],
-            operator_payout_address: None,
-            platform_node_id: None,
-            platform_p2p_port: None,
-            platform_http_port: None,
-        };
-        let without_service = DMNState {
-            service: None,
-            ..with_service.clone()
-        };
-
-        // Diff from Some → None should capture the change
-        let diff = with_service
-            .compare_to_newer_dmn_state(&without_service)
-            .expect("should detect service removal");
-        assert_eq!(diff.service, Some(None), "diff should record service cleared");
-
-        // Applying the diff should clear the service
-        let mut state = with_service.clone();
-        state.apply_diff(diff);
-        assert_eq!(state.service, None, "service should be None after applying diff");
-
-        // Diff from None → Some should also work
-        let diff = without_service
-            .compare_to_newer_dmn_state(&with_service)
-            .expect("should detect service addition");
-        assert_eq!(
-            diff.service,
-            Some(Some("194.135.88.228:6667".parse().unwrap())),
-            "diff should record service set"
-        );
-
-        // Applying the diff should restore the service
-        let mut state = without_service;
-        state.apply_diff(diff);
-        assert_eq!(
-            state.service,
-            Some("194.135.88.228:6667".parse().unwrap()),
-            "service should be restored after applying diff"
-        );
     }
 }
