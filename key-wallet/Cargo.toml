@@ -9,7 +9,7 @@ readme = "README.md"
 license = "CC0-1.0"
 
 [features]
-default = ["secp256k1/std", "bip39/std", "getrandom", "rand", "manager"]
+default = ["secp256k1/std", "bip39/std", "getrandom", "manager"]
 manager = ["dep:tokio"]
 parallel-filters = ["manager", "dep:rayon"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
@@ -51,4 +51,5 @@ rayon = { version = "1.11", optional = true }
 dashcore = { path="../dash", features = ["test-utils"] }
 hex = "0.4"
 key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
+rand = { version = "0.8", features = ["std", "std_rng"] }
 test-case = "3.3"
