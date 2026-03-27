@@ -9,7 +9,7 @@ readme = "README.md"
 license = "CC0-1.0"
 
 [features]
-default = ["secp256k1/std", "bip39/std", "getrandom", "manager"]
+default = ["getrandom", "manager"]
 manager = ["dep:tokio"]
 parallel-filters = ["manager", "dep:rayon"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
@@ -23,8 +23,8 @@ test-utils = ["dashcore/test-utils"]
 internals = { path = "../internals", package = "dashcore-private" }
 dashcore_hashes = { path = "../hashes" }
 dashcore = { path="../dash" }
-secp256k1 = { version = "0.30.0", default-features = false, features = ["hashes", "recovery"] }
-bip39 = { version = "2.2.0", default-features = false, features = ["chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
+secp256k1 = { version = "0.30.0", default-features = false, features = ["hashes", "recovery", "std"] }
+bip39 = { version = "2.2.0", default-features = false, features = ["std", "chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 base58ck = { version = "0.1.0", default-features = false }
 bitflags = { version = "2.6", default-features = false }
