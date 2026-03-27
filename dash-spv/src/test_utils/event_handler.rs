@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, watch};
 use crate::client::EventHandler;
 use crate::network::NetworkEvent;
 use crate::sync::{SyncEvent, SyncProgress};
-use key_wallet::manager::WalletEvent;
+use key_wallet_manager::WalletEvent;
 
 /// Event handler that forwards all events to internal channels.
 ///

@@ -1,9 +1,9 @@
 use super::*;
-use crate::wallet::initialization::WalletAccountCreationOptions;
-use crate::wallet::managed_wallet_info::ManagedWalletInfo;
-use crate::Network;
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, TxIn, TxOut, Txid, Witness};
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::Network;
 use tokio::sync::broadcast;
 
 pub(crate) const TEST_MNEMONIC: &str =

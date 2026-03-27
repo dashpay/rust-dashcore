@@ -35,8 +35,6 @@ pub mod dip9;
 pub mod error;
 pub mod gap_limit;
 pub mod managed_account;
-#[cfg(feature = "manager")]
-pub mod manager;
 pub mod mnemonic;
 pub mod psbt;
 pub mod seed;

@@ -52,8 +52,8 @@ mod tests {
     use crate::storage::DiskStorageManager;
     use crate::{test_utils::MockNetworkManager, types::UnconfirmedTransaction};
     use dashcore::{Address, Amount, Transaction, TxOut};
-    use key_wallet::manager::WalletManager;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet_manager::WalletManager;
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::sync::RwLock;

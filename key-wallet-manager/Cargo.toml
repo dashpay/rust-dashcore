@@ -1,0 +1,27 @@
+[package]
+name = "key-wallet-manager"
+version = { workspace = true }
+authors = ["The Dash Core Developers"]
+edition = "2021"
+description = "High-level wallet management for Dash (WalletManager, WalletInterface, events, compact filters)"
+keywords = ["dash", "wallet", "manager", "spv"]
+license = "CC0-1.0"
+
+[features]
+default = []
+parallel-filters = ["dep:rayon"]
+bincode = ["key-wallet/bincode", "dep:bincode"]
+test-utils = ["key-wallet/test-utils"]
+
+[dependencies]
+key-wallet = { path = "../key-wallet" }
+dashcore = { path = "../dash" }
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
+async-trait = "0.1"
+rayon = { version = "1.11", optional = true }
+zeroize = { version = "1.8", features = ["derive"] }
+bincode = { version = "2.0.1", optional = true }
+
+[dev-dependencies]
+key-wallet = { path = "../key-wallet", features = ["test-utils"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

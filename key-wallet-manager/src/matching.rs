@@ -55,8 +55,8 @@ pub fn check_compact_filters_for_addresses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Network;
     use dashcore::{Block, Transaction};
+    use key_wallet::Network;
 
     #[test]
     fn test_empty_input_returns_empty() {

@@ -9,8 +9,8 @@ use clap::{Arg, Command};
 use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::{ClientConfig, DashSpvClient, EventHandler, LevelFilter, MempoolStrategy, Network};
-use key_wallet::manager::{WalletEvent, WalletManager};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::{WalletEvent, WalletManager};
 use tokio_util::sync::CancellationToken;
 
 /// Logs all SPV client events via tracing.

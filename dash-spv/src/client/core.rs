@@ -23,7 +23,7 @@ use crate::storage::{
 };
 use crate::sync::SyncCoordinator;
 use crate::types::MempoolState;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
     PersistentBlockHeaderStorage,

@@ -6,7 +6,7 @@ use crate::sync::{
 };
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 #[async_trait]
 impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
@@ -191,7 +191,7 @@ mod tests {
     use crate::test_utils::test_socket_address;
     use crate::types::MempoolState;
     use dashcore::hashes::Hash;
-    use key_wallet::test_utils::MockWallet;
+    use key_wallet_manager::test_utils::MockWallet;
     use std::sync::Arc;
     use tokio::sync::{mpsc, RwLock};
 

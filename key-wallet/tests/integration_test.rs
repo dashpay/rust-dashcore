@@ -3,13 +3,13 @@
 //! These tests verify that the high-level wallet management functionality
 //! works correctly with the low-level key-wallet primitives.
 
-use key_wallet::manager::WalletInterface;
-use key_wallet::manager::{WalletError, WalletManager};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{mnemonic::Language, Mnemonic, Network};
+use key_wallet_manager::WalletInterface;
+use key_wallet_manager::{WalletError, WalletManager};
 
 #[test]
 fn test_wallet_manager_creation() {

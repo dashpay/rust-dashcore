@@ -11,8 +11,8 @@ use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
-use key_wallet::manager::WalletEvent;
 use key_wallet_ffi::types::FFITransactionContext;
+use key_wallet_manager::WalletEvent;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 

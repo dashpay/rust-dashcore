@@ -23,7 +23,7 @@ use crate::network::RequestSender;
 use crate::sync::mempool::MempoolProgress;
 use crate::sync::SyncEvent;
 use crate::types::{MempoolState, UnconfirmedTransaction};
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 /// Timeout for pruning expired mempool transactions (24 hours).
 pub(super) const MEMPOOL_TX_EXPIRY: Duration = Duration::from_secs(24 * 3600);
@@ -497,8 +497,8 @@ mod tests {
     use dashcore::hashes::Hash;
     use dashcore::network::message::NetworkMessage;
     use dashcore::{Address, BlockHash, Network, ScriptBuf, Transaction};
-    use key_wallet::test_utils::MockWallet;
     use key_wallet::transaction_checking::TransactionContext;
+    use key_wallet_manager::test_utils::MockWallet;
 
     use crate::sync::SyncState;
     use crate::test_utils::test_socket_address;

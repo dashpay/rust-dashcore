@@ -2,7 +2,7 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
-use crate::manager::WalletEvent;
+use crate::WalletEvent;
 use async_trait::async_trait;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};

@@ -55,7 +55,7 @@ fn test_key_wallet_error_to_ffi_error() {
 
 #[test]
 fn test_wallet_manager_error_to_ffi_error() {
-    use key_wallet::manager::WalletError;
+    use key_wallet_manager::WalletError;
 
     // Test WalletNotFound conversion
     let wallet_id = [0u8; 32];
@@ -105,8 +105,8 @@ fn test_wallet_manager_error_to_ffi_error() {
 
 #[test]
 fn test_key_wallet_error_to_wallet_manager_error() {
-    use key_wallet::manager::WalletError;
     use key_wallet::Error as KeyWalletError;
+    use key_wallet_manager::WalletError;
 
     // Test InvalidMnemonic conversion
     let err = KeyWalletError::InvalidMnemonic("bad mnemonic".to_string());
@@ -172,8 +172,8 @@ fn test_key_wallet_error_to_wallet_manager_error() {
 
 #[test]
 fn test_error_message_consistency() {
-    use key_wallet::manager::WalletError;
     use key_wallet::Error as KeyWalletError;
+    use key_wallet_manager::WalletError;
 
     // Test that error messages are preserved through conversions
     let original_msg = "This is a test error message";

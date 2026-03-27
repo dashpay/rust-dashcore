@@ -11,7 +11,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncProgress;
 use crate::SpvError;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 const SYNC_COORDINATOR_TICK_MS: Duration = Duration::from_millis(100);
 

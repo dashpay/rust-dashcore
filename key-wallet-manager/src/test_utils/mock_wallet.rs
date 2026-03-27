@@ -1,9 +1,9 @@
-use crate::manager::MempoolTransactionResult;
-use crate::manager::{BlockProcessingResult, WalletEvent, WalletInterface};
-use crate::transaction_checking::TransactionContext;
+use crate::MempoolTransactionResult;
+use crate::{BlockProcessingResult, WalletEvent, WalletInterface};
 use dashcore::address::NetworkUnchecked;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
+use key_wallet::transaction_checking::TransactionContext;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
