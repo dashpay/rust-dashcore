@@ -175,9 +175,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
 /// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
 /// - The caller must ensure the config pointer remains valid for the duration of this call
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_clear_peers(
-    config: *mut FFIClientConfig,
-) -> i32 {
+pub unsafe extern "C" fn dash_spv_ffi_config_clear_peers(config: *mut FFIClientConfig) -> i32 {
     null_check!(config);
 
     let cfg = unsafe { &mut *((*config).inner as *mut ClientConfig) };

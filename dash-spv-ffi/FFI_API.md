@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 40
+**Total Functions**: 41
 
 ## Table of Contents
 
@@ -31,12 +31,13 @@ Functions: 3
 
 ### Configuration
 
-Functions: 16
+Functions: 17
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_update_config` | Update the running client's configuration | client |
 | `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts socket addresses with or... | config |
+| `dash_spv_ffi_config_clear_peers` | Removes all configured peers from the configuration  This is useful when the... | config |
 | `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_get_network` | Gets the network type from the configuration  # Safety - `config` must be a... | config |
 | `dash_spv_ffi_config_mainnet` | No description | config |
@@ -196,6 +197,22 @@ Adds a peer address to the configuration  Accepts socket addresses with or witho
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
+
+**Module:** `config`
+
+---
+
+#### `dash_spv_ffi_config_clear_peers`
+
+```c
+dash_spv_ffi_config_clear_peers(config: *mut FFIClientConfig) -> i32
+```
+
+**Description:**
+Removes all configured peers from the configuration  This is useful when the caller wants to start with a clean slate before adding custom peers via `dash_spv_ffi_config_add_peer`.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Safety:**
+- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
 
 **Module:** `config`
 
