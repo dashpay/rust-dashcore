@@ -383,7 +383,6 @@ pub(super) fn create_test_wallet(
 /// Create test client config pointing to a specific peer (exclusive mode).
 fn create_test_config(storage_path: PathBuf, peer_addr: std::net::SocketAddr) -> ClientConfig {
     let mut config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
-    config.peers.clear();
     config.add_peer(peer_addr);
     config
 }
@@ -396,9 +395,7 @@ pub(super) async fn create_non_exclusive_test_config(
     storage_path: PathBuf,
     peer_addr: std::net::SocketAddr,
 ) -> ClientConfig {
-    let mut config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
-    // Clear default regtest peers so the manager enters non-exclusive mode
-    config.peers.clear();
+    let config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
     // Seed the peer store so the client can discover our dashd node
     let peer_store = PersistentPeerStorage::open(config.storage_path.clone())
         .await
