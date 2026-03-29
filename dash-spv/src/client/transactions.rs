@@ -4,7 +4,7 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use dashcore::network::message::NetworkMessage;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 use super::{DashSpvClient, EventHandler};
 

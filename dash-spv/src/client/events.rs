@@ -9,7 +9,7 @@ use tokio::sync::watch;
 use crate::network::{NetworkEvent, NetworkManager};
 use crate::storage::StorageManager;
 use crate::sync::{SyncEvent, SyncProgress};
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 use tokio::sync::broadcast;
 
 use super::{DashSpvClient, EventHandler};

@@ -1,14 +1,12 @@
-use crate::manager::wallet_interface::{
-    BlockProcessingResult, MempoolTransactionResult, WalletInterface,
-};
-use crate::manager::{WalletEvent, WalletManager};
-use crate::transaction_checking::transaction_router::TransactionRouter;
-use crate::transaction_checking::{BlockInfo, TransactionContext};
-use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
+use crate::{WalletEvent, WalletManager};
 use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction, Txid};
+use key_wallet::transaction_checking::transaction_router::TransactionRouter;
+use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use std::collections::BTreeSet;
 use tokio::sync::broadcast;
 
@@ -228,18 +226,18 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::StandardAccountType;
-    use crate::manager::test_helpers::*;
-    use crate::wallet::initialization::WalletAccountCreationOptions;
-    use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
-    use crate::wallet::managed_wallet_info::ManagedWalletInfo;
-    use crate::AccountType;
+    use crate::test_helpers::*;
     use dashcore::block::{Header, Version};
     use dashcore::hashes::Hash;
     use dashcore::pow::CompactTarget;
     use dashcore::{
         BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
     };
+    use key_wallet::account::StandardAccountType;
+    use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+    use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet::AccountType;
 
     fn make_block(txdata: Vec<Transaction>) -> Block {
         Block {

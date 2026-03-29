@@ -1,9 +1,9 @@
 use super::test_helpers::*;
 use super::*;
-use crate::manager::wallet_interface::WalletInterface;
-use crate::transaction_checking::BlockInfo;
+use crate::wallet_interface::WalletInterface;
 use dashcore::hashes::Hash;
 use dashcore::BlockHash;
+use key_wallet::transaction_checking::BlockInfo;
 
 // ---------------------------------------------------------------------------
 // Lifecycle flow tests

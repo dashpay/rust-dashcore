@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::network::NetworkEvent;
 use crate::sync::{SyncEvent, SyncProgress};
-use key_wallet::manager::WalletEvent;
+use key_wallet_manager::WalletEvent;
 
 /// Trait for receiving SPV client events.
 ///
@@ -105,7 +105,7 @@ mod tests {
     use super::{spawn_broadcast_monitor, spawn_progress_monitor, EventHandler};
     use crate::network::NetworkEvent;
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncProgress};
-    use key_wallet::manager::WalletEvent;
+    use key_wallet_manager::WalletEvent;
 
     struct RecordingHandler {
         sync_count: AtomicUsize,

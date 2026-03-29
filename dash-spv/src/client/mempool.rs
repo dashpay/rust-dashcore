@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 use super::{DashSpvClient, EventHandler};
 

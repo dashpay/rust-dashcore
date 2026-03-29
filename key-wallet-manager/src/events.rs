@@ -3,9 +3,9 @@
 //! These events are emitted by the WalletManager when significant wallet
 //! operations occur, allowing consumers to receive push-based notifications.
 
-use crate::manager::WalletId;
-use crate::transaction_checking::TransactionContext;
+use crate::WalletId;
 use dashcore::{Address, Amount, SignedAmount, Txid};
+use key_wallet::transaction_checking::TransactionContext;
 
 /// Events emitted by the wallet manager.
 ///

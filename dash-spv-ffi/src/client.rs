@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 /// FFI wrapper around `DashSpvClient`.
 type InnerClient = DashSpvClient<
-    key_wallet::manager::WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo>,
+    key_wallet_manager::WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo>,
     dash_spv::network::PeerNetworkManager,
     DiskStorageManager,
     FFIEventCallbacks,
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
         // Construct concrete implementations for generics
         let network = dash_spv::network::PeerNetworkManager::new(&client_config).await;
         let storage = DiskStorageManager::new(&client_config).await;
-        let wallet = key_wallet::manager::WalletManager::<
+        let wallet = key_wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
         >::new(client_config.network);
         let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));

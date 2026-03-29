@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
-    use key_wallet::manager::WalletManager;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_ffi::{
@@ -11,6 +10,7 @@ mod tests {
         },
         FFIError, FFINetwork, FFIWalletManager,
     };
+    use key_wallet_manager::WalletManager;
     use std::ffi::{CStr, CString};
     use tempfile::TempDir;
 
