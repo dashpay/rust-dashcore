@@ -96,6 +96,39 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_config_clear_peers() {
+        unsafe {
+            let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
+
+            // Add peers
+            let peer1 = CString::new("127.0.0.1:9999").unwrap();
+            let peer2 = CString::new("127.0.0.2:9999").unwrap();
+            dash_spv_ffi_config_add_peer(config, peer1.as_ptr());
+            dash_spv_ffi_config_add_peer(config, peer2.as_ptr());
+
+            // Clear all peers
+            let result = dash_spv_ffi_config_clear_peers(config);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+
+            // Clear on already-empty should still succeed
+            let result = dash_spv_ffi_config_clear_peers(config);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_clear_peers_null() {
+        unsafe {
+            let result = dash_spv_ffi_config_clear_peers(std::ptr::null_mut());
+            assert_eq!(result, FFIErrorCode::NullPointer as i32);
+        }
+    }
+
+    #[test]
+    #[serial]
     fn test_config_user_agent() {
         unsafe {
             let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
