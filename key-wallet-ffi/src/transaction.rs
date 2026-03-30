@@ -1157,7 +1157,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             };
 
             // Derive the one-time private key from the asset lock top-up account
-            let asset_lock_account = match &managed_wallet.accounts.asset_lock_address_topup {
+            let asset_lock_account = match &mut managed_wallet.accounts.asset_lock_address_topup {
                 Some(account) => account,
                 None => {
                     FFIError::set_error(
@@ -1173,27 +1173,34 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             let key_index = asset_lock_account.get_next_address_index().unwrap_or(0);
 
             // Derive the one-time key using the asset lock account's derivation path
-            let asset_lock_path = match asset_lock_account.account_type.address_pools().first() {
-                Some(pool) => match pool.addresses.get(&key_index) {
-                    Some(addr_info) => addr_info.path.clone(),
+            // and get the address so we can mark it as used
+            let (asset_lock_path, asset_lock_address) =
+                match asset_lock_account.account_type.address_pools().first() {
+                    Some(pool) => match pool.addresses.get(&key_index) {
+                        Some(addr_info) => (addr_info.path.clone(), addr_info.address.clone()),
+                        None => {
+                            FFIError::set_error(
+                                error,
+                                FFIErrorCode::WalletError,
+                                "No address available in asset lock account".to_string(),
+                            );
+                            return false;
+                        }
+                    },
                     None => {
                         FFIError::set_error(
                             error,
                             FFIErrorCode::WalletError,
-                            "No address available in asset lock account".to_string(),
+                            "Asset lock account has no address pool".to_string(),
                         );
                         return false;
                     }
-                },
-                None => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        "Asset lock account has no address pool".to_string(),
-                    );
-                    return false;
-                }
-            };
+                };
+
+            // Mark the address as used so the next call derives a fresh key
+            asset_lock_account
+                .account_type
+                .mark_address_used(&asset_lock_address);
 
             let secp = secp256k1::Secp256k1::new();
             let root_ext_priv = root_xpriv.to_extended_priv_key(network_rust);
@@ -1260,7 +1267,11 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
                 fee
             };
 
-            // The asset lock output index is 0 (the burn output before credit outputs)
+            // The output index identifies which credit output in the payload
+            // the one-time key corresponds to. Since we derive a single key,
+            // it maps to the first credit output (index 0).
+            // For multi-output scenarios where each output needs its own key,
+            // the caller should invoke this function once per credit output.
             *output_index_out = 0;
 
             // Write the one-time private key
