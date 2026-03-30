@@ -84,14 +84,23 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         filter_storage: Arc<RwLock<F>>,
     ) -> Self {
         let committed_height = wallet.read().await.filter_committed_height();
-
-        // Load block header tip for target display
-        let header_tip =
+        let stored_height = filter_storage.read().await.filter_tip_height().await.unwrap_or(0);
+        let target_height =
             header_storage.read().await.get_tip().await.map(|t| t.height()).unwrap_or(0);
+        let filter_header_tip = filter_header_storage
+            .read()
+            .await
+            .get_filter_tip_height()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
 
         let mut initial_progress = FiltersProgress::default();
         initial_progress.update_committed_height(committed_height);
-        initial_progress.update_target_height(header_tip);
+        initial_progress.update_stored_height(stored_height);
+        initial_progress.update_target_height(target_height);
+        initial_progress.update_filter_header_tip_height(filter_header_tip);
 
         Self {
             progress: initial_progress,
@@ -767,10 +776,12 @@ mod tests {
     use super::*;
     use crate::network::{MessageType, RequestSender};
     use crate::storage::{
-        DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
-        PersistentFilterStorage, StorageManager,
+        BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage,
+        PersistentFilterHeaderStorage, PersistentFilterStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use dashcore::Header;
+    use dashcore_hashes::Hash;
     use key_wallet_manager::test_utils::MockWallet;
     use tokio::sync::mpsc::unbounded_channel;
 
@@ -800,6 +811,58 @@ mod tests {
         assert_eq!(manager.identifier(), ManagerIdentifier::Filter);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::CFilter]);
+        assert_eq!(manager.progress.committed_height(), 0);
+        assert_eq!(manager.progress.stored_height(), 0);
+        assert_eq!(manager.progress.target_height(), 0);
+        assert_eq!(manager.progress.filter_header_tip_height(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_filters_manager_new_restores_from_storage() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+
+        // Set wallet committed height via synced_height (MockWallet default delegates)
+        let mut wallet = MockWallet::new();
+        wallet.update_synced_height(50);
+        let wallet = Arc::new(RwLock::new(wallet));
+
+        // Pre-populate filter storage with filters at heights 1..=100
+        let filters = storage.filters();
+        {
+            let mut filter_store = filters.write().await;
+            for height in 1..=100 {
+                filter_store.store_filter(height, &[0u8; 32]).await.unwrap();
+            }
+        }
+
+        // Pre-populate block header storage with 300 headers for target_height
+        let block_headers = Header::dummy_batch(0..300);
+        storage.block_headers().write().await.store_headers(&block_headers).await.unwrap();
+
+        // Pre-populate filter header storage with headers at heights 1..=200
+        let filter_headers = storage.filter_headers();
+        {
+            let dummy_headers = vec![FilterHeader::all_zeros(); 200];
+            filter_headers
+                .write()
+                .await
+                .store_filter_headers_at_height(&dummy_headers, 1)
+                .await
+                .unwrap();
+        }
+
+        let manager = FiltersManager::new(
+            wallet,
+            storage.block_headers(),
+            storage.filter_headers(),
+            storage.filters(),
+        )
+        .await;
+
+        assert_eq!(manager.progress.committed_height(), 50);
+        assert_eq!(manager.progress.stored_height(), 100);
+        assert_eq!(manager.progress.target_height(), 299);
+        assert_eq!(manager.progress.filter_header_tip_height(), 200);
     }
 
     #[tokio::test]
