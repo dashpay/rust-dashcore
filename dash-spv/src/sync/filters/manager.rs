@@ -753,9 +753,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     return self.try_create_lookahead_batches().await;
                 }
             }
-            SyncState::WaitingForConnections | SyncState::WaitForEvents
-                if self.progress.stored_height() < self.progress.filter_header_tip_height() =>
-            {
+            SyncState::WaitingForConnections | SyncState::WaitForEvents => {
                 return self.start_download(requests).await;
             }
             _ => {}
@@ -1115,5 +1113,63 @@ mod tests {
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(!manager.is_idle());
+    }
+
+    #[tokio::test]
+    async fn test_handle_new_filter_headers_synced_restart() {
+        let mut manager = create_test_manager().await;
+
+        // Store block headers so start_download can resolve heights
+        let headers = dashcore::block::Header::dummy_batch(0..101);
+        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+
+        // Simulate restart where everything is already synced but state is WaitForEvents.
+        // committed == stored == filter_header_tip — start_download detects synced state.
+        manager.set_state(SyncState::WaitForEvents);
+        manager.wallet.write().await.update_synced_height(100);
+        manager.progress.update_committed_height(100);
+        manager.progress.update_stored_height(100);
+        manager.progress.update_filter_header_tip_height(100);
+        manager.progress.update_target_height(100);
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
+
+        assert_eq!(manager.state(), SyncState::Synced);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SyncEvent::FiltersSyncComplete {
+                    tip_height: 100
+                }
+            )),
+            "expected FiltersSyncComplete(100), got {:?}",
+            events
+        );
+        assert!(manager.active_batches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_new_filter_headers_stays_synced_when_already_synced() {
+        let mut manager = create_test_manager().await;
+
+        // Already in Synced state with matching heights — should stay Synced without
+        // emitting duplicate events.
+        manager.set_state(SyncState::Synced);
+        manager.progress.update_committed_height(100);
+        manager.progress.update_stored_height(100);
+        manager.progress.update_filter_header_tip_height(100);
+        manager.progress.update_target_height(100);
+        manager.filter_pipeline.init(101, 100);
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
+
+        assert_eq!(manager.state(), SyncState::Synced);
+        assert!(events.is_empty());
     }
 }
