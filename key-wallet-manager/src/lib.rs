@@ -1,25 +1,25 @@
-//! High-level wallet management for Dash
-//!
-//! This crate provides high-level wallet functionality that builds on top of
-//! the low-level primitives in `key-wallet`.
-//!
-//! ## Features
-//!
-//! - Multiple wallet management
-//! - BIP 157/158 compact block filter support
-//! - Address generation and gap limit handling
-//! - Blockchain synchronization
-
+/// Re-export key-wallet so consumers can access wallet primitives through this crate.
 pub use key_wallet;
 
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
-
+/// High-level wallet management for Dash
+///
+/// This module provides high-level wallet functionality that builds on top of
+/// the low-level primitives in `key-wallet`
+///
+/// ## Features
+///
+/// - Multiple wallet management
+/// - BIP 157/158 compact block filter support
+/// - Address generation and gap limit handling
+/// - Blockchain synchronization
+mod accessors;
+mod error;
 mod events;
 mod matching;
 mod process_block;
 mod wallet_interface;
 
+pub use error::WalletError;
 pub use events::WalletEvent;
 pub use matching::{check_compact_filters_for_addresses, FilterMatchKey};
 pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
@@ -30,11 +30,10 @@ use key_wallet::account::AccountCollection;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
-use key_wallet::Utxo;
-use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::{AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletCoreBalance};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use tokio::sync::broadcast;
@@ -119,24 +118,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             structural_revision: 0,
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
         }
-    }
-
-    /// Subscribe to wallet events.
-    ///
-    /// Returns a receiver that will receive all wallet events emitted by this manager.
-    pub fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
-        self.event_sender.subscribe()
-    }
-
-    /// Get a reference to the event sender for emitting events.
-    pub fn event_sender(&self) -> &broadcast::Sender<WalletEvent> {
-        &self.event_sender
-    }
-
-    /// Return the total monitor revision (structural + per-wallet account revisions).
-    pub fn monitor_revision(&self) -> u64 {
-        self.structural_revision
-            + self.wallet_infos.values().map(|w| w.monitor_revision()).sum::<u64>()
     }
 
     /// Increment the structural revision for wallet/account additions or removals.
@@ -339,61 +320,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         self.wallet_infos.insert(wallet_id, managed_info);
         self.bump_structural_revision();
         Ok(wallet_id)
-    }
-
-    /// Get a wallet by ID
-    pub fn get_wallet(&self, wallet_id: &WalletId) -> Option<&Wallet> {
-        self.wallets.get(wallet_id)
-    }
-
-    /// Get wallet info by ID
-    pub fn get_wallet_info(&self, wallet_id: &WalletId) -> Option<&T> {
-        self.wallet_infos.get(wallet_id)
-    }
-
-    /// Get mutable wallet info by ID
-    pub fn get_wallet_info_mut(&mut self, wallet_id: &WalletId) -> Option<&mut T> {
-        self.wallet_infos.get_mut(wallet_id)
-    }
-
-    /// Get both wallet and info by ID
-    pub fn get_wallet_and_info(&self, wallet_id: &WalletId) -> Option<(&Wallet, &T)> {
-        match (self.wallets.get(wallet_id), self.wallet_infos.get(wallet_id)) {
-            (Some(wallet), Some(info)) => Some((wallet, info)),
-            _ => None,
-        }
-    }
-
-    /// Remove a wallet
-    pub fn remove_wallet(&mut self, wallet_id: &WalletId) -> Result<(Wallet, T), WalletError> {
-        let wallet =
-            self.wallets.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-        let info =
-            self.wallet_infos.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-        // Absorb the removed wallet's account-level revision so the total
-        // stays monotonically increasing even though we lost a contributor.
-        self.structural_revision += info.monitor_revision() + 1;
-        Ok((wallet, info))
-    }
-
-    /// List all wallet IDs
-    pub fn list_wallets(&self) -> Vec<&WalletId> {
-        self.wallets.keys().collect()
-    }
-
-    /// Get all wallets
-    pub fn get_all_wallets(&self) -> &BTreeMap<WalletId, Wallet> {
-        &self.wallets
-    }
-
-    /// Get all wallet infos
-    pub fn get_all_wallet_infos(&self) -> &BTreeMap<WalletId, T> {
-        &self.wallet_infos
-    }
-
-    /// Get wallet count
-    pub fn wallet_count(&self) -> usize {
-        self.wallets.len()
     }
 
     /// Import a wallet from an extended private key and add it to the manager
@@ -640,24 +566,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         self.bump_structural_revision();
         Ok(())
-    }
-
-    /// Get all accounts in a specific wallet
-    pub fn get_accounts(&self, wallet_id: &WalletId) -> Result<Vec<&Account>, WalletError> {
-        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-
-        Ok(wallet.all_accounts())
-    }
-
-    /// Get account by index in a specific wallet
-    pub fn get_account(
-        &self,
-        wallet_id: &WalletId,
-        index: u32,
-    ) -> Result<Option<&Account>, WalletError> {
-        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-
-        Ok(wallet.get_bip44_account(index))
     }
 
     /// Get receive address from a specific wallet and account
@@ -988,184 +896,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             account_type_used,
         })
     }
-
-    /// Get transaction history for a specific wallet
-    pub fn wallet_transaction_history(
-        &self,
-        wallet_id: &WalletId,
-    ) -> Result<Vec<&TransactionRecord>, WalletError> {
-        let managed_info =
-            self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-
-        Ok(managed_info.transaction_history())
-    }
-
-    /// Get UTXOs for all wallets across all networks
-    pub fn get_all_utxos(&self) -> Vec<&Utxo> {
-        let mut all_utxos = Vec::new();
-        for info in self.wallet_infos.values() {
-            all_utxos.extend(info.utxos().iter());
-        }
-        all_utxos
-    }
-
-    /// Get UTXOs for a specific wallet
-    pub fn wallet_utxos(&self, wallet_id: &WalletId) -> Result<BTreeSet<&Utxo>, WalletError> {
-        // Get the wallet info
-        let wallet_info =
-            self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-
-        // Get UTXOs from the wallet info and clone them
-        let utxos = wallet_info.utxos();
-
-        Ok(utxos)
-    }
-
-    /// Get total balance across all wallets and networks
-    pub fn get_total_balance(&self) -> u64 {
-        self.wallet_infos.values().map(|info| info.balance().total()).sum()
-    }
-
-    /// Get balance for a specific wallet
-    pub fn get_wallet_balance(
-        &self,
-        wallet_id: &WalletId,
-    ) -> Result<WalletCoreBalance, WalletError> {
-        // Get the wallet info
-        let wallet_info =
-            self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-
-        // Get balance from the wallet info
-        Ok(wallet_info.balance())
-    }
-
-    /// Update wallet metadata
-    pub fn update_wallet_metadata(
-        &mut self,
-        wallet_id: &WalletId,
-        name: Option<String>,
-        description: Option<String>,
-    ) -> Result<(), WalletError> {
-        let managed_info =
-            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-
-        if let Some(new_name) = name {
-            managed_info.set_name(new_name);
-        }
-
-        if let Some(desc) = description {
-            managed_info.set_description(Some(desc));
-        }
-
-        managed_info.update_last_synced(current_timestamp());
-
-        Ok(())
-    }
-
-    /// Get the network this manager is configured for
-    pub fn network(&self) -> Network {
-        self.network
-    }
-
-    /// Get monitored addresses for all wallets for a specific network
-    pub fn monitored_addresses(&self) -> Vec<Address> {
-        let mut addresses = Vec::new();
-        for info in self.wallet_infos.values() {
-            addresses.extend(info.monitored_addresses());
-        }
-        addresses
-    }
-
-    /// Snapshot the current balance of every managed wallet.
-    pub(crate) fn snapshot_balances(&self) -> Vec<(WalletId, WalletCoreBalance)> {
-        self.wallet_infos.iter().map(|(id, info)| (*id, info.balance())).collect()
-    }
-
-    /// Emit `BalanceUpdated` events for wallets whose balance differs from the snapshot.
-    pub(crate) fn emit_balance_changes(&self, old_balances: &[(WalletId, WalletCoreBalance)]) {
-        for (wallet_id, old_balance) in old_balances {
-            if let Some(info) = self.wallet_infos.get(wallet_id) {
-                let new_balance = info.balance();
-                if *old_balance != new_balance {
-                    let event = WalletEvent::BalanceUpdated {
-                        wallet_id: *wallet_id,
-                        spendable: new_balance.spendable(),
-                        unconfirmed: new_balance.unconfirmed(),
-                        immature: new_balance.immature(),
-                        locked: new_balance.locked(),
-                    };
-                    let _ = self.event_sender.send(event);
-                }
-            }
-        }
-    }
-
-    /// Get all outpoints from wallet UTXOs across all managed wallets.
-    /// Used for bloom filter construction to detect spends of our UTXOs.
-    pub fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {
-        let mut outpoints = Vec::new();
-        for info in self.wallet_infos.values() {
-            outpoints.extend(info.utxos().into_iter().map(|u| u.outpoint));
-        }
-        outpoints
-    }
-}
-
-/// Wallet manager errors
-#[derive(Debug)]
-pub enum WalletError {
-    /// Wallet creation failed
-    WalletCreation(String),
-    /// Wallet not found
-    WalletNotFound(WalletId),
-    /// Wallet already exists
-    WalletExists(WalletId),
-    /// Invalid mnemonic
-    InvalidMnemonic(String),
-    /// Account creation failed
-    AccountCreation(String),
-    /// Account not found
-    AccountNotFound(u32),
-    /// Address generation failed
-    AddressGeneration(String),
-    /// Invalid network
-    InvalidNetwork,
-    /// Invalid parameter
-    InvalidParameter(String),
-    /// Transaction building failed
-    TransactionBuild(String),
-    /// Insufficient funds
-    InsufficientFunds,
-}
-
-impl core::fmt::Display for WalletError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            WalletError::WalletCreation(msg) => write!(f, "Wallet creation failed: {}", msg),
-            WalletError::WalletNotFound(id) => {
-                write!(f, "Wallet not found: ")?;
-                for byte in id.iter() {
-                    write!(f, "{:02x}", byte)?;
-                }
-                Ok(())
-            }
-            WalletError::WalletExists(id) => {
-                write!(f, "Wallet already exists: ")?;
-                for byte in id.iter() {
-                    write!(f, "{:02x}", byte)?;
-                }
-                Ok(())
-            }
-            WalletError::InvalidMnemonic(msg) => write!(f, "Invalid mnemonic: {}", msg),
-            WalletError::AccountCreation(msg) => write!(f, "Account creation failed: {}", msg),
-            WalletError::AccountNotFound(idx) => write!(f, "Account not found: {}", idx),
-            WalletError::AddressGeneration(msg) => write!(f, "Address generation failed: {}", msg),
-            WalletError::InvalidNetwork => write!(f, "Invalid network"),
-            WalletError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
-            WalletError::TransactionBuild(err) => write!(f, "Transaction build failed: {}", err),
-            WalletError::InsufficientFunds => write!(f, "Insufficient funds"),
-        }
-    }
 }
 
 /// Helper function for getting current timestamp
@@ -1173,46 +903,10 @@ fn current_timestamp() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
-impl std::error::Error for WalletError {}
-
 #[cfg(test)]
 mod event_tests;
 #[cfg(test)]
 mod test_helpers;
 
-/// Conversion from key_wallet::Error to WalletError
-impl From<key_wallet::Error> for WalletError {
-    fn from(err: key_wallet::Error) -> Self {
-        use key_wallet::Error;
-
-        match err {
-            Error::InvalidMnemonic(msg) => WalletError::InvalidMnemonic(msg),
-            Error::InvalidDerivationPath(msg) => {
-                WalletError::InvalidParameter(format!("Invalid derivation path: {}", msg))
-            }
-            Error::InvalidAddress(msg) => {
-                WalletError::AddressGeneration(format!("Invalid address: {}", msg))
-            }
-            Error::InvalidNetwork => WalletError::InvalidNetwork,
-            Error::InvalidParameter(msg) => WalletError::InvalidParameter(msg),
-            Error::WatchOnly => WalletError::InvalidParameter(
-                "Operation not supported on watch-only wallet".to_string(),
-            ),
-            Error::CoinJoinNotEnabled => {
-                WalletError::InvalidParameter("CoinJoin not enabled".to_string())
-            }
-            Error::KeyError(msg) => WalletError::AccountCreation(format!("Key error: {}", msg)),
-            Error::Serialization(msg) => {
-                WalletError::InvalidParameter(format!("Serialization error: {}", msg))
-            }
-            Error::Bip32(e) => WalletError::AccountCreation(format!("BIP32 error: {}", e)),
-            Error::Secp256k1(e) => WalletError::AccountCreation(format!("Secp256k1 error: {}", e)),
-            Error::Base58 => WalletError::InvalidParameter("Base58 decoding error".to_string()),
-            Error::NoKeySource => {
-                WalletError::InvalidParameter("No key source available".to_string())
-            }
-            #[allow(unreachable_patterns)]
-            _ => WalletError::InvalidParameter(format!("Key wallet error: {}", err)),
-        }
-    }
-}
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
