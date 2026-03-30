@@ -1198,9 +1198,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
                 };
 
             // Mark the address as used so the next call derives a fresh key
-            asset_lock_account
-                .account_type
-                .mark_address_used(&asset_lock_address);
+            asset_lock_account.account_type.mark_address_used(&asset_lock_address);
 
             let secp = secp256k1::Secp256k1::new();
             let root_ext_priv = root_xpriv.to_extended_priv_key(network_rust);
