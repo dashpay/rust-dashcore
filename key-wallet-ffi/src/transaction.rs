@@ -976,3 +976,307 @@ pub unsafe extern "C" fn address_to_pubkey_hash(
         Err(_) => -1,
     }
 }
+
+// MARK: - Asset Lock Transaction
+
+/// Build and sign an asset lock transaction for Core to Platform transfers.
+///
+/// Creates a special transaction (type 8) with `AssetLockPayload` that locks
+/// Dash for Platform credits. Uses the wallet's UTXOs for funding and derives
+/// a one-time private key from the asset lock top-up account.
+///
+/// # Safety
+///
+/// - All pointer parameters must be valid and non-null
+/// - `credit_output_scripts` must point to an array of `credit_outputs_count` byte-array pointers
+/// - `credit_output_script_lens` must point to an array of `credit_outputs_count` lengths
+/// - `credit_output_amounts` must point to an array of `credit_outputs_count` amounts
+/// - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+#[no_mangle]
+pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
+    manager: *const FFIWalletManager,
+    wallet: *const FFIWallet,
+    account_index: u32,
+    credit_output_scripts: *const *const u8,
+    credit_output_script_lens: *const usize,
+    credit_output_amounts: *const u64,
+    credit_outputs_count: usize,
+    fee_per_kb: u64,
+    fee_out: *mut u64,
+    tx_bytes_out: *mut *mut u8,
+    tx_len_out: *mut usize,
+    output_index_out: *mut u32,
+    private_key_out: *mut [u8; 32],
+    error: *mut FFIError,
+) -> bool {
+    if manager.is_null()
+        || wallet.is_null()
+        || credit_output_scripts.is_null()
+        || credit_output_script_lens.is_null()
+        || credit_output_amounts.is_null()
+        || tx_bytes_out.is_null()
+        || tx_len_out.is_null()
+        || fee_out.is_null()
+        || output_index_out.is_null()
+        || private_key_out.is_null()
+    {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return false;
+    }
+
+    if credit_outputs_count == 0 {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "At least one credit output required".to_string(),
+        );
+        return false;
+    }
+
+    unsafe {
+        use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
+        use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
+
+        let manager_ref = &*manager;
+        let wallet_ref = &*wallet;
+        let network_rust = wallet_ref.inner().network;
+
+        let scripts_slice = slice::from_raw_parts(credit_output_scripts, credit_outputs_count);
+        let lens_slice = slice::from_raw_parts(credit_output_script_lens, credit_outputs_count);
+        let amounts_slice = slice::from_raw_parts(credit_output_amounts, credit_outputs_count);
+
+        // Build credit outputs as Vec<TxOut>
+        let mut credit_outputs = Vec::with_capacity(credit_outputs_count);
+        for i in 0..credit_outputs_count {
+            if scripts_slice[i].is_null() {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    format!("Credit output script {} is null", i),
+                );
+                return false;
+            }
+            let script_bytes = slice::from_raw_parts(scripts_slice[i], lens_slice[i]);
+            credit_outputs.push(TxOut {
+                value: amounts_slice[i],
+                script_pubkey: ScriptBuf::from(script_bytes.to_vec()),
+            });
+        }
+
+        manager_ref.runtime.block_on(async {
+            let mut manager = manager_ref.manager.write().await;
+            let wallet_id = wallet_ref.inner().wallet_id;
+
+            // Get change address for the funding account
+            let change_address = match manager.get_change_address(
+                &wallet_id,
+                account_index,
+                AccountTypePreference::BIP44,
+                true,
+            ) {
+                Ok(result) => match result.address {
+                    Some(addr) => addr,
+                    None => {
+                        FFIError::set_error(
+                            error,
+                            FFIErrorCode::WalletError,
+                            "No change address available".to_string(),
+                        );
+                        return false;
+                    }
+                },
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Failed to get change address: {}", e),
+                    );
+                    return false;
+                }
+            };
+
+            let managed_wallet = match manager.get_wallet_info_mut(&wallet_id) {
+                Some(info) => info,
+                None => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidInput,
+                        "Could not obtain ManagedWalletInfo for the provided wallet".to_string(),
+                    );
+                    return false;
+                }
+            };
+
+            // Get the funding account (BIP44)
+            let managed_account =
+                match managed_wallet.accounts.standard_bip44_accounts.get_mut(&account_index) {
+                    Some(account) => account,
+                    None => {
+                        FFIError::set_error(
+                            error,
+                            FFIErrorCode::WalletError,
+                            format!("Account {} not found", account_index),
+                        );
+                        return false;
+                    }
+                };
+
+            // Get available UTXOs from the funding account
+            let utxos: Vec<key_wallet::Utxo> = managed_account.utxos.values().cloned().collect();
+
+            // Build address-to-path map for signing
+            use std::collections::HashMap;
+            let mut address_to_path: HashMap<dashcore::Address, key_wallet::DerivationPath> =
+                HashMap::new();
+            for pool in managed_account.account_type.address_pools() {
+                for addr_info in pool.addresses.values() {
+                    address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
+                }
+            }
+
+            // Get the wallet's root extended private key
+            use key_wallet::wallet::WalletType;
+            let root_xpriv = match &wallet_ref.inner().wallet_type {
+                WalletType::Mnemonic {
+                    root_extended_private_key,
+                    ..
+                } => root_extended_private_key,
+                WalletType::Seed {
+                    root_extended_private_key,
+                    ..
+                } => root_extended_private_key,
+                WalletType::ExtendedPrivKey(root_extended_private_key) => root_extended_private_key,
+                _ => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        "Cannot sign with watch-only wallet".to_string(),
+                    );
+                    return false;
+                }
+            };
+
+            // Derive the one-time private key from the asset lock top-up account
+            let asset_lock_account = match &managed_wallet.accounts.asset_lock_address_topup {
+                Some(account) => account,
+                None => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        "Asset lock address top-up account not found in wallet".to_string(),
+                    );
+                    return false;
+                }
+            };
+
+            // Get the next unused address index from the asset lock account
+            let key_index = asset_lock_account.get_next_address_index().unwrap_or(0);
+
+            // Derive the one-time key using the asset lock account's derivation path
+            let asset_lock_path = match asset_lock_account.account_type.address_pools().first() {
+                Some(pool) => match pool.addresses.get(&key_index) {
+                    Some(addr_info) => addr_info.path.clone(),
+                    None => {
+                        FFIError::set_error(
+                            error,
+                            FFIErrorCode::WalletError,
+                            "No address available in asset lock account".to_string(),
+                        );
+                        return false;
+                    }
+                },
+                None => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        "Asset lock account has no address pool".to_string(),
+                    );
+                    return false;
+                }
+            };
+
+            let secp = secp256k1::Secp256k1::new();
+            let root_ext_priv = root_xpriv.to_extended_priv_key(network_rust);
+            let one_time_xpriv = match root_ext_priv.derive_priv(&secp, &asset_lock_path) {
+                Ok(xpriv) => xpriv,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Failed to derive asset lock key: {}", e),
+                    );
+                    return false;
+                }
+            };
+
+            // Build the asset lock transaction
+            let tx_builder = TransactionBuilder::new()
+                .set_change_address(change_address)
+                .set_fee_rate(FeeRate::new(fee_per_kb));
+
+            let tx_builder_with_inputs = match tx_builder.select_inputs(
+                &utxos,
+                SelectionStrategy::BranchAndBound,
+                managed_wallet.synced_height(),
+                |utxo| {
+                    let path = address_to_path.get(&utxo.address)?;
+                    let root_ext_priv = root_xpriv.to_extended_priv_key(network_rust);
+                    let secp = secp256k1::Secp256k1::new();
+                    let derived_xpriv = root_ext_priv.derive_priv(&secp, path).ok()?;
+                    Some(derived_xpriv.private_key)
+                },
+            ) {
+                Ok(builder) => builder,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Coin selection failed: {}", e),
+                    );
+                    return false;
+                }
+            };
+
+            // Calculate fee before build_asset_lock consumes the builder
+            let outputs_count_before = tx_builder_with_inputs.outputs().len();
+            let fee = tx_builder_with_inputs.calculate_fee();
+            let fee_with_extra = tx_builder_with_inputs.calculate_fee_with_extra_output();
+
+            let transaction = match tx_builder_with_inputs.build_asset_lock(credit_outputs) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Failed to build asset lock transaction: {}", e),
+                    );
+                    return false;
+                }
+            };
+
+            *fee_out = if transaction.output.len() > outputs_count_before {
+                fee_with_extra
+            } else {
+                fee
+            };
+
+            // The asset lock output index is 0 (the burn output before credit outputs)
+            *output_index_out = 0;
+
+            // Write the one-time private key
+            (*private_key_out).copy_from_slice(&one_time_xpriv.private_key[..]);
+
+            // Serialize the transaction
+            let serialized = consensus::serialize(&transaction);
+            let size = serialized.len();
+            let boxed = serialized.into_boxed_slice();
+            let tx_bytes = Box::into_raw(boxed) as *mut u8;
+
+            *tx_bytes_out = tx_bytes;
+            *tx_len_out = size;
+
+            FFIError::set_success(error);
+            true
+        })
+    }
+}
