@@ -1,6 +1,7 @@
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, BlockHash};
+#[cfg(feature = "parallel-filters")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::collections::{BTreeSet, HashMap};
 
@@ -40,7 +41,15 @@ pub fn check_compact_filters_for_addresses(
             .then_some(key.clone())
     };
 
-    input.into_par_iter().filter_map(match_filter).collect()
+    #[cfg(feature = "parallel-filters")]
+    {
+        input.into_par_iter().filter_map(match_filter).collect()
+    }
+
+    #[cfg(not(feature = "parallel-filters"))]
+    {
+        input.iter().filter_map(match_filter).collect()
+    }
 }
 
 #[cfg(test)]
