@@ -670,8 +670,6 @@ pub struct FFITransactionRecord {
     pub context: FFITransactionContextDetails,
     /// Fee if known, 0 if unknown
     pub fee: u64,
-    /// Whether this is our transaction
-    pub is_ours: bool,
 }
 
 /// Get all transactions from a managed account
@@ -730,9 +728,6 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
 
         // Copy fee (0 if unknown)
         ffi_record.fee = record.fee.unwrap_or(0);
-
-        // Copy is_ours flag
-        ffi_record.is_ours = record.is_ours;
     }
 
     *transactions_out = ptr;

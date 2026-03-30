@@ -4,8 +4,9 @@ use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::{TxIn, Txid};
 
 use crate::account::TransactionRecord;
+use crate::managed_account::transaction_record::TransactionDirection;
 use crate::managed_account::ManagedCoreAccount;
-use crate::transaction_checking::TransactionContext;
+use crate::transaction_checking::{TransactionContext, TransactionType};
 
 /// Create a transaction that spends the given outpoints.
 fn spending_tx(spent: &[OutPoint]) -> Transaction {
@@ -36,7 +37,15 @@ fn receive_only_tx() -> Transaction {
 }
 
 fn record_from_tx(tx: &Transaction) -> TransactionRecord {
-    TransactionRecord::new(tx.clone(), TransactionContext::Mempool, 0, false)
+    TransactionRecord::new(
+        tx.clone(),
+        TransactionContext::Mempool,
+        TransactionType::Standard,
+        TransactionDirection::Incoming,
+        Vec::new(),
+        Vec::new(),
+        0,
+    )
 }
 
 #[test]

@@ -14,6 +14,10 @@ use crate::account::TransactionRecord;
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::address_pool::PublicKeyType;
+use crate::managed_account::transaction_record::{
+    InputDetail, OutputDetail, OutputRole, TransactionDirection,
+};
+use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
@@ -401,14 +405,21 @@ impl ManagedCoreAccount {
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
+        transaction_type: TransactionType,
     ) -> bool {
         if !self.transactions.contains_key(&tx.txid()) {
-            self.record_transaction(tx, account_match, context);
+            self.record_transaction(tx, account_match, context, transaction_type);
             return true;
         }
 
         let mut changed = false;
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
+            debug_assert_eq!(
+                tx_record.transaction_type,
+                transaction_type,
+                "transaction_type changed between recordings for {}",
+                tx.txid()
+            );
             if tx_record.context != context {
                 let was_confirmed = tx_record.context.confirmed();
                 tx_record.update_context(context);
@@ -429,9 +440,97 @@ impl ManagedCoreAccount {
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
+        transaction_type: TransactionType,
     ) {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
-        let tx_record = TransactionRecord::new(tx.clone(), context, net_amount, net_amount < 0);
+
+        let receive_addrs: HashSet<_> = account_match
+            .account_type_match
+            .involved_receive_addresses()
+            .iter()
+            .map(|info| &info.address)
+            .collect();
+        let change_addrs: HashSet<_> = account_match
+            .account_type_match
+            .involved_change_addresses()
+            .iter()
+            .map(|info| &info.address)
+            .collect();
+
+        // Input details must be built before `update_utxos` removes spent UTXOs
+        let mut input_details = Vec::new();
+        if !tx.is_coin_base() {
+            for (idx, input) in tx.input.iter().enumerate() {
+                if let Some(utxo) = self.utxos.get(&input.previous_output) {
+                    input_details.push(InputDetail {
+                        index: idx as u32,
+                        value: utxo.txout.value,
+                        address: utxo.address.clone(),
+                    });
+                }
+            }
+        }
+
+        // Use both UTXO-based input details and `account_match.sent` as signals
+        // that we created this transaction. The UTXO set may be incomplete
+        // (e.g., partial rescan) so `account_match.sent > 0` catches cases where
+        // the transaction still spent our funds even without matching UTXOs.
+        let has_inputs = !input_details.is_empty() || account_match.sent > 0;
+
+        let resolved_outputs: Vec<Option<Address>> = tx
+            .output
+            .iter()
+            .map(|output| Address::from_script(&output.script_pubkey, self.network).ok())
+            .collect();
+
+        // Build output details — annotate every output with its role
+        let mut output_details = Vec::new();
+        for (idx, output) in tx.output.iter().enumerate() {
+            let role = match &resolved_outputs[idx] {
+                Some(addr) if receive_addrs.contains(addr) => OutputRole::Received,
+                Some(addr) if change_addrs.contains(addr) => OutputRole::Change,
+                Some(_) if has_inputs => OutputRole::Sent,
+                Some(_) => continue,
+                None => {
+                    if output.script_pubkey.is_provably_unspendable() {
+                        OutputRole::Unspendable
+                    } else if has_inputs {
+                        OutputRole::Sent
+                    } else {
+                        continue;
+                    }
+                }
+            };
+            output_details.push(OutputDetail {
+                index: idx as u32,
+                role,
+            });
+        }
+
+        // Determine direction
+        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
+        let has_our_outputs = output_details
+            .iter()
+            .any(|d| d.role == OutputRole::Received || d.role == OutputRole::Change);
+        let direction = if transaction_type == TransactionType::CoinJoin {
+            TransactionDirection::CoinJoin
+        } else if !has_sent && has_inputs && has_our_outputs {
+            TransactionDirection::Internal
+        } else if has_inputs {
+            TransactionDirection::Outgoing
+        } else {
+            TransactionDirection::Incoming
+        };
+
+        let tx_record = TransactionRecord::new(
+            tx.clone(),
+            context,
+            transaction_type,
+            direction,
+            input_details,
+            output_details,
+            net_amount,
+        );
 
         self.transactions.insert(tx.txid(), tx_record);
 

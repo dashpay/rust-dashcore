@@ -124,6 +124,79 @@ pub enum CoreAccountTypeMatch {
 }
 
 impl CoreAccountTypeMatch {
+    /// Get involved receive (external) addresses
+    pub fn involved_receive_addresses(&self) -> &[AddressInfo] {
+        match self {
+            CoreAccountTypeMatch::StandardBIP44 {
+                involved_receive_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::StandardBIP32 {
+                involved_receive_addresses,
+                ..
+            } => involved_receive_addresses,
+            CoreAccountTypeMatch::CoinJoin {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::IdentityRegistration {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::IdentityTopUp {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::IdentityTopUpNotBound {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::IdentityInvitation {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::AssetLockAddressTopUp {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderVotingKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderOwnerKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderOperatorKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderPlatformKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::DashpayReceivingFunds {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::DashpayExternalAccount {
+                involved_addresses,
+                ..
+            } => involved_addresses,
+        }
+    }
+
+    /// Get involved change (internal) addresses
+    pub fn involved_change_addresses(&self) -> &[AddressInfo] {
+        match self {
+            CoreAccountTypeMatch::StandardBIP44 {
+                involved_change_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::StandardBIP32 {
+                involved_change_addresses,
+                ..
+            } => involved_change_addresses,
+            // Non-standard account types don't have change addresses
+            _ => &[],
+        }
+    }
+
     /// Get all involved addresses (both receive and change combined)
     pub fn all_involved_addresses(&self) -> Vec<AddressInfo> {
         match self {
