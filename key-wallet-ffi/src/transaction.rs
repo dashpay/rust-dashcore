@@ -979,11 +979,36 @@ pub unsafe extern "C" fn address_to_pubkey_hash(
 
 // MARK: - Asset Lock Transaction
 
+/// The type of funding account used for asset lock key derivation.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIAssetLockFundingType {
+    /// Identity registration: m/9'/coinType'/5'/0'/index'
+    IdentityRegistration = 0,
+    /// Identity top-up (bound to a specific identity): m/9'/coinType'/5'/1'/reg_index'/index'
+    IdentityTopUp = 1,
+    /// Identity top-up (not bound to identity): m/9'/coinType'/5'/1'/index'
+    IdentityTopUpNotBound = 2,
+    /// Identity invitation: m/9'/coinType'/5'/3'/index'
+    IdentityInvitation = 3,
+    /// Asset lock address top-up: m/9'/coinType'/5'/4'/index'
+    AssetLockAddressTopUp = 4,
+    /// Asset lock shielded address top-up: m/9'/coinType'/5'/5'/index'
+    AssetLockShieldedAddressTopUp = 5,
+}
+
 /// Build and sign an asset lock transaction for Core to Platform transfers.
 ///
 /// Creates a special transaction (type 8) with `AssetLockPayload` that locks
 /// Dash for Platform credits. Uses the wallet's UTXOs for funding and derives
-/// a one-time private key from the asset lock top-up account.
+/// a one-time private key from the specified funding account type.
+///
+/// # Parameters
+///
+/// - `funding_type`: Which funding account to derive the one-time key from
+///   (registration, top-up, invitation, etc.)
+/// - `identity_index`: For `IdentityTopUp` funding type, the registration index
+///   of the identity being topped up. Ignored for other funding types.
 ///
 /// # Safety
 ///
@@ -997,6 +1022,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
     manager: *const FFIWalletManager,
     wallet: *const FFIWallet,
     account_index: u32,
+    funding_type: FFIAssetLockFundingType,
+    identity_index: u32,
     credit_output_scripts: *const *const u8,
     credit_output_script_lens: *const usize,
     credit_output_amounts: *const u64,
@@ -1156,26 +1183,100 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
                 }
             };
 
-            // Derive the one-time private key from the asset lock top-up account
-            let asset_lock_account = match &mut managed_wallet.accounts.asset_lock_address_topup {
-                Some(account) => account,
-                None => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        "Asset lock address top-up account not found in wallet".to_string(),
-                    );
-                    return false;
-                }
-            };
+            // Look up the funding account based on the requested type
+            let funding_account: &mut key_wallet::managed_account::ManagedCoreAccount =
+                match funding_type {
+                    FFIAssetLockFundingType::IdentityRegistration => {
+                        match &mut managed_wallet.accounts.identity_registration {
+                            Some(account) => account,
+                            None => {
+                                FFIError::set_error(
+                                    error,
+                                    FFIErrorCode::WalletError,
+                                    "Identity registration account not found".to_string(),
+                                );
+                                return false;
+                            }
+                        }
+                    }
+                    FFIAssetLockFundingType::IdentityTopUp => {
+                        match managed_wallet.accounts.identity_topup.get_mut(&identity_index) {
+                            Some(account) => account,
+                            None => {
+                                FFIError::set_error(
+                                    error,
+                                    FFIErrorCode::WalletError,
+                                    format!(
+                                        "Identity top-up account not found for index {}",
+                                        identity_index
+                                    ),
+                                );
+                                return false;
+                            }
+                        }
+                    }
+                    FFIAssetLockFundingType::IdentityTopUpNotBound => {
+                        match &mut managed_wallet.accounts.identity_topup_not_bound {
+                            Some(account) => account,
+                            None => {
+                                FFIError::set_error(
+                                    error,
+                                    FFIErrorCode::WalletError,
+                                    "Identity top-up (unbound) account not found".to_string(),
+                                );
+                                return false;
+                            }
+                        }
+                    }
+                    FFIAssetLockFundingType::IdentityInvitation => {
+                        match &mut managed_wallet.accounts.identity_invitation {
+                            Some(account) => account,
+                            None => {
+                                FFIError::set_error(
+                                    error,
+                                    FFIErrorCode::WalletError,
+                                    "Identity invitation account not found".to_string(),
+                                );
+                                return false;
+                            }
+                        }
+                    }
+                    FFIAssetLockFundingType::AssetLockAddressTopUp => {
+                        match &mut managed_wallet.accounts.asset_lock_address_topup {
+                            Some(account) => account,
+                            None => {
+                                FFIError::set_error(
+                                    error,
+                                    FFIErrorCode::WalletError,
+                                    "Asset lock address top-up account not found".to_string(),
+                                );
+                                return false;
+                            }
+                        }
+                    }
+                    FFIAssetLockFundingType::AssetLockShieldedAddressTopUp => {
+                        match &mut managed_wallet.accounts.asset_lock_shielded_address_topup {
+                            Some(account) => account,
+                            None => {
+                                FFIError::set_error(
+                                    error,
+                                    FFIErrorCode::WalletError,
+                                    "Asset lock shielded address top-up account not found"
+                                        .to_string(),
+                                );
+                                return false;
+                            }
+                        }
+                    }
+                };
 
             // Get the next unused address index from the asset lock account
-            let key_index = asset_lock_account.get_next_address_index().unwrap_or(0);
+            let key_index = funding_account.get_next_address_index().unwrap_or(0);
 
             // Derive the one-time key using the asset lock account's derivation path
             // and get the address so we can mark it as used
             let (asset_lock_path, asset_lock_address) =
-                match asset_lock_account.account_type.address_pools().first() {
+                match funding_account.account_type.address_pools().first() {
                     Some(pool) => match pool.addresses.get(&key_index) {
                         Some(addr_info) => (addr_info.path.clone(), addr_info.address.clone()),
                         None => {
@@ -1198,7 +1299,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
                 };
 
             // Mark the address as used so the next call derives a fresh key
-            asset_lock_account.account_type.mark_address_used(&asset_lock_address);
+            funding_account.account_type.mark_address_used(&asset_lock_address);
 
             let secp = secp256k1::Secp256k1::new();
             let root_ext_priv = root_xpriv.to_extended_priv_key(network_rust);
