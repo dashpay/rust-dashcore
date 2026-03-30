@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 259
+**Total Functions**: 260
 
 ## Table of Contents
 
@@ -69,7 +69,7 @@ Functions: 19
 
 ### Wallet Operations
 
-Functions: 63
+Functions: 64
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -108,6 +108,7 @@ Functions: 63
 | `wallet_add_dashpay_external_account_with_xpub_bytes` | Add a DashPay external (watch-only) account with xpub bytes  # Safety -... | wallet |
 | `wallet_add_dashpay_receiving_account` | Add a DashPay receiving funds account  # Safety - `wallet` must be a valid... | wallet |
 | `wallet_add_platform_payment_account` | Add a Platform Payment account (DIP-17) to the wallet  Platform Payment... | wallet |
+| `wallet_build_and_sign_asset_lock_transaction` | Build and sign an asset lock transaction for Core to Platform transfers | transaction |
 | `wallet_build_and_sign_transaction` | Build and sign a transaction using the wallet's managed info  This is the... | transaction |
 | `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  #... | transaction |
 | `wallet_create_from_mnemonic` | Create a new wallet from mnemonic (backward compatibility - single network) ... | wallet |
@@ -1278,6 +1279,22 @@ Add a Platform Payment account (DIP-17) to the wallet  Platform Payment accounts
 This function dereferences a raw pointer to FFIWallet. The caller must ensure that: - The wallet pointer is either null or points to a valid FFIWallet - The FFIWallet remains valid for the duration of this call
 
 **Module:** `wallet`
+
+---
+
+#### `wallet_build_and_sign_asset_lock_transaction`
+
+```c
+wallet_build_and_sign_asset_lock_transaction(manager: *const FFIWalletManager, wallet: *const FFIWallet, account_index: u32, credit_output_scripts: *const *const u8, credit_output_script_lens: *const usize, credit_output_amounts: *const u64, credit_outputs_count: usize, fee_per_kb: u64, fee_out: *mut u64, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, output_index_out: *mut u32, private_key_out: *mut [u8; 32], error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Build and sign an asset lock transaction for Core to Platform transfers.  Creates a special transaction (type 8) with `AssetLockPayload` that locks Dash for Platform credits. Uses the wallet's UTXOs for funding and derives a one-time private key from the asset lock top-up account.  # Safety  - All pointer parameters must be valid and non-null - `credit_output_scripts` must point to an array of `credit_outputs_count` byte-array pointers - `credit_output_script_lens` must point to an array of `credit_outputs_count` lengths - `credit_output_amounts` must point to an array of `credit_outputs_count` amounts - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+
+**Safety:**
+- All pointer parameters must be valid and non-null - `credit_output_scripts` must point to an array of `credit_outputs_count` byte-array pointers - `credit_output_script_lens` must point to an array of `credit_outputs_count` lengths - `credit_output_amounts` must point to an array of `credit_outputs_count` amounts - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+
+**Module:** `transaction`
 
 ---
 
