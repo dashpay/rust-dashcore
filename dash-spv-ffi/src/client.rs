@@ -37,11 +37,6 @@ impl FFIDashSpvClient {
     ) -> Option<Arc<tokio::sync::RwLock<dash_spv::MasternodeListEngine>>> {
         self.inner.masternode_list_engine().ok()
     }
-
-    /// Returns the network this client is configured for.
-    pub fn network(&self) -> dashcore::Network {
-        self.runtime.block_on(async { self.inner.network().await })
-    }
 }
 
 /// Create a new SPV client and return an opaque pointer.
