@@ -3,6 +3,7 @@
 //! This module contains the mutable metadata and information about a wallet
 //! that is managed separately from the core wallet structure.
 
+pub mod asset_lock_builder;
 pub mod coin_selection;
 pub mod fee;
 pub mod helpers;

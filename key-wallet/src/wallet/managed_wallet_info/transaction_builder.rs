@@ -161,6 +161,15 @@ impl TransactionBuilder {
         Ok(self)
     }
 
+    /// Add a raw TxOut as an output.
+    ///
+    /// Used for special transactions (e.g., asset locks) where outputs are
+    /// constructed from script bytes rather than addresses.
+    pub fn add_raw_output(mut self, output: TxOut) -> Self {
+        self.outputs.push(output);
+        self
+    }
+
     /// Add a data output (OP_RETURN)
     ///
     /// Note: Outputs will be sorted according to BIP-69 when the transaction is built:

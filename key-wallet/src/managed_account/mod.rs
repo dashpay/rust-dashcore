@@ -941,6 +941,40 @@ impl ManagedCoreAccount {
         }
     }
 
+    /// Consume the next unused address and derive its private key.
+    ///
+    /// Used for one-time keys (asset lock funding, identity registration, etc.).
+    /// The address is marked as used so subsequent calls return fresh keys.
+    ///
+    /// Only works for single-pool account types (not Standard accounts).
+    pub fn next_private_key(
+        &mut self,
+        root_xpriv: &crate::wallet::root_extended_keys::RootExtendedPrivKey,
+        network: Network,
+    ) -> Result<[u8; 32], &'static str> {
+        if matches!(self.account_type, ManagedAccountType::Standard { .. }) {
+            return Err("Standard accounts must use next_receive_address or next_change_address");
+        }
+
+        let mut pools = self.account_type.address_pools_mut();
+        let pool = pools.first_mut().ok_or("Account has no address pool")?;
+
+        let info = pool
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
+            .map_err(|_| "No unused address available")?;
+
+        pool.mark_index_used(info.index);
+
+        let secp = secp256k1::Secp256k1::new();
+        let root_ext_priv = root_xpriv.to_extended_priv_key(network);
+        let derived_xpriv =
+            root_ext_priv.derive_priv(&secp, &info.path).map_err(|_| "Key derivation failed")?;
+
+        let mut private_key = [0u8; 32];
+        private_key.copy_from_slice(&derived_xpriv.private_key[..]);
+        Ok(private_key)
+    }
+
     /// Get the derivation path for an address if it belongs to this account
     pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
         self.account_type.get_address_derivation_path(address)
