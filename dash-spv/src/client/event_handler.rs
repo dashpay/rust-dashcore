@@ -65,6 +65,7 @@ where
                             on_failure.cancel();
                             break;
                         }
+                        Err(broadcast::error::RecvError::Lagged(_)) if shutdown.is_cancelled() => break,
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             let msg = format!("{} monitor lagged, missed {} events", name, n);
                             tracing::error!("{}", msg);
