@@ -111,8 +111,9 @@ async fn test_transaction_routing_to_bip32_account() {
     let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check with update_state = false
-    let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false, true).await;
+    let result = managed_wallet_info
+        .check_core_transaction(&tx, context.clone(), &mut wallet, false, true)
+        .await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Transaction should be relevant to the BIP32 account");
@@ -327,7 +328,7 @@ async fn test_transaction_affects_multiple_accounts() {
     let result = managed_wallet_info
         .check_core_transaction(
             &tx,
-            context,
+            context.clone(),
             &mut wallet,
             true, // update state
             true, // update balance

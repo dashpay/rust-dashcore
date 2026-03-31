@@ -4,6 +4,7 @@
 
 use crate::WalletEvent;
 use async_trait::async_trait;
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
 use tokio::sync::broadcast;
@@ -60,11 +61,11 @@ pub trait WalletInterface: Send + Sync + 'static {
 
     /// Called when a transaction is seen in the mempool.
     /// Returns whether the transaction was relevant and any new addresses generated.
-    /// When `is_instant_send` is true, the transaction already has an IS lock.
+    /// When `instant_lock` is `Some`, the transaction already has an IS lock.
     async fn process_mempool_transaction(
         &mut self,
         tx: &Transaction,
-        is_instant_send: bool,
+        instant_lock: Option<InstantLock>,
     ) -> MempoolTransactionResult;
 
     /// Get all addresses the wallet is monitoring for incoming transactions
@@ -117,7 +118,7 @@ pub trait WalletInterface: Send + Sync + 'static {
 
     /// Process an InstantSend lock for a transaction already in the wallet.
     /// Marks UTXOs as IS-locked, emits status change and balance update events.
-    fn process_instant_send_lock(&mut self, _txid: Txid) {}
+    fn process_instant_send_lock(&mut self, _instant_lock: InstantLock) {}
 
     /// Provide a human-readable description of the wallet implementation.
     ///

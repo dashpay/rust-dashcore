@@ -705,6 +705,8 @@ impl FFIWalletEventCallbacks {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
 
+                    let mut ffi_ctx = FFITransactionContext::from(record.context.clone());
+
                     let tx_bytes =
                         dashcore::consensus::serialize(&record.transaction).into_boxed_slice();
 
@@ -736,7 +738,7 @@ impl FFIWalletEventCallbacks {
                     let ffi_record = FFITransactionRecord {
                         txid: record.txid.to_byte_array(),
                         net_amount: record.net_amount,
-                        context: FFITransactionContext::from(record.context),
+                        context: ffi_ctx.clone(),
                         transaction_type: FFITransactionType::from(record.transaction_type),
                         direction: FFITransactionDirection::from(record.direction),
                         fee: record.fee.unwrap_or(0),
@@ -778,6 +780,9 @@ impl FFIWalletEventCallbacks {
                             }
                         }
                     }
+                    // SAFETY: `ffi_ctx` owns the heap-allocated IS lock bytes produced
+                    // by `From<TransactionContext>`. Free them after the callback returns.
+                    unsafe { ffi_ctx.free_islock_data() };
                 }
             }
             WalletEvent::TransactionStatusChanged {
@@ -789,12 +794,16 @@ impl FFIWalletEventCallbacks {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let txid_bytes = txid.as_byte_array();
+                    let mut ffi_ctx = FFITransactionContext::from(status.clone());
                     cb(
                         c_wallet_id.as_ptr(),
                         txid_bytes as *const [u8; 32],
-                        FFITransactionContext::from(*status),
+                        ffi_ctx.clone(),
                         self.user_data,
                     );
+                    // SAFETY: `ffi_ctx` owns the heap-allocated IS lock bytes produced
+                    // by `From<TransactionContext>`. Free them after the callback returns.
+                    unsafe { ffi_ctx.free_islock_data() };
                 }
             }
             WalletEvent::BalanceUpdated {

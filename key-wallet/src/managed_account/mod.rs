@@ -369,7 +369,7 @@ impl ManagedCoreAccount {
                                 Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
                             utxo.is_confirmed = context.confirmed();
                             utxo.is_instantlocked =
-                                matches!(context, TransactionContext::InstantSend);
+                                matches!(context, TransactionContext::InstantSend(_));
                             self.utxos.insert(outpoint, utxo);
                             utxos_changed = true;
                         }
@@ -422,7 +422,7 @@ impl ManagedCoreAccount {
             );
             if tx_record.context != context {
                 let was_confirmed = tx_record.context.confirmed();
-                tx_record.update_context(context);
+                tx_record.update_context(context.clone());
                 // Only signal a change when confirmation status actually changes,
                 // not for upgrades within the confirmed state (e.g. InBlock → InChainLockedBlock).
                 // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
@@ -524,7 +524,7 @@ impl ManagedCoreAccount {
 
         let tx_record = TransactionRecord::new(
             tx.clone(),
-            context,
+            context.clone(),
             transaction_type,
             direction,
             input_details,

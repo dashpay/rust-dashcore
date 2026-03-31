@@ -7,11 +7,12 @@ use std::collections::BTreeSet;
 use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::ManagedAccountTrait;
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
+use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
-
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address as DashAddress, Transaction, Txid};
 
@@ -92,9 +93,10 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// This should be called when the chain tip advances to a new height
     fn update_synced_height(&mut self, current_height: u32);
 
-    /// Mark UTXOs for a transaction as InstantSend-locked across all accounts.
+    /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
+    /// and update the corresponding transaction record context.
     /// Returns `true` if any UTXO was newly marked.
-    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool;
+    fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
 
     /// Return the aggregated monitor revision across all accounts.
     /// Increments whenever the monitored address set changes.
@@ -240,7 +242,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.update_balance();
     }
 
-    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool {
+    fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool {
         if !self.instant_send_locks.insert(*txid) {
             return false;
         }
@@ -248,6 +250,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
         for account in self.accounts.all_accounts_mut() {
             if account.mark_utxos_instant_send(txid) {
                 any_changed = true;
+            }
+            if let Some(record) = account.transactions_mut().get_mut(txid) {
+                record.update_context(TransactionContext::InstantSend(lock.clone()));
             }
         }
         if any_changed {

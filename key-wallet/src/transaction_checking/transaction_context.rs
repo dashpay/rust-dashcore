@@ -1,5 +1,6 @@
 //! Block metadata and transaction context types.
 
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::BlockHash;
 
@@ -35,13 +36,13 @@ impl BlockInfo {
 }
 
 /// Context for transaction processing
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TransactionContext {
     /// Transaction is in the mempool (unconfirmed)
     Mempool,
     /// Transaction is in the mempool with an InstantSend lock
-    InstantSend,
+    InstantSend(InstantLock),
     /// Transaction is in a block at the given height
     InBlock(BlockInfo),
     /// Transaction is in a chain-locked block at the given height
@@ -52,7 +53,7 @@ impl std::fmt::Display for TransactionContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TransactionContext::Mempool => write!(f, "mempool"),
-            TransactionContext::InstantSend => write!(f, "instant send"),
+            TransactionContext::InstantSend(_) => write!(f, "instant send"),
             TransactionContext::InBlock(info) => write!(f, "block {}", info.height),
             TransactionContext::InChainLockedBlock(info) => {
                 write!(f, "chainlocked block {}", info.height)
@@ -67,10 +68,15 @@ impl TransactionContext {
         matches!(self, TransactionContext::InChainLockedBlock(_) | TransactionContext::InBlock(_))
     }
 
+    /// Returns whether this context is an InstantSend lock.
+    pub(crate) fn is_instant_send(&self) -> bool {
+        matches!(self, TransactionContext::InstantSend(_))
+    }
+
     /// Returns the block info if confirmed.
     pub fn block_info(&self) -> Option<&BlockInfo> {
         match self {
-            TransactionContext::Mempool | TransactionContext::InstantSend => None,
+            TransactionContext::Mempool | TransactionContext::InstantSend(_) => None,
             TransactionContext::InBlock(info) | TransactionContext::InChainLockedBlock(info) => {
                 Some(info)
             }

@@ -1,4 +1,5 @@
 use super::*;
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, TxIn, TxOut, Txid, Witness};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
@@ -10,6 +11,13 @@ pub(crate) const TEST_MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 pub(crate) const TX_AMOUNT: u64 = 100_000;
+
+pub(crate) fn dummy_instant_lock(txid: Txid) -> InstantLock {
+    InstantLock {
+        txid,
+        ..InstantLock::default()
+    }
+}
 
 pub(crate) fn setup_manager_with_wallet() -> (WalletManager<ManagedWalletInfo>, WalletId, Address) {
     let mut manager = WalletManager::new(Network::Testnet);
@@ -76,7 +84,7 @@ pub(crate) async fn assert_lifecycle_flow(contexts: &[TransactionContext], input
     let tx = create_tx_paying_to(&addr, input_seed);
 
     for (i, ctx) in contexts.iter().enumerate() {
-        manager.check_transaction_in_all_wallets(&tx, *ctx, true, true).await;
+        manager.check_transaction_in_all_wallets(&tx, ctx.clone(), true, true).await;
         let event = assert_single_event(&mut rx);
 
         if i == 0 {
@@ -89,7 +97,7 @@ pub(crate) async fn assert_lifecycle_flow(contexts: &[TransactionContext], input
             );
         } else {
             assert!(
-                matches!(event, WalletEvent::TransactionStatusChanged { wallet_id: wid, status, .. } if wid == wallet_id && status == *ctx),
+                matches!(&event, WalletEvent::TransactionStatusChanged { wallet_id: wid, status, .. } if *wid == wallet_id && status == ctx),
                 "context[{}]: expected TransactionStatusChanged with wallet_id and status {:?}, got {:?}",
                 i,
                 ctx,
@@ -113,7 +121,7 @@ pub(crate) async fn assert_context_suppressed(
     let tx = create_tx_paying_to(&addr, input_seed);
 
     for ctx in setup_contexts {
-        manager.check_transaction_in_all_wallets(&tx, *ctx, true, true).await;
+        manager.check_transaction_in_all_wallets(&tx, ctx.clone(), true, true).await;
         drain_events(&mut rx);
     }
 

@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::{Amount, Transaction, Txid};
 use rand::seq::IteratorRandom;
@@ -56,8 +57,8 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     pending_requests: HashMap<Txid, Instant>,
     /// Connected peers and their activation state.
     pub(super) peers: HashMap<SocketAddr, Option<VecDeque<Txid>>>,
-    /// IS lock txids that arrived before their corresponding transaction, with insertion time.
-    pending_is_locks: HashMap<Txid, Instant>,
+    /// IS locks that arrived before their corresponding transaction, with insertion time.
+    pending_is_locks: HashMap<Txid, (InstantLock, Instant)>,
     /// Txids already downloaded, with download timestamp.
     /// Prevents duplicate downloads when multiple peers announce the same transactions.
     /// Entries expire after `SEEN_TXID_EXPIRY`.
@@ -302,11 +303,12 @@ impl<W: WalletInterface> MempoolManager<W> {
         self.progress.add_received(1);
 
         // Check for a pre-arrived IS lock before wallet processing consumes it
-        let is_locked = self.pending_is_locks.remove(&txid).is_some();
+        let pending_lock = self.pending_is_locks.remove(&txid).map(|(lock, _)| lock);
+        let is_locked = pending_lock.is_some();
 
         let result = {
             let mut wallet = self.wallet.write().await;
-            wallet.process_mempool_transaction(&tx, is_locked).await
+            wallet.process_mempool_transaction(&tx, pending_lock).await
         };
 
         if !result.is_relevant {
@@ -356,30 +358,31 @@ impl<W: WalletInterface> MempoolManager<W> {
 
     /// Mark a mempool transaction as InstantSend-locked and notify the wallet.
     ///
-    /// If the transaction hasn't arrived yet, remembers the txid so the lock
+    /// If the transaction hasn't arrived yet, remembers the lock so it
     /// can be applied when the transaction is later received via `handle_tx`.
-    pub(super) async fn mark_instant_send(&mut self, txid: &Txid) {
+    pub(super) async fn mark_instant_send(&mut self, instant_lock: InstantLock) {
+        let txid = instant_lock.txid;
         let mut state = self.mempool_state.write().await;
-        let marked = if let Some(tx) = state.transactions.get_mut(txid) {
+        let instant_lock_opt = if let Some(tx) = state.transactions.get_mut(&txid) {
             tx.is_instant_send = true;
             tracing::debug!("Marked mempool tx {} as InstantSend-locked", txid);
-            true
+            Some(instant_lock)
         } else if self.pending_is_locks.len() < MAX_PENDING_IS_LOCKS {
-            self.pending_is_locks.insert(*txid, Instant::now());
+            self.pending_is_locks.insert(txid, (instant_lock, Instant::now()));
             tracing::debug!("IS lock arrived before tx {}, remembering for later", txid);
-            false
+            None
         } else {
             tracing::warn!(
                 "Pending IS locks at capacity ({}), dropping IS lock for {}",
                 MAX_PENDING_IS_LOCKS,
                 txid
             );
-            false
+            None
         };
         drop(state);
-        if marked {
+        if let Some(lock) = instant_lock_opt {
             let mut wallet = self.wallet.write().await;
-            wallet.process_instant_send_lock(*txid);
+            wallet.process_instant_send_lock(lock);
         }
     }
 
@@ -398,7 +401,7 @@ impl<W: WalletInterface> MempoolManager<W> {
 
         // Prune pending IS locks whose transaction never arrived
         let before = self.pending_is_locks.len();
-        self.pending_is_locks.retain(|_, inserted_at| inserted_at.elapsed() < timeout);
+        self.pending_is_locks.retain(|_, (_, inserted_at)| inserted_at.elapsed() < timeout);
         let expired = before - self.pending_is_locks.len();
         if expired > 0 {
             tracing::debug!("Pruned {} expired pending IS locks", expired);
@@ -503,6 +506,21 @@ mod tests {
     use crate::sync::SyncState;
     use crate::test_utils::test_socket_address;
     use tokio::sync::mpsc;
+
+    fn dummy_instant_lock(txid: Txid) -> InstantLock {
+        InstantLock {
+            txid,
+            ..InstantLock::default()
+        }
+    }
+
+    fn rich_instant_lock(txid: Txid) -> InstantLock {
+        InstantLock {
+            txid,
+            cyclehash: BlockHash::from_byte_array([0xab; 32]),
+            ..InstantLock::default()
+        }
+    }
 
     fn create_test_manager(
     ) -> (MempoolManager<MockWallet>, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
@@ -917,7 +935,7 @@ mod tests {
             ));
         }
 
-        manager.mark_instant_send(&txid).await;
+        manager.mark_instant_send(dummy_instant_lock(txid)).await;
 
         // Verify mempool state also reflects IS flag
         let state = manager.mempool_state.read().await;
@@ -929,7 +947,7 @@ mod tests {
         let changes = status_changes.lock().await;
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].0, txid);
-        assert_eq!(changes[0].1, TransactionContext::InstantSend);
+        assert!(matches!(changes[0].1, TransactionContext::InstantSend(_)));
     }
 
     #[tokio::test]
@@ -937,7 +955,7 @@ mod tests {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let unknown_txid = Txid::from_byte_array([0xbb; 32]);
-        manager.mark_instant_send(&unknown_txid).await;
+        manager.mark_instant_send(dummy_instant_lock(unknown_txid)).await;
 
         // No immediate wallet notification
         let wallet = manager.wallet.read().await;
@@ -1055,7 +1073,8 @@ mod tests {
         manager
             .peers
             .insert(test_socket_address(1), Some(VecDeque::from([Txid::from_byte_array([2; 32])])));
-        manager.pending_is_locks.insert(Txid::from_byte_array([3; 32]), Instant::now());
+        let txid3 = Txid::from_byte_array([3; 32]);
+        manager.pending_is_locks.insert(txid3, (dummy_instant_lock(txid3), Instant::now()));
 
         manager.clear_pending();
 
@@ -1092,7 +1111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_instant_send_before_transaction() {
-        let (mut manager, _requests, _wallet) = create_relevant_manager();
+        let (mut manager, _requests, wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 1,
@@ -1103,8 +1122,8 @@ mod tests {
         };
         let txid = tx.txid();
 
-        // IS lock arrives before the transaction
-        manager.mark_instant_send(&txid).await;
+        // IS lock arrives before the transaction (with a distinct cyclehash)
+        manager.mark_instant_send(rich_instant_lock(txid)).await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives
@@ -1116,6 +1135,18 @@ mod tests {
         // Transaction stored with IS flag set
         let state = manager.mempool_state.read().await;
         assert!(state.transactions.get(&txid).unwrap().is_instant_send);
+        drop(state);
+
+        // Wallet received the IS lock payload with the correct cyclehash
+        let w = wallet.read().await;
+        let locks = w.processed_instant_locks.lock().await;
+        let received = locks.iter().find(|(id, lock)| {
+            *id == txid
+                && lock
+                    .as_ref()
+                    .is_some_and(|l| l.cyclehash == BlockHash::from_byte_array([0xab; 32]))
+        });
+        assert!(received.is_some(), "wallet should have received rich IS lock with cyclehash 0xab");
     }
 
     #[tokio::test]
@@ -1132,7 +1163,7 @@ mod tests {
         let txid = tx.txid();
 
         // IS lock arrives before the transaction
-        manager.mark_instant_send(&txid).await;
+        manager.mark_instant_send(dummy_instant_lock(txid)).await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives but wallet says it's not relevant
@@ -1154,13 +1185,14 @@ mod tests {
         for i in 0..MAX_PENDING_IS_LOCKS {
             let mut bytes = [0u8; 32];
             bytes[0..8].copy_from_slice(&(i as u64).to_le_bytes());
-            manager.pending_is_locks.insert(Txid::from_byte_array(bytes), Instant::now());
+            let txid = Txid::from_byte_array(bytes);
+            manager.pending_is_locks.insert(txid, (dummy_instant_lock(txid), Instant::now()));
         }
         assert_eq!(manager.pending_is_locks.len(), MAX_PENDING_IS_LOCKS);
 
         // Next IS lock should be dropped
         let overflow_txid = Txid::from_byte_array([0xff; 32]);
-        manager.mark_instant_send(&overflow_txid).await;
+        manager.mark_instant_send(dummy_instant_lock(overflow_txid)).await;
         assert!(!manager.pending_is_locks.contains_key(&overflow_txid));
         assert_eq!(manager.pending_is_locks.len(), MAX_PENDING_IS_LOCKS);
     }
@@ -1191,8 +1223,10 @@ mod tests {
 
         // Also store a pending IS lock for this txid and an unrelated one
         let unrelated_txid = Txid::from_byte_array([0xdd; 32]);
-        manager.pending_is_locks.insert(txid, Instant::now());
-        manager.pending_is_locks.insert(unrelated_txid, Instant::now());
+        manager.pending_is_locks.insert(txid, (dummy_instant_lock(txid), Instant::now()));
+        manager
+            .pending_is_locks
+            .insert(unrelated_txid, (dummy_instant_lock(unrelated_txid), Instant::now()));
 
         manager.prune_expired(test_timeout).await;
 
@@ -1216,13 +1250,19 @@ mod tests {
 
         // Insert a pending IS lock that is older than the test timeout
         let stale_txid = Txid::from_byte_array([0xaa; 32]);
-        manager
-            .pending_is_locks
-            .insert(stale_txid, Instant::now() - test_timeout - Duration::from_secs(1));
+        manager.pending_is_locks.insert(
+            stale_txid,
+            (
+                dummy_instant_lock(stale_txid),
+                Instant::now() - test_timeout - Duration::from_secs(1),
+            ),
+        );
 
         // Insert a fresh pending IS lock
         let fresh_txid = Txid::from_byte_array([0xbb; 32]);
-        manager.pending_is_locks.insert(fresh_txid, Instant::now());
+        manager
+            .pending_is_locks
+            .insert(fresh_txid, (dummy_instant_lock(fresh_txid), Instant::now()));
 
         manager.prune_expired(test_timeout).await;
 

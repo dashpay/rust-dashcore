@@ -742,7 +742,7 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
 
         ffi_record.txid = record.txid.to_byte_array();
         ffi_record.net_amount = record.net_amount;
-        ffi_record.context = FFITransactionContext::from(record.context);
+        ffi_record.context = FFITransactionContext::from(record.context.clone());
         ffi_record.transaction_type = FFITransactionType::from(record.transaction_type);
         ffi_record.direction = FFITransactionDirection::from(record.direction);
         ffi_record.fee = record.fee.unwrap_or(0);
@@ -823,7 +823,10 @@ pub unsafe extern "C" fn managed_core_account_free_transactions(
     }
 
     for i in 0..count {
-        let record = &*transactions.add(i);
+        let record = &mut *transactions.add(i);
+
+        // Free IS lock data
+        record.context.free_islock_data();
 
         // Free input detail addresses first, then the array
         if !record.input_details.is_null() && record.input_details_count > 0 {
@@ -2012,6 +2015,8 @@ mod tests {
             r0.context = FFITransactionContext {
                 context_type: FFITransactionContextType::Mempool,
                 block_info: FFIBlockInfo::empty(),
+                islock_data: std::ptr::null(),
+                islock_len: 0,
             };
             r0.transaction_type = FFITransactionType::Standard;
             r0.direction = FFITransactionDirection::Incoming;
@@ -2053,6 +2058,8 @@ mod tests {
             r1.context = FFITransactionContext {
                 context_type: FFITransactionContextType::Mempool,
                 block_info: FFIBlockInfo::empty(),
+                islock_data: std::ptr::null(),
+                islock_len: 0,
             };
             r1.transaction_type = FFITransactionType::Standard;
             r1.direction = FFITransactionDirection::Outgoing;

@@ -188,8 +188,9 @@ async fn test_update_state_flag_behavior() {
     ));
 
     // First check with update_state = false
-    let result1 =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false, true).await;
+    let result1 = managed_wallet_info
+        .check_core_transaction(&tx, context.clone(), &mut wallet, false, true)
+        .await;
 
     assert!(result1.is_relevant);
 

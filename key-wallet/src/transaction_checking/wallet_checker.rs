@@ -80,7 +80,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         if !is_new {
             // IS lock on a transaction that is already confirmed is stale — ignore
-            if context == TransactionContext::InstantSend {
+            if context.is_instant_send() {
                 if !self.instant_send_locks.insert(txid) {
                     return result;
                 }
@@ -94,13 +94,16 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if already_confirmed {
                     return result;
                 }
-                // Mark UTXOs as IS-locked in affected accounts
+                // Mark UTXOs as IS-locked and update the transaction context
                 for account_match in &result.affected_accounts {
                     if let Some(account) = self
                         .accounts
                         .get_by_account_type_match_mut(&account_match.account_type_match)
                     {
                         account.mark_utxos_instant_send(&txid);
+                        if let Some(record) = account.transactions.get_mut(&txid) {
+                            record.update_context(context.clone());
+                        }
                     }
                 }
                 if update_balance {
@@ -124,12 +127,13 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             if is_new {
-                let record = account.record_transaction(tx, &account_match, context, tx_type);
+                let record =
+                    account.record_transaction(tx, &account_match, context.clone(), tx_type);
                 if let Some(account_index) = account_match.account_type_match.account_index() {
                     result.new_records.push((account_index, record));
                 }
                 result.state_modified = true;
-            } else if account.confirm_transaction(tx, &account_match, context, tx_type) {
+            } else if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
                 result.state_modified = true;
             }
 
@@ -166,7 +170,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         if is_new {
             // Populate dedup sets when a tx arrives with an initial IS status
-            if context == TransactionContext::InstantSend {
+            if context.is_instant_send() {
                 self.instant_send_locks.insert(txid);
             }
             self.increment_transactions();
@@ -203,6 +207,7 @@ mod tests {
     use crate::Network;
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::blockdata::transaction::Transaction;
+    use dashcore::ephemerealdata::instant_lock::InstantLock;
     use dashcore::OutPoint;
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
@@ -664,8 +669,9 @@ mod tests {
         ));
 
         // First processing - should be marked as new
-        let result1 =
-            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        let result1 = managed_wallet
+            .check_core_transaction(&tx, context.clone(), &mut wallet, true, true)
+            .await;
 
         assert!(result1.is_relevant, "Transaction should be relevant");
         assert!(
@@ -876,7 +882,11 @@ mod tests {
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
 
         // Stage 2: IS lock
-        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let is_lock = InstantLock {
+            txid,
+            ..InstantLock::default()
+        };
+        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend(is_lock)).await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
@@ -886,8 +896,18 @@ mod tests {
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
         assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
 
+        // Verify the TransactionRecord stores the IS lock payload
+        let record = ctx.transaction(&txid);
+        if let TransactionContext::InstantSend(ref lock) = record.context {
+            assert_eq!(lock.txid, txid);
+        } else {
+            panic!("expected InstantSend context, got {:?}", record.context);
+        }
+
         // Duplicate IS lock should be a no-op
-        let result_dup = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result_dup = ctx
+            .check_transaction(&tx, TransactionContext::InstantSend(InstantLock::default()))
+            .await;
         assert!(result_dup.is_relevant);
         assert!(!result_dup.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
@@ -913,7 +933,9 @@ mod tests {
 
         // Stage 5: late IS lock on already-confirmed tx should be ignored
         let balance_before = ctx.managed_wallet.balance();
-        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result = ctx
+            .check_transaction(&tx, TransactionContext::InstantSend(InstantLock::default()))
+            .await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), balance_before.spendable());
@@ -927,7 +949,9 @@ mod tests {
         let txid = tx.txid();
 
         // Arrive directly as IS (skipping plain mempool)
-        let result = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result = ctx
+            .check_transaction(&tx, TransactionContext::InstantSend(InstantLock::default()))
+            .await;
         assert!(result.is_relevant);
         assert!(result.is_new_transaction);
         assert_eq!(result.total_received, 150_000);
@@ -938,7 +962,9 @@ mod tests {
         assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
 
         // A follow-up IS lock should be a no-op
-        let result2 = ctx.check_transaction(&tx, TransactionContext::InstantSend).await;
+        let result2 = ctx
+            .check_transaction(&tx, TransactionContext::InstantSend(InstantLock::default()))
+            .await;
         assert!(!result2.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);

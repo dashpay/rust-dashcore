@@ -1,6 +1,9 @@
 use super::test_helpers::*;
 use super::*;
 use crate::wallet_interface::WalletInterface;
+use dashcore::bls_sig_utils::BLSSignature;
+use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::hash_types::CycleHash;
 use dashcore::hashes::Hash;
 use dashcore::BlockHash;
 use key_wallet::transaction_checking::BlockInfo;
@@ -66,7 +69,7 @@ async fn test_mempool_to_instantsend_to_confirmed_event_flow() {
     assert_lifecycle_flow(
         &[
             TransactionContext::Mempool,
-            TransactionContext::InstantSend,
+            TransactionContext::InstantSend(InstantLock::default()),
             TransactionContext::InBlock(BlockInfo::new(
                 200,
                 BlockHash::from_byte_array([0xbb; 32]),
@@ -109,8 +112,8 @@ async fn test_duplicate_mempool_emits_no_event() {
 #[tokio::test]
 async fn test_duplicate_instantsend_emits_no_event() {
     assert_context_suppressed(
-        &[TransactionContext::Mempool, TransactionContext::InstantSend],
-        TransactionContext::InstantSend,
+        &[TransactionContext::Mempool, TransactionContext::InstantSend(InstantLock::default())],
+        TransactionContext::InstantSend(InstantLock::default()),
         None,
         0x22,
     )
@@ -124,7 +127,8 @@ async fn test_duplicate_confirmed_emits_no_event() {
         BlockHash::from_byte_array([0x33; 32]),
         3000,
     ));
-    assert_context_suppressed(&[block_ctx], block_ctx, Some(300), 0x33).await;
+    let block_ctx2 = block_ctx.clone();
+    assert_context_suppressed(&[block_ctx], block_ctx2, Some(300), 0x33).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +138,8 @@ async fn test_duplicate_confirmed_emits_no_event() {
 #[tokio::test]
 async fn test_first_seen_as_instantsend_then_duplicate() {
     assert_context_suppressed(
-        &[TransactionContext::InstantSend],
-        TransactionContext::InstantSend,
+        &[TransactionContext::InstantSend(InstantLock::default())],
+        TransactionContext::InstantSend(InstantLock::default()),
         None,
         0x55,
     )
@@ -153,7 +157,7 @@ async fn test_late_instantsend_after_confirmation_is_ignored() {
                 8000,
             )),
         ],
-        TransactionContext::InstantSend,
+        TransactionContext::InstantSend(InstantLock::default()),
         Some(800),
         0x77,
     )
@@ -163,7 +167,7 @@ async fn test_late_instantsend_after_confirmation_is_ignored() {
 #[tokio::test]
 async fn test_mempool_after_instantsend_is_suppressed() {
     assert_context_suppressed(
-        &[TransactionContext::Mempool, TransactionContext::InstantSend],
+        &[TransactionContext::Mempool, TransactionContext::InstantSend(InstantLock::default())],
         TransactionContext::Mempool,
         None,
         0xab,
@@ -181,7 +185,7 @@ async fn test_mempool_tx_emits_balance_updated() {
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf1);
 
-    manager.process_mempool_transaction(&tx, false).await;
+    manager.process_mempool_transaction(&tx, None).await;
 
     let events = drain_events(&mut rx);
     let balance_events: Vec<_> =
@@ -208,7 +212,7 @@ async fn test_instantsend_tx_emits_balance_updated_spendable() {
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf2);
 
-    manager.process_mempool_transaction(&tx, true).await;
+    manager.process_mempool_transaction(&tx, Some(InstantLock::default())).await;
 
     let events = drain_events(&mut rx);
     let balance_events: Vec<_> =
@@ -236,7 +240,7 @@ async fn test_mempool_to_instantsend_transitions_balance() {
     let tx = create_tx_paying_to(&addr, 0xf3);
 
     // Mempool tx: balance should be unconfirmed
-    manager.process_mempool_transaction(&tx, false).await;
+    manager.process_mempool_transaction(&tx, None).await;
     let events = drain_events(&mut rx);
     assert!(
         events.iter().any(|e| matches!(
@@ -253,7 +257,7 @@ async fn test_mempool_to_instantsend_transitions_balance() {
     );
 
     // IS lock: balance should move from unconfirmed to spendable
-    manager.process_instant_send_lock(tx.txid());
+    manager.process_instant_send_lock(dummy_instant_lock(tx.txid()));
     let events = drain_events(&mut rx);
     assert!(
         events.iter().any(|e| matches!(
@@ -270,6 +274,39 @@ async fn test_mempool_to_instantsend_transitions_balance() {
     );
 }
 
+#[tokio::test]
+async fn test_process_instant_send_lock_updates_transaction_record_context() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let tx = create_tx_paying_to(&addr, 0xf4);
+
+    // Process as mempool transaction first
+    manager.process_mempool_transaction(&tx, None).await;
+
+    // Verify record starts with Mempool context
+    let history = manager.wallet_transaction_history(&wallet_id).unwrap();
+    let record = history.iter().find(|r| r.txid == tx.txid()).unwrap();
+    assert_eq!(record.context, TransactionContext::Mempool);
+
+    // Create a rich InstantLock with a non-default cyclehash
+    let lock = InstantLock {
+        txid: tx.txid(),
+        cyclehash: CycleHash::from_byte_array([0xab; 32]),
+        signature: BLSSignature::from([0xcd; 96]),
+        ..InstantLock::default()
+    };
+
+    manager.process_instant_send_lock(lock.clone());
+
+    // Verify the transaction record context was updated to InstantSend
+    let history = manager.wallet_transaction_history(&wallet_id).unwrap();
+    let record = history.iter().find(|r| r.txid == tx.txid()).unwrap();
+    assert_eq!(
+        record.context,
+        TransactionContext::InstantSend(lock),
+        "transaction record context should be updated to InstantSend with matching lock"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Production API tests
 // ---------------------------------------------------------------------------
@@ -282,7 +319,7 @@ async fn test_process_instant_send_lock_for_unknown_txid() {
     let unknown_txid = dashcore::Txid::from_byte_array([0xee; 32]);
     let balance_before = manager.wallet_infos.get(&wallet_id).unwrap().balance();
 
-    manager.process_instant_send_lock(unknown_txid);
+    manager.process_instant_send_lock(dummy_instant_lock(unknown_txid));
 
     assert_no_events(&mut rx);
     let balance_after = manager.wallet_infos.get(&wallet_id).unwrap().balance();
@@ -294,18 +331,18 @@ async fn test_process_instant_send_lock_dedup() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let tx = create_tx_paying_to(&addr, 0xe1);
 
-    manager.process_mempool_transaction(&tx, false).await;
+    manager.process_mempool_transaction(&tx, None).await;
     let mut rx = manager.subscribe_events();
 
     // First IS lock should emit events
-    manager.process_instant_send_lock(tx.txid());
+    manager.process_instant_send_lock(dummy_instant_lock(tx.txid()));
     let events = drain_events(&mut rx);
     assert!(
         events.iter().any(|e| matches!(
             e,
             WalletEvent::TransactionStatusChanged {
                 wallet_id: wid,
-                status: TransactionContext::InstantSend,
+                status: TransactionContext::InstantSend(_),
                 ..
             } if *wid == wallet_id
         )),
@@ -321,7 +358,7 @@ async fn test_process_instant_send_lock_dedup() {
     );
 
     // Second IS lock should be a no-op
-    manager.process_instant_send_lock(tx.txid());
+    manager.process_instant_send_lock(dummy_instant_lock(tx.txid()));
     assert_no_events(&mut rx);
 }
 
@@ -331,7 +368,7 @@ async fn test_process_instant_send_lock_after_block_confirmation() {
     let tx = create_tx_paying_to(&addr, 0xe2);
 
     // Process as IS mempool tx, then confirm in block
-    manager.process_mempool_transaction(&tx, true).await;
+    manager.process_mempool_transaction(&tx, Some(InstantLock::default())).await;
     let block_ctx = TransactionContext::InBlock(BlockInfo::new(
         500,
         BlockHash::from_byte_array([0xe2; 32]),
@@ -341,7 +378,7 @@ async fn test_process_instant_send_lock_after_block_confirmation() {
 
     // IS lock after block confirmation is a no-op (already tracked via mempool IS)
     let mut rx = manager.subscribe_events();
-    manager.process_instant_send_lock(tx.txid());
+    manager.process_instant_send_lock(dummy_instant_lock(tx.txid()));
     assert_no_events(&mut rx);
 
     // Confirm height preserved
@@ -362,14 +399,14 @@ async fn test_mixed_instantsend_paths_no_duplicate_events() {
     drain_events(&mut rx);
 
     // IS lock via process_instant_send_lock (network IS lock message)
-    manager.process_instant_send_lock(tx.txid());
+    manager.process_instant_send_lock(dummy_instant_lock(tx.txid()));
     let events = drain_events(&mut rx);
     assert!(
         events.iter().any(|e| matches!(
             e,
             WalletEvent::TransactionStatusChanged {
                 wallet_id: wid,
-                status: TransactionContext::InstantSend,
+                status: TransactionContext::InstantSend(_),
                 ..
             } if *wid == wallet_id
         )),
@@ -379,8 +416,9 @@ async fn test_mixed_instantsend_paths_no_duplicate_events() {
 
     // Same IS lock via check_transaction_in_all_wallets (block/tx processing path)
     // should be suppressed — no duplicate event
+    let is_lock = dummy_instant_lock(tx.txid());
     manager
-        .check_transaction_in_all_wallets(&tx, TransactionContext::InstantSend, true, true)
+        .check_transaction_in_all_wallets(&tx, TransactionContext::InstantSend(is_lock), true, true)
         .await;
     assert_no_events(&mut rx);
 }
@@ -396,8 +434,14 @@ async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
     drain_events(&mut rx);
 
     // IS lock via check_transaction_in_all_wallets first
+    let is_lock = dummy_instant_lock(tx.txid());
     manager
-        .check_transaction_in_all_wallets(&tx, TransactionContext::InstantSend, true, true)
+        .check_transaction_in_all_wallets(
+            &tx,
+            TransactionContext::InstantSend(is_lock.clone()),
+            true,
+            true,
+        )
         .await;
     let events = drain_events(&mut rx);
     assert!(
@@ -405,7 +449,7 @@ async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
             e,
             WalletEvent::TransactionStatusChanged {
                 wallet_id: wid,
-                status: TransactionContext::InstantSend,
+                status: TransactionContext::InstantSend(_),
                 ..
             } if *wid == wallet_id
         )),
@@ -414,7 +458,7 @@ async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
     );
 
     // Same IS lock via process_instant_send_lock — should be suppressed
-    manager.process_instant_send_lock(tx.txid());
+    manager.process_instant_send_lock(is_lock);
     assert_no_events(&mut rx);
 }
 
@@ -511,7 +555,7 @@ async fn test_irrelevant_mempool_tx_emits_no_events() {
         special_transaction_payload: None,
     };
 
-    let result = manager.process_mempool_transaction(&tx, false).await;
+    let result = manager.process_mempool_transaction(&tx, None).await;
 
     assert!(!result.is_relevant);
     assert_eq!(result.net_amount, 0);
@@ -526,7 +570,7 @@ async fn test_irrelevant_mempool_tx_emits_no_events() {
 async fn test_instantsend_to_chainlocked_event_flow() {
     assert_lifecycle_flow(
         &[
-            TransactionContext::InstantSend,
+            TransactionContext::InstantSend(InstantLock::default()),
             TransactionContext::InChainLockedBlock(BlockInfo::new(
                 1600,
                 BlockHash::from_byte_array([0xc3; 32]),
