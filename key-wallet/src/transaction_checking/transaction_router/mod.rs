@@ -61,6 +61,8 @@ impl TransactionRouter {
                 TransactionPayload::QuorumCommitmentPayloadType(_) => TransactionType::Ignored,
                 TransactionPayload::MnhfSignalPayloadType(_) => TransactionType::Ignored,
             }
+        } else if tx.is_coin_base() {
+            TransactionType::Coinbase
         } else if Self::is_coinjoin_transaction(tx) {
             TransactionType::CoinJoin
         } else {
