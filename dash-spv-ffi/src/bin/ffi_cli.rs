@@ -266,6 +266,7 @@ extern "C" fn on_error(error: *const c_char, _user_data: *mut c_void) {
             .to_string()
     };
     eprintln!("[FATAL] {}", msg);
+    std::process::exit(1);
 }
 
 fn main() {
