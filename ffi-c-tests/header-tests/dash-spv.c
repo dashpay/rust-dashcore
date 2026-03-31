@@ -1,4 +1,4 @@
-#include "../../target/debug/include/dash-spv-ffi/dash-spv-ffi.h"
+#include "../../target/llvm-cov-target/debug/include/dash-spv-ffi/dash-spv-ffi.h"
 
 int main() {
 

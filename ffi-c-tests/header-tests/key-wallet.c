@@ -1,4 +1,4 @@
-#include "../../target/debug/include/key-wallet-ffi/key-wallet-ffi.h"
+#include "../../target/llvm-cov-target/debug/include/key-wallet-ffi/key-wallet-ffi.h"
 
 int main() {
 
