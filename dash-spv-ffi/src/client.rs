@@ -121,15 +121,21 @@ impl FFIDashSpvClient {
     /// Only falls back to `abort()` if the task doesn't exit within the timeout.
     fn wait_for_run_task(&self) {
         let task = self.run_task.lock().unwrap().take();
-        if let Some(task) = task {
-            let finished = self
-                .runtime
-                .block_on(async { tokio::time::timeout(RUN_TASK_SHUTDOWN_TIMEOUT, task).await });
-            if finished.is_err() {
-                tracing::warn!(
-                    "Run task did not exit within {:?}, aborting",
-                    RUN_TASK_SHUTDOWN_TIMEOUT
-                );
+        if let Some(mut task) = task {
+            let finished = self.runtime.block_on(async {
+                tokio::time::timeout(RUN_TASK_SHUTDOWN_TIMEOUT, &mut task).await
+            });
+            match finished {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::warn!("Run task exited with join error: {}", e),
+                Err(_) => {
+                    tracing::warn!(
+                        "Run task did not exit within {:?}, aborting",
+                        RUN_TASK_SHUTDOWN_TIMEOUT,
+                    );
+                    task.abort();
+                    let _ = self.runtime.block_on(task);
+                }
             }
         }
     }
