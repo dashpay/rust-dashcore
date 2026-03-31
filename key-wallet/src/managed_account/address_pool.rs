@@ -3,8 +3,6 @@
 //! This module provides comprehensive address pool management including
 //! generation, usage tracking, and discovery.
 
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use core::fmt;
 use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
@@ -19,7 +17,6 @@ use dashcore::{Address, AddressType, ScriptBuf};
 
 /// Types of public keys used in the address pool
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[allow(clippy::upper_case_acronyms)]
 pub enum PublicKeyType {
     /// ECDSA public key (standard Bitcoin/Dash addresses) - stored as `Vec<u8>` for serialization
@@ -33,7 +30,6 @@ pub enum PublicKeyType {
 /// Type of address pool (external, internal, or absent/single-pool)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum AddressPoolType {
     /// External (receive) addresses - used for receiving funds
     External,
@@ -92,7 +88,6 @@ impl<'de> Deserialize<'de> for PublicKeyType {
 /// Key source for address derivation
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum KeySource {
     /// ECDSA private key for full wallet
     Private(ExtendedPrivKey),
@@ -210,7 +205,6 @@ impl KeySource {
 /// Information about a single address in the pool
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AddressInfo {
     /// The address
     pub address: Address,
@@ -322,7 +316,6 @@ impl AddressInfo {
 /// Address pool for managing HD wallet addresses
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AddressPool {
     /// Base derivation path for this pool
     pub base_path: DerivationPath,

@@ -124,34 +124,6 @@ impl AsRef<[u8]> for PlatformP2PKHAddress {
     }
 }
 
-#[cfg(feature = "bincode")]
-impl bincode::Encode for PlatformP2PKHAddress {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> core::result::Result<(), bincode::error::EncodeError> {
-        bincode::Encode::encode(&self.0, encoder)
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<Context> bincode::Decode<Context> for PlatformP2PKHAddress {
-    fn decode<D: bincode::de::Decoder<Context = Context>>(
-        decoder: &mut D,
-    ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        Ok(Self(<[u8; 20]>::decode(decoder)?))
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<'de, Context> bincode::BorrowDecode<'de, Context> for PlatformP2PKHAddress {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = Context>>(
-        decoder: &mut D,
-    ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        Ok(Self(<[u8; 20]>::borrow_decode(decoder)?))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

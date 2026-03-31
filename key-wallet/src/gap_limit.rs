@@ -3,8 +3,6 @@
 //! Implements BIP44 gap limit tracking to determine when to stop generating
 //! addresses during wallet recovery and discovery.
 
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use core::cmp;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -31,7 +29,6 @@ pub const MAX_GAP_LIMIT: u32 = 1000;
 /// Stages of gap limit processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum GapLimitStage {
     /// Initial address generation
     Initial,
@@ -46,7 +43,6 @@ pub enum GapLimitStage {
 /// Gap limit tracker for a single chain (external or internal)
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct GapLimit {
     /// The gap limit value
     pub limit: u32,
@@ -232,7 +228,6 @@ impl GapLimit {
 /// Statistics about gap limit state
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct GapLimitStats {
     pub limit: u32,
     pub stage: GapLimitStage,
@@ -247,7 +242,6 @@ pub struct GapLimitStats {
 /// Manager for multiple gap limits (external, internal, CoinJoin)
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct GapLimitManager {
     /// External (receive) address gap limit
     pub external: GapLimit,
@@ -325,7 +319,6 @@ impl GapLimitManager {
 /// Combined statistics for all gap limits
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct GapLimitManagerStats {
     pub external: GapLimitStats,
     pub internal: GapLimitStats,

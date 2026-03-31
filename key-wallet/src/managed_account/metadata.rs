@@ -2,15 +2,12 @@
 //!
 //! This module contains metadata structures for accounts.
 
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Account metadata for organization and tracking
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AccountMetadata {
     /// Human-readable account name
     pub name: Option<String>,

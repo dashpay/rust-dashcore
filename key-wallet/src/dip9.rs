@@ -1,6 +1,4 @@
 use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use bitflags::bitflags;
 use dashcore::Network;
 use secp256k1::Secp256k1;
@@ -9,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum DerivationPathReference {
     Unknown = 0,
     BIP32 = 1,

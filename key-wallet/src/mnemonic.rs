@@ -5,8 +5,6 @@ use core::str::FromStr;
 
 use crate::bip32::ExtendedPrivKey;
 use crate::error::{Error, Result};
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use bip39 as bip39_crate;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -15,7 +13,6 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// Language for mnemonic generation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum Language {
     English,
     ChineseSimplified,
@@ -51,49 +48,6 @@ impl From<Language> for bip39_crate::Language {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mnemonic {
     inner: bip39_crate::Mnemonic,
-}
-
-#[cfg(feature = "bincode")]
-impl bincode::Encode for Mnemonic {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> core::result::Result<(), bincode::error::EncodeError> {
-        // Store mnemonic as its phrase string
-        let phrase = self.phrase();
-        phrase.encode(encoder)
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<C> bincode::Decode<C> for Mnemonic {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        let phrase: String = bincode::Decode::decode(decoder)?;
-        // Parse back from phrase - default to English
-        let inner = bip39_crate::Mnemonic::parse(&phrase).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid mnemonic: {}", e))
-        })?;
-        Ok(Self {
-            inner,
-        })
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl<'de, C> bincode::BorrowDecode<'de, C> for Mnemonic {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
-        decoder: &mut D,
-    ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        let phrase: String = bincode::BorrowDecode::borrow_decode(decoder)?;
-        let inner = bip39_crate::Mnemonic::parse(&phrase).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid mnemonic: {}", e))
-        })?;
-        Ok(Self {
-            inner,
-        })
-    }
 }
 
 impl Mnemonic {

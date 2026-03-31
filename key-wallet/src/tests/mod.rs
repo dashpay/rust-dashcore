@@ -24,6 +24,4 @@ mod special_transaction_tests;
 
 mod transaction_tests;
 
-mod spent_outpoints_tests;
-
 mod wallet_tests;

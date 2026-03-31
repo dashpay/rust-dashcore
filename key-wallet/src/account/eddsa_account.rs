@@ -17,13 +17,10 @@ use serde::{Deserialize, Serialize};
 use crate::account::derivation::AccountDerivation;
 use crate::bip32::{ChainCode, Fingerprint};
 use crate::managed_account::address_pool::AddressPoolType;
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 
 /// EdDSA (Ed25519) account structure for Platform identity operations
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct EdDSAAccount {
     /// Wallet id (stored as Vec for serialization)
     pub parent_wallet_id: Option<Vec<u8>>,
@@ -153,21 +150,6 @@ impl EdDSAAccount {
         let mut watch_only = self.clone();
         watch_only.is_watch_only = true;
         watch_only
-    }
-
-    /// Serialize account to bytes
-    #[cfg(feature = "bincode")]
-    pub fn serialize(&self) -> Result<Vec<u8>> {
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .map_err(|e| Error::Serialization(e.to_string()))
-    }
-
-    /// Deserialize account from bytes
-    #[cfg(feature = "bincode")]
-    pub fn deserialize(data: &[u8]) -> Result<Self> {
-        bincode::decode_from_slice(data, bincode::config::standard())
-            .map(|(account, _)| account)
-            .map_err(|e| Error::Serialization(e.to_string()))
     }
 
     /// Derive a Platform identity key at index

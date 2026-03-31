@@ -8,15 +8,12 @@ use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, PlatformAccountConversionError,
 };
 use crate::Network;
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Account types supported by the wallet
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum StandardAccountType {
     /// Standard BIP44 account for regular transactions m/44'/coin_type'/account'/x/x
     #[default]
@@ -28,7 +25,6 @@ pub enum StandardAccountType {
 /// Account types supported by the wallet
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum AccountType {
     /// Standard BIP44 account for regular transactions
     Standard {

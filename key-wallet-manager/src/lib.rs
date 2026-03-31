@@ -201,7 +201,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// # Security Note
     /// When `downgrade_to_pubkey_wallet` is true, the returned wallet contains NO private key material,
     /// making it safe to use on potentially compromised systems or for creating watch-only wallets.
-    #[cfg(feature = "bincode")]
+    #[cfg(feature = "serde")]
     #[allow(clippy::too_many_arguments)]
     pub fn create_wallet_from_mnemonic_return_serialized_bytes(
         &mut self,
@@ -271,10 +271,10 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         }
 
         // Serialize the wallet to bytes
-        let serialized_bytes = bincode::encode_to_vec(&final_wallet, bincode::config::standard())
-            .map_err(|e| {
-            WalletError::InvalidParameter(format!("Failed to serialize wallet: {}", e))
-        })?;
+        let serialized_bytes =
+            bincode::serde::encode_to_vec(&final_wallet, bincode::config::standard()).map_err(
+                |e| WalletError::InvalidParameter(format!("Failed to serialize wallet: {}", e)),
+            )?;
 
         // Add the wallet to the manager
         let mut managed_info = T::from_wallet(&final_wallet);
@@ -423,17 +423,18 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// # Returns
     /// * `Ok(WalletId)` - The computed wallet ID of the imported wallet
     /// * `Err(WalletError)` - If deserialization fails or the wallet already exists
-    #[cfg(feature = "bincode")]
+    #[cfg(feature = "serde")]
     pub fn import_wallet_from_bytes(
         &mut self,
         wallet_bytes: &[u8],
     ) -> Result<WalletId, WalletError> {
         // Deserialize the wallet from bincode
-        let wallet: Wallet = bincode::decode_from_slice(wallet_bytes, bincode::config::standard())
-            .map_err(|e| {
-                WalletError::InvalidParameter(format!("Failed to deserialize wallet: {}", e))
-            })?
-            .0;
+        let wallet: Wallet =
+            bincode::serde::decode_from_slice(wallet_bytes, bincode::config::standard())
+                .map_err(|e| {
+                    WalletError::InvalidParameter(format!("Failed to deserialize wallet: {}", e))
+                })?
+                .0;
 
         // Compute wallet ID from the wallet's root public key
         let wallet_id = wallet.compute_wallet_id();

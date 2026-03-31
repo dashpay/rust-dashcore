@@ -14,12 +14,9 @@ pub mod eddsa_account;
 // pub mod scan;
 pub mod account_type;
 pub mod derivation;
-mod serialization;
 
 use core::fmt;
 
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -53,7 +50,6 @@ pub use eddsa_account::EdDSAAccount;
 /// identity information that doesn't change during normal operation.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Account {
     /// Wallet id
     pub parent_wallet_id: Option<[u8; 32]>,

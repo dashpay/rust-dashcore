@@ -6,8 +6,6 @@ use crate::gap_limit::{
 };
 
 use crate::{AccountType, AddressPool, DerivationPath};
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use dashcore::ScriptBuf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -15,7 +13,6 @@ use serde::{Deserialize, Serialize};
 /// Managed account type with embedded address pools
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[allow(clippy::large_enum_variant)]
 pub enum ManagedAccountType {
     /// Standard BIP44 account for regular transactions
