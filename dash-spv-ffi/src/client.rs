@@ -352,16 +352,17 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
     if !client.is_null() {
         let client = Box::from_raw(client);
 
-        // Cancel shutdown token to stop all tasks
+        // Cancel shutdown token so run() exits its loop and cleans up
         client.shutdown_token.cancel();
-
-        // Stop the SPV client
-        client.runtime.block_on(async {
-            let _ = client.inner.stop().await;
-        });
 
         // Wait for the run task to finish (cooperative, with timeout fallback)
         client.wait_for_run_task();
+
+        // Stop the SPV client (run() calls stop() internally, but this
+        // handles the case where run() was never called or was aborted)
+        client.runtime.block_on(async {
+            let _ = client.inner.stop().await;
+        });
 
         tracing::info!("FFI client destroyed and all tasks cleaned up");
     }
