@@ -360,7 +360,7 @@ impl<W: WalletInterface> MempoolManager<W> {
     ///
     /// If the transaction hasn't arrived yet, remembers the lock so it
     /// can be applied when the transaction is later received via `handle_tx`.
-    pub(super) async fn mark_instant_send(&mut self, instant_lock: InstantLock) {
+    pub(super) async fn process_instant_send(&mut self, instant_lock: InstantLock) {
         let txid = instant_lock.txid;
         let mut state = self.mempool_state.write().await;
         let instant_lock_opt = if let Some(tx) = state.transactions.get_mut(&txid) {
@@ -935,7 +935,7 @@ mod tests {
             ));
         }
 
-        manager.mark_instant_send(dummy_instant_lock(txid)).await;
+        manager.process_instant_send(dummy_instant_lock(txid)).await;
 
         // Verify mempool state also reflects IS flag
         let state = manager.mempool_state.read().await;
@@ -955,7 +955,7 @@ mod tests {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let unknown_txid = Txid::from_byte_array([0xbb; 32]);
-        manager.mark_instant_send(dummy_instant_lock(unknown_txid)).await;
+        manager.process_instant_send(dummy_instant_lock(unknown_txid)).await;
 
         // No immediate wallet notification
         let wallet = manager.wallet.read().await;
@@ -1123,7 +1123,7 @@ mod tests {
         let txid = tx.txid();
 
         // IS lock arrives before the transaction (with a distinct cyclehash)
-        manager.mark_instant_send(rich_instant_lock(txid)).await;
+        manager.process_instant_send(rich_instant_lock(txid)).await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives
@@ -1163,7 +1163,7 @@ mod tests {
         let txid = tx.txid();
 
         // IS lock arrives before the transaction
-        manager.mark_instant_send(dummy_instant_lock(txid)).await;
+        manager.process_instant_send(dummy_instant_lock(txid)).await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives but wallet says it's not relevant
@@ -1192,7 +1192,7 @@ mod tests {
 
         // Next IS lock should be dropped
         let overflow_txid = Txid::from_byte_array([0xff; 32]);
-        manager.mark_instant_send(dummy_instant_lock(overflow_txid)).await;
+        manager.process_instant_send(dummy_instant_lock(overflow_txid)).await;
         assert!(!manager.pending_is_locks.contains_key(&overflow_txid));
         assert_eq!(manager.pending_is_locks.len(), MAX_PENDING_IS_LOCKS);
     }

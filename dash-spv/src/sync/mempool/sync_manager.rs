@@ -96,7 +96,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 instant_lock,
                 ..
             } => {
-                self.mark_instant_send(instant_lock.clone()).await;
+                self.process_instant_send(instant_lock.clone()).await;
                 Ok(vec![])
             }
             _ => Ok(vec![]),
