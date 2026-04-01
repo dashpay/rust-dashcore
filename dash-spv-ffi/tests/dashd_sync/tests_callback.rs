@@ -301,19 +301,25 @@ fn test_callbacks_post_sync_transactions_and_disconnect() {
             tx_received_after
         );
 
-        // Verify the sent txid and amount appear paired in the callback data
+        // Verify the sent txid appears in the callback data with a non-zero
+        // net_amount.  The SPV wallet and dashd share the same mnemonic so the
+        // transaction is an internal transfer (wallet owns both inputs and
+        // outputs); net_amount therefore equals approximately -fee, not the
+        // nominal send amount.
         let sent_txid_bytes = *txid.as_byte_array();
         let received_txs = tracker.received_transactions.lock().unwrap();
+        let sent_entry = received_txs.iter().find(|&&(id, _)| id == sent_txid_bytes);
         assert!(
-            received_txs.iter().any(|&(txid, _)| txid == sent_txid_bytes),
+            sent_entry.is_some(),
             "sent txid should appear in received transaction callback data"
         );
+        let &(_, net_amount) = sent_entry.unwrap();
+        // Internal transfer: net_amount = received - sent = (send_amount + change) - input = -fee.
+        // The fee must be negative, non-zero, and small (< 0.001 DASH).
         assert!(
-            received_txs
-                .iter()
-                .any(|&(txid, amount)| txid == sent_txid_bytes && amount == 100_000_000),
-            "sent txid should be paired with 1 DASH (100_000_000 sat): {:?}",
-            *received_txs
+            net_amount < 0 && net_amount > -100_000,
+            "internal transfer net_amount should equal -fee (small negative), got: {}",
+            net_amount
         );
         drop(received_txs);
 
