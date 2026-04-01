@@ -174,6 +174,18 @@ impl CoreAccountTypeMatch {
             | CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
                 involved_addresses,
             }
+            | CoreAccountTypeMatch::BlockchainIdentitiesECDSA {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::BlockchainIdentitiesECDSAHash160 {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::BlockchainIdentitiesBLS {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::BlockchainIdentitiesBLSHash160 {
+                involved_addresses,
+            }
             | CoreAccountTypeMatch::ProviderVotingKeys {
                 involved_addresses,
             }
