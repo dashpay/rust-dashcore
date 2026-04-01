@@ -4,14 +4,17 @@
 //! ManagedAccount instances from the key-wallet crate. FFIManagedCoreAccount is a
 //! simple wrapper around `Arc<ManagedAccount>` without additional fields.
 
-use std::os::raw::c_uint;
+use std::os::raw::{c_char, c_uint};
 use std::sync::Arc;
 
 use dashcore::hashes::Hash;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountType, FFITransactionContext};
+use crate::types::{
+    FFIAccountType, FFIInputDetail, FFIOutputDetail, FFIOutputRole, FFITransactionContext,
+    FFITransactionDirection, FFITransactionType,
+};
 use crate::wallet_manager::FFIWalletManager;
 use crate::FFINetwork;
 use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
@@ -660,6 +663,8 @@ pub unsafe extern "C" fn managed_core_account_get_utxo_count(
 }
 
 /// FFI-compatible transaction record
+///
+/// Heap-allocated fields must be freed with `managed_core_account_free_transactions`.
 #[repr(C)]
 pub struct FFITransactionRecord {
     /// Transaction ID (32 bytes)
@@ -668,8 +673,26 @@ pub struct FFITransactionRecord {
     pub net_amount: i64,
     /// Transaction context (mempool, instant-send, in-block, chain-locked + block info)
     pub context: FFITransactionContext,
+    /// Classified transaction type
+    pub transaction_type: FFITransactionType,
+    /// Direction of the transaction relative to the wallet
+    pub direction: FFITransactionDirection,
     /// Fee if known, 0 if unknown
     pub fee: u64,
+    /// Input details array
+    pub input_details: *mut FFIInputDetail,
+    /// Number of input details
+    pub input_details_count: usize,
+    /// Output details array
+    pub output_details: *mut FFIOutputDetail,
+    /// Number of output details
+    pub output_details_count: usize,
+    /// Consensus-serialized transaction bytes
+    pub tx_data: *mut u8,
+    /// Length of `tx_data`
+    pub tx_len: usize,
+    /// Optional label (null if not set)
+    pub label: *mut c_char,
 }
 
 /// Get all transactions from a managed account
@@ -717,17 +740,65 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
     for (i, (_txid, record)) in transactions.iter().enumerate() {
         let ffi_record = &mut *ptr.add(i);
 
-        // Copy txid
         ffi_record.txid = record.txid.to_byte_array();
-
-        // Copy net amount
         ffi_record.net_amount = record.net_amount;
-
-        // Copy transaction context
         ffi_record.context = FFITransactionContext::from(record.context);
-
-        // Copy fee (0 if unknown)
+        ffi_record.transaction_type = FFITransactionType::from(record.transaction_type);
+        ffi_record.direction = FFITransactionDirection::from(record.direction);
         ffi_record.fee = record.fee.unwrap_or(0);
+
+        // Serialize transaction bytes
+        let tx_slice = dashcore::consensus::serialize(&record.transaction).into_boxed_slice();
+        ffi_record.tx_len = tx_slice.len();
+        ffi_record.tx_data = if tx_slice.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            Box::into_raw(tx_slice) as *mut u8
+        };
+
+        // Input details
+        let input_slice: Box<[FFIInputDetail]> = record
+            .input_details
+            .iter()
+            .map(|d| {
+                let addr = std::ffi::CString::new(d.address.to_string()).unwrap_or_default();
+                FFIInputDetail {
+                    index: d.index,
+                    value: d.value,
+                    address: addr.into_raw(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        ffi_record.input_details_count = input_slice.len();
+        ffi_record.input_details = if input_slice.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            Box::into_raw(input_slice) as *mut FFIInputDetail
+        };
+
+        // Label
+        ffi_record.label = match &record.label {
+            Some(label) => std::ffi::CString::new(label.as_str()).unwrap_or_default().into_raw(),
+            None => std::ptr::null_mut(),
+        };
+
+        // Output details
+        let output_slice: Box<[FFIOutputDetail]> = record
+            .output_details
+            .iter()
+            .map(|d| FFIOutputDetail {
+                index: d.index,
+                role: FFIOutputRole::from(d.role),
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        ffi_record.output_details_count = output_slice.len();
+        ffi_record.output_details = if output_slice.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            Box::into_raw(output_slice) as *mut FFIOutputDetail
+        };
     }
 
     *transactions_out = ptr;
@@ -747,13 +818,50 @@ pub unsafe extern "C" fn managed_core_account_free_transactions(
     transactions: *mut FFITransactionRecord,
     count: usize,
 ) {
-    if !transactions.is_null() && count > 0 {
-        let layout = match std::alloc::Layout::array::<FFITransactionRecord>(count) {
-            Ok(layout) => layout,
-            Err(_) => return,
-        };
-        std::alloc::dealloc(transactions as *mut u8, layout);
+    if transactions.is_null() || count == 0 {
+        return;
     }
+
+    for i in 0..count {
+        let record = &*transactions.add(i);
+
+        // Free input detail addresses first, then the array
+        if !record.input_details.is_null() && record.input_details_count > 0 {
+            let slice =
+                std::slice::from_raw_parts_mut(record.input_details, record.input_details_count);
+            for detail in slice.iter() {
+                if !detail.address.is_null() {
+                    drop(std::ffi::CString::from_raw(detail.address));
+                }
+            }
+            drop(Box::from_raw(slice as *mut [FFIInputDetail]));
+        }
+
+        // Free output details
+        if !record.output_details.is_null() && record.output_details_count > 0 {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                record.output_details,
+                record.output_details_count,
+            )));
+        }
+
+        // Free tx data
+        if !record.tx_data.is_null() && record.tx_len > 0 {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(record.tx_data, record.tx_len)));
+        }
+
+        // Free label
+        if !record.label.is_null() {
+            drop(std::ffi::CString::from_raw(record.label));
+        }
+    }
+
+    // Free the main array
+    let layout = match std::alloc::Layout::array::<FFITransactionRecord>(count) {
+        Ok(layout) => layout,
+        Err(_) => return,
+    };
+    std::alloc::dealloc(transactions as *mut u8, layout);
 }
 
 /// Free a managed account handle
@@ -1339,7 +1447,11 @@ pub unsafe extern "C" fn managed_platform_account_result_free_error(
 mod tests {
     use super::*;
     use crate::address_pool::address_pool_free;
-    use crate::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
+    use crate::types::{
+        FFIAccountCreationOptionType, FFIBlockInfo, FFIInputDetail, FFIOutputDetail, FFIOutputRole,
+        FFITransactionContext, FFITransactionContextType, FFITransactionDirection,
+        FFITransactionType, FFIWalletAccountCreationOptions,
+    };
     use crate::wallet_manager::{
         wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
         wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
@@ -1874,6 +1986,87 @@ mod tests {
         unsafe {
             // Should not crash when freeing null
             address_pool_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_free_transactions_null_safety() {
+        unsafe {
+            managed_core_account_free_transactions(std::ptr::null_mut(), 0);
+            managed_core_account_free_transactions(std::ptr::null_mut(), 5);
+        }
+    }
+
+    #[test]
+    fn test_ffi_transaction_record_roundtrip() {
+        unsafe {
+            let count = 2;
+            let layout = std::alloc::Layout::array::<FFITransactionRecord>(count).unwrap();
+            let records = std::alloc::alloc(layout) as *mut FFITransactionRecord;
+            assert!(!records.is_null());
+
+            // First record: with sub-allocations
+            let r0 = &mut *records.add(0);
+            r0.txid = [0xaa; 32];
+            r0.net_amount = 50000;
+            r0.context = FFITransactionContext {
+                context_type: FFITransactionContextType::Mempool,
+                block_info: FFIBlockInfo::empty(),
+            };
+            r0.transaction_type = FFITransactionType::Standard;
+            r0.direction = FFITransactionDirection::Incoming;
+            r0.fee = 226;
+
+            // Create input details
+            let addr = std::ffi::CString::new("XtestAddress123").unwrap();
+            let input_slice = vec![FFIInputDetail {
+                index: 0,
+                value: 100000,
+                address: addr.into_raw(),
+            }]
+            .into_boxed_slice();
+            r0.input_details_count = input_slice.len();
+            r0.input_details = Box::into_raw(input_slice) as *mut FFIInputDetail;
+
+            // Create output details
+            let output_slice = vec![FFIOutputDetail {
+                index: 0,
+                role: FFIOutputRole::Received,
+            }]
+            .into_boxed_slice();
+            r0.output_details_count = output_slice.len();
+            r0.output_details = Box::into_raw(output_slice) as *mut FFIOutputDetail;
+
+            // Create tx data
+            let tx_slice = vec![0u8; 10].into_boxed_slice();
+            r0.tx_len = tx_slice.len();
+            r0.tx_data = Box::into_raw(tx_slice) as *mut u8;
+
+            // Create label
+            let label = std::ffi::CString::new("Payment for coffee").unwrap();
+            r0.label = label.into_raw();
+
+            // Second record: empty sub-arrays
+            let r1 = &mut *records.add(1);
+            r1.txid = [0xbb; 32];
+            r1.net_amount = -10000;
+            r1.context = FFITransactionContext {
+                context_type: FFITransactionContextType::Mempool,
+                block_info: FFIBlockInfo::empty(),
+            };
+            r1.transaction_type = FFITransactionType::Standard;
+            r1.direction = FFITransactionDirection::Outgoing;
+            r1.fee = 0;
+            r1.input_details = std::ptr::null_mut();
+            r1.input_details_count = 0;
+            r1.output_details = std::ptr::null_mut();
+            r1.output_details_count = 0;
+            r1.tx_data = std::ptr::null_mut();
+            r1.tx_len = 0;
+            r1.label = std::ptr::null_mut();
+
+            // Free should not crash
+            managed_core_account_free_transactions(records, count);
         }
     }
 }

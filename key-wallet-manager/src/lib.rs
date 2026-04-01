@@ -506,28 +506,11 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     }
 
                     if check_result.is_new_transaction {
-                        // First time seeing this transaction — emit TransactionReceived
-                        for account_match in &check_result.affected_accounts {
-                            let Some(account_index) =
-                                account_match.account_type_match.account_index()
-                            else {
-                                continue;
-                            };
-                            let amount = account_match.received as i64 - account_match.sent as i64;
-                            let addresses: Vec<Address> = account_match
-                                .account_type_match
-                                .all_involved_addresses()
-                                .into_iter()
-                                .map(|info| info.address)
-                                .collect();
-
+                        for (account_index, record) in check_result.new_records {
                             let event = WalletEvent::TransactionReceived {
                                 wallet_id,
-                                status: context,
                                 account_index,
-                                txid: tx.txid(),
-                                amount,
-                                addresses,
+                                record: Box::new(record),
                             };
                             let _ = self.event_sender.send(event);
                         }

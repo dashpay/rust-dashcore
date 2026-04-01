@@ -81,7 +81,7 @@ pub(crate) async fn assert_lifecycle_flow(contexts: &[TransactionContext], input
 
         if i == 0 {
             assert!(
-                matches!(event, WalletEvent::TransactionReceived { wallet_id: wid, status, .. } if wid == wallet_id && status == *ctx),
+                matches!(&event, WalletEvent::TransactionReceived { wallet_id: wid, record, .. } if *wid == wallet_id && record.context == *ctx),
                 "context[{}]: expected TransactionReceived with wallet_id and status {:?}, got {:?}",
                 i,
                 ctx,

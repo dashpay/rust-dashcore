@@ -5,6 +5,7 @@ use std::ptr;
 use clap::{Arg, ArgAction, Command};
 
 use dash_spv_ffi::*;
+use key_wallet_ffi::managed_account::FFITransactionRecord;
 use key_wallet_ffi::types::FFITransactionContext;
 use key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic;
 use key_wallet_ffi::{FFIError, FFINetwork};
@@ -157,24 +158,28 @@ extern "C" fn on_peers_updated(connected_count: u32, best_height: u32, _user_dat
 
 extern "C" fn on_transaction_received(
     wallet_id: *const c_char,
-    status: FFITransactionContext,
     account_index: u32,
-    txid: *const [u8; 32],
-    amount: i64,
-    addresses: *const c_char,
+    record: *const FFITransactionRecord,
     _user_data: *mut c_void,
 ) {
     let wallet_str = ffi_string_to_rust(wallet_id);
-    let addr_str = ffi_string_to_rust(addresses);
     let wallet_short = if wallet_str.len() > 8 {
         &wallet_str[..8]
     } else {
         &wallet_str
     };
-    let txid_hex = unsafe { hex::encode(*txid) };
+    if record.is_null() {
+        println!(
+            "[Wallet] TX received: wallet={}..., account={}, record=null",
+            wallet_short, account_index
+        );
+        return;
+    }
+    let r = unsafe { &*record };
+    let txid_hex = hex::encode(r.txid);
     println!(
-        "[Wallet] TX received: wallet={}..., txid={}, account={}, amount={} duffs, status={:?}, addresses={}",
-        wallet_short, txid_hex, account_index, amount, status, addr_str
+        "[Wallet] TX received: wallet={}..., txid={}, account={}, amount={} duffs, tx_size={}",
+        wallet_short, txid_hex, account_index, r.net_amount, r.tx_len
     );
 }
 

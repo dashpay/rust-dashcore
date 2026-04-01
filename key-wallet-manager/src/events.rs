@@ -3,9 +3,11 @@
 //! These events are emitted by the WalletManager when significant wallet
 //! operations occur, allowing consumers to receive push-based notifications.
 
-use crate::WalletId;
-use dashcore::{Address, Amount, SignedAmount, Txid};
+use dashcore::{Amount, SignedAmount, Txid};
+use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::TransactionContext;
+
+use crate::WalletId;
 
 /// Events emitted by the wallet manager.
 ///
@@ -17,16 +19,10 @@ pub enum WalletEvent {
     TransactionReceived {
         /// ID of the affected wallet.
         wallet_id: WalletId,
-        /// Context at the time the transaction was first seen.
-        status: TransactionContext,
         /// Account index within the wallet.
         account_index: u32,
-        /// Transaction ID.
-        txid: Txid,
-        /// Net amount change (positive for incoming, negative for outgoing).
-        amount: i64,
-        /// Addresses involved in the transaction.
-        addresses: Vec<Address>,
+        /// The full transaction record with all details.
+        record: Box<TransactionRecord>,
     },
     /// The confirmation status of a previously seen transaction has changed.
     TransactionStatusChanged {
@@ -57,16 +53,14 @@ impl WalletEvent {
     pub fn description(&self) -> String {
         match self {
             WalletEvent::TransactionReceived {
-                txid,
-                amount,
-                status,
+                record,
                 ..
             } => {
                 format!(
                     "TransactionReceived(txid={}, amount={}, status={})",
-                    txid,
-                    SignedAmount::from_sat(*amount),
-                    status
+                    record.txid,
+                    SignedAmount::from_sat(record.net_amount),
+                    record.context
                 )
             }
             WalletEvent::TransactionStatusChanged {

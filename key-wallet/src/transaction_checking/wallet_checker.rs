@@ -124,7 +124,10 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             if is_new {
-                account.record_transaction(tx, &account_match, context, tx_type);
+                let record = account.record_transaction(tx, &account_match, context, tx_type);
+                if let Some(account_index) = account_match.account_type_match.account_index() {
+                    result.new_records.push((account_index, record));
+                }
                 result.state_modified = true;
             } else if account.confirm_transaction(tx, &account_match, context, tx_type) {
                 result.state_modified = true;

@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dash_spv_ffi::*;
+use key_wallet_ffi::managed_account::FFITransactionRecord;
 use key_wallet_ffi::types::FFITransactionContext;
 
 /// Tracks callback invocations for verification.
@@ -343,29 +344,21 @@ extern "C" fn on_peers_updated(connected_count: u32, best_height: u32, user_data
 
 extern "C" fn on_transaction_received(
     wallet_id: *const c_char,
-    _status: FFITransactionContext,
     account_index: u32,
-    txid: *const [u8; 32],
-    amount: i64,
-    _addresses: *const c_char,
+    record: *const FFITransactionRecord,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    if !txid.is_null() {
-        let txid_bytes = unsafe { *txid };
-        tracker.received_txids.lock().unwrap_or_else(|e| e.into_inner()).push(txid_bytes);
+    if !record.is_null() {
+        let r = unsafe { &*record };
+        tracker.received_txids.lock().unwrap_or_else(|e| e.into_inner()).push(r.txid);
+        tracker.received_amounts.lock().unwrap_or_else(|e| e.into_inner()).push(r.net_amount);
     }
-    tracker.received_amounts.lock().unwrap_or_else(|e| e.into_inner()).push(amount);
     tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
-    tracing::info!(
-        "on_transaction_received: wallet={}, account={}, amount={}",
-        wallet_str,
-        account_index,
-        amount
-    );
+    tracing::info!("on_transaction_received: wallet={}, account={}", wallet_str, account_index,);
 }
 
 extern "C" fn on_transaction_status_changed(

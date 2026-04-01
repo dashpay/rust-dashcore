@@ -1,6 +1,8 @@
 //! Common types for FFI interface
 
 use dashcore::hashes::Hash;
+use key_wallet::managed_account::transaction_record::{OutputRole, TransactionDirection};
+use key_wallet::transaction_checking::transaction_router::TransactionType;
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
 use key_wallet::{Network, Wallet};
 use std::os::raw::c_char;
@@ -432,147 +434,6 @@ impl FFIAccountType {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn valid_block_info() -> FFIBlockInfo {
-        FFIBlockInfo {
-            height: 1000,
-            block_hash: [0xab; 32],
-            timestamp: 1700000000,
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "DashpayReceivingFunds cannot be converted to AccountType")]
-    fn test_dashpay_receiving_funds_to_account_type_panics() {
-        // This should panic because we cannot construct a DashPay account without identity IDs
-        let _ = FFIAccountType::DashpayReceivingFunds.to_account_type(0);
-    }
-
-    #[test]
-    #[should_panic(expected = "DashpayExternalAccount cannot be converted to AccountType")]
-    fn test_dashpay_external_account_to_account_type_panics() {
-        // This should panic because we cannot construct a DashPay account without identity IDs
-        let _ = FFIAccountType::DashpayExternalAccount.to_account_type(0);
-    }
-
-    #[test]
-    #[should_panic(expected = "PlatformPayment cannot be converted to AccountType")]
-    fn test_platform_payment_to_account_type_panics() {
-        // This should panic because we cannot construct a Platform Payment account without indices
-        let _ = FFIAccountType::PlatformPayment.to_account_type(0);
-    }
-
-    #[test]
-    #[should_panic(expected = "Cannot convert AccountType::DashpayReceivingFunds")]
-    fn test_dashpay_receiving_funds_from_account_type_panics() {
-        // This should panic because we cannot represent identity IDs in the FFI tuple
-        let account_type = key_wallet::AccountType::DashpayReceivingFunds {
-            index: 0,
-            user_identity_id: [1u8; 32],
-            friend_identity_id: [2u8; 32],
-        };
-        let _ = FFIAccountType::from_account_type(&account_type);
-    }
-
-    #[test]
-    #[should_panic(expected = "Cannot convert AccountType::DashpayExternalAccount")]
-    fn test_dashpay_external_account_from_account_type_panics() {
-        // This should panic because we cannot represent identity IDs in the FFI tuple
-        let account_type = key_wallet::AccountType::DashpayExternalAccount {
-            index: 0,
-            user_identity_id: [1u8; 32],
-            friend_identity_id: [2u8; 32],
-        };
-        let _ = FFIAccountType::from_account_type(&account_type);
-    }
-
-    #[test]
-    fn test_non_dashpay_conversions_work() {
-        // Verify that non-DashPay types still convert correctly
-        let standard_bip44 = FFIAccountType::StandardBIP44.to_account_type(5);
-        assert!(matches!(
-            standard_bip44,
-            key_wallet::AccountType::Standard {
-                index: 5,
-                ..
-            }
-        ));
-
-        let coinjoin = FFIAccountType::CoinJoin.to_account_type(3);
-        assert!(matches!(
-            coinjoin,
-            key_wallet::AccountType::CoinJoin {
-                index: 3
-            }
-        ));
-
-        // Test reverse conversion
-        let (ffi_type, index, _) = FFIAccountType::from_account_type(&standard_bip44);
-        assert_eq!(ffi_type, FFIAccountType::StandardBIP44);
-        assert_eq!(index, 5);
-    }
-
-    #[test]
-    fn transaction_context_from_ffi_mempool_with_empty_block_info() {
-        let result = transaction_context_from_ffi(
-            FFITransactionContextType::Mempool,
-            &FFIBlockInfo::empty(),
-        );
-        assert!(matches!(result, Some(TransactionContext::Mempool)));
-    }
-
-    #[test]
-    fn transaction_context_from_ffi_instant_send_with_empty_block_info() {
-        let result = transaction_context_from_ffi(
-            FFITransactionContextType::InstantSend,
-            &FFIBlockInfo::empty(),
-        );
-        assert!(matches!(result, Some(TransactionContext::InstantSend)));
-    }
-
-    #[test]
-    fn transaction_context_from_ffi_in_block_with_empty_block_info() {
-        let result = transaction_context_from_ffi(
-            FFITransactionContextType::InBlock,
-            &FFIBlockInfo::empty(),
-        );
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn transaction_context_from_ffi_in_chain_locked_block_with_empty_block_info() {
-        let result = transaction_context_from_ffi(
-            FFITransactionContextType::InChainLockedBlock,
-            &FFIBlockInfo::empty(),
-        );
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn transaction_context_from_ffi_in_block_with_valid_block_info() {
-        let block_info = valid_block_info();
-        let result = transaction_context_from_ffi(FFITransactionContextType::InBlock, &block_info);
-        let ctx = result.expect("should return Some for InBlock with valid block info");
-        assert!(matches!(ctx, TransactionContext::InBlock(info) if info.height() == 1000));
-    }
-
-    #[test]
-    fn transaction_context_from_ffi_in_chain_locked_block_with_valid_block_info() {
-        let block_info = valid_block_info();
-        let result = transaction_context_from_ffi(
-            FFITransactionContextType::InChainLockedBlock,
-            &block_info,
-        );
-        let ctx = result.expect("should return Some for InChainLockedBlock with valid block info");
-        assert!(
-            matches!(ctx, TransactionContext::InChainLockedBlock(info) if info.height() == 1000)
-        );
-    }
-}
-
 /// Address type enumeration
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -919,5 +780,311 @@ impl From<TransactionContext> for FFITransactionContext {
             context_type,
             block_info,
         }
+    }
+}
+
+/// FFI-compatible transaction direction
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum FFITransactionDirection {
+    Incoming = 0,
+    Outgoing = 1,
+    Internal = 2,
+    CoinJoin = 3,
+}
+
+impl From<TransactionDirection> for FFITransactionDirection {
+    fn from(dir: TransactionDirection) -> Self {
+        match dir {
+            TransactionDirection::Incoming => Self::Incoming,
+            TransactionDirection::Outgoing => Self::Outgoing,
+            TransactionDirection::Internal => Self::Internal,
+            TransactionDirection::CoinJoin => Self::CoinJoin,
+        }
+    }
+}
+
+/// FFI-compatible transaction type classification
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum FFITransactionType {
+    Standard = 0,
+    CoinJoin = 1,
+    ProviderRegistration = 2,
+    ProviderUpdateRegistrar = 3,
+    ProviderUpdateService = 4,
+    ProviderUpdateRevocation = 5,
+    AssetLock = 6,
+    AssetUnlock = 7,
+    Coinbase = 8,
+    Ignored = 9,
+}
+
+impl From<TransactionType> for FFITransactionType {
+    fn from(tt: TransactionType) -> Self {
+        match tt {
+            TransactionType::Standard => Self::Standard,
+            TransactionType::CoinJoin => Self::CoinJoin,
+            TransactionType::ProviderRegistration => Self::ProviderRegistration,
+            TransactionType::ProviderUpdateRegistrar => Self::ProviderUpdateRegistrar,
+            TransactionType::ProviderUpdateService => Self::ProviderUpdateService,
+            TransactionType::ProviderUpdateRevocation => Self::ProviderUpdateRevocation,
+            TransactionType::AssetLock => Self::AssetLock,
+            TransactionType::AssetUnlock => Self::AssetUnlock,
+            TransactionType::Coinbase => Self::Coinbase,
+            TransactionType::Ignored => Self::Ignored,
+        }
+    }
+}
+
+/// FFI-compatible output role
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum FFIOutputRole {
+    Received = 0,
+    Change = 1,
+    Sent = 2,
+    Unspendable = 3,
+}
+
+impl From<OutputRole> for FFIOutputRole {
+    fn from(role: OutputRole) -> Self {
+        match role {
+            OutputRole::Received => Self::Received,
+            OutputRole::Change => Self::Change,
+            OutputRole::Sent => Self::Sent,
+            OutputRole::Unspendable => Self::Unspendable,
+        }
+    }
+}
+
+/// FFI-compatible input detail
+#[repr(C)]
+pub struct FFIInputDetail {
+    pub index: u32,
+    pub value: u64,
+    pub address: *mut std::os::raw::c_char,
+}
+
+/// FFI-compatible output detail
+#[repr(C)]
+pub struct FFIOutputDetail {
+    pub index: u32,
+    pub role: FFIOutputRole,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use key_wallet::transaction_checking::BlockInfo;
+
+    fn valid_block_info() -> FFIBlockInfo {
+        FFIBlockInfo {
+            height: 1000,
+            block_hash: [0xab; 32],
+            timestamp: 1700000000,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "DashpayReceivingFunds cannot be converted to AccountType")]
+    fn test_dashpay_receiving_funds_to_account_type_panics() {
+        // This should panic because we cannot construct a DashPay account without identity IDs
+        let _ = FFIAccountType::DashpayReceivingFunds.to_account_type(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "DashpayExternalAccount cannot be converted to AccountType")]
+    fn test_dashpay_external_account_to_account_type_panics() {
+        // This should panic because we cannot construct a DashPay account without identity IDs
+        let _ = FFIAccountType::DashpayExternalAccount.to_account_type(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "PlatformPayment cannot be converted to AccountType")]
+    fn test_platform_payment_to_account_type_panics() {
+        // This should panic because we cannot construct a Platform Payment account without indices
+        let _ = FFIAccountType::PlatformPayment.to_account_type(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot convert AccountType::DashpayReceivingFunds")]
+    fn test_dashpay_receiving_funds_from_account_type_panics() {
+        // This should panic because we cannot represent identity IDs in the FFI tuple
+        let account_type = key_wallet::AccountType::DashpayReceivingFunds {
+            index: 0,
+            user_identity_id: [1u8; 32],
+            friend_identity_id: [2u8; 32],
+        };
+        let _ = FFIAccountType::from_account_type(&account_type);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot convert AccountType::DashpayExternalAccount")]
+    fn test_dashpay_external_account_from_account_type_panics() {
+        // This should panic because we cannot represent identity IDs in the FFI tuple
+        let account_type = key_wallet::AccountType::DashpayExternalAccount {
+            index: 0,
+            user_identity_id: [1u8; 32],
+            friend_identity_id: [2u8; 32],
+        };
+        let _ = FFIAccountType::from_account_type(&account_type);
+    }
+
+    #[test]
+    fn test_non_dashpay_conversions_work() {
+        // Verify that non-DashPay types still convert correctly
+        let standard_bip44 = FFIAccountType::StandardBIP44.to_account_type(5);
+        assert!(matches!(
+            standard_bip44,
+            key_wallet::AccountType::Standard {
+                index: 5,
+                ..
+            }
+        ));
+
+        let coinjoin = FFIAccountType::CoinJoin.to_account_type(3);
+        assert!(matches!(
+            coinjoin,
+            key_wallet::AccountType::CoinJoin {
+                index: 3
+            }
+        ));
+
+        // Test reverse conversion
+        let (ffi_type, index, _) = FFIAccountType::from_account_type(&standard_bip44);
+        assert_eq!(ffi_type, FFIAccountType::StandardBIP44);
+        assert_eq!(index, 5);
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_mempool_with_empty_block_info() {
+        let result = transaction_context_from_ffi(
+            FFITransactionContextType::Mempool,
+            &FFIBlockInfo::empty(),
+        );
+        assert!(matches!(result, Some(TransactionContext::Mempool)));
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_instant_send_with_empty_block_info() {
+        let result = transaction_context_from_ffi(
+            FFITransactionContextType::InstantSend,
+            &FFIBlockInfo::empty(),
+        );
+        assert!(matches!(result, Some(TransactionContext::InstantSend)));
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_in_block_with_empty_block_info() {
+        let result = transaction_context_from_ffi(
+            FFITransactionContextType::InBlock,
+            &FFIBlockInfo::empty(),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_in_chain_locked_block_with_empty_block_info() {
+        let result = transaction_context_from_ffi(
+            FFITransactionContextType::InChainLockedBlock,
+            &FFIBlockInfo::empty(),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_in_block_with_valid_block_info() {
+        let block_info = valid_block_info();
+        let result = transaction_context_from_ffi(FFITransactionContextType::InBlock, &block_info);
+        let ctx = result.expect("should return Some for InBlock with valid block info");
+        assert!(matches!(ctx, TransactionContext::InBlock(info) if info.height() == 1000));
+    }
+
+    #[test]
+    fn transaction_context_from_ffi_in_chain_locked_block_with_valid_block_info() {
+        let block_info = valid_block_info();
+        let result = transaction_context_from_ffi(
+            FFITransactionContextType::InChainLockedBlock,
+            &block_info,
+        );
+        let ctx = result.expect("should return Some for InChainLockedBlock with valid block info");
+        assert!(
+            matches!(ctx, TransactionContext::InChainLockedBlock(info) if info.height() == 1000)
+        );
+    }
+
+    #[test]
+    fn test_ffi_transaction_direction_from() {
+        assert!(matches!(
+            FFITransactionDirection::from(TransactionDirection::Incoming),
+            FFITransactionDirection::Incoming
+        ));
+        assert!(matches!(
+            FFITransactionDirection::from(TransactionDirection::Outgoing),
+            FFITransactionDirection::Outgoing
+        ));
+        assert!(matches!(
+            FFITransactionDirection::from(TransactionDirection::Internal),
+            FFITransactionDirection::Internal
+        ));
+        assert!(matches!(
+            FFITransactionDirection::from(TransactionDirection::CoinJoin),
+            FFITransactionDirection::CoinJoin
+        ));
+    }
+
+    #[test]
+    fn test_ffi_transaction_type_from() {
+        assert!(matches!(
+            FFITransactionType::from(TransactionType::Standard),
+            FFITransactionType::Standard
+        ));
+        assert!(matches!(
+            FFITransactionType::from(TransactionType::CoinJoin),
+            FFITransactionType::CoinJoin
+        ));
+        assert!(matches!(
+            FFITransactionType::from(TransactionType::ProviderRegistration),
+            FFITransactionType::ProviderRegistration
+        ));
+        assert!(matches!(
+            FFITransactionType::from(TransactionType::AssetLock),
+            FFITransactionType::AssetLock
+        ));
+        assert!(matches!(
+            FFITransactionType::from(TransactionType::Coinbase),
+            FFITransactionType::Coinbase
+        ));
+        assert!(matches!(
+            FFITransactionType::from(TransactionType::Ignored),
+            FFITransactionType::Ignored
+        ));
+    }
+
+    #[test]
+    fn test_ffi_transaction_context_from_in_block() {
+        let hash = dashcore::BlockHash::from_byte_array([0xab; 32]);
+        let block_info = BlockInfo::new(1000, hash, 1700000000);
+        let ctx = FFITransactionContext::from(TransactionContext::InBlock(block_info));
+        assert!(matches!(ctx.context_type, FFITransactionContextType::InBlock));
+        assert_eq!(ctx.block_info.height, 1000);
+        assert_eq!(ctx.block_info.block_hash, [0xab; 32]);
+        assert_eq!(ctx.block_info.timestamp, 1700000000);
+    }
+
+    #[test]
+    fn test_ffi_transaction_context_from_mempool() {
+        let ctx = FFITransactionContext::from(TransactionContext::Mempool);
+        assert!(matches!(ctx.context_type, FFITransactionContextType::Mempool));
+        assert_eq!(ctx.block_info.block_hash, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_ffi_output_role_from() {
+        assert!(matches!(FFIOutputRole::from(OutputRole::Received), FFIOutputRole::Received));
+        assert!(matches!(FFIOutputRole::from(OutputRole::Change), FFIOutputRole::Change));
+        assert!(matches!(FFIOutputRole::from(OutputRole::Sent), FFIOutputRole::Sent));
+        assert!(matches!(FFIOutputRole::from(OutputRole::Unspendable), FFIOutputRole::Unspendable));
     }
 }

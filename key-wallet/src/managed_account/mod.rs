@@ -441,7 +441,7 @@ impl ManagedCoreAccount {
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-    ) {
+    ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
         let receive_addrs: HashSet<_> = account_match
@@ -532,9 +532,11 @@ impl ManagedCoreAccount {
             net_amount,
         );
 
+        let record = tx_record.clone();
         self.transactions.insert(tx.txid(), tx_record);
 
         self.update_utxos(tx, account_match, context);
+        record
     }
 
     /// Mark all UTXOs belonging to a transaction as InstantSend-locked.

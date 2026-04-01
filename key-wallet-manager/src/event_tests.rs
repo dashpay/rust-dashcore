@@ -20,16 +20,14 @@ async fn test_mempool_to_confirmed_event_flow() {
     let event = assert_single_event(&mut rx);
     match event {
         WalletEvent::TransactionReceived {
-            txid: ev_txid,
             wallet_id: ev_wid,
-            status,
-            amount,
+            record,
             ..
         } => {
-            assert_eq!(status, TransactionContext::Mempool);
-            assert_eq!(ev_txid, tx.txid());
+            assert_eq!(record.context, TransactionContext::Mempool);
+            assert_eq!(record.txid, tx.txid());
             assert_eq!(ev_wid, wallet_id);
-            assert_eq!(amount, TX_AMOUNT as i64);
+            assert_eq!(record.net_amount, TX_AMOUNT as i64);
         }
         other => panic!("expected TransactionReceived, got {:?}", other),
     }
@@ -455,21 +453,23 @@ async fn test_process_block_emits_events() {
 
     match event {
         WalletEvent::TransactionReceived {
-            status,
             account_index,
-            addresses,
+            record,
             ..
         } => {
             assert!(
                 matches!(
-                                    status,
-                TransactionContext::InBlock(info) if info.height() == 1000
-                                ),
+                    record.context,
+                    TransactionContext::InBlock(info) if info.height() == 1000
+                ),
                 "expected InBlock at height 1000, got {:?}",
-                status
+                record.context
             );
             assert_eq!(*account_index, 0);
-            assert!(!addresses.is_empty(), "expected non-empty addresses");
+            assert!(
+                !record.input_details.is_empty() || !record.output_details.is_empty(),
+                "expected non-empty details"
+            );
         }
         _ => unreachable!(),
     }
@@ -549,11 +549,9 @@ async fn test_mempool_to_block_to_chainlocked_event_flow() {
     let event = assert_single_event(&mut rx);
     assert!(
         matches!(
-            event,
-            WalletEvent::TransactionReceived {
-                status: TransactionContext::Mempool,
-                ..
-            }
+            &event,
+            WalletEvent::TransactionReceived { record, .. }
+            if record.context == TransactionContext::Mempool
         ),
         "expected TransactionReceived(Mempool), got {:?}",
         event
@@ -605,11 +603,9 @@ async fn test_chainlocked_block_event_flow() {
     let event = assert_single_event(&mut rx);
     assert!(
         matches!(
-            event,
-            WalletEvent::TransactionReceived {
-                status: TransactionContext::InChainLockedBlock(info),
-                ..
-            } if info.height() == 2000
+            &event,
+            WalletEvent::TransactionReceived { record, .. }
+            if matches!(record.context, TransactionContext::InChainLockedBlock(info) if info.height() == 2000)
         ),
         "expected TransactionReceived(InChainLockedBlock at 2000), got {:?}",
         event

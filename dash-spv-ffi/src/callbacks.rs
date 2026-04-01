@@ -11,7 +11,11 @@ use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
-use key_wallet_ffi::types::FFITransactionContext;
+use key_wallet_ffi::managed_account::FFITransactionRecord;
+use key_wallet_ffi::types::{
+    FFIInputDetail, FFIOutputDetail, FFIOutputRole, FFITransactionContext, FFITransactionDirection,
+    FFITransactionType,
+};
 use key_wallet_manager::WalletEvent;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
@@ -530,17 +534,15 @@ impl FFINetworkEventCallbacks {
 
 /// Callback for WalletEvent::TransactionReceived
 ///
-/// The `wallet_id`, `addresses` string pointers and the `txid` hash pointer
-/// are borrowed and only valid for the duration of the callback. Callers must
-/// copy any data they need to retain after the callback returns.
+/// The `record` pointer is borrowed and only valid for the duration of the
+/// callback. Callers must copy any data they need to retain after the callback
+/// returns. The record contains all transaction details including serialized
+/// transaction bytes, input/output details, and classification metadata.
 pub type OnTransactionReceivedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
-        status: FFITransactionContext,
         account_index: u32,
-        txid: *const [u8; 32],
-        amount: i64,
-        addresses: *const c_char,
+        record: *const FFITransactionRecord,
         user_data: *mut c_void,
     ),
 >;
@@ -696,28 +698,85 @@ impl FFIWalletEventCallbacks {
         match event {
             WalletEvent::TransactionReceived {
                 wallet_id,
-                status,
                 account_index,
-                txid,
-                amount,
-                addresses,
+                record,
             } => {
                 if let Some(cb) = self.on_transaction_received {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
-                    let txid_bytes = txid.as_byte_array();
-                    let addresses_str: Vec<String> =
-                        addresses.iter().map(|a| a.to_string()).collect();
-                    let c_addresses = CString::new(addresses_str.join(",")).unwrap_or_default();
+
+                    let tx_bytes =
+                        dashcore::consensus::serialize(&record.transaction).into_boxed_slice();
+
+                    let input_details: Vec<FFIInputDetail> = record
+                        .input_details
+                        .iter()
+                        .map(|d| {
+                            let addr = CString::new(d.address.to_string()).unwrap_or_default();
+                            FFIInputDetail {
+                                index: d.index,
+                                value: d.value,
+                                address: addr.into_raw(),
+                            }
+                        })
+                        .collect();
+
+                    let output_details: Vec<FFIOutputDetail> = record
+                        .output_details
+                        .iter()
+                        .map(|d| FFIOutputDetail {
+                            index: d.index,
+                            role: FFIOutputRole::from(d.role),
+                        })
+                        .collect();
+
+                    let ffi_record = FFITransactionRecord {
+                        txid: record.txid.to_byte_array(),
+                        net_amount: record.net_amount,
+                        context: FFITransactionContext::from(record.context),
+                        transaction_type: FFITransactionType::from(record.transaction_type),
+                        direction: FFITransactionDirection::from(record.direction),
+                        fee: record.fee.unwrap_or(0),
+                        input_details: if input_details.is_empty() {
+                            std::ptr::null_mut()
+                        } else {
+                            input_details.as_ptr() as *mut _
+                        },
+                        input_details_count: input_details.len(),
+                        output_details: if output_details.is_empty() {
+                            std::ptr::null_mut()
+                        } else {
+                            output_details.as_ptr() as *mut _
+                        },
+                        output_details_count: output_details.len(),
+                        tx_data: if tx_bytes.is_empty() {
+                            std::ptr::null_mut()
+                        } else {
+                            tx_bytes.as_ptr() as *mut _
+                        },
+                        tx_len: tx_bytes.len(),
+                        label: record
+                            .label
+                            .as_ref()
+                            .map(|l| CString::new(l.as_str()).unwrap().into_raw())
+                            .unwrap_or(std::ptr::null_mut()),
+                    };
+
                     cb(
                         c_wallet_id.as_ptr(),
-                        FFITransactionContext::from(*status),
                         *account_index,
-                        txid_bytes as *const [u8; 32],
-                        *amount,
-                        c_addresses.as_ptr(),
+                        &ffi_record as *const FFITransactionRecord,
                         self.user_data,
                     );
+
+                    // Free the CString addresses from input details
+                    for detail in input_details {
+                        if !detail.address.is_null() {
+                            unsafe {
+                                drop(CString::from_raw(detail.address));
+                            }
+                        }
+                    }
                 }
             }
             WalletEvent::TransactionStatusChanged {

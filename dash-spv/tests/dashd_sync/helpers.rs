@@ -140,7 +140,7 @@ pub(super) async fn wait_for_mempool_tx(
             _ = &mut timeout => return None,
             result = receiver.recv() => {
                 match result {
-                    Ok(WalletEvent::TransactionReceived { txid, status: TransactionContext::Mempool, .. }) => return Some(txid),
+                    Ok(WalletEvent::TransactionReceived { ref record, .. }) if record.context == TransactionContext::Mempool => return Some(record.txid),
                     Ok(_) => continue,
                     Err(_) => return None,
                 }
