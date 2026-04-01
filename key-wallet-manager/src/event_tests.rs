@@ -212,7 +212,7 @@ async fn test_instantsend_tx_emits_balance_updated_spendable() {
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf2);
 
-    manager.process_mempool_transaction(&tx, Some(InstantLock::default())).await;
+    manager.process_mempool_transaction(&tx, Some(dummy_instant_lock(tx.txid()))).await;
 
     let events = drain_events(&mut rx);
     let balance_events: Vec<_> =
@@ -368,7 +368,7 @@ async fn test_process_instant_send_lock_after_block_confirmation() {
     let tx = create_tx_paying_to(&addr, 0xe2);
 
     // Process as IS mempool tx, then confirm in block
-    manager.process_mempool_transaction(&tx, Some(InstantLock::default())).await;
+    manager.process_mempool_transaction(&tx, Some(dummy_instant_lock(tx.txid()))).await;
     let block_ctx = TransactionContext::InBlock(BlockInfo::new(
         500,
         BlockHash::from_byte_array([0xe2; 32]),
