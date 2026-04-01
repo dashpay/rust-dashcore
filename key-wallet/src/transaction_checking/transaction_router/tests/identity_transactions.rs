@@ -14,7 +14,7 @@ use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLock
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, TxIn, TxOut, Txid};
+use dashcore::{OutPoint, TxIn, TxOut, Txid};
 
 #[test]
 fn test_identity_registration() {
@@ -114,13 +114,7 @@ async fn test_identity_registration_account_routing() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // First check without updating state
     let result =
@@ -193,13 +187,7 @@ async fn test_normal_payment_to_identity_registration_shared_path_detected_via_b
         script_pubkey: address.script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     let result = managed_wallet_info
         .check_core_transaction(

@@ -16,9 +16,9 @@ use tokio::sync::RwLock;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::FFINetwork;
-use key_wallet::manager::WalletInterface;
-use key_wallet::manager::WalletManager;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::WalletInterface;
+use key_wallet_manager::WalletManager;
 
 /// FFI wrapper for WalletManager
 ///
@@ -470,14 +470,14 @@ pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
         Err(e) => {
             // Convert the error to FFI error
             match e {
-                key_wallet::manager::WalletError::WalletExists(_) => {
+                key_wallet_manager::WalletError::WalletExists(_) => {
                     FFIError::set_error(
                         error,
                         FFIErrorCode::InvalidState,
                         "Wallet already exists in the manager".to_string(),
                     );
                 }
-                key_wallet::manager::WalletError::InvalidParameter(msg) => {
+                key_wallet_manager::WalletError::InvalidParameter(msg) => {
                     FFIError::set_error(
                         error,
                         FFIErrorCode::SerializationError,
@@ -730,7 +730,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `tx_bytes` must be a valid pointer to transaction bytes
 /// - `tx_len` must be the length of the transaction bytes
-/// - `context` must be a valid pointer to FFITransactionContextDetails
+/// - `context` must be a valid pointer to FFITransactionContext
 /// - `update_state_if_found` indicates whether to update wallet state when transaction is relevant
 /// - `error` must be a valid pointer to an FFIError structure or null
 /// - The caller must ensure all pointers remain valid for the duration of this call
@@ -739,7 +739,7 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     manager: *mut FFIWalletManager,
     tx_bytes: *const u8,
     tx_len: usize,
-    context: *const crate::types::FFITransactionContextDetails,
+    context: *const crate::types::FFITransactionContext,
     update_state_if_found: bool,
     error: *mut FFIError,
 ) -> bool {
@@ -772,7 +772,17 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     };
 
     // Convert FFI context to native TransactionContext
-    let context = unsafe { (*context).to_transaction_context() };
+    let context = match unsafe { (*context).to_transaction_context() } {
+        Some(ctx) => ctx,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Block info must not be zeroed for confirmed contexts".to_string(),
+            );
+            return false;
+        }
+    };
 
     // Get the manager
     let manager_ref = unsafe { &mut *manager };

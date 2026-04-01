@@ -3,35 +3,30 @@ name = "key-wallet-manager"
 version = { workspace = true }
 authors = ["The Dash Core Developers"]
 edition = "2021"
-description = "High-level wallet management for Dash using key-wallet primitives"
-keywords = ["dash", "wallet", "transaction", "utxo", "hdwallet"]
-readme = "README.md"
+description = "High-level wallet management for Dash (WalletManager, WalletInterface, events, compact filters)"
+keywords = ["dash", "wallet", "manager", "spv"]
 license = "CC0-1.0"
 
 [features]
-default = ["std", "bincode"]
-std = ["key-wallet/std", "secp256k1/std"]
-serde = ["dep:serde", "key-wallet/serde", "dashcore/serde"]
-getrandom = ["key-wallet/getrandom"]
-bincode = ["dep:bincode", "key-wallet/bincode"]
-test-utils = []
+default = []
+parallel-filters = ["dep:rayon"]
+bincode = ["key-wallet/bincode", "dep:bincode"]
+test-utils = ["key-wallet/test-utils"]
 
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false }
 dashcore = { path = "../dash" }
-dashcore_hashes = { path = "../hashes" }
-secp256k1 = { version = "0.30.0", default-features = false, features = ["recovery"] }
-serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 async-trait = "0.1"
-bincode = { version = "2.0.1", optional = true }
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
 zeroize = { version = "1.8", features = ["derive"] }
-rayon = "1.11"
-tokio = { version = "1.32", features = ["full"] }
+rayon = { version = "1.11", optional = true }
+bincode = { version = "2.0.1", optional = true }
 
 [dev-dependencies]
+key-wallet = { path = "../key-wallet", features = ["test-utils", "bincode"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 hex = "0.4"
-serde_json = "1.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }

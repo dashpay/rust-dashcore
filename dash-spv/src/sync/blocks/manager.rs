@@ -12,7 +12,7 @@ use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, BlockStorage};
 use crate::sync::{BlocksProgress, SyncEvent, SyncManager, SyncState};
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 /// Blocks manager for downloading and processing matching blocks.
 ///
@@ -100,6 +100,9 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 );
             }
 
+            // Collect confirmed txids before moving new_addresses out of result
+            let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
+
             // Collect new addresses for gap limit rescanning
             let new_addresses: Vec<_> = result.new_addresses.into_iter().collect();
             if !new_addresses.is_empty() {
@@ -122,6 +125,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 block_hash: hash,
                 height,
                 new_addresses,
+                confirmed_txids,
             });
         }
 
@@ -164,8 +168,8 @@ mod tests {
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
-    use key_wallet::manager::FilterMatchKey;
-    use key_wallet::test_utils::MockWallet;
+    use key_wallet_manager::test_utils::MockWallet;
+    use key_wallet_manager::FilterMatchKey;
     use std::collections::BTreeSet;
 
     type TestBlocksManager =

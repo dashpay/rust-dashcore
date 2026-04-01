@@ -19,7 +19,7 @@ fn test_wallet_sync_via_ffi() {
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
         tracing::info!("Added wallet, ID: {}", hex::encode(&wallet_id));
 
-        ctx.run_with_sync_callbacks();
+        ctx.run();
         tracing::info!("FFI client running");
 
         ctx.wait_for_sync(dashd.initial_height);

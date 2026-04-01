@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 259
+**Total Functions**: 260
 
 ## Table of Contents
 
@@ -69,7 +69,7 @@ Functions: 19
 
 ### Wallet Operations
 
-Functions: 63
+Functions: 64
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -108,6 +108,7 @@ Functions: 63
 | `wallet_add_dashpay_external_account_with_xpub_bytes` | Add a DashPay external (watch-only) account with xpub bytes  # Safety -... | wallet |
 | `wallet_add_dashpay_receiving_account` | Add a DashPay receiving funds account  # Safety - `wallet` must be a valid... | wallet |
 | `wallet_add_platform_payment_account` | Add a Platform Payment account (DIP-17) to the wallet  Platform Payment... | wallet |
+| `wallet_build_and_sign_asset_lock_transaction` | Build and sign an asset lock transaction for Core to Platform transfers | transaction |
 | `wallet_build_and_sign_transaction` | Build and sign a transaction using the wallet's managed info  This is the... | transaction |
 | `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  #... | transaction |
 | `wallet_create_from_mnemonic` | Create a new wallet from mnemonic (backward compatibility - single network) ... | wallet |
@@ -702,14 +703,14 @@ Get the network for this wallet manager  # Safety  - `manager` must be a valid p
 #### `wallet_manager_process_transaction`
 
 ```c
-wallet_manager_process_transaction(manager: *mut FFIWalletManager, tx_bytes: *const u8, tx_len: usize, context: *const crate::types::FFITransactionContextDetails, update_state_if_found: bool, error: *mut FFIError,) -> bool
+wallet_manager_process_transaction(manager: *mut FFIWalletManager, tx_bytes: *const u8, tx_len: usize, context: *const crate::types::FFITransactionContext, update_state_if_found: bool, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Process a transaction through all wallets  Checks a transaction against all wallets and updates their states if relevant. Returns true if the transaction was relevant to at least one wallet.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Process a transaction through all wallets  Checks a transaction against all wallets and updates their states if relevant. Returns true if the transaction was relevant to at least one wallet.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContext - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContextDetails - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContext - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -852,7 +853,7 @@ Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't stor
 #### `managed_wallet_check_transaction`
 
 ```c
-managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: c_uint, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
+managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContextType, block_info: FFIBlockInfo, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1281,6 +1282,22 @@ This function dereferences a raw pointer to FFIWallet. The caller must ensure th
 
 ---
 
+#### `wallet_build_and_sign_asset_lock_transaction`
+
+```c
+wallet_build_and_sign_asset_lock_transaction(manager: *const FFIWalletManager, wallet: *const FFIWallet, account_index: u32, funding_type: FFIAssetLockFundingType, identity_index: u32, credit_output_scripts: *const *const u8, credit_output_script_lens: *const usize, credit_output_amounts: *const u64, credit_outputs_count: usize, fee_per_kb: u64, fee_out: *mut u64, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, output_index_out: *mut u32, private_key_out: *mut [u8; 32], error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Build and sign an asset lock transaction for Core to Platform transfers.  Creates a special transaction (type 8) with `AssetLockPayload` that locks Dash for Platform credits. Uses the wallet's UTXOs for funding and derives a one-time private key from the specified funding account type.  # Parameters  - `funding_type`: Which funding account to derive the one-time key from (registration, top-up, invitation, etc.) - `identity_index`: For `IdentityTopUp` funding type, the registration index of the identity being topped up. Ignored for other funding types.  # Safety  - All pointer parameters must be valid and non-null - `credit_output_scripts` must point to an array of `credit_outputs_count` byte-array pointers - `credit_output_script_lens` must point to an array of `credit_outputs_count` lengths - `credit_output_amounts` must point to an array of `credit_outputs_count` amounts - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+
+**Safety:**
+- All pointer parameters must be valid and non-null - `credit_output_scripts` must point to an array of `credit_outputs_count` byte-array pointers - `credit_output_script_lens` must point to an array of `credit_outputs_count` lengths - `credit_output_amounts` must point to an array of `credit_outputs_count` amounts - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+
+**Module:** `transaction`
+
+---
+
 #### `wallet_build_and_sign_transaction`
 
 ```c
@@ -1300,7 +1317,7 @@ Build and sign a transaction using the wallet's managed info  This is the recomm
 #### `wallet_check_transaction`
 
 ```c
-wallet_check_transaction(wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContext, block_height: u32, block_hash: *const u8, // 32 bytes if not null timestamp: u64, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
+wallet_check_transaction(wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContextType, block_info: FFIBlockInfo, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
 ```
 
 **Description:**

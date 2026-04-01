@@ -1,9 +1,10 @@
+use std::borrow::Cow;
+
 use crate::bip32::{ChainCode, ChildNumber, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPrivKey;
 use crate::wallet::WalletType;
 use crate::{Error, Network, Wallet};
-use alloc::borrow::Cow;
 #[cfg(feature = "bincode")]
 use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]

@@ -9,7 +9,6 @@ use crate::derivation_bls_bip32::{ExtendedBLSPrivKey, ExtendedBLSPubKey};
 use crate::error::{Error, Result};
 use crate::managed_account::address_pool::AddressPoolType;
 use crate::{ChildNumber, DerivationPath, Network};
-use alloc::vec::Vec;
 use core::fmt;
 use dashcore::Address;
 

@@ -19,7 +19,7 @@ fn test_ffi_restart_consistency() {
         let ctx = FFITestContext::new(dashd.addr);
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
 
-        ctx.run_with_sync_callbacks();
+        ctx.run();
         ctx.wait_for_sync(dashd.initial_height);
 
         let (first_balance, _) = ctx.get_wallet_balance(&wallet_id);
@@ -39,7 +39,7 @@ fn test_ffi_restart_consistency() {
         let ctx = ctx.restart();
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
 
-        ctx.run_with_sync_callbacks();
+        ctx.run();
         ctx.wait_for_sync(dashd.initial_height);
 
         let (second_balance, _) = ctx.get_wallet_balance(&wallet_id);

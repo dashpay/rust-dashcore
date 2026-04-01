@@ -10,16 +10,18 @@ use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::{managed_wallet_info_free, FFIManagedWalletInfo};
-use crate::types::{FFITransactionContext, FFIWallet};
+use crate::types::{
+    transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
+};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
-    account_checker::CoreAccountTypeMatch, TransactionContext, WalletTransactionChecker,
+    account_checker::CoreAccountTypeMatch, WalletTransactionChecker,
 };
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
 // Transaction context for checking
-// FFITransactionContext is imported from types module at the top
+// FFITransactionContextType is imported from types module at the top
 /// Account type match result
 #[repr(C)]
 pub struct FFIAccountMatch {
@@ -111,10 +113,8 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     wallet: *mut FFIWallet,
     tx_bytes: *const u8,
     tx_len: usize,
-    context_type: FFITransactionContext,
-    block_height: c_uint,
-    block_hash: *const u8, // 32 bytes if not null
-    timestamp: u64,
+    context_type: FFITransactionContextType,
+    block_info: FFIBlockInfo,
     update_state: bool,
     result_out: *mut FFITransactionCheckResult,
     error: *mut FFIError,
@@ -141,49 +141,16 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     };
 
     // Build the transaction context
-    let context = match context_type {
-        FFITransactionContext::Mempool => TransactionContext::Mempool,
-        FFITransactionContext::InBlock => {
-            let block_hash = if !block_hash.is_null() {
-                use dashcore::hashes::Hash;
-                let hash_bytes = slice::from_raw_parts(block_hash, 32);
-                let mut hash_array = [0u8; 32];
-                hash_array.copy_from_slice(hash_bytes);
-                Some(dashcore::BlockHash::from_byte_array(hash_array))
-            } else {
-                None
-            };
-            TransactionContext::InBlock {
-                height: block_height,
-                block_hash,
-                timestamp: if timestamp > 0 {
-                    Some(timestamp as u32)
-                } else {
-                    None
-                },
-            }
+    let context = match transaction_context_from_ffi(context_type, &block_info) {
+        Some(ctx) => ctx,
+        None => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Block info must not be zeroed for confirmed contexts".to_string(),
+            );
+            return false;
         }
-        FFITransactionContext::InChainLockedBlock => {
-            let block_hash = if !block_hash.is_null() {
-                use dashcore::hashes::Hash;
-                let hash_bytes = slice::from_raw_parts(block_hash, 32);
-                let mut hash_array = [0u8; 32];
-                hash_array.copy_from_slice(hash_bytes);
-                Some(dashcore::BlockHash::from_byte_array(hash_array))
-            } else {
-                None
-            };
-            TransactionContext::InChainLockedBlock {
-                height: block_height,
-                block_hash,
-                timestamp: if timestamp > 0 {
-                    Some(timestamp as u32)
-                } else {
-                    None
-                },
-            }
-        }
-        FFITransactionContext::InstantSend => TransactionContext::InstantSend,
     };
 
     // Check the transaction - wallet is now required
@@ -684,9 +651,9 @@ mod tests {
     #[test]
     fn test_transaction_context_conversion() {
         // Test that FFI transaction context values match expectations
-        assert_eq!(FFITransactionContext::Mempool as u32, 0);
-        assert_eq!(FFITransactionContext::InstantSend as u32, 1);
-        assert_eq!(FFITransactionContext::InBlock as u32, 2);
-        assert_eq!(FFITransactionContext::InChainLockedBlock as u32, 3);
+        assert_eq!(FFITransactionContextType::Mempool as u32, 0);
+        assert_eq!(FFITransactionContextType::InstantSend as u32, 1);
+        assert_eq!(FFITransactionContextType::InBlock as u32, 2);
+        assert_eq!(FFITransactionContextType::InChainLockedBlock as u32, 3);
     }
 }

@@ -17,7 +17,7 @@
 //! use dash_spv::storage::DiskStorageManager;
 //! use dashcore::Network;
 //! use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-//! use key_wallet::manager::WalletManager;
+//! use key_wallet_manager::WalletManager;
 //! use std::sync::Arc;
 //! use tokio::sync::RwLock;
 //! use tokio_util::sync::CancellationToken;
@@ -34,7 +34,7 @@
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 //!
 //!     // Create and run the client
-//!     let client = DashSpvClient::new(config.clone(), network, storage, wallet).await?;
+//!     let client = DashSpvClient::new(config.clone(), network, storage, wallet, Arc::new(())).await?;
 //!     let shutdown_token = CancellationToken::new();
 //!
 //!     client.run(shutdown_token).await?;
@@ -69,7 +69,7 @@ pub mod validation;
 
 // Re-export main types for convenience
 pub use client::config::MempoolStrategy;
-pub use client::{ClientConfig, DashSpvClient};
+pub use client::{ClientConfig, DashSpvClient, EventHandler};
 pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
 };

@@ -3,12 +3,13 @@
 //! This module provides methods for checking if transactions belong to
 //! specific accounts within a ManagedAccountCollection.
 
+use std::collections::BTreeMap;
+
 use super::transaction_router::AccountTypeToCheck;
 use crate::account::{ManagedAccountCollection, ManagedCoreAccount};
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::Address;
-use alloc::vec::Vec;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::transaction::TransactionPayload;
@@ -32,6 +33,8 @@ pub struct TransactionCheckResult {
     pub is_relevant: bool,
     /// Set to false if the transaction was already stored and is being re-processed (e.g., during rescan)
     pub is_new_transaction: bool,
+    /// Whether any wallet state was modified during this check (new recording, confirmation, or IS-lock).
+    pub state_modified: bool,
     /// Accounts that the transaction affects
     pub affected_accounts: Vec<AccountMatch>,
     /// Total value received by our accounts
@@ -137,6 +140,79 @@ pub enum CoreAccountTypeMatch {
 }
 
 impl CoreAccountTypeMatch {
+    /// Get involved receive (external) addresses
+    pub fn involved_receive_addresses(&self) -> &[AddressInfo] {
+        match self {
+            CoreAccountTypeMatch::StandardBIP44 {
+                involved_receive_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::StandardBIP32 {
+                involved_receive_addresses,
+                ..
+            } => involved_receive_addresses,
+            CoreAccountTypeMatch::CoinJoin {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::IdentityRegistration {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::IdentityTopUp {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::IdentityTopUpNotBound {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::IdentityInvitation {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::AssetLockAddressTopUp {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderVotingKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderOwnerKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderOperatorKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderPlatformKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::DashpayReceivingFunds {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::DashpayExternalAccount {
+                involved_addresses,
+                ..
+            } => involved_addresses,
+        }
+    }
+
+    /// Get involved change (internal) addresses
+    pub fn involved_change_addresses(&self) -> &[AddressInfo] {
+        match self {
+            CoreAccountTypeMatch::StandardBIP44 {
+                involved_change_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::StandardBIP32 {
+                involved_change_addresses,
+                ..
+            } => involved_change_addresses,
+            // Non-standard account types don't have change addresses
+            _ => &[],
+        }
+    }
+
     /// Get all involved addresses (both receive and change combined)
     pub fn all_involved_addresses(&self) -> Vec<AddressInfo> {
         match self {
@@ -330,6 +406,7 @@ impl ManagedAccountCollection {
         let mut result = TransactionCheckResult {
             is_relevant: false,
             is_new_transaction: false,
+            state_modified: false,
             affected_accounts: Vec::new(),
             total_received: 0,
             total_sent: 0,
@@ -476,7 +553,7 @@ impl ManagedAccountCollection {
 
     /// Check indexed accounts (BTreeMap of accounts)
     fn check_indexed_accounts(
-        accounts: &alloc::collections::BTreeMap<u32, ManagedCoreAccount>,
+        accounts: &BTreeMap<u32, ManagedCoreAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();

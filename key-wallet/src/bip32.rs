@@ -25,7 +25,6 @@ use core::default::Default;
 use core::fmt;
 use core::ops::Index;
 use core::str::FromStr;
-#[cfg(feature = "std")]
 use std::error;
 
 use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
@@ -42,7 +41,6 @@ use crate::dip9::{
     IDENTITY_REGISTRATION_PATH_MAINNET, IDENTITY_REGISTRATION_PATH_TESTNET,
     IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET,
 };
-use alloc::{string::String, vec::Vec};
 use base58ck;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
@@ -343,7 +341,6 @@ impl<'de> serde::Deserialize<'de> for Fingerprint {
 
 /// Extended private key
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "std", derive(Debug))]
 pub struct ExtendedPrivKey {
     /// The network this key is to be used on
     pub network: Network,
@@ -451,8 +448,6 @@ impl<'de> serde::Deserialize<'de> for ExtendedPrivKey {
     }
 }
 
-#[cfg(not(feature = "std"))]
-#[cfg_attr(docsrs, doc(cfg(not(feature = "std"))))]
 impl fmt::Debug for ExtendedPrivKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ExtendedPrivKey")
@@ -1474,7 +1469,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
         if let Error::Secp256k1(ref e) = *self {

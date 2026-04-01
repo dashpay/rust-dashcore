@@ -50,7 +50,7 @@ mod tests {
 
             // Create and destroy multiple clients
             for _ in 0..10 {
-                let client = dash_spv_ffi_client_new(config);
+                let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
                 assert!(!client.is_null());
 
                 // Perform some operations
@@ -180,7 +180,7 @@ mod tests {
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
 
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Get structures that contain FFIString and other pointers

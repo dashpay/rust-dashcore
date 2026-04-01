@@ -35,6 +35,7 @@ flags:
   wallet:
     paths:
       - key-wallet/src/
+      - key-wallet-manager/src/
   ffi:
     paths:
       - dash-spv-ffi/src/

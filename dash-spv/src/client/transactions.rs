@@ -4,11 +4,13 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use dashcore::network::message::NetworkMessage;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
-use super::DashSpvClient;
+use super::{DashSpvClient, EventHandler};
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
+    DashSpvClient<W, N, S, H>
+{
     /// Broadcast a transaction to all connected peers.
     pub async fn broadcast_transaction(&self, tx: &dashcore::Transaction) -> Result<()> {
         let network_guard = self.network.lock().await;

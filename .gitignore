@@ -26,6 +26,8 @@ coordination.md
 
 # Build artifacts
 **/*.rs.bk
+dash-spv-ffi/include/
+key-wallet-ffi/include/
 *.a
 *.so
 *.dylib

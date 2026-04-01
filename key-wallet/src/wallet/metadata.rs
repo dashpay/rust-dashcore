@@ -2,8 +2,8 @@
 //!
 //! This module contains the metadata structures for wallets.
 
-use alloc::collections::BTreeMap;
-use alloc::string::String;
+use std::collections::BTreeMap;
+
 use dashcore::prelude::CoreBlockHeight;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

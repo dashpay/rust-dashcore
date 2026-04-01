@@ -103,7 +103,6 @@ impl ClientConfig {
     pub fn new(network: Network) -> Self {
         Self {
             network,
-            peers: Self::default_peers_for_network(network),
             restrict_to_configured_peers: false,
             ..Self::default()
         }
@@ -215,26 +214,5 @@ impl ClientConfig {
         })?;
 
         Ok(())
-    }
-
-    /// Get default peers for a network.
-    /// Returns empty vector to enable immediate DNS discovery on startup.
-    /// Explicit peers can still be added via add_peer() or configuration.
-    fn default_peers_for_network(network: Network) -> Vec<SocketAddr> {
-        match network {
-            Network::Mainnet | Network::Testnet => {
-                // Return empty to trigger immediate DNS discovery
-                // DNS seeds will be used: dnsseed.dash.org (mainnet), testnet-seed.dashdot.io (testnet)
-                vec![]
-            }
-            Network::Regtest => {
-                // Regtest typically uses local peers
-                vec!["127.0.0.1:19899".parse::<SocketAddr>()]
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .collect()
-            }
-            _ => vec![],
-        }
     }
 }

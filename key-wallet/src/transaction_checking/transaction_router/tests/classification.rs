@@ -187,6 +187,10 @@ fn test_classify_coinbase_transaction() {
     tx.special_transaction_payload = Some(TransactionPayload::CoinbasePayloadType(payload));
 
     assert_eq!(TransactionRouter::classify_transaction(&tx), TransactionType::Coinbase);
+
+    // Also detected by coinbase input pattern (null txid + 0xffffffff vout) without payload
+    let coinbase_tx = Transaction::dummy_coinbase(&addr, 100_000_000);
+    assert_eq!(TransactionRouter::classify_transaction(&coinbase_tx), TransactionType::Coinbase);
 }
 
 #[test]

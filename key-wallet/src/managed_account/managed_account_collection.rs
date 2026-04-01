@@ -3,6 +3,8 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
+use std::collections::BTreeMap;
+
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::account::account_type::AccountType;
 use crate::gap_limit::{
@@ -16,8 +18,6 @@ use crate::managed_account::ManagedCoreAccount;
 use crate::transaction_checking::account_checker::CoreAccountTypeMatch;
 use crate::{Account, AccountCollection};
 use crate::{KeySource, Network};
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 

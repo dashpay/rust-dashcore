@@ -25,7 +25,7 @@
 ### Current State: Production-Ready Structure ✅
 
 **Code Organization: EXCELLENT (A+)**
-- ✅ Parallel event-driven sync architecture with 7 independent managers
+- ✅ Parallel event-driven sync architecture with 8 independent managers
 - ✅ SyncManager trait with standard event loop pattern
 - ✅ SyncEvent broadcast channel for inter-manager communication
 - ✅ client/: 8 modules (2,895 lines)
@@ -59,7 +59,7 @@
 |----------|-------|-------|
 | Total Files | 110+ | Well-organized module structure |
 | Total Lines | ~40,000 | All files appropriately sized |
-| Sync Managers | 7 | Block headers, filter headers, filters, blocks, masternodes, chainlock, instantsend |
+| Sync Managers | 8 | Block headers, filter headers, filters, blocks, masternodes, chainlock, instantsend, mempool |
 | Largest File | network/manager.rs | 1,322 lines - Acceptable complexity |
 | Module Count | 10+ | Well-separated concerns |
 
@@ -91,13 +91,13 @@
            │
            ▼
     ┌─────────────────────────────────────────────────────────┐
-    │              Parallel Sync Managers (7)                 │
+    │              Parallel Sync Managers (8)                 │
     ├──────────────┬──────────────┬──────────────┬────────────┤
     │ BlockHeaders │ FilterHeaders│   Filters    │   Blocks   │
     │   Manager    │   Manager    │   Manager    │   Manager  │
     ├──────────────┼──────────────┼──────────────┼────────────┤
-    │  Masternodes │  ChainLock   │ InstantSend  │            │
-    │   Manager    │   Manager    │   Manager    │            │
+    │  Masternodes │  ChainLock   │ InstantSend  │  Mempool   │
+    │   Manager    │   Manager    │   Manager    │  Manager   │
     └──────────────┴──────────────┴──────────────┴────────────┘
            │
            ▼
@@ -141,8 +141,12 @@
 │  FiltersManager ──BlocksNeeded──> BlocksManager                          │
 │                                                                          │
 │  BlocksManager ──BlockProcessed──> FiltersManager (for gap limit rescan) │
+│                 ──BlockProcessed──> MempoolManager (confirmed tx removal)│
 │                                                                          │
-│  SyncCoordinator ──SyncComplete──> External listeners                    │
+│  InstantSendManager ──InstantLockReceived──> MempoolManager              │
+│                                                                          │
+│  SyncCoordinator ──SyncComplete──> MempoolManager (activation trigger)   │
+│                  ──SyncComplete──> External listeners                    │
 └──────────────────────────────────────────────────────────────────────────┘
                     │
                     │ Progress (watch channels)
@@ -976,7 +980,7 @@ storage/disk/
 
 #### Overview
 
-The sync module uses a parallel, event-driven architecture where 7 independent managers run concurrently in their own tokio tasks, communicating via a broadcast event channel.
+The sync module uses a parallel, event-driven architecture where 8 independent managers run concurrently in their own tokio tasks, communicating via a broadcast event channel.
 
 #### Architecture Summary
 
@@ -988,7 +992,8 @@ SyncCoordinator
 ├── BlocksManager         - Downloads matched blocks, processes through wallet
 ├── MasternodesManager    - Synchronizes masternode list via QRInfo/MnListDiff
 ├── ChainLockManager      - Receives and validates ChainLocks
-└── InstantSendManager    - Receives and validates InstantLocks
+├── InstantSendManager    - Receives and validates InstantLocks
+└── MempoolManager        - Tracks unconfirmed wallet transactions via BIP37 or full-fetch
 ```
 
 #### Core Components
@@ -1041,10 +1046,10 @@ The trait provides a default `run()` implementation with the standard event loop
 | `FilterHeadersStored` | FilterHeadersManager | FiltersManager |
 | `FiltersSyncComplete` | FiltersManager | BlocksManager |
 | `BlocksNeeded` | FiltersManager | BlocksManager |
-| `BlockProcessed` | BlocksManager | FiltersManager (gap limit rescan) |
+| `BlockProcessed` | BlocksManager | FiltersManager (gap limit rescan), MempoolManager (confirmed tx removal) |
 | `ChainLockReceived` | ChainLockManager | External listeners |
-| `InstantLockReceived` | InstantSendManager | External listeners |
-| `SyncComplete` | Coordinator | External listeners |
+| `InstantLockReceived` | InstantSendManager | MempoolManager (IS lock association) |
+| `SyncComplete` | Coordinator | MempoolManager (activation trigger), External listeners |
 
 ##### `src/sync/progress.rs` - Aggregate Progress
 
@@ -1111,6 +1116,132 @@ sync/<manager>/
 - Validates signatures
 - Emits `InstantLockReceived` events
 
+##### `src/sync/mempool/` - Mempool Transaction Tracking
+
+Tracks unconfirmed transactions relevant to the wallet in real time after chain sync completes. Unlike other managers that participate in the initial sync pipeline, the mempool manager is purely post-sync: it activates only after `SyncComplete` and runs continuously until shutdown.
+
+**Module structure:**
+```text
+sync/mempool/
+├── mod.rs           - Module exports, bloom filter false-positive rate constant
+├── manager.rs       - Core state machine and transaction processing
+├── sync_manager.rs  - SyncManager trait implementation (event routing, tick logic)
+├── bloom.rs         - BIP37 bloom filter construction from wallet addresses/outpoints
+└── progress.rs      - Progress tracking (received, relevant, tracked, removed)
+```
+
+**Multi-peer activation:**
+
+The manager activates mempool relay on all connected peers simultaneously. When `SyncComplete` arrives, `activate_all_peers()` enables relay on every peer that has completed handshake. Peers connecting after activation are activated immediately if the manager is already in `Synced` state.
+
+Since the client connects with `relay=false`, peers won't send transaction INVs until explicitly enabled. Two strategies control how relay is enabled:
+
+- **BloomFilter**: Sends a BIP37 bloom filter containing wallet address hashes (P2PKH/P2SH hash160) and UTXO outpoints via `filterload` (which implicitly enables filtered relay), then `mempool`. The peer filters INV messages server-side, reducing bandwidth. The filter is rebuilt on all activated peers when new addresses are discovered during block processing.
+- **FetchAll**: Sends `filterclear` (which enables unfiltered relay), then `mempool`. The manager checks wallet relevance locally. Higher bandwidth but no address leakage to peers.
+
+**Transaction processing pipeline:**
+
+```text
+Peer INV(tx)
+  │
+  ▼
+handle_inv()
+  ├─ Skip if: in seen_txids (180s dedup window), pending, queued, or in mempool state
+  ├─ Skip if: at capacity (max_transactions)
+  └─ Enqueue to announcing peer's queue
+       │
+       ▼
+send_queued()  (up to 100 in-flight getdata requests)
+       │
+       ▼
+Peer TX
+  │
+  ▼
+handle_tx()
+  ├─ Add txid to seen_txids (prevents re-download from other peers)
+  ├─ Check for pre-arrived InstantSend lock in pending_is_locks
+  ├─ wallet.process_mempool_transaction(tx, is_locked)
+  │    ├─ Not relevant → discard
+  │    └─ Relevant → store in MempoolState
+  │         ├─ Wallet emits BalanceUpdated event
+  │         └─ New addresses discovered → flag filter rebuild
+  └─ Return MempoolTransactionResult { is_relevant, net_amount, is_outgoing, addresses, new_addresses }
+```
+
+The `seen_txids` map provides a 180-second deduplication window to handle the case where multiple peers respond to the initial `mempool` request with overlapping INVs.
+
+**Events consumed:**
+
+| Event | Action |
+|-------|--------|
+| `SyncComplete` | Activate mempool relay on all connected peers (transitions to `Synced`) |
+| `BlockProcessed` | Remove confirmed txids from mempool state; immediately rebuild bloom filter if new addresses |
+| `InstantLockReceived` | Mark transaction as IS-locked, or store in pending_is_locks if TX not yet received |
+| `PeerConnected` | Activate on new peer immediately if already synced |
+| `PeerDisconnected` | Remove peer; redistribute its queued txids to a random activated peer |
+| `PeersUpdated(0)` | All peers lost: call `stop_sync()`, transition to `WaitingForConnections` |
+
+**InstantSend lock handling:**
+
+IS locks can arrive before or after their corresponding transaction. Both orderings are handled:
+- Lock after TX: set `is_instant_send` flag on stored transaction, notify wallet via `process_instant_send_lock`
+- Lock before TX: store lock in `pending_is_locks` map; when the TX arrives via `handle_tx()`, it is processed with the IS flag already set
+
+Pending IS locks are pruned after 24 hours alongside expired transactions.
+
+**Bloom filter lifecycle:**
+
+Rebuilds happen immediately when the wallet state changes:
+- On `handle_tx()` when a wallet-relevant transaction is received (new UTXOs, spent inputs, potentially new addresses from gap limit maintenance)
+- On `BlockProcessed` with confirmed txids or new addresses, if the sync state is `Synced` (during initial sync, filter rebuilds are deferred until sync completes)
+
+The rebuild sequence on each activated peer is: `filterclear` → `filterload` (with updated wallet data) → `mempool` (re-request inventory with the new filter).
+
+**Periodic maintenance (tick):**
+
+| Action | Trigger |
+|--------|---------|
+| Prune expired transactions | Transactions older than 24 hours |
+| Requeue timed-out requests | Getdata requests unanswered for 120s |
+| Drain queued txids | Send getdata up to 100 in-flight limit |
+
+**Peer failover:**
+
+Each peer has its own txid queue (`None` = connected but inactive, `Some(VecDeque)` = activated). On disconnect:
+- Peer with queued txids: redistribute to a random activated peer
+- No activated peers remaining: queued items dropped with warning
+- All peers lost (`PeersUpdated` with count 0): manager transitions to `WaitingForConnections`, then re-activates via `start_sync()` when peers return
+
+**Wallet integration:**
+
+The `WalletInterface` trait provides four methods for mempool support:
+
+| Method | Purpose |
+|--------|---------|
+| `process_mempool_transaction(tx, is_instant_send)` | Check relevance across all accounts, return net amount and new addresses |
+| `monitored_addresses()` | All watched addresses for bloom filter construction |
+| `watched_outpoints()` | All owned UTXOs for bloom filter spend detection |
+| `process_instant_send_lock(txid)` | Mark UTXOs as IS-locked, transition balance to spendable |
+
+**Balance semantics:**
+
+`MempoolState` tracks two pending balance categories:
+- `pending_balance`: regular unconfirmed transactions
+- `pending_instant_balance`: IS-locked transactions (immediately spendable)
+
+The wallet emits `BalanceUpdated` events only when balance actually changes, with four categories: spendable, unconfirmed, immature, locked.
+
+**Capacity and limits:**
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `max_mempool_transactions` | configurable (default 1000) | Cap on tracked transactions |
+| `MAX_IN_FLIGHT` | 100 | Max concurrent getdata requests |
+| `MEMPOOL_TX_EXPIRY` | 24 hours | Auto-prune for unconfirmed transactions |
+| `PENDING_REQUEST_TIMEOUT` | 120 seconds | Requeue unanswered getdata |
+| `SEEN_TXID_EXPIRY` | 180 seconds | Dedup window for multi-peer INV overlap |
+| `BLOOM_FALSE_POSITIVE_RATE` | 0.0005 (0.05%) | BIP37 filter false-positive rate |
+
 #### Design Strengths
 
 - **True parallelism**: Headers, filters, and masternodes sync concurrently
@@ -1134,3 +1265,4 @@ sync/<manager>/
 | MasternodesManager | sync/masternodes/ | manager.rs, pipeline.rs, sync_manager.rs | Masternode list via QRInfo/MnListDiff |
 | ChainLockManager | sync/chainlock/ | manager.rs, sync_manager.rs | ChainLock message handling |
 | InstantSendManager | sync/instantsend/ | manager.rs, sync_manager.rs | InstantLock message handling |
+| MempoolManager | sync/mempool/ | manager.rs, sync_manager.rs, bloom.rs, progress.rs | Post-sync mempool transaction tracking via BIP37 or full-fetch |

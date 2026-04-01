@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 
 use crate::psbt::raw;
-use alloc::vec::Vec;
 
 mod global;
 mod input;

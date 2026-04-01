@@ -2,6 +2,8 @@
 //!
 //! This trait allows WalletManager to work with different wallet info implementations
 
+use std::collections::BTreeSet;
+
 use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::ManagedAccountTrait;
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
@@ -9,8 +11,7 @@ use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address as DashAddress, Transaction, Txid};
 
@@ -94,6 +95,12 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts.
     /// Returns `true` if any UTXO was newly marked.
     fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool;
+
+    /// Return the aggregated monitor revision across all accounts.
+    /// Increments whenever the monitored address set changes.
+    fn monitor_revision(&self) -> u64 {
+        0
+    }
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -234,6 +241,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool {
+        if !self.instant_send_locks.insert(*txid) {
+            return false;
+        }
         let mut any_changed = false;
         for account in self.accounts.all_accounts_mut() {
             if account.mark_utxos_instant_send(txid) {
@@ -244,5 +254,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
             self.update_balance();
         }
         any_changed
+    }
+
+    fn monitor_revision(&self) -> u64 {
+        self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
     }
 }

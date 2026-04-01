@@ -10,6 +10,7 @@ pub enum ManagerIdentifier {
     Masternode,
     ChainLock,
     InstantSend,
+    Mempool,
 }
 
 impl Display for ManagerIdentifier {
@@ -22,6 +23,7 @@ impl Display for ManagerIdentifier {
             ManagerIdentifier::Masternode => write!(f, "Masternode"),
             ManagerIdentifier::ChainLock => write!(f, "ChainLock"),
             ManagerIdentifier::InstantSend => write!(f, "InstantSend"),
+            ManagerIdentifier::Mempool => write!(f, "Mempool"),
         }
     }
 }
@@ -39,5 +41,6 @@ mod tests {
         assert_eq!(ManagerIdentifier::Masternode.to_string(), "Masternode");
         assert_eq!(ManagerIdentifier::ChainLock.to_string(), "ChainLock");
         assert_eq!(ManagerIdentifier::InstantSend.to_string(), "InstantSend");
+        assert_eq!(ManagerIdentifier::Mempool.to_string(), "Mempool");
     }
 }

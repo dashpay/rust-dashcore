@@ -25,6 +25,7 @@
 //! Never acquire locks in reverse order or deadlock will occur!
 
 pub mod config;
+pub mod event_handler;
 
 mod core;
 mod events;
@@ -36,6 +37,7 @@ mod transactions;
 
 // Re-export public types from extracted modules
 pub use config::ClientConfig;
+pub use event_handler::EventHandler;
 
 // Re-export the main client struct
 pub use core::DashSpvClient;
@@ -50,8 +52,8 @@ mod tests {
     use crate::storage::DiskStorageManager;
     use crate::{test_utils::MockNetworkManager, types::UnconfirmedTransaction};
     use dashcore::{Address, Amount, Transaction, TxOut};
-    use key_wallet::manager::WalletManager;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet_manager::WalletManager;
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::sync::RwLock;
@@ -75,7 +77,7 @@ mod tests {
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client = DashSpvClient::new(config, network_manager, storage, wallet)
+        let client = DashSpvClient::new(config, network_manager, storage, wallet, Arc::new(()))
             .await
             .expect("client construction must succeed");
 
@@ -102,7 +104,7 @@ mod tests {
 
         let test_address = Address::dummy(config.network, 0);
 
-        let client = DashSpvClient::new(config, network_manager, storage, wallet)
+        let client = DashSpvClient::new(config, network_manager, storage, wallet, Arc::new(()))
             .await
             .expect("client construction must succeed");
 

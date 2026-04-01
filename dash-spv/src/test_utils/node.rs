@@ -2,9 +2,11 @@
 //!
 //! This provides utilities for managing a dashd instance and loading test wallet data.
 
-use dashcore::{Address, Amount, BlockHash, Txid};
+use dashcore::{Address, Amount, BlockHash, Transaction, Txid};
+use dashcore_rpc::json as rpc_json;
 use dashcore_rpc::{Auth, Client, RpcApi};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -142,6 +144,8 @@ impl DashCoreNode {
             "-timestampindex=0".to_string(),
             "-blockfilterindex=1".to_string(),
             "-peerblockfilters=1".to_string(),
+            "-peerbloomfilters=1".to_string(),
+            "-whitelist=127.0.0.1".to_string(),
             "-debug=all".to_string(),
             format!("-wallet={}", self.config.wallet),
         ];
@@ -287,7 +291,7 @@ impl DashCoreNode {
         hashes
     }
 
-    /// Send DASH to an address.
+    /// Send DASH to an address from the primary wallet.
     pub fn send_to_address(&self, address: &Address, amount: Amount) -> Txid {
         let client = self.rpc_client();
         let txid = client
@@ -295,6 +299,105 @@ impl DashCoreNode {
             .expect("failed to send to address");
         tracing::info!("Sent {} to {}, txid: {}", amount, address, txid);
         txid
+    }
+
+    /// Send DASH to an address from a specific wallet.
+    pub fn send_to_address_from_wallet(
+        &self,
+        wallet_name: &str,
+        address: &Address,
+        amount: Amount,
+    ) -> Txid {
+        let client = self.rpc_client_for_wallet(wallet_name);
+        let txid = client
+            .send_to_address(address, amount, None, None, None, None, None, None, None, None)
+            .expect("failed to send to address");
+        tracing::info!("Sent {} to {} (wallet: {}), txid: {}", amount, address, wallet_name, txid);
+        txid
+    }
+
+    /// List unspent outputs for a specific wallet.
+    pub fn list_unspent_from_wallet(
+        &self,
+        wallet_name: &str,
+    ) -> Vec<rpc_json::ListUnspentResultEntry> {
+        let client = self.rpc_client_for_wallet(wallet_name);
+        client.list_unspent(None, None, None, None, None).expect("failed to list unspent")
+    }
+
+    /// Create, sign, and broadcast a raw transaction spending a single UTXO.
+    /// Sends the input amount minus fee to the destination address.
+    pub fn send_raw_from_wallet(
+        &self,
+        wallet_name: &str,
+        input_txid: Txid,
+        input_vout: u32,
+        input_amount: Amount,
+        destination: &Address,
+        fee: Amount,
+    ) -> Txid {
+        let client = self.rpc_client_for_wallet(wallet_name);
+
+        let inputs = vec![rpc_json::CreateRawTransactionInput {
+            txid: input_txid,
+            vout: input_vout,
+            sequence: None,
+        }];
+        let send_amount = input_amount.checked_sub(fee).expect("fee exceeds input amount");
+        let mut outputs = HashMap::new();
+        outputs.insert(destination.to_string(), send_amount);
+
+        let raw_tx: Transaction = client
+            .create_raw_transaction(&inputs, &outputs, None)
+            .expect("failed to create raw tx");
+
+        let signed = client
+            .sign_raw_transaction_with_wallet(&raw_tx, None, None)
+            .expect("failed to sign raw tx");
+        assert!(signed.complete, "raw transaction signing incomplete");
+
+        let txid = client
+            .send_raw_transaction(&signed.transaction().expect("invalid signed tx"))
+            .expect("failed to send raw tx");
+        tracing::info!(
+            "Sent raw tx from wallet '{}': {} -> {}, txid: {}",
+            wallet_name,
+            input_amount,
+            destination,
+            txid
+        );
+        txid
+    }
+
+    /// Connect this dashd node to another dashd node via P2P and wait for the
+    /// connection to be established.
+    pub async fn connect_to_node(&self, addr: SocketAddr) {
+        let client = self.rpc_client();
+        client.onetry_node(&addr.to_string()).expect("failed to connect to node");
+
+        for _ in 0..30 {
+            let peers = client.get_peer_info().expect("failed to get peer info");
+            if peers.iter().any(|p| p.addr.to_string().starts_with(&addr.ip().to_string())) {
+                tracing::info!("Connected to node {}", addr);
+                return;
+            }
+            sleep(Duration::from_millis(500)).await;
+        }
+        panic!("Timed out waiting for connection to {}", addr);
+    }
+
+    /// Disconnect a specific peer by address.
+    pub fn disconnect_peer(&self, addr: SocketAddr) {
+        let client = self.rpc_client();
+        client.disconnect_node(&addr.to_string()).expect("failed to disconnect peer");
+        tracing::info!("Disconnected peer {}", addr);
+    }
+
+    /// Enable or disable all P2P network activity on this node.
+    pub fn set_network_active(&self, active: bool) {
+        let client = self.rpc_client();
+        client.set_network_active(active).expect("failed to set network active");
+        tracing::info!("Set network active={} on dashd", active);
     }
 
     /// Disconnect all currently connected peers.

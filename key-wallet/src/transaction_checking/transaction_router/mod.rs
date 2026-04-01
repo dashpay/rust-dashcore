@@ -10,7 +10,8 @@ use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 
 /// Classification of transaction types for routing
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TransactionType {
     /// Standard payment transaction
     Standard,
@@ -61,6 +62,8 @@ impl TransactionRouter {
                 TransactionPayload::QuorumCommitmentPayloadType(_) => TransactionType::Ignored,
                 TransactionPayload::MnhfSignalPayloadType(_) => TransactionType::Ignored,
             }
+        } else if tx.is_coin_base() {
+            TransactionType::Coinbase
         } else if Self::is_coinjoin_transaction(tx) {
             TransactionType::CoinJoin
         } else {

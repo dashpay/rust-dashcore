@@ -8,7 +8,6 @@ use crate::account::AccountType;
 use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey, VerifyingKey};
 use crate::error::{Error, Result};
 use crate::{ChildNumber, DerivationPath, Network};
-use alloc::vec::Vec;
 use core::fmt;
 use dashcore::Address;
 

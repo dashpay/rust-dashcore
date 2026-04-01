@@ -30,7 +30,7 @@ mod tests {
     fn test_client_creation_with_invalid_config() {
         unsafe {
             // Test with null config
-            let client = dash_spv_ffi_client_new(std::ptr::null());
+            let client = dash_spv_ffi_client_new(std::ptr::null(), FFIEventCallbacks::default());
             assert!(client.is_null());
 
             // Check error was set
@@ -49,7 +49,7 @@ mod tests {
             // Create multiple clients with different data directories
             for i in 0..3 {
                 let (config, temp_dir) = create_test_config_with_dir();
-                let client = dash_spv_ffi_client_new(config);
+                let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
                 assert!(!client.is_null(), "Failed to create client {}", i);
 
                 clients.push(client);
@@ -70,7 +70,7 @@ mod tests {
     fn test_client_start_stop_restart() {
         unsafe {
             let (config, _temp_dir) = create_test_config_with_dir();
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Start
@@ -95,7 +95,7 @@ mod tests {
     fn test_client_destruction_while_operations_pending() {
         unsafe {
             let (config, _temp_dir) = create_test_config_with_dir();
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Start a sync operation in background
@@ -119,7 +119,7 @@ mod tests {
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
 
             // Don't add any peers
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Try to start (should handle no peers gracefully)
@@ -139,7 +139,7 @@ mod tests {
         unsafe {
             for _ in 0..5 {
                 let (config, _temp_dir) = create_test_config_with_dir();
-                let client = dash_spv_ffi_client_new(config);
+                let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
                 assert!(!client.is_null());
 
                 // Do some operations
@@ -188,7 +188,7 @@ mod tests {
     fn test_client_state_consistency() {
         unsafe {
             let (config, _temp_dir) = create_test_config_with_dir();
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Get initial state
@@ -228,15 +228,15 @@ mod tests {
 
         unsafe {
             let (config, _temp_dir) = create_test_config_with_dir();
-            let client = dash_spv_ffi_client_new(config);
-            assert!(!client.is_null());
-
-            let callback = FFIClientErrorCallback {
-                on_error: Some(on_error),
-                user_data: tx_ptr as *mut std::os::raw::c_void,
+            let callbacks = FFIEventCallbacks {
+                error: FFIClientErrorCallback {
+                    on_error: Some(on_error),
+                    user_data: tx_ptr as *mut std::os::raw::c_void,
+                },
+                ..FFIEventCallbacks::default()
             };
-            let result = dash_spv_ffi_client_set_client_error_callback(client, callback);
-            assert_eq!(result, FFIErrorCode::Success as i32);
+            let client = dash_spv_ffi_client_new(config, callbacks);
+            assert!(!client.is_null());
 
             // Call run() twice — the second run's sync thread will call
             // start() on the already-running client, triggering "already running"
@@ -302,20 +302,10 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_client_error_callback_null_client() {
+    fn test_client_run_null_client() {
         unsafe {
-            let callback = FFIClientErrorCallback {
-                on_error: None,
-                user_data: std::ptr::null_mut(),
-            };
-
             assert_eq!(
-                dash_spv_ffi_client_set_client_error_callback(std::ptr::null_mut(), callback),
-                FFIErrorCode::NullPointer as i32
-            );
-
-            assert_eq!(
-                dash_spv_ffi_client_clear_client_error_callback(std::ptr::null_mut()),
+                dash_spv_ffi_client_run(std::ptr::null_mut()),
                 FFIErrorCode::NullPointer as i32
             );
         }
@@ -336,7 +326,7 @@ mod tests {
         for _ in 0..10 {
             unsafe {
                 let (config, _temp_dir) = create_test_config_with_dir();
-                let client = dash_spv_ffi_client_new(config);
+                let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
                 assert!(!client.is_null());
 
                 // Do a quick operation

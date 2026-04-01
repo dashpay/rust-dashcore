@@ -8,7 +8,6 @@ use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
 use crate::Error;
-use alloc::vec::Vec;
 use hex;
 
 impl Wallet {

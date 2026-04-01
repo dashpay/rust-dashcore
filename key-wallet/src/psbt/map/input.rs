@@ -10,8 +10,6 @@ use secp256k1::XOnlyPublicKey;
 use crate::psbt::map::Map;
 use crate::psbt::serialize::Deserialize;
 use crate::psbt::{error, raw, Error};
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::txout::TxOut;
 use dashcore::blockdata::transaction::Transaction;
@@ -22,7 +20,7 @@ use dashcore::sighash::{
     self, EcdsaSighashType, NonStandardSighashType, SighashTypeParseError, TapSighashType,
 };
 use dashcore::taproot::{ControlBlock, LeafVersion, TapLeafHash, TapNodeHash};
-use std::collections::btree_map;
+use std::collections::{btree_map, BTreeMap};
 
 use crate::bip32::KeySource;
 #[cfg(feature = "serde")]

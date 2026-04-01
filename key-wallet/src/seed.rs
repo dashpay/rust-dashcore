@@ -3,8 +3,6 @@
 //! A seed is a 512-bit (64 bytes) value used to derive HD wallet keys.
 
 use crate::error::{Error, Result};
-use alloc::string::String;
-use alloc::vec::Vec;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use core::fmt;

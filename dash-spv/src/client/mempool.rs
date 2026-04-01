@@ -13,11 +13,13 @@ use crate::error::Result;
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
-use super::DashSpvClient;
+use super::{DashSpvClient, EventHandler};
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
+    DashSpvClient<W, N, S, H>
+{
     /// Get mempool balance for an address.
     pub async fn get_mempool_balance(
         &self,

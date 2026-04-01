@@ -39,8 +39,7 @@ mod tests {
 
         let regtest = ClientConfig::regtest();
         assert_eq!(regtest.network, Network::Regtest);
-        assert_eq!(regtest.peers.len(), 1);
-        assert_eq!(regtest.peers[0].to_string(), "127.0.0.1:19899");
+        assert!(regtest.peers.is_empty());
     }
 
     #[test]

@@ -22,7 +22,6 @@ use crate::account::account_collection::AccountCollection;
 use crate::mnemonic::Mnemonic;
 use crate::seed::Seed;
 use crate::Network;
-use alloc::vec::Vec;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use core::fmt;

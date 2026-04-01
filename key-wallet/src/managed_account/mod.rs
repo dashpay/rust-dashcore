@@ -14,19 +14,23 @@ use crate::account::TransactionRecord;
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::address_pool::PublicKeyType;
+use crate::managed_account::transaction_record::{
+    InputDetail, OutputDetail, OutputRole, TransactionDirection,
+};
+use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
 #[cfg(feature = "eddsa")]
 use crate::AddressInfo;
 use crate::{ExtendedPubKey, Network};
-use alloc::collections::BTreeMap;
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::{Address, ScriptBuf};
 use dashcore::{Transaction, Txid};
 use managed_account_type::ManagedAccountType;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::{BTreeSet, HashSet};
 
 pub mod address_pool;
@@ -64,6 +68,10 @@ pub struct ManagedCoreAccount {
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
+    /// Revision counter incremented when the monitored address set changes
+    /// (e.g. new addresses generated). Used to detect bloom filter staleness.
+    #[cfg_attr(feature = "serde", serde(skip_serializing))]
+    monitor_revision: u64,
 }
 
 impl ManagedCoreAccount {
@@ -78,7 +86,18 @@ impl ManagedCoreAccount {
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            monitor_revision: 0,
         }
+    }
+
+    /// Return the current monitor revision.
+    pub fn monitor_revision(&self) -> u64 {
+        self.monitor_revision
+    }
+
+    /// Increment the monitor revision to signal that the monitored address set changed.
+    pub fn bump_monitor_revision(&mut self) {
+        self.monitor_revision += 1;
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
@@ -331,6 +350,7 @@ impl ManagedCoreAccount {
                     .collect();
 
                 let txid = tx.txid();
+                let mut utxos_changed = false;
 
                 // Insert UTXOs for outputs paying to our addresses
                 for (vout, output) in tx.output.iter().enumerate() {
@@ -360,17 +380,14 @@ impl ManagedCoreAccount {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
                             };
-                            let mut utxo = Utxo::new(
-                                outpoint,
-                                txout,
-                                addr,
-                                context.block_height().unwrap_or(0),
-                                tx.is_coin_base(),
-                            );
+                            let block_height = context.block_info().map_or(0, |info| info.height);
+                            let mut utxo =
+                                Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
                             utxo.is_confirmed = context.confirmed();
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend);
                             self.utxos.insert(outpoint, utxo);
+                            utxos_changed = true;
                         }
                     }
                 }
@@ -385,7 +402,12 @@ impl ManagedCoreAccount {
                             txid = %tx.txid(),
                             "Removed spent UTXO"
                         );
+                        utxos_changed = true;
                     }
+                }
+
+                if utxos_changed {
+                    self.monitor_revision += 1;
                 }
             }
             _ => {}
@@ -399,22 +421,29 @@ impl ManagedCoreAccount {
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
+        transaction_type: TransactionType,
     ) -> bool {
         if !self.transactions.contains_key(&tx.txid()) {
-            self.record_transaction(tx, account_match, context);
+            self.record_transaction(tx, account_match, context, transaction_type);
             return true;
         }
 
         let mut changed = false;
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
-            if !tx_record.is_confirmed() {
-                if let (Some(height), Some(hash)) = (context.block_height(), context.block_hash()) {
-                    tx_record.mark_confirmed(height, hash);
-                    changed = true;
-                }
-                if let Some(ts) = context.timestamp() {
-                    tx_record.timestamp = ts as u64;
-                }
+            debug_assert_eq!(
+                tx_record.transaction_type,
+                transaction_type,
+                "transaction_type changed between recordings for {}",
+                tx.txid()
+            );
+            if tx_record.context != context {
+                let was_confirmed = tx_record.context.confirmed();
+                tx_record.update_context(context);
+                // Only signal a change when confirmation status actually changes,
+                // not for upgrades within the confirmed state (e.g. InBlock → InChainLockedBlock).
+                // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
+                // wallet transaction events are properly handled
+                changed = !was_confirmed;
             }
         }
         self.update_utxos(tx, account_match, context);
@@ -427,19 +456,97 @@ impl ManagedCoreAccount {
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
+        transaction_type: TransactionType,
     ) {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
-        let tx_record = TransactionRecord {
-            transaction: tx.clone(),
-            txid: tx.txid(),
-            height: context.block_height(),
-            block_hash: context.block_hash(),
-            timestamp: context.timestamp().unwrap_or(0) as u64,
-            net_amount,
-            fee: None,
-            label: None,
-            is_ours: net_amount < 0,
+
+        let receive_addrs: HashSet<_> = account_match
+            .account_type_match
+            .involved_receive_addresses()
+            .iter()
+            .map(|info| &info.address)
+            .collect();
+        let change_addrs: HashSet<_> = account_match
+            .account_type_match
+            .involved_change_addresses()
+            .iter()
+            .map(|info| &info.address)
+            .collect();
+
+        // Input details must be built before `update_utxos` removes spent UTXOs
+        let mut input_details = Vec::new();
+        if !tx.is_coin_base() {
+            for (idx, input) in tx.input.iter().enumerate() {
+                if let Some(utxo) = self.utxos.get(&input.previous_output) {
+                    input_details.push(InputDetail {
+                        index: idx as u32,
+                        value: utxo.txout.value,
+                        address: utxo.address.clone(),
+                    });
+                }
+            }
+        }
+
+        // Use both UTXO-based input details and `account_match.sent` as signals
+        // that we created this transaction. The UTXO set may be incomplete
+        // (e.g., partial rescan) so `account_match.sent > 0` catches cases where
+        // the transaction still spent our funds even without matching UTXOs.
+        let has_inputs = !input_details.is_empty() || account_match.sent > 0;
+
+        let resolved_outputs: Vec<Option<Address>> = tx
+            .output
+            .iter()
+            .map(|output| Address::from_script(&output.script_pubkey, self.network).ok())
+            .collect();
+
+        // Build output details — annotate every output with its role
+        let mut output_details = Vec::new();
+        for (idx, output) in tx.output.iter().enumerate() {
+            let role = match &resolved_outputs[idx] {
+                Some(addr) if receive_addrs.contains(addr) => OutputRole::Received,
+                Some(addr) if change_addrs.contains(addr) => OutputRole::Change,
+                Some(_) if has_inputs => OutputRole::Sent,
+                Some(_) => continue,
+                None => {
+                    if output.script_pubkey.is_provably_unspendable() {
+                        OutputRole::Unspendable
+                    } else if has_inputs {
+                        OutputRole::Sent
+                    } else {
+                        continue;
+                    }
+                }
+            };
+            output_details.push(OutputDetail {
+                index: idx as u32,
+                role,
+            });
+        }
+
+        // Determine direction
+        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
+        let has_our_outputs = output_details
+            .iter()
+            .any(|d| d.role == OutputRole::Received || d.role == OutputRole::Change);
+        let direction = if transaction_type == TransactionType::CoinJoin {
+            TransactionDirection::CoinJoin
+        } else if !has_sent && has_inputs && has_our_outputs {
+            TransactionDirection::Internal
+        } else if has_inputs {
+            TransactionDirection::Outgoing
+        } else {
+            TransactionDirection::Incoming
         };
+
+        let tx_record = TransactionRecord::new(
+            tx.clone(),
+            context,
+            transaction_type,
+            direction,
+            input_details,
+            output_details,
+            net_amount,
+        );
 
         self.transactions.insert(tx.txid(), tx_record);
 
@@ -522,12 +629,15 @@ impl ManagedCoreAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            external_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                crate::error::Error::NoKeySource => {
-                    "No unused addresses available and no key source provided"
-                }
-                _ => "Failed to generate receive address",
-            })
+            let addr =
+                external_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate receive address",
+                })?;
+            self.monitor_revision += 1;
+            Ok(addr)
         } else {
             Err("Cannot generate receive address for non-standard account type")
         }
@@ -553,12 +663,15 @@ impl ManagedCoreAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            internal_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                crate::error::Error::NoKeySource => {
-                    "No unused addresses available and no key source provided"
-                }
-                _ => "Failed to generate change address",
-            })
+            let addr =
+                internal_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate change address",
+                })?;
+            self.monitor_revision += 1;
+            Ok(addr)
         } else {
             Err("Cannot generate change address for non-standard account type")
         }
@@ -969,17 +1082,10 @@ impl ManagedCoreAccount {
 
     /// Get the current timestamp (for metadata)
     fn current_timestamp() -> u64 {
-        #[cfg(feature = "std")]
-        {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            0 // In no_std environments, timestamp must be provided externally
-        }
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     /// Get total address count across all pools
@@ -1185,6 +1291,7 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
             transactions: helper.transactions,
             utxos: helper.utxos,
             spent_outpoints,
+            monitor_revision: 0,
         })
     }
 }

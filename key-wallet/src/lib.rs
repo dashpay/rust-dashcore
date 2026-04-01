@@ -4,14 +4,6 @@
 //! including BIP32 hierarchical deterministic wallets, BIP39 mnemonic support,
 //! and Dash-specific derivation paths (DIP9).
 
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
-extern crate core;
-#[cfg(feature = "std")]
-extern crate std;
-
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
@@ -43,7 +35,6 @@ pub mod dip9;
 pub mod error;
 pub mod gap_limit;
 pub mod managed_account;
-pub mod manager;
 pub mod mnemonic;
 pub mod psbt;
 pub mod seed;

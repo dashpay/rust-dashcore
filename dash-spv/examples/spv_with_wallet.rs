@@ -5,8 +5,8 @@
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient, LevelFilter};
-use key_wallet::manager::WalletManager;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::WalletManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -31,7 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client with all components
-    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(())).await?;
 
     // The wallet will automatically be notified of:
     // - New blocks via process_block()

@@ -1,7 +1,7 @@
 use crate::error::{SyncError, SyncResult};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
-    FiltersProgress, InstantSendProgress, MasternodesProgress,
+    FiltersProgress, InstantSendProgress, MasternodesProgress, MempoolProgress,
 };
 use dashcore::prelude::CoreBlockHeight;
 use std::fmt;
@@ -34,6 +34,8 @@ pub struct SyncProgress {
     chainlocks: Option<ChainLockProgress>,
     /// InstantSend synchronization progress.
     instantsend: Option<InstantSendProgress>,
+    /// Mempool monitoring progress.
+    mempool: Option<MempoolProgress>,
 }
 
 impl SyncProgress {
@@ -156,6 +158,12 @@ impl SyncProgress {
             .ok_or_else(|| SyncError::InvalidState("InstantSendManager not started".into()))
     }
 
+    pub fn mempool(&self) -> SyncResult<&MempoolProgress> {
+        self.mempool
+            .as_ref()
+            .ok_or_else(|| SyncError::InvalidState("MempoolManager not started".into()))
+    }
+
     pub fn update_headers(&mut self, progress: BlockHeadersProgress) {
         let updated_headers = Some(progress);
         if self.headers != updated_headers {
@@ -209,6 +217,14 @@ impl SyncProgress {
             self.instantsend = updated_instantsend;
         }
     }
+
+    /// Update mempool progress.
+    pub fn update_mempool(&mut self, progress: MempoolProgress) {
+        let updated_mempool = Some(progress);
+        if self.mempool != updated_mempool {
+            self.mempool = updated_mempool;
+        }
+    }
 }
 
 impl fmt::Display for SyncProgress {
@@ -234,6 +250,9 @@ impl fmt::Display for SyncProgress {
         }
         if let Some(i) = &self.instantsend {
             writeln!(f, "  InstantSend:    {}", i)?;
+        }
+        if let Some(m) = &self.mempool {
+            writeln!(f, "  Mempool:        {}", m)?;
         }
         Ok(())
     }

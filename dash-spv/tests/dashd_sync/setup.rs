@@ -1,6 +1,7 @@
+use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::NetworkEvent;
 use dash_spv::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
-use dash_spv::test_utils::{retain_test_dir, DashdTestContext, TestChain};
+use dash_spv::test_utils::{retain_test_dir, DashdTestContext, TestChain, TestEventHandler};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
@@ -10,11 +11,13 @@ use dash_spv::{
 };
 use dashcore::network::address::AddrV2Message;
 use dashcore::network::constants::ServiceFlags;
+use dashcore::Txid;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
-use key_wallet::manager::{WalletId, WalletManager};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::WalletEvent;
+use key_wallet_manager::{WalletId, WalletManager};
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -99,6 +102,19 @@ impl TestContext {
     /// Spawns and initializes a new client instance asynchronously.
     pub(super) async fn spawn_new_client(&self) -> ClientHandle {
         create_and_start_client(&self.client_config, Arc::clone(&self.wallet)).await
+    }
+
+    /// Spawns an independent client with the given mempool strategy.
+    ///
+    /// Each call creates a fresh wallet (same mnemonic) and a separate storage directory.
+    /// The caller must hold the returned `TempDir` alive for the duration of the test.
+    pub(super) async fn spawn_client(&self, strategy: MempoolStrategy) -> (ClientHandle, TempDir) {
+        let storage = TempDir::new().expect("Failed to create client temp dir");
+        let mut config = create_test_config(storage.path().to_path_buf(), self.dashd.addr);
+        config.mempool_strategy = strategy;
+        let (wallet, _) = create_test_wallet(&self.dashd.wallet.mnemonic, Network::Regtest);
+        let handle = create_and_start_client(&config, wallet).await;
+        (handle, storage)
     }
     /// Retrieves the total count of transactions across all accounts in the wallet.
     pub(super) async fn transaction_count(&self) -> usize {
@@ -242,8 +258,12 @@ impl Drop for TestContext {
 }
 
 /// Type alias for the SPV client used in tests.
-pub(super) type TestClient =
-    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>;
+pub(super) type TestClient = DashSpvClient<
+    WalletManager<ManagedWalletInfo>,
+    PeerNetworkManager,
+    DiskStorageManager,
+    TestEventHandler,
+>;
 
 /// A `ClientHandle` is a utility structure that manages the state and handles for a `TestClient`
 /// required to interact with the synchronization process, various event channels, and cancellation capabilities.
@@ -258,6 +278,8 @@ pub(super) struct ClientHandle {
     pub(super) sync_event_receiver: broadcast::Receiver<SyncEvent>,
     /// A channel for receiving network events.
     pub(super) network_event_receiver: broadcast::Receiver<NetworkEvent>,
+    /// A channel for receiving wallet events.
+    pub(super) wallet_event_receiver: broadcast::Receiver<WalletEvent>,
     /// A cancellation token for the client's run loop.
     pub(super) cancel_token: CancellationToken,
 }
@@ -274,7 +296,26 @@ impl ClientHandle {
     }
 }
 
-/// Creates a new SPV client and starts it.
+/// Check if a transaction exists in a client's wallet.
+pub(super) async fn client_has_transaction(
+    client: &TestClient,
+    wallet_id: &WalletId,
+    txid: &Txid,
+) -> bool {
+    let wallet_read = client.wallet().read().await;
+    let wallet_info = wallet_read.get_wallet_info(wallet_id).expect("Wallet info not found");
+    wallet_info
+        .accounts()
+        .all_accounts()
+        .iter()
+        .any(|account| account.transactions.contains_key(txid))
+        || wallet_info.immature_transactions().iter().any(|tx| &tx.txid() == txid)
+}
+
+/// Creates a new SPV client and starts it with a `TestEventHandler`.
+///
+/// The handler bridges events back to channels so tests can use `tokio::select!`
+/// patterns while going through the `EventHandler` trait.
 pub(super) async fn create_and_start_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
@@ -284,17 +325,24 @@ pub(super) async fn create_and_start_client(
     let storage_manager =
         DiskStorageManager::new(config).await.expect("Failed to create storage manager");
 
-    let client = DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet)
-        .await
-        .expect("Failed to create client");
+    let handler = Arc::new(TestEventHandler::new());
+    let progress_receiver = handler.subscribe_progress();
+    let sync_event_receiver = handler.subscribe_sync_events();
+    let network_event_receiver = handler.subscribe_network_events();
 
-    let progress_receiver = client.subscribe_progress().await;
-    let sync_event_receiver = client.subscribe_sync_events().await;
-    let network_event_receiver = client.subscribe_network_events().await;
+    let client =
+        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, handler)
+            .await
+            .expect("Failed to create client");
+
+    let wallet_event_receiver = {
+        let w = client.wallet().read().await;
+        w.subscribe_events()
+    };
     let cancel_token = CancellationToken::new();
     let run_token = cancel_token.clone();
-
     let run_client = client.clone();
+
     let run_handle = tokio::task::spawn(async move { run_client.run(run_token).await });
 
     ClientHandle {
@@ -303,6 +351,7 @@ pub(super) async fn create_and_start_client(
         progress_receiver,
         sync_event_receiver,
         network_event_receiver,
+        wallet_event_receiver,
         cancel_token,
     }
 }
@@ -334,7 +383,6 @@ pub(super) fn create_test_wallet(
 /// Create test client config pointing to a specific peer (exclusive mode).
 fn create_test_config(storage_path: PathBuf, peer_addr: std::net::SocketAddr) -> ClientConfig {
     let mut config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
-    config.peers.clear();
     config.add_peer(peer_addr);
     config
 }
@@ -347,9 +395,7 @@ pub(super) async fn create_non_exclusive_test_config(
     storage_path: PathBuf,
     peer_addr: std::net::SocketAddr,
 ) -> ClientConfig {
-    let mut config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
-    // Clear default regtest peers so the manager enters non-exclusive mode
-    config.peers.clear();
+    let config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
     // Seed the peer store so the client can discover our dashd node
     let peer_store = PersistentPeerStorage::open(config.storage_path.clone())
         .await

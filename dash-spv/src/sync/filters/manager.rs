@@ -21,8 +21,8 @@ use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 
 use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
-use key_wallet::manager::WalletInterface;
-use key_wallet::manager::{check_compact_filters_for_addresses, FilterMatchKey};
+use key_wallet_manager::WalletInterface;
+use key_wallet_manager::{check_compact_filters_for_addresses, FilterMatchKey};
 use tokio::sync::RwLock;
 
 /// Batch size for processing filters.
@@ -84,14 +84,23 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         filter_storage: Arc<RwLock<F>>,
     ) -> Self {
         let committed_height = wallet.read().await.filter_committed_height();
-
-        // Load block header tip for target display
-        let header_tip =
+        let stored_height = filter_storage.read().await.filter_tip_height().await.unwrap_or(0);
+        let target_height =
             header_storage.read().await.get_tip().await.map(|t| t.height()).unwrap_or(0);
+        let filter_header_tip = filter_header_storage
+            .read()
+            .await
+            .get_filter_tip_height()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
 
         let mut initial_progress = FiltersProgress::default();
         initial_progress.update_committed_height(committed_height);
-        initial_progress.update_target_height(header_tip);
+        initial_progress.update_stored_height(stored_height);
+        initial_progress.update_target_height(target_height);
+        initial_progress.update_filter_header_tip_height(filter_header_tip);
 
         Self {
             progress: initial_progress,
@@ -744,9 +753,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     return self.try_create_lookahead_batches().await;
                 }
             }
-            SyncState::WaitingForConnections | SyncState::WaitForEvents
-                if self.progress.stored_height() < self.progress.filter_header_tip_height() =>
-            {
+            SyncState::WaitingForConnections | SyncState::WaitForEvents => {
                 return self.start_download(requests).await;
             }
             _ => {}
@@ -767,11 +774,13 @@ mod tests {
     use super::*;
     use crate::network::{MessageType, RequestSender};
     use crate::storage::{
-        DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
-        PersistentFilterStorage, StorageManager,
+        BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage,
+        PersistentFilterHeaderStorage, PersistentFilterStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
-    use key_wallet::test_utils::MockWallet;
+    use dashcore::Header;
+    use dashcore_hashes::Hash;
+    use key_wallet_manager::test_utils::MockWallet;
     use tokio::sync::mpsc::unbounded_channel;
 
     type TestFiltersManager = FiltersManager<
@@ -800,6 +809,58 @@ mod tests {
         assert_eq!(manager.identifier(), ManagerIdentifier::Filter);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::CFilter]);
+        assert_eq!(manager.progress.committed_height(), 0);
+        assert_eq!(manager.progress.stored_height(), 0);
+        assert_eq!(manager.progress.target_height(), 0);
+        assert_eq!(manager.progress.filter_header_tip_height(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_filters_manager_new_restores_from_storage() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+
+        // Set wallet committed height via synced_height (MockWallet default delegates)
+        let mut wallet = MockWallet::new();
+        wallet.update_synced_height(50);
+        let wallet = Arc::new(RwLock::new(wallet));
+
+        // Pre-populate filter storage with filters at heights 1..=100
+        let filters = storage.filters();
+        {
+            let mut filter_store = filters.write().await;
+            for height in 1..=100 {
+                filter_store.store_filter(height, &[0u8; 32]).await.unwrap();
+            }
+        }
+
+        // Pre-populate block header storage with 300 headers for target_height
+        let block_headers = Header::dummy_batch(0..300);
+        storage.block_headers().write().await.store_headers(&block_headers).await.unwrap();
+
+        // Pre-populate filter header storage with headers at heights 1..=200
+        let filter_headers = storage.filter_headers();
+        {
+            let dummy_headers = vec![FilterHeader::all_zeros(); 200];
+            filter_headers
+                .write()
+                .await
+                .store_filter_headers_at_height(&dummy_headers, 1)
+                .await
+                .unwrap();
+        }
+
+        let manager = FiltersManager::new(
+            wallet,
+            storage.block_headers(),
+            storage.filter_headers(),
+            storage.filters(),
+        )
+        .await;
+
+        assert_eq!(manager.progress.committed_height(), 50);
+        assert_eq!(manager.progress.stored_height(), 100);
+        assert_eq!(manager.progress.target_height(), 299);
+        assert_eq!(manager.progress.filter_header_tip_height(), 200);
     }
 
     #[tokio::test]
@@ -1052,5 +1113,63 @@ mod tests {
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(!manager.is_idle());
+    }
+
+    #[tokio::test]
+    async fn test_handle_new_filter_headers_synced_restart() {
+        let mut manager = create_test_manager().await;
+
+        // Store block headers so start_download can resolve heights
+        let headers = dashcore::block::Header::dummy_batch(0..101);
+        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+
+        // Simulate restart where everything is already synced but state is WaitForEvents.
+        // committed == stored == filter_header_tip — start_download detects synced state.
+        manager.set_state(SyncState::WaitForEvents);
+        manager.wallet.write().await.update_synced_height(100);
+        manager.progress.update_committed_height(100);
+        manager.progress.update_stored_height(100);
+        manager.progress.update_filter_header_tip_height(100);
+        manager.progress.update_target_height(100);
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
+
+        assert_eq!(manager.state(), SyncState::Synced);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SyncEvent::FiltersSyncComplete {
+                    tip_height: 100
+                }
+            )),
+            "expected FiltersSyncComplete(100), got {:?}",
+            events
+        );
+        assert!(manager.active_batches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_new_filter_headers_stays_synced_when_already_synced() {
+        let mut manager = create_test_manager().await;
+
+        // Already in Synced state with matching heights — should stay Synced without
+        // emitting duplicate events.
+        manager.set_state(SyncState::Synced);
+        manager.progress.update_committed_height(100);
+        manager.progress.update_stored_height(100);
+        manager.progress.update_filter_header_tip_height(100);
+        manager.progress.update_target_height(100);
+        manager.filter_pipeline.init(101, 100);
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
+
+        assert_eq!(manager.state(), SyncState::Synced);
+        assert!(events.is_empty());
     }
 }

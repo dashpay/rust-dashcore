@@ -24,6 +24,7 @@ use crate::error::NetworkResult;
 use crate::NetworkError;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::{GetHeadersMessage, Inventory};
+use dashcore::network::message_bloom::FilterLoad;
 use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
 use dashcore::network::message_qrinfo::GetQRInfo;
 use dashcore::network::message_sml::GetMnListDiff;
@@ -144,6 +145,21 @@ impl RequestSender {
         self.send_message(NetworkMessage::GetData(
             hashes.into_iter().map(Inventory::Block).collect(),
         ))
+    }
+
+    /// Send a filterload message to a specific peer.
+    pub fn send_filter_load(&self, filter_load: FilterLoad, peer: SocketAddr) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::FilterLoad(filter_load), peer)
+    }
+
+    /// Send a filterclear message to a specific peer.
+    pub fn send_filter_clear(&self, peer: SocketAddr) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::FilterClear, peer)
+    }
+
+    /// Send a mempool message to request inventory from a specific peer.
+    pub fn request_mempool(&self, peer: SocketAddr) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::MemPool, peer)
     }
 }
 

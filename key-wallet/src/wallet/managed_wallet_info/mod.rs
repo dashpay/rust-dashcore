@@ -18,7 +18,6 @@ use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::Network;
-use alloc::string::String;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
 #[cfg(feature = "serde")]

@@ -4,106 +4,13 @@
 //! if transactions belong to the wallet.
 
 pub(crate) use super::account_checker::TransactionCheckResult;
+use super::transaction_context::TransactionContext;
 use super::transaction_router::TransactionRouter;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::prelude::CoreBlockHeight;
-use dashcore::BlockHash;
-
-/// Context for transaction processing
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransactionContext {
-    /// Transaction is in the mempool (unconfirmed)
-    Mempool,
-    /// Transaction is in the mempool with an InstantSend lock
-    InstantSend,
-    /// Transaction is in a block at the given height
-    InBlock {
-        height: u32,
-        block_hash: Option<BlockHash>,
-        timestamp: Option<u32>,
-    },
-    /// Transaction is in a chain-locked block at the given height
-    InChainLockedBlock {
-        height: u32,
-        block_hash: Option<BlockHash>,
-        timestamp: Option<u32>,
-    },
-}
-
-impl std::fmt::Display for TransactionContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TransactionContext::Mempool => write!(f, "mempool"),
-            TransactionContext::InstantSend => write!(f, "instant send"),
-            TransactionContext::InBlock {
-                height,
-                ..
-            } => write!(f, "block {}", height),
-            TransactionContext::InChainLockedBlock {
-                height,
-                ..
-            } => {
-                write!(f, "chainlocked block {}", height)
-            }
-        }
-    }
-}
-
-impl TransactionContext {
-    /// Returns the confirmation state.
-    pub(crate) fn confirmed(&self) -> bool {
-        matches!(
-            self,
-            TransactionContext::InChainLockedBlock { .. } | TransactionContext::InBlock { .. }
-        )
-    }
-    /// Returns the block height if confirmed.
-    pub(crate) fn block_height(&self) -> Option<CoreBlockHeight> {
-        match self {
-            TransactionContext::Mempool | TransactionContext::InstantSend => None,
-            TransactionContext::InBlock {
-                height,
-                ..
-            }
-            | TransactionContext::InChainLockedBlock {
-                height,
-                ..
-            } => Some(*height),
-        }
-    }
-    /// Returns the block hash if confirmed.
-    pub(crate) fn block_hash(&self) -> Option<BlockHash> {
-        match self {
-            TransactionContext::Mempool | TransactionContext::InstantSend => None,
-            TransactionContext::InBlock {
-                block_hash,
-                ..
-            }
-            | TransactionContext::InChainLockedBlock {
-                block_hash,
-                ..
-            } => *block_hash,
-        }
-    }
-    /// Returns the block time if confirmed.
-    pub(crate) fn timestamp(&self) -> Option<u32> {
-        match self {
-            TransactionContext::Mempool | TransactionContext::InstantSend => None,
-            TransactionContext::InBlock {
-                timestamp,
-                ..
-            }
-            | TransactionContext::InChainLockedBlock {
-                timestamp,
-                ..
-            } => *timestamp,
-        }
-    }
-}
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -199,6 +106,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if update_balance {
                     self.update_balance();
                 }
+                result.state_modified = true;
                 return result;
             }
             // Only proceed if the new context is a block confirmation
@@ -216,9 +124,10 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             if is_new {
-                account.record_transaction(tx, &account_match, context);
-            } else {
-                account.confirm_transaction(tx, &account_match, context);
+                account.record_transaction(tx, &account_match, context, tx_type);
+                result.state_modified = true;
+            } else if account.confirm_transaction(tx, &account_match, context, tx_type) {
+                result.state_modified = true;
             }
 
             for address_info in account_match.account_type_match.all_involved_addresses() {
@@ -233,6 +142,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             let key_source = KeySource::Public(xpub);
+            let rev_before = result.new_addresses.len();
             for pool in account.account_type.address_pools_mut() {
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(addrs) => result.new_addresses.extend(addrs),
@@ -245,6 +155,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         );
                     }
                 }
+            }
+            if result.new_addresses.len() > rev_before {
+                account.bump_monitor_revision();
             }
         }
 
@@ -277,7 +190,10 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
     use crate::test_utils::TestWalletContext;
+    use crate::transaction_checking::BlockInfo;
+    use crate::transaction_checking::TransactionType;
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use crate::wallet::{ManagedWalletInfo, Wallet};
@@ -383,13 +299,11 @@ mod tests {
         if let (Some(_xpub), Some(address)) = (bip32_xpub, bip32_address) {
             let tx = Transaction::dummy(&address, 0..1, &[50_000]);
 
-            let context = TransactionContext::InBlock {
-                height: 100000,
-                block_hash: Some(
-                    BlockHash::from_slice(&[0u8; 32]).expect("Should create block hash"),
-                ),
-                timestamp: Some(1234567890),
-            };
+            let context = TransactionContext::InBlock(BlockInfo::new(
+                100000,
+                BlockHash::from_slice(&[0u8; 32]).expect("Should create block hash"),
+                1234567890,
+            ));
 
             // This should exercise BIP32 account branch in the update logic
             let result =
@@ -420,13 +334,11 @@ mod tests {
         if let (Some(_xpub), Some(address)) = (coinjoin_xpub, coinjoin_address) {
             let tx = Transaction::dummy(&address, 0..1, &[75_000]);
 
-            let context = TransactionContext::InChainLockedBlock {
-                height: 100001,
-                block_hash: Some(
-                    BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
-                ),
-                timestamp: Some(1234567891),
-            };
+            let context = TransactionContext::InChainLockedBlock(BlockInfo::new(
+                100001,
+                BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+                1234567891,
+            ));
 
             // This should exercise CoinJoin account branch in the update logic
             let result =
@@ -471,11 +383,11 @@ mod tests {
         let block_height = 100000;
 
         // Test with InBlock context
-        let context = TransactionContext::InBlock {
-            height: block_height,
-            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567890),
-        };
+        let context = TransactionContext::InBlock(BlockInfo::new(
+            block_height,
+            BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+            1234567890,
+        ));
 
         let result = managed_wallet
             .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
@@ -527,11 +439,11 @@ mod tests {
         // Fund the wallet with a transaction paying to the receive address
         let funding_value = 50_000_000u64;
         let funding_tx = Transaction::dummy(&receive_address, 0..1, &[funding_value]);
-        let funding_context = TransactionContext::InBlock {
-            height: 1,
-            block_hash: Some(BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1_650_000_000),
-        };
+        let funding_context = TransactionContext::InBlock(BlockInfo::new(
+            1,
+            BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash"),
+            1_650_000_000,
+        ));
 
         let funding_result = managed_wallet
             .check_core_transaction(&funding_tx, funding_context, &mut wallet, true, true)
@@ -563,11 +475,11 @@ mod tests {
             special_transaction_payload: None,
         };
 
-        let spend_context = TransactionContext::InBlock {
-            height: 2,
-            block_hash: Some(BlockHash::from_slice(&[3u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1_650_000_100),
-        };
+        let spend_context = TransactionContext::InBlock(BlockInfo::new(
+            2,
+            BlockHash::from_slice(&[3u8; 32]).expect("Should create block hash"),
+            1_650_000_100,
+        ));
 
         let spend_result = managed_wallet
             .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
@@ -625,11 +537,11 @@ mod tests {
 
         let block_height = 100000;
 
-        let context = TransactionContext::InBlock {
-            height: block_height,
-            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567890),
-        };
+        let context = TransactionContext::InBlock(BlockInfo::new(
+            block_height,
+            BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+            1234567890,
+        ));
 
         // Process the coinbase transaction
         let result = managed_wallet
@@ -724,9 +636,11 @@ mod tests {
 
         let stored_tx =
             managed_account.transactions.get(&tx.txid()).expect("Should have stored transaction");
-        assert_eq!(stored_tx.height, None, "Mempool transaction should have no height");
-        assert_eq!(stored_tx.block_hash, None, "Mempool transaction should have no block hash");
-        assert_eq!(stored_tx.timestamp, 0, "Mempool transaction should have timestamp 0");
+        assert_eq!(
+            stored_tx.context,
+            TransactionContext::Mempool,
+            "Mempool transaction should have mempool context"
+        );
     }
 
     /// Test that rescanning a block marks transactions as existing
@@ -740,11 +654,11 @@ mod tests {
         } = TestWalletContext::new_random();
         let tx = Transaction::dummy(&address, 0..1, &[100_000]);
 
-        let context = TransactionContext::InBlock {
-            height: 100,
-            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567890),
-        };
+        let context = TransactionContext::InBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+            1234567890,
+        ));
 
         // First processing - should be marked as new
         let result1 =
@@ -847,11 +761,11 @@ mod tests {
 
         // Process spending tx FIRST (out of order)
         // This time it HAS an output to our wallet, so it should be stored
-        let spend_context = TransactionContext::InBlock {
-            height: 100,
-            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567890),
-        };
+        let spend_context = TransactionContext::InBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+            1234567890,
+        ));
 
         let spend_result = managed_wallet
             .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
@@ -876,11 +790,11 @@ mod tests {
         assert_eq!(account.utxos.len(), 1, "Should have one UTXO (change output)");
 
         // Now process the funding tx (which was spent by spend_tx that we already stored)
-        let fund_context = TransactionContext::InBlock {
-            height: 99,
-            block_hash: Some(BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash")),
-            timestamp: Some(1234567880),
-        };
+        let fund_context = TransactionContext::InBlock(BlockInfo::new(
+            99,
+            BlockHash::from_slice(&[2u8; 32]).expect("Should create block hash"),
+            1234567880,
+        ));
 
         let fund_result = managed_wallet
             .check_core_transaction(&funding_tx, fund_context, &mut wallet, true, true)
@@ -919,18 +833,15 @@ mod tests {
 
         // Verify unconfirmed state
         assert!(!ctx.transaction(&txid).is_confirmed(), "Mempool tx should be unconfirmed");
-        assert_eq!(ctx.transaction(&txid).height, None);
+        assert_eq!(ctx.transaction(&txid).context, TransactionContext::Mempool);
         assert!(!ctx.first_utxo().is_confirmed, "Mempool UTXO should be unconfirmed");
 
         let total_tx_before = ctx.managed_wallet.metadata.total_transactions;
 
         // Same transaction now seen in a block
         let block_hash = BlockHash::from_slice(&[5u8; 32]).expect("Should create block hash");
-        let block_context = TransactionContext::InBlock {
-            height: 500,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+        let block_context =
+            TransactionContext::InBlock(BlockInfo::new(500, block_hash, 1700000000));
 
         let result = ctx.check_transaction(&tx, block_context).await;
         assert!(result.is_relevant);
@@ -939,9 +850,9 @@ mod tests {
         // Verify confirmed state
         let record = ctx.transaction(&txid);
         assert!(record.is_confirmed(), "Tx should now be confirmed");
-        assert_eq!(record.height, Some(500));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(500));
+        assert_eq!(record.block_info().unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info().unwrap().timestamp, 1700000000);
         assert!(ctx.first_utxo().is_confirmed, "UTXO should now be confirmed");
 
         assert_eq!(
@@ -980,24 +891,18 @@ mod tests {
 
         // Stage 3: block confirmation
         let block_hash = BlockHash::from_slice(&[10u8; 32]).expect("hash");
-        let block_context = TransactionContext::InBlock {
-            height: 1000,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+        let block_context =
+            TransactionContext::InBlock(BlockInfo::new(1000, block_hash, 1700000000));
         let result = ctx.check_transaction(&tx, block_context).await;
         assert!(!result.is_new_transaction);
         assert!(ctx.transaction(&txid).is_confirmed());
-        assert_eq!(ctx.transaction(&txid).height, Some(1000));
+        assert_eq!(ctx.transaction(&txid).height(), Some(1000));
         assert!(ctx.first_utxo().is_confirmed);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
 
         // Stage 4: chain-locked block (rescan with stronger context)
-        let cl_context = TransactionContext::InChainLockedBlock {
-            height: 1000,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+        let cl_context =
+            TransactionContext::InChainLockedBlock(BlockInfo::new(1000, block_hash, 1700000000));
         let result = ctx.check_transaction(&tx, cl_context).await;
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
@@ -1064,11 +969,8 @@ mod tests {
         //
         // Cleaner approach: test `confirm_transaction` directly on the account.
         let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
-        let block_context = TransactionContext::InBlock {
-            height: 800,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+        let block_context =
+            TransactionContext::InBlock(BlockInfo::new(800, block_hash, 1700000000));
 
         // Re-check the transaction: check_core_transaction will see no record in any
         // account, so it will treat it as new and call `record_transaction`. This still
@@ -1079,9 +981,9 @@ mod tests {
 
         let record = ctx.transaction(&txid);
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(800));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(800));
+        assert_eq!(record.block_info().unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info().unwrap().timestamp, 1700000000);
         assert!(ctx.first_utxo().is_confirmed);
     }
 
@@ -1110,20 +1012,18 @@ mod tests {
 
         // Call `confirm_transaction` directly — the backfill path should create the record
         let block_hash = BlockHash::from_slice(&[9u8; 32]).expect("hash");
-        let block_context = TransactionContext::InBlock {
-            height: 600,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
-        let changed = account.confirm_transaction(&tx, &account_match, block_context);
+        let block_context =
+            TransactionContext::InBlock(BlockInfo::new(600, block_hash, 1700000000));
+        let tx_type = TransactionRouter::classify_transaction(&tx);
+        let changed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
         assert!(changed, "Should return true when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
         let record = account.transactions.get(&txid).expect("Should have backfilled record");
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(600));
-        assert_eq!(record.block_hash, Some(block_hash));
-        assert_eq!(record.timestamp, 1700000000);
+        assert_eq!(record.height(), Some(600));
+        assert_eq!(record.block_info().unwrap().block_hash, block_hash);
+        assert_eq!(record.block_info().unwrap().timestamp, 1700000000);
         assert_eq!(record.net_amount, 250_000);
 
         // Verify UTXO was also created
@@ -1158,22 +1058,483 @@ mod tests {
         let account_match = result.affected_accounts[0].clone();
 
         let block_hash = BlockHash::from_slice(&[11u8; 32]).expect("hash");
-        let block_context = TransactionContext::InBlock {
-            height: 700,
-            block_hash: Some(block_hash),
-            timestamp: Some(1700000000),
-        };
+        let block_context =
+            TransactionContext::InBlock(BlockInfo::new(700, block_hash, 1700000000));
 
         let account = ctx
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
-        let changed = account.confirm_transaction(&tx, &account_match, block_context);
+        let tx_type = TransactionRouter::classify_transaction(&tx);
+        let changed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
         assert!(changed, "Should return true when confirming unconfirmed tx");
 
         let record = account.transactions.get(&txid).expect("Should have record");
         assert!(record.is_confirmed());
-        assert_eq!(record.height, Some(700));
-        assert_eq!(record.block_hash, Some(block_hash));
+        assert_eq!(record.height(), Some(700));
+        assert_eq!(record.block_info().unwrap().block_hash, block_hash);
+    }
+
+    // ── Record-detail tests ─────────────────────────────────────────────
+
+    /// Exercises record details across all standard transaction shapes:
+    /// incoming, multi-output incoming, outgoing with change, internal
+    /// (self-transfer), sweep (no change), OP_RETURN + change, OP_RETURN
+    /// only (all-burn), coinbase, and confirmation preserving details.
+    #[tokio::test]
+    async fn test_record_details_across_transaction_types() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+        let mut block_height = 10u32;
+
+        let block_ctx = |height: &mut u32| {
+            let ctx = TransactionContext::InBlock(BlockInfo::new(
+                *height,
+                BlockHash::from_slice(&[*height as u8; 32]).expect("hash"),
+                1_700_000_000 + *height,
+            ));
+            *height += 1;
+            ctx
+        };
+
+        // ── Incoming ────────────────────────────────────────────────────
+        let incoming_amount = 500_000u64;
+        let incoming_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[incoming_amount]);
+        let result = ctx.check_transaction(&incoming_tx, block_ctx(&mut block_height)).await;
+        assert!(result.is_relevant);
+
+        let record = ctx.transaction(&incoming_tx.txid());
+        assert_eq!(record.direction, TransactionDirection::Incoming);
+        assert_eq!(record.transaction_type, TransactionType::Standard);
+        assert_eq!(record.net_amount, incoming_amount as i64);
+        assert!(record.input_details.is_empty());
+        assert_eq!(record.output_details.len(), 1);
+        assert_eq!(record.output_details[0].index, 0);
+        assert_eq!(record.output_details[0].role, OutputRole::Received);
+        assert!(!record.output_details.iter().any(|d| d.role == OutputRole::Sent));
+
+        // ── Multi-output incoming ───────────────────────────────────────
+        let amount_1 = 300_000u64;
+        let amount_2 = 200_000u64;
+        let second_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_receive_address(Some(&ctx.xpub), true)
+            .expect("second receive address");
+
+        let multi_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint::new(Txid::from([50u8; 32]), 0),
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: amount_1,
+                    script_pubkey: ctx.receive_address.script_pubkey(),
+                },
+                TxOut {
+                    value: amount_2,
+                    script_pubkey: second_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        let result = ctx.check_transaction(&multi_tx, block_ctx(&mut block_height)).await;
+        assert!(result.is_relevant);
+
+        let record = ctx.transaction(&multi_tx.txid());
+        assert_eq!(record.direction, TransactionDirection::Incoming);
+        assert_eq!(record.output_details.len(), 2);
+        assert!(record.output_details.iter().all(|d| d.role == OutputRole::Received));
+        assert_eq!(record.output_details[0].index, 0);
+        assert_eq!(record.output_details[1].index, 1);
+        assert_eq!(record.net_amount, (amount_1 + amount_2) as i64);
+
+        // ── Outgoing with change ────────────────────────────────────────
+        // Fund with a fresh UTXO so the spend has a known input.
+        // Each funding tx uses a different input range to produce unique txids.
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 10..11, &[funding_value]);
+        ctx.check_transaction(&funding_tx, block_ctx(&mut block_height)).await;
+
+        let change_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+
+        let send_amount = 600_000u64;
+        let change_amount = funding_value - send_amount - 1_000;
+        let spend_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: send_amount,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        let result = ctx.check_transaction(&spend_tx, block_ctx(&mut block_height)).await;
+        assert!(result.is_relevant);
+
+        let record = ctx.transaction(&spend_tx.txid());
+        assert_eq!(record.direction, TransactionDirection::Outgoing);
+        assert_eq!(record.transaction_type, TransactionType::Standard);
+        assert_eq!(record.input_details.len(), 1);
+        assert_eq!(record.input_details[0].index, 0);
+        assert_eq!(record.input_details[0].value, funding_value);
+        assert_eq!(record.input_details[0].address, ctx.receive_address);
+        assert_eq!(record.output_details.len(), 2);
+        let sent = record.output_details.iter().find(|d| d.role == OutputRole::Sent);
+        let change = record.output_details.iter().find(|d| d.role == OutputRole::Change);
+        assert!(sent.is_some() && change.is_some());
+        assert_eq!(sent.unwrap().index, 0);
+        assert_eq!(change.unwrap().index, 1);
+        assert_eq!(record.net_amount, change_amount as i64 - funding_value as i64);
+
+        // ── Internal (self-transfer) ────────────────────────────────────
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 20..21, &[funding_value]);
+        ctx.check_transaction(&funding_tx, block_ctx(&mut block_height)).await;
+
+        let self_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_receive_address(Some(&ctx.xpub), true)
+            .expect("self address");
+        let change_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+
+        let self_amount = 800_000u64;
+        let change_amount = funding_value - self_amount - 1_000;
+        let internal_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: self_amount,
+                    script_pubkey: self_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        let result = ctx.check_transaction(&internal_tx, block_ctx(&mut block_height)).await;
+        assert!(result.is_relevant);
+
+        let record = ctx.transaction(&internal_tx.txid());
+        assert_eq!(record.direction, TransactionDirection::Internal);
+        assert_eq!(record.transaction_type, TransactionType::Standard);
+        assert_eq!(record.input_details.len(), 1);
+        assert_eq!(record.input_details[0].value, funding_value);
+        assert!(!record.output_details.iter().any(|d| d.role == OutputRole::Sent));
+        assert!(record.output_details.iter().any(|d| d.role == OutputRole::Received));
+        assert!(record.output_details.iter().any(|d| d.role == OutputRole::Change));
+        assert_eq!(record.output_details.len(), 2);
+        assert_eq!(record.net_amount, (self_amount + change_amount) as i64 - funding_value as i64);
+
+        // ── Sweep (outgoing, no change) ─────────────────────────────────
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 30..31, &[funding_value]);
+        ctx.check_transaction(&funding_tx, block_ctx(&mut block_height)).await;
+
+        let sweep_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: funding_value - 1_000,
+                script_pubkey: external_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+
+        let result = ctx.check_transaction(&sweep_tx, block_ctx(&mut block_height)).await;
+        assert!(result.is_relevant);
+
+        let record = ctx.transaction(&sweep_tx.txid());
+        assert_eq!(record.direction, TransactionDirection::Outgoing);
+        assert_eq!(record.input_details.len(), 1);
+        assert_eq!(record.input_details[0].value, funding_value);
+        assert_eq!(record.output_details.len(), 1);
+        assert_eq!(record.output_details[0].role, OutputRole::Sent);
+        assert!(!record.output_details.iter().any(|d| d.role == OutputRole::Change));
+        assert_eq!(record.net_amount, -(funding_value as i64));
+
+        // ── OP_RETURN with change ───────────────────────────────────────
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 40..41, &[funding_value]);
+        ctx.check_transaction(&funding_tx, block_ctx(&mut block_height)).await;
+
+        let change_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+
+        let send_amount = 400_000u64;
+        let change_amount = funding_value - send_amount - 1_000;
+        let op_return_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: send_amount,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: 0,
+                    script_pubkey: ScriptBuf::new_op_return(&[0x01, 0x02, 0x03]),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        let result = ctx.check_transaction(&op_return_tx, block_ctx(&mut block_height)).await;
+        assert!(result.is_relevant);
+
+        let record = ctx.transaction(&op_return_tx.txid());
+        assert_eq!(record.direction, TransactionDirection::Outgoing);
+        assert_eq!(record.output_details.len(), 3);
+        let sent = record.output_details.iter().find(|d| d.role == OutputRole::Sent);
+        let unspendable = record.output_details.iter().find(|d| d.role == OutputRole::Unspendable);
+        let change = record.output_details.iter().find(|d| d.role == OutputRole::Change);
+        assert!(sent.is_some());
+        assert_eq!(sent.unwrap().index, 0);
+        assert!(unspendable.is_some());
+        assert_eq!(unspendable.unwrap().index, 1);
+        assert!(change.is_some());
+        assert_eq!(change.unwrap().index, 2);
+
+        // ── OP_RETURN only (all-burn) ───────────────────────────────────
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 50..51, &[funding_value]);
+        ctx.check_transaction(&funding_tx, block_ctx(&mut block_height)).await;
+
+        let burn_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: 0,
+                script_pubkey: ScriptBuf::new_op_return(&[0x01]),
+            }],
+            special_transaction_payload: None,
+        };
+
+        let result = ctx.check_transaction(&burn_tx, block_ctx(&mut block_height)).await;
+        assert!(result.is_relevant);
+
+        let record = ctx.transaction(&burn_tx.txid());
+        assert_eq!(record.direction, TransactionDirection::Outgoing);
+        assert_eq!(record.input_details.len(), 1);
+        assert_eq!(record.output_details.len(), 1);
+        assert_eq!(record.output_details[0].role, OutputRole::Unspendable);
+        assert_eq!(record.net_amount, -(funding_value as i64));
+
+        // ── Coinbase ────────────────────────────────────────────────────
+        let reward = 5_000_000_000u64;
+        let coinbase_tx = Transaction::dummy_coinbase(&ctx.receive_address, reward);
+        let result = ctx.check_transaction(&coinbase_tx, block_ctx(&mut block_height)).await;
+        assert!(result.is_relevant);
+
+        let record = ctx.transaction(&coinbase_tx.txid());
+        assert_eq!(record.direction, TransactionDirection::Incoming);
+        assert_eq!(record.transaction_type, TransactionType::Coinbase);
+        assert!(record.input_details.is_empty());
+        assert_eq!(record.output_details.len(), 1);
+        assert_eq!(record.output_details[0].role, OutputRole::Received);
+        assert_eq!(record.output_details[0].index, 0);
+
+        // ── Confirmation preserves details ──────────────────────────────
+        let amount = 750_000u64;
+        let mempool_tx = Transaction::dummy(&ctx.receive_address, 60..61, &[amount]);
+        let mempool_txid = mempool_tx.txid();
+        ctx.check_transaction(&mempool_tx, TransactionContext::Mempool).await;
+
+        let record_before = ctx.transaction(&mempool_txid);
+        assert!(!record_before.is_confirmed());
+        assert_eq!(record_before.direction, TransactionDirection::Incoming);
+        assert_eq!(record_before.output_details.len(), 1);
+        assert_eq!(record_before.output_details[0].role, OutputRole::Received);
+        assert!(record_before.input_details.is_empty());
+
+        ctx.check_transaction(&mempool_tx, block_ctx(&mut block_height)).await;
+
+        let record_after = ctx.transaction(&mempool_txid);
+        assert!(record_after.is_confirmed());
+        assert_eq!(record_after.direction, TransactionDirection::Incoming);
+        assert_eq!(record_after.input_details.len(), 0);
+        assert_eq!(record_after.output_details.len(), 1);
+        assert_eq!(record_after.output_details[0].role, OutputRole::Received);
+    }
+
+    /// CoinJoin transaction: direction should be `CoinJoin` regardless of output roles.
+    #[tokio::test]
+    async fn test_record_details_coinjoin_transaction() {
+        use crate::account::AccountType;
+        use crate::managed_account::managed_account_type::ManagedAccountType;
+
+        // Create a wallet with a CoinJoin account
+        let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::None)
+            .expect("wallet");
+        wallet
+            .add_account(
+                AccountType::CoinJoin {
+                    index: 0,
+                },
+                None,
+            )
+            .expect("add coinjoin");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        let xpub =
+            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
+
+        let managed_account =
+            managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
+
+        // Get an address from the CoinJoin pool
+        let coinjoin_address = if let ManagedAccountType::CoinJoin {
+            addresses,
+            ..
+        } = &mut managed_account.account_type
+        {
+            addresses.next_unused(&KeySource::Public(xpub), true).expect("coinjoin address")
+        } else {
+            panic!("Expected CoinJoin account type");
+        };
+
+        // Build a CoinJoin-like tx: 3+ inputs, 3+ outputs with denomination amounts
+        let denomination = 100_000u64; // 0.001 DASH
+        let external_addr = Address::dummy(Network::Testnet, 99);
+        let tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![
+                TxIn {
+                    previous_output: OutPoint::new(Txid::from([1u8; 32]), 0),
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::Witness::new(),
+                },
+                TxIn {
+                    previous_output: OutPoint::new(Txid::from([2u8; 32]), 0),
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::Witness::new(),
+                },
+                TxIn {
+                    previous_output: OutPoint::new(Txid::from([3u8; 32]), 0),
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::Witness::new(),
+                },
+            ],
+            output: vec![
+                TxOut {
+                    value: denomination,
+                    script_pubkey: coinjoin_address.script_pubkey(),
+                },
+                TxOut {
+                    value: denomination,
+                    script_pubkey: external_addr.script_pubkey(),
+                },
+                TxOut {
+                    value: denomination,
+                    script_pubkey: Address::dummy(Network::Testnet, 100).script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        let context = TransactionContext::InBlock(BlockInfo::new(
+            50,
+            BlockHash::from_slice(&[5u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        let result =
+            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        assert!(result.is_relevant, "CoinJoin tx should be relevant");
+
+        let account = managed_wallet.first_coinjoin_managed_account().expect("coinjoin account");
+        let record = account.transactions.get(&tx.txid()).expect("should have record");
+        assert_eq!(record.direction, TransactionDirection::CoinJoin);
+        assert_eq!(record.transaction_type, TransactionType::CoinJoin);
+        assert!(record.input_details.is_empty(), "CoinJoin test has no funded UTXOs");
+        assert_eq!(record.output_details.len(), 1, "One output to our CoinJoin address");
+        assert_eq!(record.output_details[0].role, OutputRole::Received);
     }
 }

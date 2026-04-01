@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use dashcore::bip158::BlockFilter;
 use dashcore::hash_types::FilterHeader;
-use key_wallet::manager::FilterMatchKey;
+use key_wallet_manager::FilterMatchKey;
 use rayon::prelude::*;
 
 use crate::error::{ValidationError, ValidationResult};
@@ -132,7 +132,7 @@ mod tests {
     use dashcore::bip158::BlockFilter;
     use dashcore::BlockHash;
     use dashcore_hashes::Hash;
-    use key_wallet::manager::FilterMatchKey;
+    use key_wallet_manager::FilterMatchKey;
 
     use super::*;
 

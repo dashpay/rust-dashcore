@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dash_spv_ffi::*;
+use key_wallet_ffi::types::FFITransactionContext;
 
 /// Tracks callback invocations for verification.
 ///
@@ -36,6 +37,7 @@ pub(super) struct CallbackTracker {
 
     // Wallet event tracking
     pub(super) transaction_received_count: AtomicU32,
+    pub(super) transaction_status_changed_count: AtomicU32,
     pub(super) balance_updated_count: AtomicU32,
 
     // Data from callbacks
@@ -231,6 +233,8 @@ extern "C" fn on_block_processed(
     height: u32,
     _hash: *const [u8; 32],
     new_address_count: u32,
+    _confirmed_txids: *const [u8; 32],
+    confirmed_txid_count: u32,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
@@ -238,7 +242,12 @@ extern "C" fn on_block_processed(
     };
     tracker.processed_block_heights.lock().unwrap_or_else(|e| e.into_inner()).push(height);
     tracker.block_processed_count.fetch_add(1, Ordering::SeqCst);
-    tracing::debug!("on_block_processed: height={}, new_addresses={}", height, new_address_count);
+    tracing::debug!(
+        "on_block_processed: height={}, new_addresses={}, confirmed_txs={}",
+        height,
+        new_address_count,
+        confirmed_txid_count
+    );
 }
 
 extern "C" fn on_masternode_state_updated(height: u32, user_data: *mut c_void) {
@@ -334,6 +343,7 @@ extern "C" fn on_peers_updated(connected_count: u32, best_height: u32, user_data
 
 extern "C" fn on_transaction_received(
     wallet_id: *const c_char,
+    _status: FFITransactionContext,
     account_index: u32,
     txid: *const [u8; 32],
     amount: i64,
@@ -356,6 +366,19 @@ extern "C" fn on_transaction_received(
         account_index,
         amount
     );
+}
+
+extern "C" fn on_transaction_status_changed(
+    _wallet_id: *const c_char,
+    _txid: *const [u8; 32],
+    status: FFITransactionContext,
+    user_data: *mut c_void,
+) {
+    let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
+        return;
+    };
+    tracker.transaction_status_changed_count.fetch_add(1, Ordering::SeqCst);
+    tracing::debug!("on_transaction_status_changed: status={:?}", status);
 }
 
 extern "C" fn on_balance_updated(
@@ -427,6 +450,7 @@ pub(super) fn create_network_callbacks(tracker: &Arc<CallbackTracker>) -> FFINet
 pub(super) fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWalletEventCallbacks {
     FFIWalletEventCallbacks {
         on_transaction_received: Some(on_transaction_received),
+        on_transaction_status_changed: Some(on_transaction_status_changed),
         on_balance_updated: Some(on_balance_updated),
         user_data: Arc::as_ptr(tracker) as *mut c_void,
     }

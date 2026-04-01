@@ -1,6 +1,6 @@
 //! Tests for transaction routing logic
 
-use super::helpers::test_addr;
+use super::helpers::{test_addr, test_block_info};
 use crate::account::{AccountType, StandardAccountType};
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_type::ManagedAccountType;
@@ -13,8 +13,7 @@ use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::hashes::Hash;
-use dashcore::{BlockHash, ScriptBuf, TxOut};
+use dashcore::{ScriptBuf, TxOut};
 
 #[test]
 fn test_standard_transaction_routing() {
@@ -45,13 +44,7 @@ async fn test_transaction_routing_to_bip44_account() {
     });
 
     // Check the transaction using the wallet's managed info
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check the transaction using the managed wallet info
     let result = managed_wallet_info
@@ -115,13 +108,7 @@ async fn test_transaction_routing_to_bip32_account() {
     });
 
     // Check the transaction using the managed wallet info
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check with update_state = false
     let result =
@@ -237,13 +224,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
         script_pubkey: ScriptBuf::new(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
@@ -340,13 +321,7 @@ async fn test_transaction_affects_multiple_accounts() {
         script_pubkey: address2.script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check the transaction
     let result = managed_wallet_info

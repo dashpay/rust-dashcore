@@ -16,8 +16,6 @@ use super::Psbt;
 use crate::bip32::KeySource;
 use crate::bip32::{ChildNumber, Fingerprint};
 use crate::psbt::{Error, PartiallySignedTransaction};
-use alloc::string::String;
-use alloc::vec::Vec;
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::txout::TxOut;
 use dashcore::blockdata::transaction::Transaction;

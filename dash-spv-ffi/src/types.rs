@@ -1,8 +1,8 @@
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
-    FiltersProgress, InstantSendProgress, MasternodesProgress, ProgressPercentage, SyncProgress,
-    SyncState,
+    FiltersProgress, InstantSendProgress, MasternodesProgress, MempoolProgress, ProgressPercentage,
+    SyncProgress, SyncState,
 };
 use dash_spv::types::MempoolRemovalReason;
 use std::ffi::{CStr, CString};
@@ -259,6 +259,31 @@ impl From<&InstantSendProgress> for FFIInstantSendProgress {
     }
 }
 
+/// Progress for mempool transaction monitoring.
+#[repr(C)]
+#[derive(Debug, Clone, Default)]
+pub struct FFIMempoolProgress {
+    pub state: FFISyncState,
+    pub received: u32,
+    pub relevant: u32,
+    pub tracked: u32,
+    pub removed: u32,
+    pub last_activity: u64,
+}
+
+impl From<&MempoolProgress> for FFIMempoolProgress {
+    fn from(progress: &MempoolProgress) -> Self {
+        FFIMempoolProgress {
+            state: progress.state().into(),
+            received: progress.received(),
+            relevant: progress.relevant(),
+            tracked: progress.tracked(),
+            removed: progress.removed(),
+            last_activity: progress.last_activity().elapsed().as_secs(),
+        }
+    }
+}
+
 /// Aggregate progress for all sync managers.
 /// Provides a complete view of the parallel sync system's state.
 #[repr(C)]
@@ -274,6 +299,7 @@ pub struct FFISyncProgress {
     pub masternodes: *mut FFIMasternodesProgress,
     pub chainlocks: *mut FFIChainLockProgress,
     pub instantsend: *mut FFIInstantSendProgress,
+    pub mempool: *mut FFIMempoolProgress,
 }
 
 impl From<SyncProgress> for FFISyncProgress {
@@ -320,6 +346,12 @@ impl From<SyncProgress> for FFISyncProgress {
             .map(|p| Box::into_raw(Box::new(FFIInstantSendProgress::from(p))))
             .unwrap_or(std::ptr::null_mut());
 
+        let mempool = progress
+            .mempool()
+            .ok()
+            .map(|p| Box::into_raw(Box::new(FFIMempoolProgress::from(p))))
+            .unwrap_or(std::ptr::null_mut());
+
         Self {
             state: progress.state().into(),
             percentage: progress.percentage(),
@@ -331,6 +363,7 @@ impl From<SyncProgress> for FFISyncProgress {
             masternodes,
             chainlocks,
             instantsend,
+            mempool,
         }
     }
 }
@@ -486,6 +519,17 @@ pub unsafe extern "C" fn dash_spv_ffi_instantsend_progress_destroy(
     }
 }
 
+/// Destroy an `FFIMempoolProgress` object.
+///
+/// # Safety
+/// - `progress` must be a pointer returned from this crate, or null.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_mempool_progress_destroy(progress: *mut FFIMempoolProgress) {
+    if !progress.is_null() {
+        let _ = Box::from_raw(progress);
+    }
+}
+
 /// Destroy an `FFISyncProgress` object and all its nested pointers.
 ///
 /// # Safety
@@ -516,6 +560,9 @@ pub unsafe extern "C" fn dash_spv_ffi_sync_progress_destroy(progress: *mut FFISy
         }
         if !p.instantsend.is_null() {
             dash_spv_ffi_instantsend_progress_destroy(p.instantsend);
+        }
+        if !p.mempool.is_null() {
+            dash_spv_ffi_mempool_progress_destroy(p.mempool);
         }
     }
 }

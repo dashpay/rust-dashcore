@@ -9,7 +9,6 @@ use crate::seed::Seed;
 use crate::wallet::root_extended_keys::RootExtendedPrivKey;
 use crate::wallet::{Wallet, WalletType};
 use crate::Network;
-use alloc::string::ToString;
 
 /// Known test mnemonic for deterministic testing
 const TEST_MNEMONIC: &str =

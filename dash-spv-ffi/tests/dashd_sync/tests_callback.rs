@@ -21,7 +21,7 @@ fn test_all_callbacks_during_sync() {
         let tracker = ctx.tracker().clone();
 
         ctx.add_wallet(&dashd.wallet.mnemonic);
-        ctx.run_with_all_callbacks();
+        ctx.run();
         tracing::info!("FFI client running with all callback types");
 
         ctx.wait_for_sync(dashd.initial_height);
@@ -107,12 +107,22 @@ fn test_all_callbacks_during_sync() {
         // Validate wallet event callbacks (test wallet has transactions)
         let tx_received = tracker.transaction_received_count.load(Ordering::SeqCst);
         let balance_updated = tracker.balance_updated_count.load(Ordering::SeqCst);
+        let tx_status_changed = tracker.transaction_status_changed_count.load(Ordering::SeqCst);
 
-        tracing::info!("Wallet: tx_received={}, balance_updated={}", tx_received, balance_updated);
+        tracing::info!(
+            "Wallet: tx_received={}, tx_status_changed={}, balance_updated={}",
+            tx_received,
+            tx_status_changed,
+            balance_updated
+        );
 
         assert!(
             tx_received > 0,
             "on_transaction_received should fire for wallet with transactions"
+        );
+        assert_eq!(
+            tx_status_changed, 0,
+            "on_transaction_status_changed should not fire here, all transactions are confirmed."
         );
         assert!(balance_updated > 0, "on_balance_updated should fire for wallet with transactions");
 
@@ -250,7 +260,7 @@ fn test_callbacks_post_sync_transactions_and_disconnect() {
         let tracker = ctx.tracker().clone();
 
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
-        ctx.run_with_all_callbacks();
+        ctx.run();
 
         // Wait for initial sync
         ctx.wait_for_sync(dashd.initial_height);

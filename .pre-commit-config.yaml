@@ -62,21 +62,20 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      - id: verify-ffi
+        name: verify FFI
+        description: Verify FFI documentation is up to date
+        entry: contrib/verify_ffi.py
+        language: python
+        pass_filenames: false
+        files: ^(key-wallet-ffi|dash-spv-ffi)/.*\.(rs|toml|py)$
+
   # ============================================================================
   # SLOW CHECKS - Run on git push only.
   # ============================================================================
 
   - repo: local
     hooks:
-      - id: verify-ffi
-        name: verify FFI
-        description: Verify FFI headers and documentation are up to date
-        entry: contrib/verify_ffi.py
-        language: python
-        pass_filenames: false
-        files: ^(key-wallet-ffi|dash-spv-ffi)/.*\.(rs|toml|py)$
-        stages: [pre-push, manual]
-
       - id: clippy
         name: clippy (workspace strict)
         description: Strict clippy on entire workspace - deny all warnings

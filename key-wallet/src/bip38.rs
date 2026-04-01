@@ -11,8 +11,6 @@
 //! - Prefix: 0x0142 for non-EC-multiply mode (base58 starts with "6P")
 //! - Prefix: 0x0143 for EC-multiply mode (base58 starts with "6P")
 
-use alloc::string::String;
-use alloc::vec::Vec;
 use core::fmt;
 
 use crate::error::{Error, Result};

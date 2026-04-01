@@ -7,8 +7,12 @@
 //! - `FFIWalletEventCallbacks` - Wallet manager events
 
 use crate::{dash_spv_ffi_sync_progress_destroy, FFISyncProgress};
+use dash_spv::network::NetworkEvent;
+use dash_spv::sync::{SyncEvent, SyncProgress};
+use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
-use key_wallet::manager::WalletEvent;
+use key_wallet_ffi::types::FFITransactionContext;
+use key_wallet_manager::WalletEvent;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 
@@ -27,6 +31,7 @@ pub enum FFIManagerId {
     Masternodes = 4,
     ChainLocks = 5,
     InstantSend = 6,
+    Mempool = 7,
 }
 
 impl From<dash_spv::sync::ManagerIdentifier> for FFIManagerId {
@@ -39,6 +44,7 @@ impl From<dash_spv::sync::ManagerIdentifier> for FFIManagerId {
             dash_spv::sync::ManagerIdentifier::Masternode => FFIManagerId::Masternodes,
             dash_spv::sync::ManagerIdentifier::ChainLock => FFIManagerId::ChainLocks,
             dash_spv::sync::ManagerIdentifier::InstantSend => FFIManagerId::InstantSend,
+            dash_spv::sync::ManagerIdentifier::Mempool => FFIManagerId::Mempool,
         }
     }
 }
@@ -162,6 +168,8 @@ pub type OnBlockProcessedCallback = Option<
         height: u32,
         hash: *const [u8; 32],
         new_address_count: u32,
+        confirmed_txids: *const [u8; 32],
+        confirmed_txid_count: u32,
         user_data: *mut c_void,
     ),
 >;
@@ -350,13 +358,18 @@ impl FFISyncEventCallbacks {
                 block_hash,
                 height,
                 new_addresses,
+                confirmed_txids,
             } => {
                 if let Some(cb) = self.on_block_processed {
                     let hash_bytes = block_hash.as_byte_array();
+                    let txid_bytes: Vec<[u8; 32]> =
+                        confirmed_txids.iter().map(|txid| *txid.as_byte_array()).collect();
                     cb(
                         *height,
                         hash_bytes as *const [u8; 32],
                         new_addresses.len() as u32,
+                        txid_bytes.as_ptr(),
+                        txid_bytes.len() as u32,
                         self.user_data,
                     );
                 }
@@ -523,10 +536,24 @@ impl FFINetworkEventCallbacks {
 pub type OnTransactionReceivedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
+        status: FFITransactionContext,
         account_index: u32,
         txid: *const [u8; 32],
         amount: i64,
         addresses: *const c_char,
+        user_data: *mut c_void,
+    ),
+>;
+
+/// Callback for WalletEvent::TransactionStatusChanged
+///
+/// The `wallet_id` string pointer and `txid` hash pointer are borrowed and only
+/// valid for the duration of the callback.
+pub type OnTransactionStatusChangedCallback = Option<
+    extern "C" fn(
+        wallet_id: *const c_char,
+        txid: *const [u8; 32],
+        status: FFITransactionContext,
         user_data: *mut c_void,
     ),
 >;
@@ -558,6 +585,7 @@ pub type OnBalanceUpdatedCallback = Option<
 #[derive(Clone)]
 pub struct FFIWalletEventCallbacks {
     pub on_transaction_received: OnTransactionReceivedCallback,
+    pub on_transaction_status_changed: OnTransactionStatusChangedCallback,
     pub on_balance_updated: OnBalanceUpdatedCallback,
     pub user_data: *mut c_void,
 }
@@ -570,6 +598,7 @@ impl Default for FFIWalletEventCallbacks {
     fn default() -> Self {
         Self {
             on_transaction_received: None,
+            on_transaction_status_changed: None,
             on_balance_updated: None,
             user_data: std::ptr::null_mut(),
         }
@@ -618,12 +647,56 @@ impl FFIClientErrorCallback {
     }
 }
 
+// ============================================================================
+// FFIEventCallbacks - All callbacks in a single C-compatible struct
+// ============================================================================
+
+/// All event callbacks grouped into a single struct.
+///
+/// Pass this to `dash_spv_ffi_client_new`. Any callback group left at its
+/// default (all function pointers null) will simply not receive events.
+#[repr(C)]
+#[derive(Clone, Default)]
+pub struct FFIEventCallbacks {
+    pub sync: FFISyncEventCallbacks,
+    pub network: FFINetworkEventCallbacks,
+    pub progress: FFIProgressCallback,
+    pub wallet: FFIWalletEventCallbacks,
+    pub error: FFIClientErrorCallback,
+}
+
+unsafe impl Send for FFIEventCallbacks {}
+unsafe impl Sync for FFIEventCallbacks {}
+
+impl EventHandler for FFIEventCallbacks {
+    fn on_sync_event(&self, event: &SyncEvent) {
+        self.sync.dispatch(event);
+    }
+
+    fn on_network_event(&self, event: &NetworkEvent) {
+        self.network.dispatch(event);
+    }
+
+    fn on_progress(&self, progress: &SyncProgress) {
+        self.progress.dispatch(progress);
+    }
+
+    fn on_wallet_event(&self, event: &WalletEvent) {
+        self.wallet.dispatch(event);
+    }
+
+    fn on_error(&self, error: &str) {
+        self.error.dispatch(error);
+    }
+}
+
 impl FFIWalletEventCallbacks {
     /// Dispatch a WalletEvent to the appropriate callback.
     pub fn dispatch(&self, event: &WalletEvent) {
         match event {
             WalletEvent::TransactionReceived {
                 wallet_id,
+                status,
                 account_index,
                 txid,
                 amount,
@@ -638,10 +711,28 @@ impl FFIWalletEventCallbacks {
                     let c_addresses = CString::new(addresses_str.join(",")).unwrap_or_default();
                     cb(
                         c_wallet_id.as_ptr(),
+                        FFITransactionContext::from(*status),
                         *account_index,
                         txid_bytes as *const [u8; 32],
                         *amount,
                         c_addresses.as_ptr(),
+                        self.user_data,
+                    );
+                }
+            }
+            WalletEvent::TransactionStatusChanged {
+                wallet_id,
+                txid,
+                status,
+            } => {
+                if let Some(cb) = self.on_transaction_status_changed {
+                    let wallet_id_hex = hex::encode(wallet_id);
+                    let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
+                    let txid_bytes = txid.as_byte_array();
+                    cb(
+                        c_wallet_id.as_ptr(),
+                        txid_bytes as *const [u8; 32],
+                        FFITransactionContext::from(*status),
                         self.user_data,
                     );
                 }

@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
-    use key_wallet::manager::WalletManager;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_ffi::{
@@ -11,6 +10,7 @@ mod tests {
         },
         FFIError, FFINetwork, FFIWalletManager,
     };
+    use key_wallet_manager::WalletManager;
     use std::ffi::{CStr, CString};
     use tempfile::TempDir;
 
@@ -28,7 +28,7 @@ mod tests {
             );
 
             // Create a client
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Get wallet manager
@@ -64,7 +64,7 @@ mod tests {
                 CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
             );
 
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);

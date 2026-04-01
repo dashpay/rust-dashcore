@@ -166,6 +166,23 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     }
 }
 
+/// Removes all configured peers from the configuration
+///
+/// This is useful when the caller wants to start with a clean slate
+/// before adding custom peers via `dash_spv_ffi_config_add_peer`.
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_clear_peers(config: *mut FFIClientConfig) -> i32 {
+    null_check!(config);
+
+    let cfg = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    cfg.peers.clear();
+    FFIErrorCode::Success as i32
+}
+
 /// Sets the user agent string to advertise in the P2P handshake
 ///
 /// # Safety
