@@ -48,7 +48,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         instant_lock: Option<InstantLock>,
     ) -> MempoolTransactionResult {
         let context = match instant_lock {
-            Some(lock) => TransactionContext::InstantSend(lock),
+            Some(lock) => {
+                debug_assert_eq!(lock.txid, tx.txid(), "InstantLock txid must match transaction");
+                TransactionContext::InstantSend(lock)
+            }
             None => TransactionContext::Mempool,
         };
         let snapshot = self.snapshot_balances();
