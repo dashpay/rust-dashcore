@@ -1,11 +1,18 @@
+#[cfg(feature = "ffi")]
+use crate::sync::FFISyncState;
 use crate::sync::SyncState;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use std::fmt;
 use std::time::Instant;
 
 /// Progress tracking for mempool transaction monitoring.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub struct MempoolProgress {
     /// Current sync state.
+    #[cfg_attr(feature = "ffi", ffi(convert = "into"))]
     state: SyncState,
     /// Total transactions received from the network.
     received: u32,
@@ -16,6 +23,7 @@ pub struct MempoolProgress {
     /// Transactions removed (confirmed or expired).
     removed: u32,
     /// Time of last activity.
+    #[cfg_attr(feature = "ffi", ffi(convert = "instant_secs"))]
     last_activity: Instant,
 }
 

@@ -1,13 +1,26 @@
 use crate::error::{SyncError, SyncResult};
+#[cfg(feature = "ffi")]
+use crate::sync::{
+    dash_spv_ffi_block_headers_progress_destroy, dash_spv_ffi_blocks_progress_destroy,
+    dash_spv_ffi_chain_lock_progress_destroy, dash_spv_ffi_filter_headers_progress_destroy,
+    dash_spv_ffi_filters_progress_destroy, dash_spv_ffi_instant_send_progress_destroy,
+    dash_spv_ffi_masternodes_progress_destroy, dash_spv_ffi_mempool_progress_destroy,
+    FFIBlockHeadersProgress, FFIBlocksProgress, FFIChainLockProgress, FFIFilterHeadersProgress,
+    FFIFiltersProgress, FFIInstantSendProgress, FFIMasternodesProgress, FFIMempoolProgress,
+};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
     FiltersProgress, InstantSendProgress, MasternodesProgress, MempoolProgress,
 };
 use dashcore::prelude::CoreBlockHeight;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use std::fmt;
 
 /// Overall state of the parallel sync system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub enum SyncState {
     #[default]
     WaitForEvents,
@@ -19,22 +32,35 @@ pub enum SyncState {
 
 /// Aggregate progress for all managers.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
+#[cfg_attr(feature = "ffi", ffi_computed(state: FFISyncState, convert = "into"))]
+#[cfg_attr(feature = "ffi", ffi_computed(percentage: f64))]
+#[cfg_attr(feature = "ffi", ffi_computed(is_synced: bool))]
 pub struct SyncProgress {
     /// Headers synchronization progress.
+    #[cfg_attr(feature = "ffi", ffi(convert = "result_to_ptr"))]
     headers: Option<BlockHeadersProgress>,
     /// Filter headers synchronization progress.
+    #[cfg_attr(feature = "ffi", ffi(convert = "result_to_ptr"))]
     filter_headers: Option<FilterHeadersProgress>,
     /// Filters synchronization progress.
+    #[cfg_attr(feature = "ffi", ffi(convert = "result_to_ptr"))]
     filters: Option<FiltersProgress>,
     /// Blocks synchronization progress.
+    #[cfg_attr(feature = "ffi", ffi(convert = "result_to_ptr"))]
     blocks: Option<BlocksProgress>,
     /// Masternodes synchronization progress.
+    #[cfg_attr(feature = "ffi", ffi(convert = "result_to_ptr"))]
     masternodes: Option<MasternodesProgress>,
     /// ChainLock synchronization progress.
+    #[cfg_attr(feature = "ffi", ffi(convert = "result_to_ptr"))]
     chainlocks: Option<ChainLockProgress>,
     /// InstantSend synchronization progress.
+    #[cfg_attr(feature = "ffi", ffi(convert = "result_to_ptr"))]
     instantsend: Option<InstantSendProgress>,
     /// Mempool monitoring progress.
+    #[cfg_attr(feature = "ffi", ffi(convert = "result_to_ptr"))]
     mempool: Option<MempoolProgress>,
 }
 

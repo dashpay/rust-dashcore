@@ -1,12 +1,20 @@
 use crate::sync::progress::ProgressPercentage;
+#[cfg(feature = "ffi")]
+use crate::sync::FFISyncState;
 use crate::sync::SyncState;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use std::fmt;
 use std::time::Instant;
 
 /// Progress for block-header synchronization.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi_computed(percentage: f64))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub struct BlockHeadersProgress {
     /// Current sync state.
+    #[cfg_attr(feature = "ffi", ffi(convert = "into"))]
     state: SyncState,
     /// The tip height of the block-header storage.
     tip_height: u32,
@@ -17,6 +25,7 @@ pub struct BlockHeadersProgress {
     /// Number of headers currently buffered in the pipeline (waiting to be stored).
     buffered: u32,
     /// The last time a block-header was stored to disk or the last manager state change.
+    #[cfg_attr(feature = "ffi", ffi(convert = "instant_secs"))]
     last_activity: Instant,
 }
 

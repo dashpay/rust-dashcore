@@ -90,9 +90,7 @@ impl FFIProgressCallback {
     /// then cleans up all allocated memory.
     pub fn dispatch(&self, progress: &dash_spv::sync::SyncProgress) {
         if let Some(cb) = self.on_progress {
-            // Clone the progress to get an owned SyncProgress for conversion
-            let owned_progress = progress.clone();
-            let ffi_progress = Box::new(FFISyncProgress::from(owned_progress));
+            let ffi_progress = Box::new(FFISyncProgress::from(progress));
             let ptr = Box::into_raw(ffi_progress);
 
             // Call the callback

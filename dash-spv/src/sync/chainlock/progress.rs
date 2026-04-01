@@ -1,11 +1,18 @@
+#[cfg(feature = "ffi")]
+use crate::sync::FFISyncState;
 use crate::sync::SyncState;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use std::fmt;
 use std::time::Instant;
 
 /// Progress for ChainLock synchronization.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub struct ChainLockProgress {
     /// Current sync state.
+    #[cfg_attr(feature = "ffi", ffi(convert = "into"))]
     state: SyncState,
     /// The highest block height of a valid ChainLock.
     best_validated_height: u32,
@@ -14,6 +21,7 @@ pub struct ChainLockProgress {
     /// Number of ChainLocks that failed validation.
     invalid: u32,
     /// The last time a ChainLock was processed or the last manager state change.
+    #[cfg_attr(feature = "ffi", ffi(convert = "instant_secs"))]
     last_activity: Instant,
 }
 

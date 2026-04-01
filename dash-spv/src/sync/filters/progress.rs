@@ -1,12 +1,20 @@
 use crate::sync::progress::ProgressPercentage;
+#[cfg(feature = "ffi")]
+use crate::sync::FFISyncState;
 use crate::sync::SyncState;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use std::fmt;
 use std::time::Instant;
 
 /// Progress for filters synchronization.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi_computed(percentage: f64))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub struct FiltersProgress {
     /// Current sync state.
+    #[cfg_attr(feature = "ffi", ffi(convert = "into"))]
     state: SyncState,
     /// Height up to which all filter batches have been fully committed to wallet.
     committed_height: u32,
@@ -24,6 +32,7 @@ pub struct FiltersProgress {
     /// Number of filters matched in the current sync session.
     matched: u32,
     /// The last time a filter was stored to disk or the last manager state change.
+    #[cfg_attr(feature = "ffi", ffi(convert = "instant_secs"))]
     last_activity: Instant,
 }
 

@@ -1,12 +1,19 @@
+#[cfg(feature = "ffi")]
+use crate::sync::FFISyncState;
 use crate::sync::SyncState;
 use dashcore::prelude::CoreBlockHeight;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use std::fmt;
 use std::time::Instant;
 
 /// Progress for masternode list synchronization.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub struct MasternodesProgress {
     /// Current sync state.
+    #[cfg_attr(feature = "ffi", ffi(convert = "into"))]
     state: SyncState,
     /// The highest block height of a valid masternode list diff.
     current_height: u32,
@@ -17,6 +24,7 @@ pub struct MasternodesProgress {
     /// Number of mnlistdiffs processed in the current sync session.
     diffs_processed: u32,
     /// The last time a mnlistdiff was stored/processed or the last manager state change.
+    #[cfg_attr(feature = "ffi", ffi(convert = "instant_secs"))]
     last_activity: Instant,
 }
 

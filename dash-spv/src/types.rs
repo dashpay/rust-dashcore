@@ -7,6 +7,8 @@ use dashcore::{
     consensus::{Decodable, Encodable},
     Amount, Block, BlockHash, Transaction, Txid,
 };
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use serde::{Deserialize, Serialize};
 
 /// A block header with its cached hash to avoid expensive X11 recomputation.
@@ -196,6 +198,8 @@ pub struct MempoolBalance {
 
 /// Reason for removing a transaction from mempool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub enum MempoolRemovalReason {
     /// Transaction expired (exceeded timeout).
     Expired,

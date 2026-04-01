@@ -233,7 +233,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
 
     let progress = client.runtime.block_on(async { client.inner.sync_progress().await });
 
-    Box::into_raw(Box::new(FFISyncProgress::from(progress)))
+    Box::into_raw(Box::new(FFISyncProgress::from(&progress)))
 }
 
 /// Get the current manager-based sync progress.
@@ -253,7 +253,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_manager_sync_progress(
 
     let progress = client.runtime.block_on(async { client.inner.progress().await });
 
-    Box::into_raw(Box::new(FFISyncProgress::from(progress)))
+    Box::into_raw(Box::new(FFISyncProgress::from(&progress)))
 }
 
 /// Clear all persisted SPV storage (headers, filters, metadata, sync state).

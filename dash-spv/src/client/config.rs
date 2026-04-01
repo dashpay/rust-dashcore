@@ -8,9 +8,13 @@ use dashcore::Network;
 // Serialization removed due to complex Address types
 
 use crate::types::ValidationMode;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi", bidirectional))]
 pub enum MempoolStrategy {
     /// Fetch all announced transactions (high bandwidth, sees all transactions).
     FetchAll,

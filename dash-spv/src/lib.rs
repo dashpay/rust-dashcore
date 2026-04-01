@@ -77,6 +77,12 @@ pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConf
 pub use tracing::level_filters::LevelFilter;
 pub use types::{FilterMatch, ValidationMode};
 
+// Re-export FFI types when ffi feature is enabled
+#[cfg(feature = "ffi")]
+pub use client::config::{dash_spv_ffi_mempool_strategy_destroy, FFIMempoolStrategy};
+#[cfg(feature = "ffi")]
+pub use types::{dash_spv_ffi_mempool_removal_reason_destroy, FFIMempoolRemovalReason};
+
 // Re-export commonly used dashcore types
 pub use dashcore::{Address, BlockHash, Network, OutPoint, QuorumHash, ScriptBuf};
 

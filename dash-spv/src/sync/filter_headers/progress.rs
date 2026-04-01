@@ -1,12 +1,20 @@
 use crate::sync::progress::ProgressPercentage;
+#[cfg(feature = "ffi")]
+use crate::sync::FFISyncState;
 use crate::sync::SyncState;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use std::fmt;
 use std::time::Instant;
 
 /// Progress for filter-header synchronization.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi_computed(percentage: f64))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub struct FilterHeadersProgress {
     /// Current sync state.
+    #[cfg_attr(feature = "ffi", ffi(convert = "into"))]
     state: SyncState,
     /// The tip height of the filter-header storage.
     current_height: u32,
@@ -17,6 +25,7 @@ pub struct FilterHeadersProgress {
     /// Number of filter-headers processed (stored) in the current sync session.
     processed: u32,
     /// The last time a filter-header was stored to disk or the last manager state change.
+    #[cfg_attr(feature = "ffi", ffi(convert = "instant_secs"))]
     last_activity: Instant,
 }
 

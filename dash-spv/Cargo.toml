@@ -51,6 +51,9 @@ indexmap = "2.0"
 # Parallelization
 rayon = "1.11"
 
+# FFI type generation (optional)
+ffi-derive = { path = "../ffi-derive", optional = true }
+
 # Test utilities (optional)
 tempfile = { version = "3.0", optional = true }
 dashcore-rpc = { path = "../rpc-client", optional = true }
@@ -86,4 +89,5 @@ name = "dash_spv"
 path = "src/lib.rs"
 
 [features]
+ffi = ["dep:ffi-derive"]
 test-utils = ["dashcore/test-utils", "key-wallet-manager/test-utils", "dep:tempfile", "dep:dashcore-rpc"]

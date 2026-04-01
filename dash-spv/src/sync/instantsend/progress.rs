@@ -1,19 +1,28 @@
+#[cfg(feature = "ffi")]
+use crate::sync::FFISyncState;
 use crate::sync::SyncState;
+#[cfg(feature = "ffi")]
+use ffi_derive::FFIType;
 use std::fmt;
 use std::time::Instant;
 
 /// Progress for InstantSend synchronization.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(FFIType))]
+#[cfg_attr(feature = "ffi", ffi(prefix = "dash_spv_ffi"))]
 pub struct InstantSendProgress {
     /// Current sync state.
+    #[cfg_attr(feature = "ffi", ffi(convert = "into"))]
     state: SyncState,
     /// Number of InstantSend locks pending for validation.
+    #[cfg_attr(feature = "ffi", ffi(convert = "as_u32"))]
     pending: usize,
     /// Number of InstantSend locks successfully verified.
     valid: u32,
     /// Number of InstantSend locks dropped after max retries (couldn't be validated).
     invalid: u32,
     /// The last time an InstantLock was processed or the last manager state change.
+    #[cfg_attr(feature = "ffi", ffi(convert = "instant_secs"))]
     last_activity: Instant,
 }
 

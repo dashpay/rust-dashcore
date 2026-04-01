@@ -107,7 +107,7 @@ mod tests {
         instantsend.add_invalid(15);
         progress.update_instantsend(instantsend);
 
-        let ffi_progress = FFISyncProgress::from(progress);
+        let ffi_progress = FFISyncProgress::from(&progress);
 
         assert_eq!(ffi_progress.state, FFISyncState::Syncing);
         assert_eq!(ffi_progress.percentage, 0.625);
