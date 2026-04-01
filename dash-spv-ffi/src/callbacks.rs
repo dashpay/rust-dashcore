@@ -730,6 +730,11 @@ impl FFIWalletEventCallbacks {
                         })
                         .collect();
 
+                    let c_label = record
+                        .label
+                        .as_ref()
+                        .map(|l| CString::new(l.as_str()).unwrap_or_default());
+
                     let ffi_record = FFITransactionRecord {
                         txid: record.txid.to_byte_array(),
                         net_amount: record.net_amount,
@@ -755,11 +760,9 @@ impl FFIWalletEventCallbacks {
                             tx_bytes.as_ptr() as *mut _
                         },
                         tx_len: tx_bytes.len(),
-                        label: record
-                            .label
+                        label: c_label
                             .as_ref()
-                            .map(|l| CString::new(l.as_str()).unwrap().into_raw())
-                            .unwrap_or(std::ptr::null_mut()),
+                            .map_or(std::ptr::null_mut(), |l| l.as_ptr() as *mut _),
                     };
 
                     cb(
