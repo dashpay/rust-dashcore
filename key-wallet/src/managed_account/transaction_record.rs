@@ -3,6 +3,7 @@
 //! This module contains the transaction record structure used to track
 //! transactions associated with accounts.
 
+use crate::error::Error;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::Address;
@@ -10,6 +11,9 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+/// Maximum length of a transaction label in bytes.
+pub const MAX_LABEL_LENGTH: usize = 256;
 
 /// Wallet-context metadata for a transaction input.
 /// The index references `transaction.input[index]`.
@@ -148,9 +152,23 @@ impl TransactionRecord {
         self.fee = Some(fee);
     }
 
-    /// Set the label for this transaction
-    pub fn set_label(&mut self, label: String) {
+    /// Set the label for this transaction.
+    ///
+    /// Empty strings clear the label. Returns an error if the label
+    /// exceeds [`MAX_LABEL_LENGTH`] bytes.
+    pub fn set_label(&mut self, label: String) -> Result<(), Error> {
+        if label.is_empty() {
+            self.label = None;
+            return Ok(());
+        }
+        if label.len() > MAX_LABEL_LENGTH {
+            return Err(Error::InvalidParameter(format!(
+                "Label exceeds {} bytes",
+                MAX_LABEL_LENGTH
+            )));
+        }
         self.label = Some(label);
+        Ok(())
     }
 
     /// Update the transaction context
@@ -314,9 +332,23 @@ mod tests {
         assert_eq!(record.label, None);
 
         record.set_fee(226);
-        record.set_label("Payment to Bob".to_string());
+        record.set_label("Payment to Bob".to_string()).unwrap();
 
         assert_eq!(record.fee, Some(226));
         assert_eq!(record.label, Some("Payment to Bob".to_string()));
+
+        // Empty string clears the label
+        record.set_label(String::new()).unwrap();
+        assert_eq!(record.label, None);
+
+        // Exceeding max length returns an error
+        let long_label = "x".repeat(MAX_LABEL_LENGTH + 1);
+        assert!(record.set_label(long_label).is_err());
+        assert_eq!(record.label, None); // unchanged
+
+        // Exactly max length is fine
+        let max_label = "x".repeat(MAX_LABEL_LENGTH);
+        record.set_label(max_label.clone()).unwrap();
+        assert_eq!(record.label, Some(max_label));
     }
 }
