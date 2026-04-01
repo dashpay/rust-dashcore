@@ -24,7 +24,7 @@ use key_wallet::AccountType;
 // stay funds-bearing. The returned [`ManagedAccountRef`] enum exposes the
 // shared trait surface (address pools, managed type, network) used here
 // without forcing callers to dispatch on the variant.
-fn get_managed_account_by_type<'a>(
+pub(crate) fn get_managed_account_by_type<'a>(
     collection: &'a ManagedAccountCollection,
     account_type: &AccountType,
 ) -> Option<ManagedAccountRef<'a>> {
@@ -89,7 +89,7 @@ fn get_managed_account_by_type<'a>(
     }
 }
 
-fn get_managed_account_by_type_mut<'a>(
+pub(crate) fn get_managed_account_by_type_mut<'a>(
     collection: &'a mut ManagedAccountCollection,
     account_type: &AccountType,
 ) -> Option<ManagedAccountRefMut<'a>> {

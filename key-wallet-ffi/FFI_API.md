@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 257
+**Total Functions**: 258
 
 ## Table of Contents
 
@@ -43,7 +43,7 @@ Functions: 4
 
 ### Wallet Manager
 
-Functions: 19
+Functions: 20
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -65,6 +65,7 @@ Functions: 19
 | `wallet_manager_import_wallet_from_bytes` | No description | wallet_manager |
 | `wallet_manager_network` | Get the network for this wallet manager  # Safety  - `manager` must be a... | wallet_manager |
 | `wallet_manager_process_transaction` | Process a transaction through all wallets  Checks a transaction against all... | wallet_manager |
+| `wallet_manager_set_transaction_label` | Set or clear a label on a transaction record in the shared wallet manager... | managed_account |
 | `wallet_manager_wallet_count` | Get wallet count  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
 
 ### Wallet Operations
@@ -713,6 +714,22 @@ Process a transaction through all wallets  Checks a transaction against all wall
 - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContext - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
+
+---
+
+#### `wallet_manager_set_transaction_label`
+
+```c
+wallet_manager_set_transaction_label(manager: *mut FFIWalletManager, wallet_id: *const u8, account_type: FFIAccountKind, account_index: c_uint, txid: *const u8, label: *const c_char, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Set or clear a label on a transaction record in the shared wallet manager state  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `txid` must be a valid pointer to a 32-byte transaction ID - `label` must be a valid null-terminated UTF-8 string, or null to clear the label - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+
+**Safety:**
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `txid` must be a valid pointer to a 32-byte transaction ID - `label` must be a valid null-terminated UTF-8 string, or null to clear the label - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+
+**Module:** `managed_account`
 
 ---
 

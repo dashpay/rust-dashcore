@@ -12,13 +12,13 @@ use std::ptr::slice_from_raw_parts_mut;
 use std::sync::Arc;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
-use crate::check_ptr;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
     FFIAccountKind, FFIInputDetail, FFIOutputDetail, FFITransactionContext,
     FFITransactionDirection, FFITransactionType,
 };
 use crate::wallet_manager::FFIWalletManager;
+use crate::{check_ptr, deref_ptr};
 use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use key_wallet::account::TransactionRecord;
 use key_wallet::managed_account::address_pool::AddressPool;
@@ -1065,6 +1065,82 @@ pub unsafe extern "C" fn managed_core_account_free_transactions(
     let _ = Box::from_raw(slice_from_raw_parts_mut(transactions, count));
 }
 
+/// Set or clear a label on a transaction record in the shared wallet manager state
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+/// - `txid` must be a valid pointer to a 32-byte transaction ID
+/// - `label` must be a valid null-terminated UTF-8 string, or null to clear the label
+/// - `error` must be a valid pointer to an FFIError structure
+/// - The caller must ensure all pointers remain valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn wallet_manager_set_transaction_label(
+    manager: *mut FFIWalletManager,
+    wallet_id: *const u8,
+    account_type: FFIAccountKind,
+    account_index: c_uint,
+    txid: *const u8,
+    label: *const c_char,
+    error: *mut FFIError,
+) -> bool {
+    let manager_ref = deref_ptr!(manager, error, false);
+    check_ptr!(wallet_id, error, false);
+    check_ptr!(txid, error, false);
+
+    let mut wallet_id_array = [0u8; 32];
+    std::ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
+
+    let mut txid_bytes = [0u8; 32];
+    std::ptr::copy_nonoverlapping(txid, txid_bytes.as_mut_ptr(), 32);
+    let txid = dashcore::Txid::from_byte_array(txid_bytes);
+
+    let account_type_rust = account_type.to_account_type(account_index);
+
+    let new_label = if label.is_null() {
+        None
+    } else {
+        match std::ffi::CStr::from_ptr(label).to_str() {
+            Ok(s) => Some(s.to_owned()),
+            Err(e) => {
+                (*error).set(FFIErrorCode::InvalidInput, &format!("Invalid UTF-8 in label: {}", e));
+                return false;
+            }
+        }
+    };
+
+    let result: Result<(), (FFIErrorCode, String)> = manager_ref.runtime.block_on(async {
+        let mut manager_guard = manager_ref.manager.write().await;
+        let wallet_info = manager_guard
+            .get_wallet_info_mut(&wallet_id_array)
+            .ok_or_else(|| (FFIErrorCode::NotFound, "Wallet not found".to_string()))?;
+        let mut account = crate::address_pool::get_managed_account_by_type_mut(
+            &mut wallet_info.accounts,
+            &account_type_rust,
+        )
+        .ok_or_else(|| (FFIErrorCode::NotFound, "Account not found".to_string()))?;
+        let record = account
+            .transactions_mut()
+            .get_mut(&txid)
+            .ok_or_else(|| (FFIErrorCode::NotFound, "Transaction not found".to_string()))?;
+        match new_label {
+            None => {
+                record.label = String::new();
+                Ok(())
+            }
+            Some(s) => record.set_label(s).map_err(|e| (FFIErrorCode::InvalidInput, e.to_string())),
+        }
+    });
+
+    if let Err((code, msg)) = result {
+        (*error).set(code, &msg);
+        return false;
+    }
+
+    true
+}
+
 /// Free a managed account handle
 ///
 /// # Safety
@@ -1684,6 +1760,12 @@ mod tests {
         wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
     };
     use dash_network::ffi::FFINetwork;
+    use dashcore::Transaction;
+    use key_wallet::managed_account::transaction_record::{
+        OutputDetail, OutputRole, TransactionDirection, TransactionRecord,
+    };
+    use key_wallet::transaction_checking::transaction_context::TransactionContext;
+    use key_wallet::transaction_checking::transaction_router::TransactionType;
     use std::ffi::CString;
     use std::ptr;
 
@@ -2208,6 +2290,293 @@ mod tests {
         unsafe {
             managed_core_account_free_transactions(std::ptr::null_mut(), 0);
             managed_core_account_free_transactions(std::ptr::null_mut(), 5);
+        }
+    }
+
+    #[cfg(feature = "keep-finalized-transactions")]
+    /// Helper to create a wallet manager with a default testnet wallet and account.
+    /// Returns (manager, wallet_ids_out, wallet_ids_count, account).
+    unsafe fn setup_account(
+    ) -> (*mut crate::wallet_manager::FFIWalletManager, *mut u8, usize, *mut FFIManagedCoreAccount)
+    {
+        let mut error = FFIError::default();
+        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
+        assert!(!manager.is_null());
+
+        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
+        let success = wallet_manager_add_wallet_from_mnemonic_with_options(
+            manager,
+            mnemonic.as_ptr(),
+            ptr::null(),
+            &mut error,
+        );
+        assert!(success);
+
+        let mut wallet_ids_out: *mut u8 = ptr::null_mut();
+        let mut count_out: usize = 0;
+        let success =
+            wallet_manager_get_wallet_ids(manager, &mut wallet_ids_out, &mut count_out, &mut error);
+        assert!(success);
+        assert_eq!(count_out, 1);
+
+        let result =
+            managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountKind::StandardBIP44);
+        assert!(!result.account.is_null());
+
+        (manager, wallet_ids_out, count_out, result.account)
+    }
+
+    #[cfg(feature = "keep-finalized-transactions")]
+    /// Helper to insert a test `TransactionRecord` into the shared wallet manager state
+    /// and return its txid bytes.
+    unsafe fn insert_test_transaction(
+        manager: *mut crate::wallet_manager::FFIWalletManager,
+        wallet_id: *const u8,
+        account_index: c_uint,
+        account_type: FFIAccountKind,
+        label: Option<&str>,
+    ) -> [u8; 32] {
+        let tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+        let txid_bytes = txid.to_byte_array();
+
+        let account_type_rust = account_type.to_account_type(account_index);
+
+        let mut record = TransactionRecord::new(
+            tx,
+            account_type_rust,
+            TransactionContext::Mempool,
+            TransactionType::Standard,
+            TransactionDirection::Incoming,
+            vec![],
+            vec![OutputDetail {
+                index: 0,
+                role: OutputRole::Received,
+                address: None,
+                value: 50_000,
+            }],
+            50_000,
+        );
+        record.set_fee(226);
+        if let Some(l) = label {
+            record.set_label(l.to_owned()).unwrap();
+        }
+
+        let mut wallet_id_array = [0u8; 32];
+        ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
+
+        let manager_ref = &*manager;
+        manager_ref.runtime.block_on(async {
+            let mut manager_guard = manager_ref.manager.write().await;
+            let wallet_info = manager_guard.get_wallet_info_mut(&wallet_id_array).expect("wallet");
+            let mut account = crate::address_pool::get_managed_account_by_type_mut(
+                &mut wallet_info.accounts,
+                &account_type_rust,
+            )
+            .expect("account");
+            account.transactions_mut().insert(txid, record);
+        });
+
+        txid_bytes
+    }
+
+    #[cfg(feature = "keep-finalized-transactions")]
+    /// Helper to get transactions from an account. Returns (pointer, count).
+    unsafe fn get_transactions(
+        account: *mut FFIManagedCoreAccount,
+    ) -> (*mut FFITransactionRecord, usize) {
+        let mut txs_out: *mut FFITransactionRecord = ptr::null_mut();
+        let mut txs_count: usize = 0;
+        let success = managed_core_account_get_transactions(account, &mut txs_out, &mut txs_count);
+        assert!(success);
+        (txs_out, txs_count)
+    }
+
+    #[cfg(feature = "keep-finalized-transactions")]
+    #[test]
+    fn test_transaction_label_lifecycle() {
+        unsafe {
+            let (manager, wallet_ids_out, count_out, account) = setup_account();
+            managed_core_account_free(account);
+
+            let txid_bytes = insert_test_transaction(
+                manager,
+                wallet_ids_out,
+                0,
+                FFIAccountKind::StandardBIP44,
+                Some("Coffee payment"),
+            );
+
+            let result = managed_wallet_get_account(
+                manager,
+                wallet_ids_out,
+                0,
+                FFIAccountKind::StandardBIP44,
+            );
+            assert!(!result.account.is_null());
+            let account = result.account;
+            assert_eq!(managed_core_account_get_transaction_count(account), 1);
+
+            let (txs_out, txs_count) = get_transactions(account);
+            assert_eq!(txs_count, 1);
+            assert!(!txs_out.is_null());
+            let record = &*txs_out;
+            assert_eq!(record.txid, txid_bytes);
+            assert_eq!(record.net_amount, 50_000);
+            assert_eq!(record.fee, 226);
+            assert!(!record.label.is_null());
+            let label_str = std::ffi::CStr::from_ptr(record.label).to_str().unwrap();
+            assert_eq!(label_str, "Coffee payment");
+            managed_core_account_free_transactions(txs_out, txs_count);
+            managed_core_account_free(account);
+
+            let mut error = FFIError::default();
+            let new_label = CString::new("Rent payment").unwrap();
+            let success = wallet_manager_set_transaction_label(
+                manager,
+                wallet_ids_out,
+                FFIAccountKind::StandardBIP44,
+                0,
+                txid_bytes.as_ptr(),
+                new_label.as_ptr(),
+                &mut error,
+            );
+            assert!(success);
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            let result = managed_wallet_get_account(
+                manager,
+                wallet_ids_out,
+                0,
+                FFIAccountKind::StandardBIP44,
+            );
+            assert!(!result.account.is_null());
+            let account = result.account;
+            let (txs_out, txs_count) = get_transactions(account);
+            assert_eq!(txs_count, 1);
+            let label_str = std::ffi::CStr::from_ptr((*txs_out).label).to_str().unwrap();
+            assert_eq!(label_str, "Rent payment");
+            managed_core_account_free_transactions(txs_out, txs_count);
+            managed_core_account_free(account);
+
+            let success = wallet_manager_set_transaction_label(
+                manager,
+                wallet_ids_out,
+                FFIAccountKind::StandardBIP44,
+                0,
+                txid_bytes.as_ptr(),
+                ptr::null(),
+                &mut error,
+            );
+            assert!(success);
+
+            let result = managed_wallet_get_account(
+                manager,
+                wallet_ids_out,
+                0,
+                FFIAccountKind::StandardBIP44,
+            );
+            assert!(!result.account.is_null());
+            let account = result.account;
+            let (txs_out, txs_count) = get_transactions(account);
+            assert_eq!(txs_count, 1);
+            assert!((*txs_out).label.is_null());
+            managed_core_account_free_transactions(txs_out, txs_count);
+            managed_core_account_free(account);
+
+            wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
+            wallet_manager_free(manager);
+        }
+    }
+
+    #[cfg(feature = "keep-finalized-transactions")]
+    #[test]
+    fn test_set_transaction_label_errors() {
+        unsafe {
+            let mut error = FFIError::default();
+            let txid = [0u8; 32];
+            let wallet_id = [0u8; 32];
+            let label = CString::new("label").unwrap();
+
+            let success = wallet_manager_set_transaction_label(
+                ptr::null_mut(),
+                wallet_id.as_ptr(),
+                FFIAccountKind::StandardBIP44,
+                0,
+                txid.as_ptr(),
+                label.as_ptr(),
+                &mut error,
+            );
+            assert!(!success);
+            assert_eq!(error.code, FFIErrorCode::InvalidInput);
+            error.clean();
+
+            let (manager, wallet_ids_out, count_out, account) = setup_account();
+            managed_core_account_free(account);
+
+            let success = wallet_manager_set_transaction_label(
+                manager,
+                ptr::null(),
+                FFIAccountKind::StandardBIP44,
+                0,
+                txid.as_ptr(),
+                label.as_ptr(),
+                &mut error,
+            );
+            assert!(!success);
+            assert_eq!(error.code, FFIErrorCode::InvalidInput);
+            error.clean();
+
+            let success = wallet_manager_set_transaction_label(
+                manager,
+                wallet_ids_out,
+                FFIAccountKind::StandardBIP44,
+                0,
+                ptr::null(),
+                label.as_ptr(),
+                &mut error,
+            );
+            assert!(!success);
+            assert_eq!(error.code, FFIErrorCode::InvalidInput);
+            error.clean();
+
+            let unknown_wallet_id = [0u8; 32];
+            let fake_txid_for_unknown_wallet = [0xaau8; 32];
+            let success = wallet_manager_set_transaction_label(
+                manager,
+                unknown_wallet_id.as_ptr(),
+                FFIAccountKind::StandardBIP44,
+                0,
+                fake_txid_for_unknown_wallet.as_ptr(),
+                label.as_ptr(),
+                &mut error,
+            );
+            assert!(!success);
+            assert_eq!(error.code, FFIErrorCode::NotFound);
+            error.clean();
+
+            let fake_txid = [0xffu8; 32];
+            let success = wallet_manager_set_transaction_label(
+                manager,
+                wallet_ids_out,
+                FFIAccountKind::StandardBIP44,
+                0,
+                fake_txid.as_ptr(),
+                label.as_ptr(),
+                &mut error,
+            );
+            assert!(!success);
+            assert_eq!(error.code, FFIErrorCode::NotFound);
+            error.clean();
+
+            wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
+            wallet_manager_free(manager);
         }
     }
 
