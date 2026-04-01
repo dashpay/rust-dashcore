@@ -16,7 +16,7 @@ use crate::types::{
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
-    account_checker::CoreAccountTypeMatch, WalletTransactionChecker,
+    account_checker::CoreAccountTypeMatch, TransactionContext, WalletTransactionChecker,
 };
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
@@ -159,6 +159,17 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
             return false;
         }
     };
+
+    if let TransactionContext::InstantSend(ref lock) = context {
+        if lock.txid != tx.txid() {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "InstantLock txid does not match transaction".to_string(),
+            );
+            return false;
+        }
+    }
 
     // Check the transaction - wallet is now required
     if wallet.is_null() {
