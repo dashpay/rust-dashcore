@@ -382,11 +382,7 @@ pub struct FFITransactionCheckResult {
 ///
 /// - `wallet` must be a valid mutable pointer to an FFIWallet
 /// - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
-/// - `inputs_spent_out` must be a valid pointer to store the spent inputs count
-/// - `addresses_used_out` must be a valid pointer to store the used addresses count
-/// - `new_balance_out` must be a valid pointer to store the new balance
-/// - `new_address_out` must be a valid pointer to store the address array pointer
-/// - `new_address_count_out` must be a valid pointer to store the address count
+/// - `result_out` must be a valid pointer to store the result
 /// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn wallet_check_transaction(
