@@ -212,20 +212,13 @@ fn test_all_callbacks_during_sync() {
         );
 
         // Validate transaction data from initial sync
-        let received_txids = tracker.received_txids.lock().unwrap();
-        assert!(!received_txids.is_empty(), "should have received transaction txids during sync");
-        drop(received_txids);
-
-        let received_amounts = tracker.received_amounts.lock().unwrap();
+        let received_txs = tracker.received_transactions.lock().unwrap();
+        assert!(!received_txs.is_empty(), "should have received transactions during sync");
         assert!(
-            !received_amounts.is_empty(),
-            "should have received transaction amounts during sync"
-        );
-        assert!(
-            received_amounts.iter().any(|&a| a != 0),
+            received_txs.iter().any(|&(_, amount)| amount != 0),
             "at least one received transaction amount should be non-zero"
         );
-        drop(received_amounts);
+        drop(received_txs);
 
         // Masternodes are disabled in test config, so these should not fire
         let masternode_updated = tracker.masternode_state_updated_count.load(Ordering::SeqCst);
@@ -308,23 +301,21 @@ fn test_callbacks_post_sync_transactions_and_disconnect() {
             tx_received_after
         );
 
-        // Verify the sent txid appears in the callback data
+        // Verify the sent txid and amount appear paired in the callback data
         let sent_txid_bytes = *txid.as_byte_array();
-        let received_txids = tracker.received_txids.lock().unwrap();
+        let received_txs = tracker.received_transactions.lock().unwrap();
         assert!(
-            received_txids.contains(&sent_txid_bytes),
-            "sent txid should appear in received_txids callback data"
+            received_txs.iter().any(|&(txid, _)| txid == sent_txid_bytes),
+            "sent txid should appear in received transaction callback data"
         );
-        drop(received_txids);
-
-        // Verify 1 DASH (100_000_000 satoshis) appears in received amounts
-        let received_amounts = tracker.received_amounts.lock().unwrap();
         assert!(
-            received_amounts.contains(&100_000_000),
-            "1 DASH (100_000_000 sat) should appear in received_amounts: {:?}",
-            *received_amounts
+            received_txs
+                .iter()
+                .any(|&(txid, amount)| txid == sent_txid_bytes && amount == 100_000_000),
+            "sent txid should be paired with 1 DASH (100_000_000 sat): {:?}",
+            *received_txs
         );
-        drop(received_amounts);
+        drop(received_txs);
 
         let balance_updated_after = tracker.balance_updated_count.load(Ordering::SeqCst);
         tracing::info!(

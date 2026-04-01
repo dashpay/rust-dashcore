@@ -74,14 +74,14 @@ fn test_ffi_sync_then_generate_blocks() {
         );
 
         // Verify the transaction was received via wallet callback
-        let received_txids = ctx.tracker().received_txids.lock().unwrap();
+        let received_txs = ctx.tracker().received_transactions.lock().unwrap();
         let txid_bytes = *txid.as_byte_array();
         assert!(
-            received_txids.contains(&txid_bytes),
+            received_txs.iter().any(|&(txid, _)| txid == txid_bytes),
             "Wallet callback should have received txid {}",
             txid
         );
-        drop(received_txids);
+        drop(received_txs);
 
         // Verify via wallet query as well
         assert!(

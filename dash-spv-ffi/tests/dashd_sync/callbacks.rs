@@ -49,9 +49,8 @@ pub(super) struct CallbackTracker {
     pub(super) connected_peers: Mutex<Vec<String>>,
     pub(super) errors: Mutex<Vec<String>>,
 
-    // Transaction data from on_transaction_received
-    pub(super) received_txids: Mutex<Vec<[u8; 32]>>,
-    pub(super) received_amounts: Mutex<Vec<i64>>,
+    // Transaction data from on_transaction_received (txid, net_amount)
+    pub(super) received_transactions: Mutex<Vec<([u8; 32], i64)>>,
 
     // Balance data from on_balance_updated
     pub(super) last_spendable: AtomicU64,
@@ -353,8 +352,11 @@ extern "C" fn on_transaction_received(
     };
     if !record.is_null() {
         let r = unsafe { &*record };
-        tracker.received_txids.lock().unwrap_or_else(|e| e.into_inner()).push(r.txid);
-        tracker.received_amounts.lock().unwrap_or_else(|e| e.into_inner()).push(r.net_amount);
+        tracker
+            .received_transactions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((r.txid, r.net_amount));
     }
     tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };

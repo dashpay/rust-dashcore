@@ -730,10 +730,8 @@ impl FFIWalletEventCallbacks {
                         })
                         .collect();
 
-                    let c_label = record
-                        .label
-                        .as_ref()
-                        .map(|l| CString::new(l.as_str()).unwrap_or_default());
+                    let c_label =
+                        record.label.as_ref().map(|l| CString::new(l.as_str()).unwrap_or_default());
 
                     let ffi_record = FFITransactionRecord {
                         txid: record.txid.to_byte_array(),
