@@ -627,10 +627,10 @@ mod tests {
         ];
 
         // Create transaction contexts for testing
-        let mempool_context = crate::types::FFITransactionContextDetails::mempool();
+        let mempool_context = crate::types::FFITransactionContext::mempool();
 
         let block_context =
-            crate::types::FFITransactionContextDetails::in_block(crate::types::FFIBlockInfo {
+            crate::types::FFITransactionContext::in_block(crate::types::FFIBlockInfo {
                 height: 100000,
                 block_hash: [0u8; 32],
                 timestamp: 1234567890,
@@ -667,14 +667,13 @@ mod tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test processing a chain-locked block transaction
-        let chain_locked_context =
-            crate::types::FFITransactionContextDetails::in_chain_locked_block(
-                crate::types::FFIBlockInfo {
-                    height: 100000,
-                    block_hash: [0u8; 32],
-                    timestamp: 1234567890,
-                },
-            );
+        let chain_locked_context = crate::types::FFITransactionContext::in_chain_locked_block(
+            crate::types::FFIBlockInfo {
+                height: 100000,
+                block_hash: [0u8; 32],
+                timestamp: 1234567890,
+            },
+        );
         let processed = unsafe {
             wallet_manager::wallet_manager_process_transaction(
                 manager,

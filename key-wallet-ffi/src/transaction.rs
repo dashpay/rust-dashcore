@@ -16,7 +16,7 @@ use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
-    transaction_context_from_ffi, FFIBlockInfo, FFINetwork, FFITransactionContext, FFIWallet,
+    transaction_context_from_ffi, FFIBlockInfo, FFINetwork, FFITransactionContextType, FFIWallet,
 };
 use crate::FFIWalletManager;
 
@@ -362,7 +362,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 }
 
 // Transaction context for checking
-// FFITransactionContext is imported from types module at the top
+// FFITransactionContextType is imported from types module at the top
 /// Transaction check result
 #[repr(C)]
 pub struct FFITransactionCheckResult {
@@ -393,7 +393,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
     wallet: *mut FFIWallet,
     tx_bytes: *const u8,
     tx_len: usize,
-    context_type: FFITransactionContext,
+    context_type: FFITransactionContextType,
     block_info: FFIBlockInfo,
     update_state: bool,
     result_out: *mut FFITransactionCheckResult,

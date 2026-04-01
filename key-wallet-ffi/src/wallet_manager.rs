@@ -730,7 +730,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `tx_bytes` must be a valid pointer to transaction bytes
 /// - `tx_len` must be the length of the transaction bytes
-/// - `context` must be a valid pointer to FFITransactionContextDetails
+/// - `context` must be a valid pointer to FFITransactionContext
 /// - `update_state_if_found` indicates whether to update wallet state when transaction is relevant
 /// - `error` must be a valid pointer to an FFIError structure or null
 /// - The caller must ensure all pointers remain valid for the duration of this call
@@ -739,7 +739,7 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     manager: *mut FFIWalletManager,
     tx_bytes: *const u8,
     tx_len: usize,
-    context: *const crate::types::FFITransactionContextDetails,
+    context: *const crate::types::FFITransactionContext,
     update_state_if_found: bool,
     error: *mut FFIError,
 ) -> bool {

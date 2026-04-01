@@ -11,7 +11,7 @@ use dashcore::hashes::Hash;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountType, FFITransactionContextDetails};
+use crate::types::{FFIAccountType, FFITransactionContext};
 use crate::wallet_manager::FFIWalletManager;
 use crate::FFINetwork;
 use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
@@ -667,7 +667,7 @@ pub struct FFITransactionRecord {
     /// Net amount for this account (positive = received, negative = sent)
     pub net_amount: i64,
     /// Transaction context (mempool, instant-send, in-block, chain-locked + block info)
-    pub context: FFITransactionContextDetails,
+    pub context: FFITransactionContext,
     /// Fee if known, 0 if unknown
     pub fee: u64,
 }
@@ -724,7 +724,7 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
         ffi_record.net_amount = record.net_amount;
 
         // Copy transaction context
-        ffi_record.context = FFITransactionContextDetails::from(record.context);
+        ffi_record.context = FFITransactionContext::from(record.context);
 
         // Copy fee (0 if unknown)
         ffi_record.fee = record.fee.unwrap_or(0);

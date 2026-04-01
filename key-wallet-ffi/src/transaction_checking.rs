@@ -10,7 +10,9 @@ use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::{managed_wallet_info_free, FFIManagedWalletInfo};
-use crate::types::{transaction_context_from_ffi, FFIBlockInfo, FFITransactionContext, FFIWallet};
+use crate::types::{
+    transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
+};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
@@ -19,7 +21,7 @@ use key_wallet::transaction_checking::{
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
 // Transaction context for checking
-// FFITransactionContext is imported from types module at the top
+// FFITransactionContextType is imported from types module at the top
 /// Account type match result
 #[repr(C)]
 pub struct FFIAccountMatch {
@@ -111,7 +113,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     wallet: *mut FFIWallet,
     tx_bytes: *const u8,
     tx_len: usize,
-    context_type: FFITransactionContext,
+    context_type: FFITransactionContextType,
     block_info: FFIBlockInfo,
     update_state: bool,
     result_out: *mut FFITransactionCheckResult,
@@ -581,9 +583,9 @@ mod tests {
     #[test]
     fn test_transaction_context_conversion() {
         // Test that FFI transaction context values match expectations
-        assert_eq!(FFITransactionContext::Mempool as u32, 0);
-        assert_eq!(FFITransactionContext::InstantSend as u32, 1);
-        assert_eq!(FFITransactionContext::InBlock as u32, 2);
-        assert_eq!(FFITransactionContext::InChainLockedBlock as u32, 3);
+        assert_eq!(FFITransactionContextType::Mempool as u32, 0);
+        assert_eq!(FFITransactionContextType::InstantSend as u32, 1);
+        assert_eq!(FFITransactionContextType::InBlock as u32, 2);
+        assert_eq!(FFITransactionContextType::InChainLockedBlock as u32, 3);
     }
 }
