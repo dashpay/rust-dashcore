@@ -743,7 +743,7 @@ impl From<TransactionContext> for FFITransactionContextType {
 
 /// FFI-compatible transaction context (type + optional block info + optional IS lock)
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FFITransactionContext {
     /// The context type
     pub context_type: FFITransactionContextType,
