@@ -1,0 +1,16 @@
+[package]
+name = "ffi-derive"
+version = { workspace = true }
+edition = "2021"
+authors = ["Dash Core Team"]
+description = "Procedural macros for deriving FFI-compatible types from Rust types"
+license = "MIT"
+repository = "https://github.com/dashpay/rust-dashcore"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["derive", "parsing"] }
+quote = "1.0"
+proc-macro2 = "1.0"
