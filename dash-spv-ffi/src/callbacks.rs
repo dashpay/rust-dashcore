@@ -705,7 +705,9 @@ impl FFIWalletEventCallbacks {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
 
-                    let mut ffi_ctx = FFITransactionContext::from(record.context.clone());
+                    let ffi_ctx = FFITransactionContext::from(record.context.clone());
+                    let islock_data = ffi_ctx.islock_data;
+                    let islock_len = ffi_ctx.islock_len;
 
                     let tx_bytes =
                         dashcore::consensus::serialize(&record.transaction).into_boxed_slice();
@@ -738,7 +740,7 @@ impl FFIWalletEventCallbacks {
                     let ffi_record = FFITransactionRecord {
                         txid: record.txid.to_byte_array(),
                         net_amount: record.net_amount,
-                        context: ffi_ctx.clone(),
+                        context: ffi_ctx,
                         transaction_type: FFITransactionType::from(record.transaction_type),
                         direction: FFITransactionDirection::from(record.direction),
                         fee: record.fee.unwrap_or(0),
@@ -780,9 +782,16 @@ impl FFIWalletEventCallbacks {
                             }
                         }
                     }
-                    // SAFETY: `ffi_ctx` owns the heap-allocated IS lock bytes produced
-                    // by `From<TransactionContext>`. Free them after the callback returns.
-                    unsafe { ffi_ctx.free_islock_data() };
+                    // SAFETY: Free the heap-allocated IS lock bytes produced by
+                    // `From<TransactionContext>` after the callback returns.
+                    if !islock_data.is_null() && islock_len > 0 {
+                        unsafe {
+                            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                                islock_data as *mut u8,
+                                islock_len,
+                            )));
+                        }
+                    }
                 }
             }
             WalletEvent::TransactionStatusChanged {
@@ -794,16 +803,25 @@ impl FFIWalletEventCallbacks {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let txid_bytes = txid.as_byte_array();
-                    let mut ffi_ctx = FFITransactionContext::from(status.clone());
+                    let ffi_ctx = FFITransactionContext::from(status.clone());
+                    let islock_data = ffi_ctx.islock_data;
+                    let islock_len = ffi_ctx.islock_len;
                     cb(
                         c_wallet_id.as_ptr(),
                         txid_bytes as *const [u8; 32],
-                        ffi_ctx.clone(),
+                        ffi_ctx,
                         self.user_data,
                     );
-                    // SAFETY: `ffi_ctx` owns the heap-allocated IS lock bytes produced
-                    // by `From<TransactionContext>`. Free them after the callback returns.
-                    unsafe { ffi_ctx.free_islock_data() };
+                    // SAFETY: Free the heap-allocated IS lock bytes produced by
+                    // `From<TransactionContext>` after the callback returns.
+                    if !islock_data.is_null() && islock_len > 0 {
+                        unsafe {
+                            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                                islock_data as *mut u8,
+                                islock_len,
+                            )));
+                        }
+                    }
                 }
             }
             WalletEvent::BalanceUpdated {
