@@ -1,17 +1,75 @@
 //! Command-line interface for the Dash SPV client.
 
-// Removed unused import
 use std::path::PathBuf;
 use std::process;
 use std::sync::Arc;
 
-use clap::{Arg, Command};
+use clap::{Parser, ValueEnum};
 use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::{ClientConfig, DashSpvClient, EventHandler, LevelFilter, MempoolStrategy, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{WalletEvent, WalletManager};
 use tokio_util::sync::CancellationToken;
+
+/// Network selection for CLI
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum NetworkArg {
+    Mainnet,
+    Testnet,
+    Regtest,
+}
+
+impl From<NetworkArg> for Network {
+    fn from(arg: NetworkArg) -> Self {
+        match arg {
+            NetworkArg::Mainnet => Network::Mainnet,
+            NetworkArg::Testnet => Network::Testnet,
+            NetworkArg::Regtest => Network::Regtest,
+        }
+    }
+}
+
+/// Validation mode selection for CLI
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ValidationModeArg {
+    None,
+    Basic,
+    Full,
+}
+
+impl From<ValidationModeArg> for dash_spv::ValidationMode {
+    fn from(arg: ValidationModeArg) -> Self {
+        match arg {
+            ValidationModeArg::None => dash_spv::ValidationMode::None,
+            ValidationModeArg::Basic => dash_spv::ValidationMode::Basic,
+            ValidationModeArg::Full => dash_spv::ValidationMode::Full,
+        }
+    }
+}
+
+/// Log level selection for CLI
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "lowercase")]
+enum LogLevelArg {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl From<LogLevelArg> for LevelFilter {
+    fn from(arg: LogLevelArg) -> Self {
+        match arg {
+            LogLevelArg::Error => LevelFilter::ERROR,
+            LogLevelArg::Warn => LevelFilter::WARN,
+            LogLevelArg::Info => LevelFilter::INFO,
+            LogLevelArg::Debug => LevelFilter::DEBUG,
+            LogLevelArg::Trace => LevelFilter::TRACE,
+        }
+    }
+}
 
 /// Logs all SPV client events via tracing.
 struct LoggingEventHandler;
@@ -38,6 +96,72 @@ impl EventHandler for LoggingEventHandler {
     }
 }
 
+/// Dash SPV (Simplified Payment Verification) client
+#[derive(Parser, Debug)]
+#[command(name = "dash-spv", version = dash_spv::VERSION, about)]
+struct Args {
+    /// Network to connect to
+    #[arg(short, long, value_enum, default_value = "mainnet")]
+    network: NetworkArg,
+
+    /// Data directory for storage (default: unique directory in /tmp)
+    #[arg(short, long)]
+    data_dir: Option<PathBuf>,
+
+    /// Peer address to connect to (can be used multiple times)
+    #[arg(short, long, value_name = "ADDRESS")]
+    peer: Vec<String>,
+
+    /// Log level (CLI overrides RUST_LOG env var)
+    #[arg(short, long, value_enum, env = "RUST_LOG", default_value = "info")]
+    log_level: LogLevelArg,
+
+    /// Disable BIP157 filter synchronization
+    #[arg(long)]
+    no_filters: bool,
+
+    /// Disable masternode list synchronization
+    #[arg(long)]
+    no_masternodes: bool,
+
+    /// Disable mempool transaction tracking
+    #[arg(long)]
+    no_mempool: bool,
+
+    /// Mempool strategy: fetch-all (higher bandwidth / more privacy) or bloom-filter (efficient / less privacy)
+    #[arg(long, value_enum, default_value = "bloom-filter")]
+    mempool_strategy: MempoolStrategy,
+
+    /// Validation mode
+    #[arg(long, value_enum, default_value = "full")]
+    validation_mode: ValidationModeArg,
+
+    /// Start syncing from a specific block height using the nearest checkpoint.
+    /// Use 'now' for the latest checkpoint.
+    #[arg(short, long, value_name = "HEIGHT")]
+    start_height: Option<String>,
+
+    /// Disable log file output (enables console logging as fallback)
+    #[arg(long)]
+    no_log_file: bool,
+
+    /// Print logs to the console
+    #[arg(long)]
+    print_to_console: bool,
+
+    /// Directory for log files (default: <data-dir>/logs)
+    #[arg(long)]
+    log_dir: Option<PathBuf>,
+
+    /// Maximum number of archived log files to keep
+    #[arg(long, default_value = "20")]
+    max_log_files: usize,
+
+    /// Path to file containing BIP39 mnemonic phrase
+    #[arg(long, value_name = "PATH")]
+    mnemonic_file: String,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
@@ -62,156 +186,19 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = Command::new("dash-spv")
-        .version(dash_spv::VERSION)
-        .about("Dash SPV (Simplified Payment Verification) client")
-        .arg(
-            Arg::new("network")
-                .short('n')
-                .long("network")
-                .value_name("NETWORK")
-                .help("Network to connect to")
-                .value_parser(["mainnet", "testnet", "regtest"])
-                .default_value("mainnet"),
-        )
-        .arg(
-            Arg::new("data-dir")
-                .short('d')
-                .long("data-dir")
-                .value_name("DIR")
-                .help("Data directory for storage (default: unique directory in /tmp)"),
-        )
-        .arg(
-            Arg::new("peer")
-                .short('p')
-                .long("peer")
-                .value_name("ADDRESS")
-                .help("Peer address to connect to (can be used multiple times)")
-                .action(clap::ArgAction::Append),
-        )
-        .arg(
-            Arg::new("log-level")
-                .short('l')
-                .long("log-level")
-                .env("RUST_LOG")
-                .default_value("info")
-                .value_name("LEVEL")
-                .help("Log level (CLI overrides RUST_LOG env var)")
-                .value_parser(["error", "warn", "info", "debug", "trace"]),
-        )
-        .arg(
-            Arg::new("no-filters")
-                .long("no-filters")
-                .help("Disable BIP157 filter synchronization")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("no-masternodes")
-                .long("no-masternodes")
-                .help("Disable masternode list synchronization")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("no-mempool")
-                .long("no-mempool")
-                .help("Disable mempool transaction tracking")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("mempool-strategy")
-                .long("mempool-strategy")
-                .value_name("STRATEGY")
-                .help("Mempool strategy: fetch-all (higher bandwidth / more privacy) or bloom-filter (efficient / less privacy)")
-                .value_parser(clap::value_parser!(MempoolStrategy))
-                .default_value("bloom-filter"),
-        )
-        .arg(
-            Arg::new("validation-mode")
-                .long("validation-mode")
-                .value_name("MODE")
-                .help("Validation mode")
-                .value_parser(["none", "basic", "full"])
-                .default_value("full"),
-        )
-        .arg(
-            Arg::new("start-height")
-                .long("start-height")
-                .short('s')
-                .help("Start syncing from a specific block height using the nearest checkpoint. Use 'now' for the latest checkpoint")
-                .value_name("HEIGHT"),
-        )
-        .arg(
-            Arg::new("no-log-file")
-                .long("no-log-file")
-                .help("Disable log file output (enables console logging as fallback)")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("print-to-console")
-                .long("print-to-console")
-                .help("Print logs to the console")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("log-dir")
-                .long("log-dir")
-                .value_name("DIR")
-                .help("Directory for log files (default: <data-dir>/logs)"),
-        )
-        .arg(
-            Arg::new("max-log-files")
-                .long("max-log-files")
-                .help("Maximum number of archived log files to keep")
-                .value_name("COUNT")
-                .default_value("20")
-                .value_parser(clap::value_parser!(usize)),
-        )
-        .arg(
-            Arg::new("mnemonic-file")
-                .long("mnemonic-file")
-                .value_name("PATH")
-                .help("Path to file containing BIP39 mnemonic phrase")
-                .required(true),
-        )
-        .get_matches();
+    let args = Args::parse();
 
-    let log_level: LevelFilter = matches
-        .get_one::<String>("log-level")
-        .expect("log-level has default value")
-        .parse()
-        .expect("log-level value_parser ensures valid level");
+    let network: Network = args.network.into();
+    let validation_mode: dash_spv::ValidationMode = args.validation_mode.into();
+    let log_level: LevelFilter = args.log_level.into();
 
-    // Parse network
-    let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
-    let network = match network_str.as_str() {
-        "mainnet" => Network::Mainnet,
-        "testnet" => Network::Testnet,
-        "regtest" => Network::Regtest,
-        n => return Err(format!("Invalid network: {}", n).into()),
-    };
-
-    let mnemonic_path =
-        matches.get_one::<String>("mnemonic-file").ok_or("Missing mnemonic-file argument")?;
-    let mnemonic_phrase = std::fs::read_to_string(mnemonic_path)
-        .map_err(|e| format!("Failed to read mnemonic file '{}': {}", mnemonic_path, e))?
+    let mnemonic_phrase = std::fs::read_to_string(&args.mnemonic_file)
+        .map_err(|e| format!("Failed to read mnemonic file '{}': {}", args.mnemonic_file, e))?
         .trim()
         .to_string();
 
-    // Parse validation mode
-    let validation_str =
-        matches.get_one::<String>("validation-mode").ok_or("Missing validation-mode argument")?;
-    let validation_mode = match validation_str.as_str() {
-        "none" => dash_spv::ValidationMode::None,
-        "basic" => dash_spv::ValidationMode::Basic,
-        "full" => dash_spv::ValidationMode::Full,
-        v => return Err(format!("Invalid validation mode: {}", v).into()),
-    };
-
-    // Create configuration
-    let data_dir = if let Some(data_dir_str) = matches.get_one::<String>("data-dir") {
-        PathBuf::from(data_dir_str)
-    } else {
-        // Create a unique temp directory with timestamp and process ID
+    // Create data directory
+    let data_dir = args.data_dir.clone().unwrap_or_else(|| {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -219,27 +206,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let pid = std::process::id();
         let dir_name = format!("dash-spv-{}-{}", timestamp, pid);
         std::env::temp_dir().join(dir_name)
-    };
+    });
 
-    // Parse logging flags and initialize logging early
-    let no_log_file = matches.get_flag("no-log-file");
-    let print_to_console = matches.get_flag("print-to-console");
-    let max_log_files = *matches.get_one::<usize>("max-log-files").unwrap();
-    let log_dir = matches
-        .get_one::<String>("log-dir")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| data_dir.join("logs"));
+    // Configure logging
+    let log_dir = args.log_dir.clone().unwrap_or_else(|| data_dir.join("logs"));
 
-    let file_config = if !no_log_file {
+    let file_config = if !args.no_log_file {
         Some(dash_spv::LogFileConfig {
             log_dir,
-            max_files: max_log_files,
+            max_files: args.max_log_files,
         })
     } else {
         None
     };
 
-    let console_enabled = no_log_file || print_to_console;
+    let console_enabled = args.no_log_file || args.print_to_console;
 
     let logging_config = dash_spv::LoggingConfig {
         level: Some(log_level),
@@ -262,9 +243,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_validation_mode(validation_mode);
 
     // Add custom peers if specified
-    if let Some(peers) = matches.get_many::<String>("peer") {
+    if !args.peer.is_empty() {
         config.peers.clear();
-        for peer in peers {
+        for peer in &args.peer {
             match peer.parse() {
                 Ok(addr) => config.add_peer(addr),
                 Err(e) => {
@@ -276,23 +257,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Configure features
-    if matches.get_flag("no-filters") {
+    if args.no_filters {
         config = config.without_filters();
     }
-    if matches.get_flag("no-masternodes") {
+    if args.no_masternodes {
         config = config.without_masternodes();
     }
-    if matches.get_flag("no-mempool") {
+    if args.no_mempool {
         config.enable_mempool_tracking = false;
     } else {
-        let mempool_strategy = *matches
-            .get_one::<MempoolStrategy>("mempool-strategy")
-            .expect("mempool-strategy has default value");
-        config = config.with_mempool_tracking(mempool_strategy);
+        config = config.with_mempool_tracking(args.mempool_strategy);
     }
 
     // Set start height if specified
-    if let Some(start_height_str) = matches.get_one::<String>("start-height") {
+    if let Some(ref start_height_str) = args.start_height {
         if start_height_str == "now" {
             // Use a very high number to get the latest checkpoint
             config.start_from_height = Some(u32::MAX);
