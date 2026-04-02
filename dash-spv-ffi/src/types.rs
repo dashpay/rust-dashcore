@@ -4,7 +4,6 @@ use dash_spv::sync::{
     FiltersProgress, InstantSendProgress, MasternodesProgress, MempoolProgress, ProgressPercentage,
     SyncProgress, SyncState,
 };
-use dash_spv::types::MempoolRemovalReason;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
@@ -398,32 +397,6 @@ impl From<FFIMempoolStrategy> for MempoolStrategy {
         match strategy {
             FFIMempoolStrategy::FetchAll => MempoolStrategy::FetchAll,
             FFIMempoolStrategy::BloomFilter => MempoolStrategy::BloomFilter,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FFIMempoolRemovalReason {
-    Expired = 0,
-    Replaced = 1,
-    DoubleSpent = 2,
-    Confirmed = 3,
-    Manual = 4,
-}
-
-impl From<MempoolRemovalReason> for FFIMempoolRemovalReason {
-    fn from(reason: MempoolRemovalReason) -> Self {
-        match reason {
-            MempoolRemovalReason::Expired => FFIMempoolRemovalReason::Expired,
-            MempoolRemovalReason::Replaced {
-                ..
-            } => FFIMempoolRemovalReason::Replaced,
-            MempoolRemovalReason::DoubleSpent {
-                ..
-            } => FFIMempoolRemovalReason::DoubleSpent,
-            MempoolRemovalReason::Confirmed => FFIMempoolRemovalReason::Confirmed,
-            MempoolRemovalReason::Manual => FFIMempoolRemovalReason::Manual,
         }
     }
 }

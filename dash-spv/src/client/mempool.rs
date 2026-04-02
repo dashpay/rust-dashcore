@@ -1,16 +1,10 @@
 //! Mempool coordination and tracking.
 //!
 //! This module contains:
-//! - Mempool tracking enablement
 //! - Mempool balance queries
 //! - Transaction counting
-//! - Filter updates
-
-use std::collections::HashSet;
-use std::sync::Arc;
 
 use crate::error::Result;
-use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use key_wallet_manager::WalletInterface;
@@ -25,7 +19,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         &self,
         address: &dashcore::Address,
     ) -> Result<crate::types::MempoolBalance> {
-        let _wallet = self.wallet.read().await;
         let mempool_state = self.mempool_state.read().await;
         let config = self.config.read().await;
 
@@ -117,22 +110,5 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         let mut mempool_state = self.mempool_state.write().await;
         mempool_state.record_send(txid);
         Ok(())
-    }
-
-    /// Update mempool filter with wallet's monitored addresses.
-    #[allow(dead_code)]
-    pub(super) async fn update_mempool_filter(&self) {
-        let config = self.config.read().await;
-        // TODO: Get monitored addresses from wallet
-        // For now, create empty filter until wallet integration is complete
-        let filter = Arc::new(MempoolFilter::new(
-            config.mempool_strategy,
-            config.max_mempool_transactions,
-            self.mempool_state.clone(),
-            HashSet::new(), // Will be populated from wallet's monitored addresses
-            config.network,
-        ));
-        *self.mempool_filter.write().await = Some(filter);
-        tracing::info!("Updated mempool filter (wallet integration pending)");
     }
 }

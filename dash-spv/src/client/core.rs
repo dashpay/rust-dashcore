@@ -15,7 +15,6 @@ use tokio::sync::{Mutex, RwLock};
 use super::ClientConfig;
 use crate::client::EventHandler;
 use crate::error::{Result, SpvError};
-use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::{
     PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
@@ -121,7 +120,6 @@ pub struct DashSpvClient<
     pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
     pub(super) running: Arc<RwLock<bool>>,
     pub(super) mempool_state: Arc<RwLock<MempoolState>>,
-    pub(super) mempool_filter: Arc<RwLock<Option<Arc<MempoolFilter>>>>,
     pub(super) event_handler: Arc<H>,
 }
 
@@ -138,7 +136,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler> 
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             running: Arc::clone(&self.running),
             mempool_state: Arc::clone(&self.mempool_state),
-            mempool_filter: Arc::clone(&self.mempool_filter),
             event_handler: Arc::clone(&self.event_handler),
         }
     }
@@ -192,12 +189,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
             storage.clear().await.map_err(SpvError::Storage)?;
         }
 
-        // Reset mempool tracking (state and bloom filter)
+        // Reset mempool tracking
         {
             let mut mempool_state = self.mempool_state.write().await;
             *mempool_state = MempoolState::default();
         }
-        *self.mempool_filter.write().await = None;
 
         Ok(())
     }

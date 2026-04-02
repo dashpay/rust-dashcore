@@ -194,25 +194,6 @@ pub struct MempoolBalance {
     pub pending_instant: dashcore::Amount,
 }
 
-/// Reason for removing a transaction from mempool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MempoolRemovalReason {
-    /// Transaction expired (exceeded timeout).
-    Expired,
-    /// Transaction was replaced by another transaction.
-    Replaced {
-        by_txid: Txid,
-    },
-    /// Transaction was double-spent.
-    DoubleSpent {
-        conflicting_txid: Txid,
-    },
-    /// Transaction was included in a block.
-    Confirmed,
-    /// Manual removal (e.g., user action).
-    Manual,
-}
-
 /// Unconfirmed transaction in mempool.
 #[derive(Debug, Clone)]
 pub struct UnconfirmedTransaction {

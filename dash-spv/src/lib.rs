@@ -60,7 +60,6 @@ pub mod chain;
 pub mod client;
 pub mod error;
 pub mod logging;
-pub mod mempool_filter;
 pub mod network;
 pub mod storage;
 pub mod sync;
