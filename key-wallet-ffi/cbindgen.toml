@@ -55,6 +55,7 @@ item_types = ["functions", "enums", "structs", "typedefs", "opaque", "constants"
 
 [enum]
 # Configure enum generation
+prefix_with_name = true
 rename_variants = "ScreamingSnakeCase"
 add_sentinel = false
 derive_helper_methods = false
