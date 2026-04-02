@@ -94,4 +94,4 @@ jobs:
         if: matrix.group == 'ffi' && inputs.os == 'ubuntu-latest'
         run: |
           sudo apt update && sudo apt install -y build-essential
-          bash ffi-c-tests/validate-headers.sh
+          bash ffi-c-tests/validate-headers.sh ./target/llvm-cov-target/debug/include

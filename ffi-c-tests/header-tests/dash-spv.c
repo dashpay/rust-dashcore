@@ -1,6 +1,3 @@
-#include "../../target/llvm-cov-target/debug/include/dash-spv-ffi/dash-spv-ffi.h"
+#include "dash-spv-ffi/dash-spv-ffi.h"
 
-int main() {
-
-    return 0;
-}
+int main() { return 0; }
