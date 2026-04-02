@@ -12,18 +12,14 @@ mod masternode;
 mod metadata;
 mod peers;
 mod segments;
-mod transactions;
-
 use crate::error::StorageResult;
 use crate::storage::lockfile::LockFile;
-use crate::storage::transactions::PersistentTransactionStorage;
-use crate::types::{HashedBlock, HashedBlockHeader, MempoolState, UnconfirmedTransaction};
+use crate::types::{HashedBlock, HashedBlockHeader};
 use crate::ClientConfig;
 use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Header as BlockHeader, Txid};
-use std::collections::HashMap;
+use dashcore::Header as BlockHeader;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,7 +35,6 @@ pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
 pub use crate::storage::masternode::{MasternodeStateStorage, PersistentMasternodeStateStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
 pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
-pub use crate::storage::transactions::TransactionStorage;
 
 pub use types::*;
 
@@ -58,7 +53,6 @@ pub trait StorageManager:
     + FilterHeaderStorage
     + FilterStorage
     + BlockStorage
-    + TransactionStorage
     + MetadataStorage
     + MasternodeStateStorage
     + Send
@@ -97,7 +91,6 @@ pub struct DiskStorageManager {
     filter_headers: Arc<RwLock<PersistentFilterHeaderStorage>>,
     filters: Arc<RwLock<PersistentFilterStorage>>,
     blocks: Arc<RwLock<PersistentBlockStorage>>,
-    transactions: Arc<RwLock<PersistentTransactionStorage>>,
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
     masternodestate: Arc<RwLock<PersistentMasternodeStateStorage>>,
 
@@ -133,9 +126,6 @@ impl DiskStorageManager {
             )),
             filters: Arc::new(RwLock::new(PersistentFilterStorage::open(&storage_path).await?)),
             blocks: Arc::new(RwLock::new(PersistentBlockStorage::open(&storage_path).await?)),
-            transactions: Arc::new(RwLock::new(
-                PersistentTransactionStorage::open(&storage_path).await?,
-            )),
             metadata: Arc::new(RwLock::new(PersistentMetadataStorage::open(&storage_path).await?)),
             masternodestate: Arc::new(RwLock::new(
                 PersistentMasternodeStateStorage::open(&storage_path).await?,
@@ -165,7 +155,6 @@ impl DiskStorageManager {
         let filter_headers = Arc::clone(&self.filter_headers);
         let filters = Arc::clone(&self.filters);
         let blocks = Arc::clone(&self.blocks);
-        let transactions = Arc::clone(&self.transactions);
         let metadata = Arc::clone(&self.metadata);
         let masternodestate = Arc::clone(&self.masternodestate);
 
@@ -181,7 +170,6 @@ impl DiskStorageManager {
                 let _ = filter_headers.write().await.persist(&storage_path).await;
                 let _ = filters.write().await.persist(&storage_path).await;
                 let _ = blocks.write().await.persist(&storage_path).await;
-                let _ = transactions.write().await.persist(&storage_path).await;
                 let _ = metadata.write().await.persist(&storage_path).await;
                 let _ = masternodestate.write().await.persist(&storage_path).await;
             }
@@ -204,7 +192,6 @@ impl DiskStorageManager {
         let _ = self.filter_headers.write().await.persist(storage_path).await;
         let _ = self.filters.write().await.persist(storage_path).await;
         let _ = self.blocks.write().await.persist(storage_path).await;
-        let _ = self.transactions.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
         let _ = self.masternodestate.write().await.persist(storage_path).await;
     }
@@ -242,8 +229,6 @@ impl StorageManager for DiskStorageManager {
             Arc::new(RwLock::new(PersistentFilterHeaderStorage::open(storage_path).await?));
         self.filters = Arc::new(RwLock::new(PersistentFilterStorage::open(storage_path).await?));
         self.blocks = Arc::new(RwLock::new(PersistentBlockStorage::open(storage_path).await?));
-        self.transactions =
-            Arc::new(RwLock::new(PersistentTransactionStorage::open(storage_path).await?));
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
         self.masternodestate =
             Arc::new(RwLock::new(PersistentMasternodeStateStorage::open(storage_path).await?));
@@ -386,42 +371,6 @@ impl BlockStorage for DiskStorageManager {
 
     async fn load_block(&self, height: u32) -> StorageResult<Option<HashedBlock>> {
         self.blocks.read().await.load_block(height).await
-    }
-}
-
-#[async_trait]
-impl transactions::TransactionStorage for DiskStorageManager {
-    async fn store_mempool_transaction(
-        &mut self,
-        txid: &Txid,
-        tx: &UnconfirmedTransaction,
-    ) -> StorageResult<()> {
-        self.transactions.write().await.store_mempool_transaction(txid, tx).await
-    }
-
-    async fn remove_mempool_transaction(&mut self, txid: &Txid) -> StorageResult<()> {
-        self.transactions.write().await.remove_mempool_transaction(txid).await
-    }
-
-    async fn get_mempool_transaction(
-        &self,
-        txid: &Txid,
-    ) -> StorageResult<Option<UnconfirmedTransaction>> {
-        self.transactions.read().await.get_mempool_transaction(txid).await
-    }
-
-    async fn get_all_mempool_transactions(
-        &self,
-    ) -> StorageResult<HashMap<Txid, UnconfirmedTransaction>> {
-        self.transactions.read().await.get_all_mempool_transactions().await
-    }
-
-    async fn store_mempool_state(&mut self, state: &MempoolState) -> StorageResult<()> {
-        self.transactions.write().await.store_mempool_state(state).await
-    }
-
-    async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>> {
-        self.transactions.read().await.load_mempool_state().await
     }
 }
 

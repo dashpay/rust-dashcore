@@ -67,9 +67,6 @@ pub struct ClientConfig {
     /// Whether to fetch transactions from INV messages immediately.
     pub fetch_mempool_transactions: bool,
 
-    /// Whether to persist mempool transactions.
-    pub persist_mempool: bool,
-
     /// Start syncing from a specific block height.
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
@@ -92,7 +89,6 @@ impl Default for ClientConfig {
             mempool_strategy: MempoolStrategy::FetchAll,
             max_mempool_transactions: 1000,
             fetch_mempool_transactions: true,
-            persist_mempool: false,
             start_from_height: None,
         }
     }
@@ -176,12 +172,6 @@ impl ClientConfig {
     /// Set maximum number of mempool transactions to track.
     pub fn with_max_mempool_transactions(mut self, max: usize) -> Self {
         self.max_mempool_transactions = max;
-        self
-    }
-
-    /// Enable or disable mempool persistence.
-    pub fn with_mempool_persistence(mut self, enabled: bool) -> Self {
-        self.persist_mempool = enabled;
         self
     }
 

@@ -342,23 +342,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
     FFIErrorCode::Success as i32
 }
 
-/// Sets whether to persist mempool state to disk
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
-    config: *mut FFIClientConfig,
-    persist: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.persist_mempool = persist;
-    FFIErrorCode::Success as i32
-}
-
 // Checkpoint sync configuration functions
 
 /// Sets the starting block height for synchronization
