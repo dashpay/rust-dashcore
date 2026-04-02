@@ -629,13 +629,34 @@ impl TransactionBuilder {
 
     /// Build an Asset Lock Transaction
     ///
-    /// Used to lock Dash for use in Platform (creates Platform credits)
-    pub fn build_asset_lock(self, credit_outputs: Vec<TxOut>) -> Result<Transaction, BuilderError> {
+    /// Used to lock Dash for use in Platform (creates Platform credits).
+    /// Credit outputs in the payload are sorted by BIP-69 (amount ascending,
+    /// then scriptPubKey lexicographically) for deterministic ordering.
+    /// Returns `(Transaction, sorted_indices)` where `sorted_indices[i]` is
+    /// the original index of the credit output now at position `i` in the payload.
+    pub fn build_asset_lock(
+        self,
+        credit_outputs: Vec<TxOut>,
+    ) -> Result<(Transaction, Vec<usize>), BuilderError> {
+        // Track original indices so callers can re-map keys
+        let mut indexed: Vec<(usize, TxOut)> = credit_outputs.into_iter().enumerate().collect();
+
+        // BIP-69: sort by amount ascending, then scriptPubKey lexicographically
+        indexed.sort_by(|(_, a), (_, b)| match a.value.cmp(&b.value) {
+            std::cmp::Ordering::Equal => a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes()),
+            other => other,
+        });
+
+        let sorted_indices: Vec<usize> = indexed.iter().map(|(orig, _)| *orig).collect();
+        let sorted_outputs: Vec<TxOut> = indexed.into_iter().map(|(_, out)| out).collect();
+
         let payload = AssetLockPayload {
             version: 0,
-            credit_outputs,
+            credit_outputs: sorted_outputs,
         };
-        self.set_special_payload(TransactionPayload::AssetLockPayloadType(payload)).build()
+        let tx =
+            self.set_special_payload(TransactionPayload::AssetLockPayloadType(payload)).build()?;
+        Ok((tx, sorted_indices))
     }
 
     /// Estimate transaction size in bytes
