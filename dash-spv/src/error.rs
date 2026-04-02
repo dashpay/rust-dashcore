@@ -232,13 +232,19 @@ pub enum SyncError {
     /// Masternode sync failed (QRInfo or MnListDiff processing error)
     #[error("Masternode sync failed: {0}")]
     MasternodeSyncFailed(String),
+
+    /// Operation requires the client to be fully synced
+    #[error("Client is not synced")]
+    NotSynced,
 }
 
 impl SyncError {
     /// Returns a static string representing the error category based on the variant
     pub fn category(&self) -> &'static str {
         match self {
-            SyncError::SyncInProgress(_) | SyncError::InvalidState(_) => "state",
+            SyncError::SyncInProgress(_) | SyncError::InvalidState(_) | SyncError::NotSynced => {
+                "state"
+            }
             SyncError::Timeout(_) => "timeout",
             SyncError::Validation(_) => "validation",
             SyncError::MissingDependency(_) => "dependency",
@@ -339,6 +345,7 @@ mod tests {
         assert_eq!(SyncError::SyncInProgress(ManagerIdentifier::BlockHeader).category(), "state");
         assert_eq!(SyncError::InvalidState("test".to_string()).category(), "state");
         assert_eq!(SyncError::MissingDependency("test".to_string()).category(), "dependency");
+        assert_eq!(SyncError::NotSynced.category(), "state");
 
         // Test deprecated SyncFailed always returns "unknown"
         #[allow(deprecated)]

@@ -296,9 +296,27 @@ impl<W: WalletInterface> MempoolManager<W> {
     }
 
     /// Handle a received transaction.
-    pub(super) async fn handle_tx(&mut self, tx: Transaction) -> SyncResult<Vec<SyncEvent>> {
+    ///
+    /// When `peer` is the local sentinel address (`0.0.0.0:0`), the transaction
+    /// is treated as self-originated and recorded in `recent_sends`.
+    pub(super) async fn handle_tx(
+        &mut self,
+        tx: Transaction,
+        peer: SocketAddr,
+    ) -> SyncResult<Vec<SyncEvent>> {
         let txid = tx.txid();
         self.pending_requests.remove(&txid);
+        let is_local = peer.ip().is_unspecified();
+
+        // Skip if already tracked (e.g., locally broadcast then received from a peer)
+        if self.mempool_state.read().await.transactions.contains_key(&txid) {
+            self.seen_txids.insert(txid, Instant::now());
+            if is_local {
+                self.mempool_state.write().await.record_send(txid);
+            }
+            return Ok(vec![]);
+        }
+
         self.seen_txids.insert(txid, Instant::now());
         self.progress.add_received(1);
 
@@ -331,6 +349,9 @@ impl<W: WalletInterface> MempoolManager<W> {
         {
             let mut state = self.mempool_state.write().await;
             state.add_transaction(unconfirmed_tx);
+            if is_local {
+                state.record_send(txid);
+            }
             self.progress.set_tracked(state.transactions.len() as u32);
         }
 
@@ -345,6 +366,7 @@ impl<W: WalletInterface> MempoolManager<W> {
             let mut state = self.mempool_state.write().await;
             for txid in txids {
                 if state.remove_transaction(txid).is_some() {
+                    state.recent_sends.remove(txid);
                     removed.push(*txid);
                 }
             }
@@ -365,6 +387,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         let mut state = self.mempool_state.write().await;
         let instant_lock_opt = if let Some(tx) = state.transactions.get_mut(&txid) {
             tx.is_instant_send = true;
+            state.recent_sends.remove(&txid);
             tracing::debug!("Marked mempool tx {} as InstantSend-locked", txid);
             Some(instant_lock)
         } else if self.pending_is_locks.len() < MAX_PENDING_IS_LOCKS {
@@ -712,7 +735,7 @@ mod tests {
         };
         let txid = tx.txid();
 
-        let events = manager.handle_tx(tx).await.unwrap();
+        let events = manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
         // MockWallet returns is_relevant=false by default
         assert!(events.is_empty());
         assert_eq!(manager.progress.received(), 1);
@@ -831,7 +854,7 @@ mod tests {
         };
         let txid = tx.txid();
 
-        let events = manager.handle_tx(tx).await.unwrap();
+        let events = manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
         assert!(events.is_empty());
 
         // Verify transaction was stored in mempool state
@@ -840,6 +863,72 @@ mod tests {
         assert_eq!(manager.progress.received(), 1);
         assert_eq!(manager.progress.relevant(), 1);
         assert_eq!(manager.progress.tracked(), 1);
+        drop(state);
+
+        // Processing the same transaction again should be a no-op (dedup guard)
+        let tx2 = Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let events = manager.handle_tx(tx2, test_socket_address(1)).await.unwrap();
+        assert!(events.is_empty());
+
+        let state = manager.mempool_state.read().await;
+        assert_eq!(state.transactions.len(), 1);
+        // Progress counters should not have incremented
+        assert_eq!(manager.progress.received(), 1);
+        assert_eq!(manager.progress.relevant(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_local_records_send() {
+        let (mut manager, _requests, _wallet) = create_relevant_manager();
+
+        let tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        // Use the unspecified address to simulate a locally broadcast transaction
+        let local_addr = SocketAddr::from(([0, 0, 0, 0], 0));
+        manager.handle_tx(tx, local_addr).await.unwrap();
+
+        let state = manager.mempool_state.read().await;
+        assert!(state.transactions.contains_key(&txid));
+        assert!(
+            state.is_recent_send(&txid, Duration::from_secs(10)),
+            "locally dispatched transaction should be recorded as a recent send"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_remote_does_not_record_send() {
+        let (mut manager, _requests, _wallet) = create_relevant_manager();
+
+        let tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+
+        let state = manager.mempool_state.read().await;
+        assert!(state.transactions.contains_key(&txid));
+        assert!(
+            !state.is_recent_send(&txid, Duration::from_secs(10)),
+            "peer-received transaction should not be recorded as a recent send"
+        );
     }
 
     #[tokio::test]
@@ -859,7 +948,7 @@ mod tests {
         manager.pending_requests.insert(txid, Instant::now());
         assert!(manager.pending_requests.contains_key(&txid));
 
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
         // Pending request should be cleared regardless of relevance
         assert!(!manager.pending_requests.contains_key(&txid));
 
@@ -933,13 +1022,18 @@ mod tests {
                 Vec::new(),
                 0,
             ));
+            state.record_send(txid);
         }
 
         manager.process_instant_send(dummy_instant_lock(txid)).await;
 
-        // Verify mempool state also reflects IS flag
+        // Verify mempool state reflects IS flag and recent_sends is cleaned up
         let state = manager.mempool_state.read().await;
         assert!(state.transactions.get(&txid).unwrap().is_instant_send);
+        assert!(
+            !state.recent_sends.contains_key(&txid),
+            "IS-locked transaction should be removed from recent_sends"
+        );
         drop(state);
 
         let wallet = manager.wallet.read().await;
@@ -1127,7 +1221,7 @@ mod tests {
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
         // Pending IS lock consumed
         assert!(manager.pending_is_locks.is_empty());
@@ -1167,7 +1261,7 @@ mod tests {
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives but wallet says it's not relevant
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
         // Pending IS lock cleaned up (no leak)
         assert!(manager.pending_is_locks.is_empty());
@@ -1349,7 +1443,7 @@ mod tests {
             w.set_mempool_addresses(vec![addr.clone()]);
         }
 
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
         let state = manager.mempool_state.read().await;
         let stored = state.transactions.get(&txid).unwrap();
@@ -1378,7 +1472,7 @@ mod tests {
             w.set_mempool_net_amount(-30000);
         }
 
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
         let state = manager.mempool_state.read().await;
         let stored = state.transactions.get(&txid).unwrap();
@@ -1491,6 +1585,9 @@ mod tests {
                 ));
             }
             assert_eq!(state.transactions.len(), 3);
+            // Mark two as recent sends
+            state.record_send(txids[0]);
+            state.record_send(txids[1]);
         }
 
         // Remove 2 of the 3 transactions
@@ -1499,6 +1596,8 @@ mod tests {
         let state = manager.mempool_state.read().await;
         assert_eq!(state.transactions.len(), 1);
         assert!(state.transactions.contains_key(&txids[2]));
+        assert!(!state.recent_sends.contains_key(&txids[0]));
+        assert!(!state.recent_sends.contains_key(&txids[1]));
         drop(state);
 
         assert_eq!(manager.progress.removed(), 2);

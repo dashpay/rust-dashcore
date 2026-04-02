@@ -1,7 +1,7 @@
 //! Peer network manager for SPV client
 
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -1327,6 +1327,12 @@ impl NetworkManager for PeerNetworkManager {
             return Err(NetworkError::ConnectionFailed("All broadcast sends failed".to_string()));
         }
         Ok(())
+    }
+
+    async fn dispatch_local(&self, message: NetworkMessage) {
+        let local_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+        let msg = Message::new(local_addr, message);
+        self.message_dispatcher.lock().await.dispatch(&msg);
     }
 
     async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> NetworkResult<()> {

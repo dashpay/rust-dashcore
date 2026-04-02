@@ -50,7 +50,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
     ) -> SyncResult<Vec<SyncEvent>> {
         match msg.inner() {
             NetworkMessage::Inv(inv) => self.handle_inv(inv, msg.peer_address(), requests).await,
-            NetworkMessage::Tx(tx) => self.handle_tx(tx.clone()).await,
+            NetworkMessage::Tx(tx) => self.handle_tx(tx.clone(), msg.peer_address()).await,
             _ => Ok(vec![]),
         }
     }
@@ -816,7 +816,7 @@ mod tests {
             output: vec![],
             special_transaction_payload: None,
         };
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
         let has_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
             matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))

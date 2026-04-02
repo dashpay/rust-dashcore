@@ -223,6 +223,12 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Broadcast a message to all connected peers.
     async fn broadcast(&self, _message: NetworkMessage) -> NetworkResult<()>;
 
+    /// Inject a message into the local message dispatcher as if received from a peer.
+    ///
+    /// Used for locally-originated messages (e.g., self-broadcast transactions) that
+    /// should be processed through the same pipeline as peer-received messages.
+    async fn dispatch_local(&self, message: NetworkMessage);
+
     /// Disconnect a specific peer by address.
     async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()>;
 
