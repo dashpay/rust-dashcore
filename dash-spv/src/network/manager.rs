@@ -1323,7 +1323,7 @@ impl NetworkManager for PeerNetworkManager {
         }
 
         let successes = results.iter().filter(|r| r.is_ok()).count();
-        if successes > 0 {
+        if successes == 0 {
             return Err(NetworkError::ConnectionFailed("All broadcast sends failed".to_string()));
         }
         Ok(())
