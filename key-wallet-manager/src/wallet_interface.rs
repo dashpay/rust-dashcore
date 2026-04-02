@@ -74,13 +74,6 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Used for bloom filter construction to detect spends of our UTXOs.
     fn watched_outpoints(&self) -> Vec<OutPoint>;
 
-    /// Return the wallet's per-transaction net change and involved addresses if known.
-    /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.
-    /// If the wallet has no record for the transaction, returns None.
-    async fn transaction_effect(&self, _tx: &Transaction) -> Option<(i64, Vec<String>)> {
-        None
-    }
-
     /// Return the earliest block height that should be scanned for this wallet on the
     /// specified network. Implementations can use the wallet's birth height or other
     /// metadata to provide a more precise rescan starting point.

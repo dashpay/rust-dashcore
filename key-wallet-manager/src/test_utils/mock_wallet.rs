@@ -1,21 +1,13 @@
 use crate::{BlockProcessingResult, MempoolTransactionResult, WalletEvent, WalletInterface};
-use dashcore::address::NetworkUnchecked;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
 use key_wallet::transaction_checking::TransactionContext;
-use std::collections::BTreeMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
-
-// Type alias for transaction effects map
-type TransactionEffectsMap = Arc<Mutex<BTreeMap<Txid, (i64, Vec<String>)>>>;
 
 pub struct MockWallet {
     processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
     processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
-    // Map txid -> (net_amount, addresses)
-    effects: TransactionEffectsMap,
     synced_height: CoreBlockHeight,
     event_sender: broadcast::Sender<WalletEvent>,
     /// When true, process_mempool_transaction returns is_relevant=true.
@@ -24,6 +16,10 @@ pub struct MockWallet {
     addresses: Vec<Address>,
     /// Outpoints returned by watched_outpoints.
     outpoints: Vec<OutPoint>,
+    /// Net amount returned by process_mempool_transaction.
+    mempool_net_amount: i64,
+    /// Addresses returned by process_mempool_transaction.
+    mempool_addresses: Vec<Address>,
     /// New addresses returned by process_mempool_transaction.
     mempool_new_addresses: Vec<Address>,
     /// Recorded status change notifications for test assertions.
@@ -44,12 +40,13 @@ impl MockWallet {
         Self {
             processed_blocks: Arc::new(Mutex::new(Vec::new())),
             processed_transactions: Arc::new(Mutex::new(Vec::new())),
-            effects: Arc::new(Mutex::new(BTreeMap::new())),
             synced_height: 0,
             event_sender,
             mempool_relevant: false,
             addresses: Vec::new(),
             outpoints: Vec::new(),
+            mempool_net_amount: 0,
+            mempool_addresses: Vec::new(),
             mempool_new_addresses: Vec::new(),
             status_changes: Arc::new(Mutex::new(Vec::new())),
             monitor_revision: 0,
@@ -73,6 +70,16 @@ impl MockWallet {
         self.monitor_revision += 1;
     }
 
+    /// Set the net amount returned by process_mempool_transaction.
+    pub fn set_mempool_net_amount(&mut self, amount: i64) {
+        self.mempool_net_amount = amount;
+    }
+
+    /// Set the addresses returned by process_mempool_transaction.
+    pub fn set_mempool_addresses(&mut self, addresses: Vec<Address>) {
+        self.mempool_addresses = addresses;
+    }
+
     /// Set new addresses returned by process_mempool_transaction.
     pub fn set_mempool_new_addresses(&mut self, addresses: Vec<Address>) {
         self.mempool_new_addresses = addresses;
@@ -80,11 +87,6 @@ impl MockWallet {
 
     pub fn status_changes(&self) -> Arc<Mutex<Vec<(Txid, TransactionContext)>>> {
         self.status_changes.clone()
-    }
-
-    pub async fn set_effect(&self, txid: dashcore::Txid, net: i64, addresses: Vec<String>) {
-        let mut map = self.effects.lock().await;
-        map.insert(txid, (net, addresses));
     }
 
     pub fn processed_blocks(&self) -> Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>> {
@@ -121,35 +123,17 @@ impl WalletInterface for MockWallet {
             return MempoolTransactionResult::default();
         }
 
-        let effects = self.effects.lock().await;
-        let (net_amount, addresses) = if let Some((net, addr_strs)) = effects.get(&tx.txid()) {
-            let addrs = addr_strs
-                .iter()
-                .filter_map(|s| {
-                    Address::<NetworkUnchecked>::from_str(s).ok().map(|a| a.assume_checked())
-                })
-                .collect();
-            (*net, addrs)
-        } else {
-            (0, Vec::new())
-        };
-
         MempoolTransactionResult {
             is_relevant: true,
-            net_amount,
-            is_outgoing: net_amount < 0,
-            addresses,
+            net_amount: self.mempool_net_amount,
+            is_outgoing: self.mempool_net_amount < 0,
+            addresses: self.mempool_addresses.clone(),
             new_addresses: self.mempool_new_addresses.clone(),
         }
     }
 
     async fn describe(&self) -> String {
         "MockWallet (test implementation)".to_string()
-    }
-
-    async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
-        let map = self.effects.lock().await;
-        map.get(&tx.txid()).cloned()
     }
 
     fn monitored_addresses(&self) -> Vec<Address> {

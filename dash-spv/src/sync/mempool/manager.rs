@@ -1301,10 +1301,12 @@ mod tests {
         };
         let txid = tx.txid();
 
-        // Set effect data on the mock wallet before handle_tx
+        let addr: Address =
+            "yWdXnYxGbouNoo8yMvcbZmZ3Gdp6BpySxL".parse::<Address<_>>().unwrap().assume_checked();
         {
-            let w = wallet.read().await;
-            w.set_effect(txid, 50000, vec!["yWdXnYxGbouNoo8yMvcbZmZ3Gdp6BpySxL".into()]).await;
+            let mut w = wallet.write().await;
+            w.set_mempool_net_amount(50000);
+            w.set_mempool_addresses(vec![addr.clone()]);
         }
 
         manager.handle_tx(tx).await.unwrap();
@@ -1332,8 +1334,8 @@ mod tests {
         let txid = tx.txid();
 
         {
-            let w = wallet.read().await;
-            w.set_effect(txid, -30000, vec![]).await;
+            let mut w = wallet.write().await;
+            w.set_mempool_net_amount(-30000);
         }
 
         manager.handle_tx(tx).await.unwrap();

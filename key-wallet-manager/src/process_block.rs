@@ -4,10 +4,8 @@ use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction, Txid};
-use key_wallet::transaction_checking::transaction_router::TransactionRouter;
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use std::collections::BTreeSet;
 use tokio::sync::broadcast;
 
 #[async_trait]
@@ -90,46 +88,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn monitor_revision(&self) -> u64 {
         self.monitor_revision()
-    }
-
-    async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
-        // Aggregate across all managed wallets. If any wallet considers it relevant,
-        // compute net = total_received - total_sent and collect involved addresses.
-        let mut total_received: u64 = 0;
-        let mut total_sent: u64 = 0;
-        let mut addresses: Vec<String> = Vec::new();
-
-        let mut is_relevant_any = false;
-        for info in self.wallet_infos.values() {
-            let collection = info.accounts();
-            // Reuse the same routing/check logic used in normal processing
-            let tx_type = TransactionRouter::classify_transaction(tx);
-            let account_types = TransactionRouter::get_relevant_account_types(&tx_type);
-            let result = collection.check_transaction(tx, &account_types);
-
-            if result.is_relevant {
-                is_relevant_any = true;
-                total_received = total_received.saturating_add(result.total_received);
-                total_sent = total_sent.saturating_add(result.total_sent);
-
-                // Collect involved addresses from affected accounts
-                for account_match in result.affected_accounts {
-                    for addr_info in account_match.account_type_match.all_involved_addresses() {
-                        addresses.push(addr_info.address.to_string());
-                    }
-                }
-            }
-        }
-
-        if is_relevant_any {
-            // Deduplicate addresses while preserving order
-            let mut seen = BTreeSet::new();
-            addresses.retain(|a| seen.insert(a.clone()));
-            let net = (total_received as i64) - (total_sent as i64);
-            Some((net, addresses))
-        } else {
-            None
-        }
     }
 
     async fn earliest_required_height(&self) -> CoreBlockHeight {
