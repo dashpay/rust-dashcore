@@ -21,7 +21,6 @@ use crate::storage::{
     PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
 };
 use crate::sync::SyncCoordinator;
-use crate::types::MempoolState;
 use key_wallet_manager::WalletInterface;
 
 pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
@@ -119,7 +118,6 @@ pub struct DashSpvClient<
     pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
     pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
     pub(super) running: Arc<RwLock<bool>>,
-    pub(super) mempool_state: Arc<RwLock<MempoolState>>,
     pub(super) event_handler: Arc<H>,
 }
 
@@ -135,7 +133,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler> 
             masternode_engine: self.masternode_engine.clone(),
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             running: Arc::clone(&self.running),
-            mempool_state: Arc::clone(&self.mempool_state),
             event_handler: Arc::clone(&self.event_handler),
         }
     }
@@ -187,12 +184,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         {
             let mut storage = self.storage.lock().await;
             storage.clear().await.map_err(SpvError::Storage)?;
-        }
-
-        // Reset mempool tracking
-        {
-            let mut mempool_state = self.mempool_state.write().await;
-            *mempool_state = MempoolState::default();
         }
 
         Ok(())

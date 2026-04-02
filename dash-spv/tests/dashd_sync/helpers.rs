@@ -369,11 +369,3 @@ pub(super) async fn wait_for_network_event_both(
     );
     r_a && r_b
 }
-
-/// Assert mempool transaction count on both clients.
-pub(super) async fn assert_mempool_count_both(a: &ClientHandle, b: &ClientHandle, expected: usize) {
-    let count_a = a.client.get_mempool_transaction_count().await;
-    let count_b = b.client.get_mempool_transaction_count().await;
-    assert_eq!(count_a, expected, "Client A mempool count: expected {}, got {}", expected, count_a);
-    assert_eq!(count_b, expected, "Client B mempool count: expected {}, got {}", expected, count_b);
-}

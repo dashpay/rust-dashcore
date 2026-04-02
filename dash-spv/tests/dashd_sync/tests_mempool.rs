@@ -7,9 +7,9 @@ use dash_spv::test_utils::{DashdTestContext, TestChain};
 use dashcore::Amount;
 
 use super::helpers::{
-    assert_mempool_count_both, assert_no_mempool_tx_both, wait_for_mempool_synced_both,
-    wait_for_mempool_tx_both, wait_for_mempool_txs_both, wait_for_network_event,
-    wait_for_network_event_both, wait_for_sync_both,
+    assert_no_mempool_tx_both, wait_for_mempool_synced_both, wait_for_mempool_tx_both,
+    wait_for_mempool_txs_both, wait_for_network_event, wait_for_network_event_both,
+    wait_for_sync_both,
 };
 use super::setup::{
     client_has_transaction, create_and_start_client, create_test_wallet, TestContext,
@@ -40,8 +40,6 @@ async fn test_mempool_detects_incoming_tx() {
         .await
         .expect("Expected mempool TransactionReceived event");
     assert_eq!(mempool_txid, txid, "Mempool event txid should match sent txid");
-
-    assert_mempool_count_both(&fa, &bf, 1).await;
 
     fa.stop().await;
     bf.stop().await;
@@ -81,7 +79,6 @@ async fn test_mempool_ignores_irrelevant_tx() {
     tracing::info!("Sent irrelevant tx (not to SPV wallet), txid: {}", txid);
 
     assert_no_mempool_tx_both(&mut fa, &mut bf, Duration::from_secs(3)).await;
-    assert_mempool_count_both(&fa, &bf, 0).await;
 
     fa.stop().await;
     bf.stop().await;
@@ -112,15 +109,12 @@ async fn test_mempool_to_confirmed_lifecycle() {
         .expect("Expected mempool TransactionReceived event");
     assert_eq!(mempool_txid, txid);
 
-    assert_mempool_count_both(&fa, &bf, 1).await;
-
     // Mine the transaction
     let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
     ctx.dashd.node.generate_blocks(1, &miner_address);
     let new_height = ctx.dashd.initial_height + 1;
     wait_for_sync_both(&mut fa, &mut bf, new_height).await;
 
-    assert_mempool_count_both(&fa, &bf, 0).await;
     assert!(
         client_has_transaction(&fa.client, &ctx.wallet_id, &txid).await,
         "FetchAll: confirmed tx should be in wallet"
@@ -162,8 +156,6 @@ async fn test_mempool_multiple_txs() {
 
     let received_txids = wait_for_mempool_txs_both(&mut fa, &mut bf, 3, MEMPOOL_TIMEOUT).await;
     assert_eq!(received_txids, expected_txids, "Received mempool txids should match sent txids");
-
-    assert_mempool_count_both(&fa, &bf, 3).await;
 
     fa.stop().await;
     bf.stop().await;
@@ -281,7 +273,6 @@ async fn test_mempool_lifecycle() {
     let received = wait_for_mempool_txs_both(&mut fa, &mut bf, 2, MEMPOOL_TIMEOUT).await;
     assert!(received.contains(&txid1), "Should have received tx1");
     assert!(received.contains(&txid2), "Should have received tx2");
-    assert_mempool_count_both(&fa, &bf, 2).await;
 
     // Step 2: Disconnect the peer
     ctx.dashd.node.disconnect_all_peers();
@@ -317,16 +308,12 @@ async fn test_mempool_lifecycle() {
         .expect("Expected mempool event for tx sent while disconnected");
     assert_eq!(detected, txid3, "Should detect tx3 via mempool dump on reconnect");
 
-    // Step 6: Verify all 3 transactions tracked
-    assert_mempool_count_both(&fa, &bf, 3).await;
-
-    // Step 7: Mine a block, verify all txs confirmed
+    // Step 6: Mine a block, verify all txs confirmed
     let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
     ctx.dashd.node.generate_blocks(1, &miner_address);
     let new_height = ctx.dashd.initial_height + 1;
     wait_for_sync_both(&mut fa, &mut bf, new_height).await;
 
-    assert_mempool_count_both(&fa, &bf, 0).await;
     for (label, client) in [("FetchAll", &fa.client), ("BloomFilter", &bf.client)] {
         assert!(
             client_has_transaction(client, &ctx.wallet_id, &txid1).await,
@@ -413,7 +400,6 @@ async fn test_mempool_peer_disconnect_reactivation() {
         .await
         .expect("Scenario 1: expected mempool tx detection");
     assert_eq!(detected, txid1);
-    assert_mempool_count_both(&fa, &bf, 1).await;
 
     // --- Scenario 2: disconnect one peer, verify detection still works ---
     // Resubscribe to get fresh receivers, avoiding stale events or lagged errors
@@ -446,7 +432,6 @@ async fn test_mempool_peer_disconnect_reactivation() {
         .await
         .expect("Scenario 2: expected mempool tx detection from remaining peer");
     assert_eq!(detected, txid2);
-    assert_mempool_count_both(&fa, &bf, 2).await;
 
     // --- Scenario 3: disconnect both peers, verify recovery ---
     ctx.dashd.node.set_network_active(false);
@@ -506,7 +491,6 @@ async fn test_mempool_peer_disconnect_reactivation() {
         .await
         .expect("Scenario 3: expected mempool tx detection after recovery");
     assert_eq!(detected, txid3);
-    assert_mempool_count_both(&fa, &bf, 3).await;
 
     fa.stop().await;
     bf.stop().await;

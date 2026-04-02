@@ -184,16 +184,6 @@ pub struct FilterMatch {
     pub block_requested: bool,
 }
 
-/// Mempool balance information.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MempoolBalance {
-    /// Pending balance from mempool transactions (not InstantLocked).
-    pub pending: dashcore::Amount,
-
-    /// Pending balance from InstantLocked mempool transactions.
-    pub pending_instant: dashcore::Amount,
-}
-
 /// Unconfirmed transaction in mempool.
 #[derive(Debug, Clone)]
 pub struct UnconfirmedTransaction {
