@@ -117,6 +117,9 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         // Send queued getdata requests now that slots may have freed up
         self.send_queued(requests).await?;
 
+        // Rebroadcast unconfirmed self-sent transactions on a randomized interval
+        self.rebroadcast_if_due(requests).await;
+
         // Rebuild bloom filter if the wallet's monitored set has changed.
         //
         // We poll the revision counter rather than using push-based wallet events

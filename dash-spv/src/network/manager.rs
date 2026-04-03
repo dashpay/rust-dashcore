@@ -822,6 +822,21 @@ impl PeerNetworkManager {
                                     }
                                 });
                             }
+                            Some(NetworkRequest::BroadcastMessage(msg)) => {
+                                tracing::debug!("Request processor: broadcasting {}", msg.cmd());
+                                let this = this.clone();
+                                tokio::spawn(async move {
+                                    let results = this.broadcast(msg).await;
+                                    let failures = results.iter().filter(|r| r.is_err()).count();
+                                    if failures > 0 {
+                                        tracing::warn!(
+                                            "Request processor: broadcast had {} failures out of {} peers",
+                                            failures,
+                                            results.len()
+                                        );
+                                    }
+                                });
+                            }
                             None => {
                                 tracing::info!("Request processor: channel closed");
                                 break;

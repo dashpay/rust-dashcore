@@ -47,6 +47,8 @@ pub enum NetworkRequest {
     SendMessage(NetworkMessage),
     /// Send a message to a specific peer.
     SendMessageToPeer(NetworkMessage, SocketAddr),
+    /// Broadcast a message to all connected peers.
+    BroadcastMessage(NetworkMessage),
 }
 
 /// Handle for managers to queue outgoing network requests.
@@ -78,6 +80,13 @@ impl RequestSender {
     ) -> NetworkResult<()> {
         self.tx
             .send(NetworkRequest::SendMessageToPeer(msg, peer_address))
+            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
+    /// Queue a message to be broadcast to all connected peers.
+    pub(crate) fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()> {
+        self.tx
+            .send(NetworkRequest::BroadcastMessage(msg))
             .map_err(|e| NetworkError::ProtocolError(e.to_string()))
     }
 

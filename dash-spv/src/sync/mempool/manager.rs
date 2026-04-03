@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::{Amount, Transaction, Txid};
 use rand::seq::IteratorRandom;
@@ -41,6 +42,9 @@ const MAX_PENDING_IS_LOCKS: usize = 1000;
 /// How long a downloaded txid stays in the dedup map.
 /// Covers the window where multiple peers respond to the initial `mempool` request.
 const SEEN_TXID_EXPIRY: Duration = Duration::from_secs(180);
+
+/// Per-transaction interval between rebroadcast attempts (10 minutes).
+const REBROADCAST_INTERVAL: Duration = Duration::from_secs(600);
 
 /// Mempool manager that monitors unconfirmed transactions from the P2P network.
 ///
@@ -433,6 +437,32 @@ impl<W: WalletInterface> MempoolManager<W> {
         let expired = before - self.pending_is_locks.len();
         if expired > 0 {
             tracing::debug!("Pruned {} expired pending IS locks", expired);
+        }
+    }
+
+    /// Rebroadcast unconfirmed self-sent transactions to all peers.
+    ///
+    /// Each transaction in `recent_sends` tracks when it was last broadcast.
+    /// Transactions whose last broadcast was more than `REBROADCAST_INTERVAL`
+    /// ago are rebroadcast and their timestamp is reset.
+    pub(super) async fn rebroadcast_if_due(&mut self, requests: &RequestSender) {
+        let mut due: Vec<Transaction> = Vec::new();
+        for (txid, last_broadcast) in &mut self.recent_sends {
+            if last_broadcast.elapsed() < REBROADCAST_INTERVAL {
+                continue;
+            }
+            if let Some(unconfirmed) = self.transactions.get(txid) {
+                due.push(unconfirmed.transaction.clone());
+                *last_broadcast = Instant::now();
+            }
+        }
+
+        for tx in &due {
+            let _ = requests.broadcast(NetworkMessage::Tx(tx.clone()));
+        }
+
+        if !due.is_empty() {
+            tracing::info!("Rebroadcast {} unconfirmed transaction(s) to all peers", due.len());
         }
     }
 
@@ -1601,6 +1631,68 @@ mod tests {
             manager.pending_requests.contains_key(&txid),
             "expired seen txid should be accepted"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_sends_old_recent_sends() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+
+        let tx = Transaction {
+            version: 10,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        // Add a transaction and mark its last broadcast as older than the interval
+        manager.transactions.insert(
+            txid,
+            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, true, Vec::new(), -100_000),
+        );
+        manager
+            .recent_sends
+            .insert(txid, Instant::now() - REBROADCAST_INTERVAL - Duration::from_secs(1));
+
+        manager.rebroadcast_if_due(&requests).await;
+
+        // Should have sent a BroadcastMessage for the transaction
+        let msg = rx.try_recv().expect("expected a rebroadcast message");
+        assert!(
+            matches!(msg, NetworkRequest::BroadcastMessage(NetworkMessage::Tx(_))),
+            "expected BroadcastMessage(Tx), got {:?}",
+            msg
+        );
+
+        // Timestamp should be reset, so a second call should not rebroadcast
+        manager.rebroadcast_if_due(&requests).await;
+        assert!(rx.try_recv().is_err(), "should not rebroadcast immediately after reset");
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_skips_recent_transactions() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+
+        let tx = Transaction {
+            version: 11,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        // Add a transaction that was just sent (within the rebroadcast interval)
+        manager.transactions.insert(
+            txid,
+            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, true, Vec::new(), -50_000),
+        );
+        manager.recent_sends.insert(txid, Instant::now());
+
+        manager.rebroadcast_if_due(&requests).await;
+
+        assert!(rx.try_recv().is_err(), "recently sent transactions should not be rebroadcast");
     }
 
     #[test]
