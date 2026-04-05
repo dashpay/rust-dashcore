@@ -18,6 +18,7 @@ pub use managed_account_operations::ManagedAccountOperations;
 use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
+use crate::changeset::{BalanceChangeSet, Merge};
 use crate::Network;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
@@ -121,6 +122,20 @@ impl ManagedWalletInfo {
     /// Increment the transaction count
     pub fn increment_transactions(&mut self) {
         self.metadata.total_transactions += 1;
+    }
+
+    /// Update the wallet balance and return a `BalanceChangeSet` capturing the aggregate delta.
+    pub fn update_balance_with_changeset(&mut self) -> BalanceChangeSet {
+        let mut balance = WalletCoreBalance::default();
+        let synced_height = self.metadata.synced_height;
+        let mut combined = BalanceChangeSet::default();
+        for account in self.accounts.all_accounts_mut() {
+            let acct_cs = account.update_balance(synced_height);
+            balance += account.balance;
+            combined.merge(acct_cs);
+        }
+        self.balance = balance;
+        combined
     }
 }
 

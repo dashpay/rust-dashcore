@@ -188,7 +188,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         let mut balance = WalletCoreBalance::default();
         let synced_height = self.synced_height();
         for account in self.accounts.all_accounts_mut() {
-            account.update_balance(synced_height);
+            let _balance_cs = account.update_balance(synced_height);
             balance += *account.balance();
         }
         self.balance = balance;
@@ -246,7 +246,8 @@ impl WalletInfoInterface for ManagedWalletInfo {
         }
         let mut any_changed = false;
         for account in self.accounts.all_accounts_mut() {
-            if account.mark_utxos_instant_send(txid) {
+            let (changed, _utxo_cs) = account.mark_utxos_instant_send(txid);
+            if changed {
                 any_changed = true;
             }
         }

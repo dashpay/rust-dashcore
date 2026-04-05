@@ -346,7 +346,7 @@ fn test_gap_limit_scan_performance() {
 
     // Scan for gap limit
     let start = Instant::now();
-    pool.maintain_gap_limit(&key_source).unwrap();
+    let _result = pool.maintain_gap_limit(&key_source).unwrap();
     let elapsed = start.elapsed();
 
     // Assert gap limit maintenance performance

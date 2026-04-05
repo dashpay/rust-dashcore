@@ -877,8 +877,13 @@ impl AddressPool {
         unused_count < self.gap_limit
     }
 
-    /// Generate addresses to maintain the gap limit
-    pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
+    /// Generate addresses to maintain the gap limit.
+    /// Returns `(new_addresses, last_revealed_index)` where `last_revealed_index` is the
+    /// new highest generated index if addresses were created, `None` otherwise.
+    pub fn maintain_gap_limit(
+        &mut self,
+        key_source: &KeySource,
+    ) -> Result<(Vec<Address>, Option<u32>)> {
         let target = match self.highest_used {
             None => self.gap_limit - 1,
             Some(highest) => highest + self.gap_limit,
@@ -891,7 +896,13 @@ impl AddressPool {
             new_addresses.push(address);
         }
 
-        Ok(new_addresses)
+        let last_revealed = if !new_addresses.is_empty() {
+            self.highest_generated
+        } else {
+            None
+        };
+
+        Ok((new_addresses, last_revealed))
     }
 
     /// Set a custom label for an address
@@ -1217,7 +1228,7 @@ mod tests {
         assert_eq!(pool.addresses.len(), gap_limit as usize);
 
         // Calling maintain_gap_limit should not generate any new addresses when none are used
-        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        let (new_addresses, _last_revealed) = pool.maintain_gap_limit(&key_source).unwrap();
         assert_eq!(new_addresses.len(), 0);
         assert_eq!(pool.highest_generated, Some(gap_limit - 1));
         assert_eq!(pool.addresses.len(), gap_limit as usize);
@@ -1227,7 +1238,7 @@ mod tests {
         assert_eq!(pool.highest_used, Some(0));
 
         // Should generate exactly 1 address to maintain gap_limit unused after index 0
-        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        let (new_addresses, _last_revealed) = pool.maintain_gap_limit(&key_source).unwrap();
         assert_eq!(new_addresses.len(), 1);
         assert_eq!(pool.highest_generated, Some(gap_limit));
         assert_eq!(pool.addresses.len(), gap_limit as usize + 1);
@@ -1237,7 +1248,7 @@ mod tests {
         pool.mark_index_used(2);
 
         // Should generate exactly 2 more addresses
-        let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
+        let (new_addresses, _last_revealed) = pool.maintain_gap_limit(&key_source).unwrap();
         assert_eq!(new_addresses.len(), 2);
         assert_eq!(pool.highest_generated, Some(gap_limit + 2));
         assert_eq!(pool.addresses.len(), gap_limit as usize + 3);

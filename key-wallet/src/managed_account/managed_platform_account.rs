@@ -292,6 +292,7 @@ impl ManagedPlatformAccount {
     pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
         self.addresses
             .maintain_gap_limit(key_source)
+            .map(|(addrs, _last_revealed)| addrs)
             .map_err(|e| Error::InvalidParameter(format!("Failed to maintain gap limit: {}", e)))
     }
 

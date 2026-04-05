@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use super::transaction_router::AccountTypeToCheck;
 use crate::account::{ManagedAccountCollection, ManagedCoreAccount};
+use crate::changeset::WalletChangeSet;
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
@@ -48,6 +49,8 @@ pub struct TransactionCheckResult {
     pub new_addresses: Vec<Address>,
     /// Transaction records created for new transactions, paired with their account index
     pub new_records: Vec<(u32, TransactionRecord)>,
+    /// Aggregated changeset capturing all mutations performed during this check.
+    pub changeset: WalletChangeSet,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -376,6 +379,7 @@ impl ManagedAccountCollection {
             total_received_for_credit_conversion: 0,
             new_addresses: Vec::new(),
             new_records: Vec::new(),
+            changeset: WalletChangeSet::default(),
         };
 
         for account_type in account_types {

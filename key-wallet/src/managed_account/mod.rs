@@ -10,6 +10,11 @@ use crate::account::BLSAccount;
 use crate::account::EdDSAAccount;
 use crate::account::ManagedAccountTrait;
 use crate::account::TransactionRecord;
+use crate::changeset::{
+    AccountChangeSet, BalanceChangeSet, TransactionChangeSet, TransactionEntry, UtxoChangeSet,
+    UtxoEntry, WalletChangeSet,
+};
+use crate::changeset::Merge;
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
@@ -295,23 +300,34 @@ impl ManagedCoreAccount {
         }
     }
 
-    /// Mark an address as used
-    pub fn mark_address_used(&mut self, address: &Address) -> bool {
+    /// Mark an address as used.
+    /// Returns `(changed, account_changeset)` where `changed` indicates if the address was newly marked.
+    pub fn mark_address_used(&mut self, address: &Address) -> (bool, AccountChangeSet) {
         // Update metadata timestamp
         self.metadata.last_used = Some(Self::current_timestamp());
 
         // Use the account type's mark_address_used method
         // The address pools already track gap limits internally
-        self.account_type.mark_address_used(address)
+        let changed = self.account_type.mark_address_used(address);
+
+        let mut account_changeset = AccountChangeSet::default();
+        if changed {
+            let account_index = self.index_or_default();
+            account_changeset.addresses_used.push((account_index, address.clone()));
+        }
+        (changed, account_changeset)
     }
 
-    /// Add new ones for received outputs, remove spent ones
+    /// Add new ones for received outputs, remove spent ones.
+    /// Returns a `UtxoChangeSet` capturing the delta.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
-    ) {
+    ) -> UtxoChangeSet {
+        let mut utxo_changeset = UtxoChangeSet::default();
+
         // Update UTXOs only for spendable account types
         match &mut self.account_type {
             ManagedAccountType::Standard {
@@ -366,11 +382,17 @@ impl ManagedCoreAccount {
                             };
                             let block_height = context.block_info().map_or(0, |info| info.height);
                             let mut utxo =
-                                Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
+                                Utxo::new(outpoint, txout, addr.clone(), block_height, tx.is_coin_base());
                             utxo.is_confirmed = context.confirmed();
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend);
                             self.utxos.insert(outpoint, utxo);
+                            utxo_changeset.added.insert(outpoint, UtxoEntry {
+                                address: addr,
+                                value: output.value,
+                                script_pubkey: output.script_pubkey.clone(),
+                                is_instant_locked: matches!(context, TransactionContext::InstantSend),
+                            });
                             utxos_changed = true;
                         }
                     }
@@ -386,6 +408,7 @@ impl ManagedCoreAccount {
                             txid = %tx.txid(),
                             "Removed spent UTXO"
                         );
+                        utxo_changeset.spent.insert(input.previous_output);
                         utxos_changed = true;
                     }
                 }
@@ -396,23 +419,28 @@ impl ManagedCoreAccount {
             }
             _ => {}
         }
+
+        utxo_changeset
     }
 
     /// Re-process an existing transaction with updated context (e.g., mempool→block confirmation)
     /// and potentially new address matches from gap limit rescans.
+    /// Returns `(changed, changeset)` where `changed` indicates if confirmation status changed.
     pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-    ) -> bool {
+    ) -> (bool, WalletChangeSet) {
         if !self.transactions.contains_key(&tx.txid()) {
-            self.record_transaction(tx, account_match, context, transaction_type);
-            return true;
+            let (_record, changeset) =
+                self.record_transaction(tx, account_match, context, transaction_type);
+            return (true, changeset);
         }
 
         let mut changed = false;
+        let mut tx_changeset = TransactionChangeSet::default();
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
             debug_assert_eq!(
                 tx_record.transaction_type,
@@ -428,20 +456,43 @@ impl ManagedCoreAccount {
                 // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
                 // wallet transaction events are properly handled
                 changed = !was_confirmed;
+
+                if changed {
+                    let block_info = tx_record.block_info();
+                    tx_changeset.records.insert(tx.txid(), TransactionEntry {
+                        transaction: tx.clone(),
+                        block_height: block_info.map(|bi| bi.height),
+                        block_hash: block_info.map(|bi| bi.block_hash),
+                        timestamp: block_info.map_or(0, |bi| bi.timestamp as u64),
+                        net_amount: tx_record.net_amount,
+                        fee: None,
+                        label: None,
+                        is_instant_locked: tx_record.context == crate::transaction_checking::TransactionContext::InstantSend,
+                        is_chain_locked: matches!(tx_record.context, crate::transaction_checking::TransactionContext::InChainLockedBlock(_)),
+                    });
+                }
             }
         }
-        self.update_utxos(tx, account_match, context);
-        changed
+        let utxo_changeset = self.update_utxos(tx, account_match, context);
+
+        let changeset = WalletChangeSet {
+            transactions: if tx_changeset.is_empty() { None } else { Some(tx_changeset) },
+            utxos: if utxo_changeset.is_empty() { None } else { Some(utxo_changeset) },
+            ..Default::default()
+        };
+
+        (changed, changeset)
     }
 
-    /// Record a new transaction and update UTXOs for spendable account types
+    /// Record a new transaction and update UTXOs for spendable account types.
+    /// Returns `(TransactionRecord, WalletChangeSet)` capturing the mutation.
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-    ) -> TransactionRecord {
+    ) -> (TransactionRecord, WalletChangeSet) {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
         let receive_addrs: HashSet<_> = account_match
@@ -535,29 +586,55 @@ impl ManagedCoreAccount {
         let record = tx_record.clone();
         self.transactions.insert(tx.txid(), tx_record);
 
-        self.update_utxos(tx, account_match, context);
-        record
+        let utxo_changeset = self.update_utxos(tx, account_match, context);
+
+        let block_info = record.block_info();
+        let tx_changeset = TransactionChangeSet {
+            records: std::iter::once((tx.txid(), TransactionEntry {
+                transaction: tx.clone(),
+                block_height: block_info.map(|bi| bi.height),
+                block_hash: block_info.map(|bi| bi.block_hash),
+                timestamp: block_info.map_or(0, |bi| bi.timestamp as u64),
+                net_amount,
+                fee: None,
+                label: None,
+                is_instant_locked: context == crate::transaction_checking::TransactionContext::InstantSend,
+                is_chain_locked: matches!(context, crate::transaction_checking::TransactionContext::InChainLockedBlock(_)),
+            })).collect(),
+        };
+
+        let changeset = WalletChangeSet {
+            transactions: Some(tx_changeset),
+            utxos: if utxo_changeset.is_empty() { None } else { Some(utxo_changeset) },
+            ..Default::default()
+        };
+
+        (record, changeset)
     }
 
     /// Mark all UTXOs belonging to a transaction as InstantSend-locked.
-    /// Returns `true` if any UTXO was newly marked.
-    pub(crate) fn mark_utxos_instant_send(&mut self, txid: &Txid) -> bool {
+    /// Returns `(changed, utxo_changeset)` where `changed` indicates if any UTXO was newly marked.
+    pub(crate) fn mark_utxos_instant_send(&mut self, txid: &Txid) -> (bool, UtxoChangeSet) {
         let mut any_changed = false;
+        let mut utxo_changeset = UtxoChangeSet::default();
         for utxo in self.utxos.values_mut() {
             if utxo.outpoint.txid == *txid && !utxo.is_instantlocked {
                 utxo.is_instantlocked = true;
+                utxo_changeset.instant_locked.insert(utxo.outpoint);
                 any_changed = true;
             }
         }
-        any_changed
+        (any_changed, utxo_changeset)
     }
 
-    /// Update the account balance
-    pub fn update_balance(&mut self, synced_height: u32) {
-        let mut spendable = 0;
-        let mut unconfirmed = 0;
-        let mut immature = 0;
-        let mut locked = 0;
+    /// Update the account balance.
+    /// Returns a `BalanceChangeSet` with the delta from the previous balance.
+    pub fn update_balance(&mut self, synced_height: u32) -> BalanceChangeSet {
+        let old = self.balance;
+        let mut spendable = 0u64;
+        let mut unconfirmed = 0u64;
+        let mut immature = 0u64;
+        let mut locked = 0u64;
         for utxo in self.utxos.values() {
             let value = utxo.txout.value;
             if utxo.is_locked {
@@ -572,6 +649,13 @@ impl ManagedCoreAccount {
         }
         self.balance = WalletCoreBalance::new(spendable, unconfirmed, immature, locked);
         self.metadata.last_used = Some(Self::current_timestamp());
+
+        BalanceChangeSet {
+            spendable_delta: spendable as i64 - old.spendable() as i64,
+            unconfirmed_delta: unconfirmed as i64 - old.unconfirmed() as i64,
+            immature_delta: immature as i64 - old.immature() as i64,
+            locked_delta: locked as i64 - old.locked() as i64,
+        }
     }
 
     /// Get all addresses from all pools
