@@ -36,6 +36,7 @@ pub mod error;
 pub mod gap_limit;
 pub mod managed_account;
 pub mod mnemonic;
+pub mod changeset;
 pub mod psbt;
 pub mod seed;
 pub mod transaction_checking;
