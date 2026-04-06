@@ -730,10 +730,11 @@ impl FFIWalletEventCallbacks {
                         })
                         .collect();
 
-                    let c_label = if record.label.is_empty() {
-                        None
+                    let c_label = CString::new(record.label.as_str()).unwrap_or_default();
+                    let c_label_ptr = if record.label.is_empty() {
+                        std::ptr::null_mut()
                     } else {
-                        Some(CString::new(record.label.as_str()).unwrap_or_default())
+                        c_label.as_ptr() as *mut _
                     };
 
                     let ffi_record = FFITransactionRecord {
@@ -761,9 +762,7 @@ impl FFIWalletEventCallbacks {
                             tx_bytes.as_ptr() as *mut _
                         },
                         tx_len: tx_bytes.len(),
-                        label: c_label
-                            .as_ref()
-                            .map_or(std::ptr::null_mut(), |l| l.as_ptr() as *mut _),
+                        label: c_label_ptr,
                     };
 
                     cb(
