@@ -172,7 +172,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         let mut affected_wallets = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
-            if info.mark_instant_send_utxos(&txid) {
+            let (changed, _utxo_cs) = info.mark_instant_send_utxos(&txid);
+            if changed {
                 affected_wallets.push(*wallet_id);
             }
         }

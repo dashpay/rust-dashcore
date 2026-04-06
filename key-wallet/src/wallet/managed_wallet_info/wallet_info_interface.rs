@@ -10,6 +10,7 @@ use crate::managed_account::managed_account_collection::ManagedAccountCollection
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
+use crate::changeset::UtxoChangeSet;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
 
 use dashcore::prelude::CoreBlockHeight;
@@ -93,8 +94,10 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn update_synced_height(&mut self, current_height: u32);
 
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts.
-    /// Returns `true` if any UTXO was newly marked.
-    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool;
+    /// Returns `(changed, utxo_changeset)` where `changed` indicates if any
+    /// UTXO was newly marked, and `utxo_changeset` captures the IS-lock deltas
+    /// for persistence.
+    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> (bool, UtxoChangeSet);
 
     /// Return the aggregated monitor revision across all accounts.
     /// Increments whenever the monitored address set changes.
@@ -240,21 +243,25 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.update_balance();
     }
 
-    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool {
+    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> (bool, UtxoChangeSet) {
+        use crate::changeset::Merge;
+
         if !self.instant_send_locks.insert(*txid) {
-            return false;
+            return (false, UtxoChangeSet::default());
         }
         let mut any_changed = false;
+        let mut combined_utxo_cs = UtxoChangeSet::default();
         for account in self.accounts.all_accounts_mut() {
-            let (changed, _utxo_cs) = account.mark_utxos_instant_send(txid);
+            let (changed, utxo_cs) = account.mark_utxos_instant_send(txid);
             if changed {
                 any_changed = true;
             }
+            combined_utxo_cs.merge(utxo_cs);
         }
         if any_changed {
             self.update_balance();
         }
-        any_changed
+        (any_changed, combined_utxo_cs)
     }
 
     fn monitor_revision(&self) -> u64 {
