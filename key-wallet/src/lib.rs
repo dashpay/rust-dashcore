@@ -26,6 +26,7 @@ pub mod account;
 pub mod bip32;
 #[cfg(feature = "bip38")]
 pub mod bip38;
+pub mod changeset;
 pub mod derivation;
 #[cfg(feature = "bls")]
 pub mod derivation_bls_bip32;
@@ -36,7 +37,6 @@ pub mod error;
 pub mod gap_limit;
 pub mod managed_account;
 pub mod mnemonic;
-pub mod changeset;
 pub mod psbt;
 pub mod seed;
 pub mod transaction_checking;

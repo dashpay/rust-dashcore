@@ -56,14 +56,14 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // Get relevant account types for this transaction type
         let relevant_types = TransactionRouter::get_relevant_account_types(&tx_type);
 
-        // Check only relevant account types
+        // Check only relevant account types (read-only)
         let mut result = self.accounts.check_transaction(tx, &relevant_types);
 
         if !update_state || !result.is_relevant {
             return result;
         }
 
-        // Check if this transaction already exists in any affected account
+        // Check if this transaction already exists in any affected account (read-only)
         let txid = tx.txid();
         let mut is_new = true;
         for account_match in &result.affected_accounts {
@@ -79,7 +79,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         result.is_new_transaction = is_new;
 
         if !is_new {
-            // IS lock on a transaction that is already confirmed is stale — ignore
+            // IS lock on a transaction that is already confirmed is stale -- ignore
             if context == TransactionContext::InstantSend {
                 if !self.instant_send_locks.insert(txid) {
                     return result;
@@ -94,15 +94,28 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if already_confirmed {
                     return result;
                 }
-                // Mark UTXOs as IS-locked in affected accounts
+                // Phase 1 (compute): compute IS-lock changesets from each account
                 let mut is_utxo_cs = UtxoChangeSet::default();
+                for account_match in &result.affected_accounts {
+                    if let Some(account) = self
+                        .accounts
+                        .get_by_account_type_match(&account_match.account_type_match)
+                    {
+                        let utxo_cs = account.compute_instant_send_lock(&txid);
+                        is_utxo_cs.merge(utxo_cs);
+                    }
+                }
+                // Phase 2 (apply): apply IS-lock changes
                 for account_match in &result.affected_accounts {
                     if let Some(account) = self
                         .accounts
                         .get_by_account_type_match_mut(&account_match.account_type_match)
                     {
-                        let (_changed, utxo_cs) = account.mark_utxos_instant_send(&txid);
-                        is_utxo_cs.merge(utxo_cs);
+                        for outpoint in &is_utxo_cs.instant_locked {
+                            if let Some(utxo) = account.utxos.get_mut(outpoint) {
+                                utxo.is_instantlocked = true;
+                            }
+                        }
                     }
                 }
                 if update_balance {
@@ -121,8 +134,57 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
-        // Process each affected account
-        for account_match in result.affected_accounts.clone() {
+        // ---------------------------------------------------------------
+        // Phase 1 (compute): build changesets from each affected account
+        // without mutating any account state.
+        // ---------------------------------------------------------------
+        struct AccountComputeResult {
+            account_match_idx: usize,
+            record: Option<crate::managed_account::transaction_record::TransactionRecord>,
+            sub_changeset: crate::changeset::WalletChangeSet,
+            changed: bool,
+            addr_changesets: Vec<AccountChangeSet>,
+        }
+
+        let mut compute_results = Vec::new();
+
+        for (idx, account_match) in result.affected_accounts.iter().enumerate() {
+            let Some(account) =
+                self.accounts.get_by_account_type_match(&account_match.account_type_match)
+            else {
+                continue;
+            };
+
+            let (record, sub_cs, changed) = if is_new {
+                let (record, sub_cs) =
+                    account.compute_record_transaction(tx, account_match, context, tx_type);
+                (Some(record), sub_cs, true)
+            } else {
+                let (changed, sub_cs) =
+                    account.compute_confirm_transaction(tx, account_match, context, tx_type);
+                (None, sub_cs, changed)
+            };
+
+            let mut addr_changesets = Vec::new();
+            for address_info in account_match.account_type_match.all_involved_addresses() {
+                let addr_cs = account.compute_mark_address_used(&address_info.address);
+                addr_changesets.push(addr_cs);
+            }
+
+            compute_results.push(AccountComputeResult {
+                account_match_idx: idx,
+                record,
+                sub_changeset: sub_cs,
+                changed,
+                addr_changesets,
+            });
+        }
+
+        // ---------------------------------------------------------------
+        // Phase 2 (apply): apply all computed changesets to mutable state.
+        // ---------------------------------------------------------------
+        for cr in compute_results {
+            let account_match = &result.affected_accounts[cr.account_match_idx];
             let Some(account) =
                 self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
             else {
@@ -130,27 +192,65 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             if is_new {
-                let (record, sub_cs) =
-                    account.record_transaction(tx, &account_match, context, tx_type);
-                if let Some(account_index) = account_match.account_type_match.account_index() {
-                    result.new_records.push((account_index, record));
+                if let Some(ref record) = cr.record {
+                    // Apply: insert transaction record
+                    account.transactions.insert(tx.txid(), record.clone());
+                    // Apply: update UTXOs
+                    if let Some(utxo_cs) = &cr.sub_changeset.utxos {
+                        account.apply_utxo_changes(tx, utxo_cs, context);
+                    } else {
+                        for input in &tx.input {
+                            account.record_spent_outpoint(input.previous_output);
+                        }
+                    }
+                    if let Some(account_index) = account_match.account_type_match.account_index() {
+                        result.new_records.push((account_index, record.clone()));
+                    }
                 }
-                result.changeset.merge(sub_cs);
                 result.state_modified = true;
             } else {
-                let (changed, sub_cs) =
-                    account.confirm_transaction(tx, &account_match, context, tx_type);
-                result.changeset.merge(sub_cs);
-                if changed {
+                // Apply: update context on existing record
+                if let Some(tx_record) = account.transactions.get_mut(&tx.txid()) {
+                    if tx_record.context != context {
+                        tx_record.update_context(context);
+                    }
+                } else if !account.transactions.contains_key(&tx.txid()) {
+                    // Transaction was not recorded yet -- insert from changeset
+                    if let Some(ref record) = cr.record {
+                        account.transactions.insert(tx.txid(), record.clone());
+                    } else {
+                        let record = account.build_transaction_record(
+                            tx,
+                            account_match,
+                            context,
+                            tx_type,
+                        );
+                        account.transactions.insert(tx.txid(), record);
+                    }
+                }
+                // Apply: update UTXOs
+                if let Some(utxo_cs) = &cr.sub_changeset.utxos {
+                    account.apply_utxo_changes(tx, utxo_cs, context);
+                }
+                if cr.changed {
                     result.state_modified = true;
                 }
             }
 
-            for address_info in account_match.account_type_match.all_involved_addresses() {
-                let (_changed, addr_cs) = account.mark_address_used(&address_info.address);
-                result.changeset.accounts.merge(Some(addr_cs));
+            // Apply: mark addresses as used
+            for addr_cs in &cr.addr_changesets {
+                for (_acct_idx, address) in &addr_cs.addresses_used {
+                    account.metadata.last_used =
+                        Some(crate::managed_account::ManagedCoreAccount::current_timestamp_static());
+                    account.account_type.mark_address_used(address);
+                }
+                result.changeset.accounts.merge(Some(addr_cs.clone()));
             }
 
+            // Merge the sub-changeset into the result
+            result.changeset.merge(cr.sub_changeset);
+
+            // Gap limit maintenance (inherently mutable -- generates new addresses)
             let Some(xpub) = wallet.extended_public_key_for_account_type(
                 &account_match.account_type_match.to_account_type_to_check(),
                 account_match.account_type_match.account_index(),
@@ -1041,7 +1141,8 @@ mod tests {
         let block_context =
             TransactionContext::InBlock(BlockInfo::new(600, block_hash, 1700000000));
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let (changed, _changeset) = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        let (changed, _changeset) =
+            account.confirm_transaction(&tx, &account_match, block_context, tx_type);
         assert!(changed, "Should return true when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
@@ -1092,7 +1193,8 @@ mod tests {
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let (changed, _changeset) = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        let (changed, _changeset) =
+            account.confirm_transaction(&tx, &account_match, block_context, tx_type);
         assert!(changed, "Should return true when confirming unconfirmed tx");
 
         let record = account.transactions.get(&txid).expect("Should have record");

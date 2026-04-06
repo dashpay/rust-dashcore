@@ -10,11 +10,11 @@ use crate::account::BLSAccount;
 use crate::account::EdDSAAccount;
 use crate::account::ManagedAccountTrait;
 use crate::account::TransactionRecord;
+use crate::changeset::Merge;
 use crate::changeset::{
     AccountChangeSet, BalanceChangeSet, TransactionChangeSet, TransactionEntry, UtxoChangeSet,
     UtxoEntry, WalletChangeSet,
 };
-use crate::changeset::Merge;
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
@@ -300,48 +300,57 @@ impl ManagedCoreAccount {
         }
     }
 
+    /// Compute the changeset for marking an address as used, without mutating state.
+    pub fn compute_mark_address_used(&self, address: &Address) -> AccountChangeSet {
+        let would_change = self.account_type.address_pools().iter().any(|pool| {
+            if let Some(&index) = pool.address_index.get(address) {
+                !pool.used_indices.contains(&index)
+            } else {
+                false
+            }
+        });
+
+        let mut account_changeset = AccountChangeSet::default();
+        if would_change {
+            let account_index = self.index_or_default();
+            account_changeset
+                .addresses_used
+                .push((account_index, address.clone()));
+        }
+        account_changeset
+    }
+
     /// Mark an address as used.
     /// Returns `(changed, account_changeset)` where `changed` indicates if the address was newly marked.
     pub fn mark_address_used(&mut self, address: &Address) -> (bool, AccountChangeSet) {
-        // Update metadata timestamp
-        self.metadata.last_used = Some(Self::current_timestamp());
+        let account_changeset = self.compute_mark_address_used(address);
+        let changed = !account_changeset.addresses_used.is_empty();
 
-        // Use the account type's mark_address_used method
-        // The address pools already track gap limits internally
-        let changed = self.account_type.mark_address_used(address);
-
-        let mut account_changeset = AccountChangeSet::default();
+        // Apply: update metadata and mark in pool
         if changed {
-            let account_index = self.index_or_default();
-            account_changeset.addresses_used.push((account_index, address.clone()));
+            self.metadata.last_used = Some(Self::current_timestamp());
+            self.account_type.mark_address_used(address);
         }
+
         (changed, account_changeset)
     }
 
-    /// Add new ones for received outputs, remove spent ones.
-    /// Returns a `UtxoChangeSet` capturing the delta.
-    fn update_utxos(
-        &mut self,
+    /// Compute UTXO changes for a transaction without mutating state.
+    /// Returns a `UtxoChangeSet` describing additions, spends, and IS-locks.
+    pub(crate) fn compute_utxo_changes(
+        &self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
     ) -> UtxoChangeSet {
         let mut utxo_changeset = UtxoChangeSet::default();
 
-        // Update UTXOs only for spendable account types
-        match &mut self.account_type {
-            ManagedAccountType::Standard {
-                ..
-            }
-            | ManagedAccountType::CoinJoin {
-                ..
-            }
-            | ManagedAccountType::DashpayReceivingFunds {
-                ..
-            }
-            | ManagedAccountType::DashpayExternalAccount {
-                ..
-            } => {
+        // Only compute for spendable account types
+        match &self.account_type {
+            ManagedAccountType::Standard { .. }
+            | ManagedAccountType::CoinJoin { .. }
+            | ManagedAccountType::DashpayReceivingFunds { .. }
+            | ManagedAccountType::DashpayExternalAccount { .. } => {
                 let involved_addrs: BTreeSet<_> = account_match
                     .account_type_match
                     .all_involved_addresses()
@@ -350,9 +359,8 @@ impl ManagedCoreAccount {
                     .collect();
 
                 let txid = tx.txid();
-                let mut utxos_changed = false;
 
-                // Insert UTXOs for outputs paying to our addresses
+                // Determine outputs paying to our addresses
                 for (vout, output) in tx.output.iter().enumerate() {
                     if let Ok(addr) = Address::from_script(&output.script_pubkey, self.network) {
                         if involved_addrs.contains(&addr) {
@@ -362,12 +370,6 @@ impl ManagedCoreAccount {
                             };
 
                             // Check if this outpoint was already spent by a transaction we've seen.
-                            // This handles out-of-order block processing during rescan where a
-                            // spending transaction at a higher height may be processed before
-                            // the transaction that created the UTXO.
-                            // TODO: This is mostly needed for wallet rescan from storage with the
-                            //       there is a timing issue with event processing which might lead to
-                            //       invalid UTXO set / balances. There might be a way around it.
                             if self.is_outpoint_spent(&outpoint) {
                                 tracing::debug!(
                                     outpoint = %outpoint,
@@ -376,45 +378,27 @@ impl ManagedCoreAccount {
                                 continue;
                             }
 
-                            let txout = dashcore::TxOut {
-                                value: output.value,
-                                script_pubkey: output.script_pubkey.clone(),
-                            };
-                            let block_height = context.block_info().map_or(0, |info| info.height);
-                            let mut utxo =
-                                Utxo::new(outpoint, txout, addr.clone(), block_height, tx.is_coin_base());
-                            utxo.is_confirmed = context.confirmed();
-                            utxo.is_instantlocked =
-                                matches!(context, TransactionContext::InstantSend);
-                            self.utxos.insert(outpoint, utxo);
-                            utxo_changeset.added.insert(outpoint, UtxoEntry {
-                                address: addr,
-                                value: output.value,
-                                script_pubkey: output.script_pubkey.clone(),
-                                is_instant_locked: matches!(context, TransactionContext::InstantSend),
-                            });
-                            utxos_changed = true;
+                            utxo_changeset.added.insert(
+                                outpoint,
+                                UtxoEntry {
+                                    address: addr,
+                                    value: output.value,
+                                    script_pubkey: output.script_pubkey.clone(),
+                                    is_instant_locked: matches!(
+                                        context,
+                                        TransactionContext::InstantSend
+                                    ),
+                                },
+                            );
                         }
                     }
                 }
 
-                // Remove UTXOs spent by this transaction and track spent outpoints
+                // Determine UTXOs spent by this transaction
                 for input in &tx.input {
-                    self.spent_outpoints.insert(input.previous_output);
-
-                    if self.utxos.remove(&input.previous_output).is_some() {
-                        tracing::debug!(
-                            outpoint = %input.previous_output,
-                            txid = %tx.txid(),
-                            "Removed spent UTXO"
-                        );
+                    if self.utxos.contains_key(&input.previous_output) {
                         utxo_changeset.spent.insert(input.previous_output);
-                        utxos_changed = true;
                     }
-                }
-
-                if utxos_changed {
-                    self.monitor_revision += 1;
                 }
             }
             _ => {}
@@ -423,11 +407,72 @@ impl ManagedCoreAccount {
         utxo_changeset
     }
 
-    /// Re-process an existing transaction with updated context (e.g., mempool→block confirmation)
-    /// and potentially new address matches from gap limit rescans.
-    /// Returns `(changed, changeset)` where `changed` indicates if confirmation status changed.
-    pub(crate) fn confirm_transaction(
+    /// Apply a UTXO changeset to this account, mutating state.
+    pub(crate) fn apply_utxo_changes(
         &mut self,
+        tx: &Transaction,
+        utxo_changeset: &UtxoChangeSet,
+        context: TransactionContext,
+    ) {
+        let mut utxos_changed = false;
+
+        // Add new UTXOs
+        for (outpoint, entry) in &utxo_changeset.added {
+            let txout = dashcore::TxOut {
+                value: entry.value,
+                script_pubkey: entry.script_pubkey.clone(),
+            };
+            let block_height = context.block_info().map_or(0, |info| info.height);
+            let mut utxo = Utxo::new(
+                *outpoint,
+                txout,
+                entry.address.clone(),
+                block_height,
+                tx.is_coin_base(),
+            );
+            utxo.is_confirmed = context.confirmed();
+            utxo.is_instantlocked = entry.is_instant_locked;
+            self.utxos.insert(*outpoint, utxo);
+            utxos_changed = true;
+        }
+
+        // Remove spent UTXOs and track spent outpoints
+        for outpoint in &utxo_changeset.spent {
+            self.spent_outpoints.insert(*outpoint);
+            if self.utxos.remove(outpoint).is_some() {
+                tracing::debug!(
+                    outpoint = %outpoint,
+                    txid = %tx.txid(),
+                    "Removed spent UTXO"
+                );
+                utxos_changed = true;
+            }
+        }
+
+        // Also track spent outpoints for inputs not in our UTXO set
+        // (needed for out-of-order processing)
+        for input in &tx.input {
+            self.spent_outpoints.insert(input.previous_output);
+        }
+
+        // Apply IS-locks
+        for outpoint in &utxo_changeset.instant_locked {
+            if let Some(utxo) = self.utxos.get_mut(outpoint) {
+                utxo.is_instantlocked = true;
+                utxos_changed = true;
+            }
+        }
+
+        if utxos_changed {
+            self.monitor_revision += 1;
+        }
+    }
+
+    /// Compute the changeset for confirming an existing transaction, without mutating state.
+    /// If the transaction is not yet recorded, delegates to `compute_record_transaction`.
+    /// Returns `(changed, changeset)` where `changed` indicates if confirmation status would change.
+    pub(crate) fn compute_confirm_transaction(
+        &self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
@@ -435,13 +480,13 @@ impl ManagedCoreAccount {
     ) -> (bool, WalletChangeSet) {
         if !self.transactions.contains_key(&tx.txid()) {
             let (_record, changeset) =
-                self.record_transaction(tx, account_match, context, transaction_type);
+                self.compute_record_transaction(tx, account_match, context, transaction_type);
             return (true, changeset);
         }
 
         let mut changed = false;
         let mut tx_changeset = TransactionChangeSet::default();
-        if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
+        if let Some(tx_record) = self.transactions.get(&tx.txid()) {
             debug_assert_eq!(
                 tx_record.transaction_type,
                 transaction_type,
@@ -450,49 +495,111 @@ impl ManagedCoreAccount {
             );
             if tx_record.context != context {
                 let was_confirmed = tx_record.context.confirmed();
-                tx_record.update_context(context);
                 // Only signal a change when confirmation status actually changes,
-                // not for upgrades within the confirmed state (e.g. InBlock → InChainLockedBlock).
-                // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
-                // wallet transaction events are properly handled
+                // not for upgrades within the confirmed state (e.g. InBlock -> InChainLockedBlock).
                 changed = !was_confirmed;
 
                 if changed {
-                    let block_info = tx_record.block_info();
-                    tx_changeset.records.insert(tx.txid(), TransactionEntry {
-                        transaction: tx.clone(),
-                        block_height: block_info.map(|bi| bi.height),
-                        block_hash: block_info.map(|bi| bi.block_hash),
-                        timestamp: block_info.map_or(0, |bi| bi.timestamp as u64),
-                        net_amount: tx_record.net_amount,
-                        fee: None,
-                        label: None,
-                        is_instant_locked: tx_record.context == crate::transaction_checking::TransactionContext::InstantSend,
-                        is_chain_locked: matches!(tx_record.context, crate::transaction_checking::TransactionContext::InChainLockedBlock(_)),
-                    });
+                    // Build the entry using the new context's block info
+                    let block_info = context.block_info();
+                    tx_changeset.records.insert(
+                        tx.txid(),
+                        TransactionEntry {
+                            transaction: tx.clone(),
+                            block_height: block_info.map(|bi| bi.height),
+                            block_hash: block_info.map(|bi| bi.block_hash),
+                            timestamp: block_info.map_or(0, |bi| bi.timestamp as u64),
+                            net_amount: tx_record.net_amount,
+                            fee: None,
+                            label: None,
+                            is_instant_locked: context
+                                == crate::transaction_checking::TransactionContext::InstantSend,
+                            is_chain_locked: matches!(
+                                context,
+                                crate::transaction_checking::TransactionContext::InChainLockedBlock(
+                                    _
+                                )
+                            ),
+                        },
+                    );
                 }
             }
         }
-        let utxo_changeset = self.update_utxos(tx, account_match, context);
+        let utxo_changeset = self.compute_utxo_changes(tx, account_match, context);
 
         let changeset = WalletChangeSet {
-            transactions: if tx_changeset.is_empty() { None } else { Some(tx_changeset) },
-            utxos: if utxo_changeset.is_empty() { None } else { Some(utxo_changeset) },
+            transactions: if tx_changeset.is_empty() {
+                None
+            } else {
+                Some(tx_changeset)
+            },
+            utxos: if utxo_changeset.is_empty() {
+                None
+            } else {
+                Some(utxo_changeset)
+            },
             ..Default::default()
         };
 
         (changed, changeset)
     }
 
-    /// Record a new transaction and update UTXOs for spendable account types.
-    /// Returns `(TransactionRecord, WalletChangeSet)` capturing the mutation.
-    pub(crate) fn record_transaction(
+    /// Re-process an existing transaction with updated context (e.g., mempool->block confirmation)
+    /// and potentially new address matches from gap limit rescans.
+    /// Returns `(changed, changeset)` where `changed` indicates if confirmation status changed.
+    #[allow(dead_code)]
+    pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-    ) -> (TransactionRecord, WalletChangeSet) {
+    ) -> (bool, WalletChangeSet) {
+        let (changed, changeset) =
+            self.compute_confirm_transaction(tx, account_match, context, transaction_type);
+
+        // Apply: update context on existing record
+        if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
+            if tx_record.context != context {
+                tx_record.update_context(context);
+            }
+        } else {
+            // Transaction wasn't recorded yet -- record it now
+            // (compute_confirm_transaction already produced the full changeset)
+        }
+
+        // Apply UTXO changes
+        if let Some(utxo_cs) = &changeset.utxos {
+            self.apply_utxo_changes(tx, utxo_cs, context);
+        }
+
+        // If the transaction was new (not previously recorded), insert the record
+        if !self.transactions.contains_key(&tx.txid()) {
+            if let Some(tx_cs) = &changeset.transactions {
+                if let Some(entry) = tx_cs.records.get(&tx.txid()) {
+                    let record = self.build_transaction_record(
+                        tx,
+                        account_match,
+                        context,
+                        transaction_type,
+                    );
+                    self.transactions.insert(tx.txid(), record);
+                    let _ = entry; // entry was used for changeset, record is for state
+                }
+            }
+        }
+
+        (changed, changeset)
+    }
+
+    /// Build a TransactionRecord from current state (read-only helper).
+    pub(crate) fn build_transaction_record(
+        &self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        transaction_type: TransactionType,
+    ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
         let receive_addrs: HashSet<_> = account_match
@@ -508,7 +615,7 @@ impl ManagedCoreAccount {
             .map(|info| &info.address)
             .collect();
 
-        // Input details must be built before `update_utxos` removes spent UTXOs
+        // Build input details from current UTXO set (must be called before UTXOs are removed)
         let mut input_details = Vec::new();
         if !tx.is_coin_base() {
             for (idx, input) in tx.input.iter().enumerate() {
@@ -523,9 +630,7 @@ impl ManagedCoreAccount {
         }
 
         // Use both UTXO-based input details and `account_match.sent` as signals
-        // that we created this transaction. The UTXO set may be incomplete
-        // (e.g., partial rescan) so `account_match.sent > 0` catches cases where
-        // the transaction still spent our funds even without matching UTXOs.
+        // that we created this transaction.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let resolved_outputs: Vec<Option<Address>> = tx
@@ -534,7 +639,7 @@ impl ManagedCoreAccount {
             .map(|output| Address::from_script(&output.script_pubkey, self.network).ok())
             .collect();
 
-        // Build output details — annotate every output with its role
+        // Build output details -- annotate every output with its role
         let mut output_details = Vec::new();
         for (idx, output) in tx.output.iter().enumerate() {
             let role = match &resolved_outputs[idx] {
@@ -573,7 +678,7 @@ impl ManagedCoreAccount {
             TransactionDirection::Incoming
         };
 
-        let tx_record = TransactionRecord::new(
+        TransactionRecord::new(
             tx.clone(),
             context,
             transaction_type,
@@ -581,55 +686,117 @@ impl ManagedCoreAccount {
             input_details,
             output_details,
             net_amount,
-        );
+        )
+    }
 
-        let record = tx_record.clone();
-        self.transactions.insert(tx.txid(), tx_record);
+    /// Compute the changeset for recording a new transaction without mutating state.
+    /// Returns `(TransactionRecord, WalletChangeSet)`.
+    pub(crate) fn compute_record_transaction(
+        &self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        transaction_type: TransactionType,
+    ) -> (TransactionRecord, WalletChangeSet) {
+        let record = self.build_transaction_record(tx, account_match, context, transaction_type);
 
-        let utxo_changeset = self.update_utxos(tx, account_match, context);
+        let utxo_changeset = self.compute_utxo_changes(tx, account_match, context);
 
+        let net_amount = account_match.received as i64 - account_match.sent as i64;
         let block_info = record.block_info();
         let tx_changeset = TransactionChangeSet {
-            records: std::iter::once((tx.txid(), TransactionEntry {
-                transaction: tx.clone(),
-                block_height: block_info.map(|bi| bi.height),
-                block_hash: block_info.map(|bi| bi.block_hash),
-                timestamp: block_info.map_or(0, |bi| bi.timestamp as u64),
-                net_amount,
-                fee: None,
-                label: None,
-                is_instant_locked: context == crate::transaction_checking::TransactionContext::InstantSend,
-                is_chain_locked: matches!(context, crate::transaction_checking::TransactionContext::InChainLockedBlock(_)),
-            })).collect(),
+            records: std::iter::once((
+                tx.txid(),
+                TransactionEntry {
+                    transaction: tx.clone(),
+                    block_height: block_info.map(|bi| bi.height),
+                    block_hash: block_info.map(|bi| bi.block_hash),
+                    timestamp: block_info.map_or(0, |bi| bi.timestamp as u64),
+                    net_amount,
+                    fee: None,
+                    label: None,
+                    is_instant_locked: context
+                        == crate::transaction_checking::TransactionContext::InstantSend,
+                    is_chain_locked: matches!(
+                        context,
+                        crate::transaction_checking::TransactionContext::InChainLockedBlock(_)
+                    ),
+                },
+            ))
+            .collect(),
         };
 
         let changeset = WalletChangeSet {
             transactions: Some(tx_changeset),
-            utxos: if utxo_changeset.is_empty() { None } else { Some(utxo_changeset) },
+            utxos: if utxo_changeset.is_empty() {
+                None
+            } else {
+                Some(utxo_changeset)
+            },
             ..Default::default()
         };
 
         (record, changeset)
     }
 
+    /// Record a new transaction and update UTXOs for spendable account types.
+    /// Returns `(TransactionRecord, WalletChangeSet)` capturing the mutation.
+    #[allow(dead_code)]
+    pub(crate) fn record_transaction(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        transaction_type: TransactionType,
+    ) -> (TransactionRecord, WalletChangeSet) {
+        let (record, changeset) =
+            self.compute_record_transaction(tx, account_match, context, transaction_type);
+
+        // Apply: insert the transaction record
+        self.transactions.insert(tx.txid(), record.clone());
+
+        // Apply: update UTXOs
+        if let Some(utxo_cs) = &changeset.utxos {
+            self.apply_utxo_changes(tx, utxo_cs, context);
+        } else {
+            // Still need to track spent outpoints even when no UTXO changes
+            for input in &tx.input {
+                self.spent_outpoints.insert(input.previous_output);
+            }
+        }
+
+        (record, changeset)
+    }
+
+    /// Compute the changeset for marking UTXOs as InstantSend-locked, without mutating state.
+    pub(crate) fn compute_instant_send_lock(&self, txid: &Txid) -> UtxoChangeSet {
+        let mut utxo_changeset = UtxoChangeSet::default();
+        for utxo in self.utxos.values() {
+            if utxo.outpoint.txid == *txid && !utxo.is_instantlocked {
+                utxo_changeset.instant_locked.insert(utxo.outpoint);
+            }
+        }
+        utxo_changeset
+    }
+
     /// Mark all UTXOs belonging to a transaction as InstantSend-locked.
     /// Returns `(changed, utxo_changeset)` where `changed` indicates if any UTXO was newly marked.
     pub(crate) fn mark_utxos_instant_send(&mut self, txid: &Txid) -> (bool, UtxoChangeSet) {
-        let mut any_changed = false;
-        let mut utxo_changeset = UtxoChangeSet::default();
-        for utxo in self.utxos.values_mut() {
-            if utxo.outpoint.txid == *txid && !utxo.is_instantlocked {
+        let utxo_changeset = self.compute_instant_send_lock(txid);
+        let any_changed = !utxo_changeset.instant_locked.is_empty();
+
+        // Apply: mark UTXOs
+        for outpoint in &utxo_changeset.instant_locked {
+            if let Some(utxo) = self.utxos.get_mut(outpoint) {
                 utxo.is_instantlocked = true;
-                utxo_changeset.instant_locked.insert(utxo.outpoint);
-                any_changed = true;
             }
         }
+
         (any_changed, utxo_changeset)
     }
 
-    /// Update the account balance.
-    /// Returns a `BalanceChangeSet` with the delta from the previous balance.
-    pub fn update_balance(&mut self, synced_height: u32) -> BalanceChangeSet {
+    /// Compute the balance changeset from current UTXO state, without mutating.
+    pub fn compute_balance_update(&self, synced_height: u32) -> BalanceChangeSet {
         let old = self.balance;
         let mut spendable = 0u64;
         let mut unconfirmed = 0u64;
@@ -647,8 +814,6 @@ impl ManagedCoreAccount {
                 unconfirmed += value;
             }
         }
-        self.balance = WalletCoreBalance::new(spendable, unconfirmed, immature, locked);
-        self.metadata.last_used = Some(Self::current_timestamp());
 
         BalanceChangeSet {
             spendable_delta: spendable as i64 - old.spendable() as i64,
@@ -656,6 +821,18 @@ impl ManagedCoreAccount {
             immature_delta: immature as i64 - old.immature() as i64,
             locked_delta: locked as i64 - old.locked() as i64,
         }
+    }
+
+    /// Update the account balance.
+    /// Returns a `BalanceChangeSet` with the delta from the previous balance.
+    pub fn update_balance(&mut self, synced_height: u32) -> BalanceChangeSet {
+        let balance_cs = self.compute_balance_update(synced_height);
+
+        // Apply: set the new balance
+        self.balance.apply_delta(&balance_cs);
+        self.metadata.last_used = Some(Self::current_timestamp());
+
+        balance_cs
     }
 
     /// Get all addresses from all pools
@@ -1152,12 +1329,22 @@ impl ManagedCoreAccount {
         self.account_type.get_address_derivation_path(address)
     }
 
-    /// Get the current timestamp (for metadata)
+    /// Get the current timestamp (for metadata).
     fn current_timestamp() -> u64 {
+        Self::current_timestamp_static()
+    }
+
+    /// Get the current timestamp as a static method (callable without self).
+    pub(crate) fn current_timestamp_static() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
+    }
+
+    /// Record a spent outpoint so that out-of-order UTXO processing is handled correctly.
+    pub(crate) fn record_spent_outpoint(&mut self, outpoint: OutPoint) {
+        self.spent_outpoints.insert(outpoint);
     }
 
     /// Get total address count across all pools
