@@ -2,6 +2,7 @@
 //!
 //! This module provides a wallet balance structure containing all available balances.
 
+use crate::changeset::BalanceChangeSet;
 use core::fmt::{Display, Formatter};
 use core::ops::AddAssign;
 #[cfg(feature = "serde")]
@@ -55,6 +56,26 @@ impl WalletCoreBalance {
     /// Get the total balance.
     pub fn total(&self) -> u64 {
         self.spendable + self.unconfirmed + self.immature + self.locked
+    }
+
+    /// Apply a [`BalanceChangeSet`] (signed deltas) to this balance.
+    ///
+    /// Each field is adjusted by adding the corresponding delta. Negative deltas
+    /// that would underflow are clamped to zero.
+    pub fn apply_delta(&mut self, delta: &BalanceChangeSet) {
+        self.spendable = apply_signed_delta(self.spendable, delta.spendable_delta);
+        self.unconfirmed = apply_signed_delta(self.unconfirmed, delta.unconfirmed_delta);
+        self.immature = apply_signed_delta(self.immature, delta.immature_delta);
+        self.locked = apply_signed_delta(self.locked, delta.locked_delta);
+    }
+}
+
+/// Apply a signed delta to an unsigned value, clamping at zero on underflow.
+fn apply_signed_delta(value: u64, delta: i64) -> u64 {
+    if delta >= 0 {
+        value.saturating_add(delta as u64)
+    } else {
+        value.saturating_sub(delta.unsigned_abs())
     }
 }
 
