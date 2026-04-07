@@ -140,6 +140,7 @@ impl<K: Hash + Eq + Clone> DownloadCoordinator<K> {
     /// Returns true if the item was being tracked, false if unexpected.
     pub(crate) fn receive(&mut self, key: &K) -> bool {
         if self.in_flight.remove(key).is_some() {
+            self.retry_counts.remove(key);
             self.last_progress = Instant::now();
             true
         } else {
