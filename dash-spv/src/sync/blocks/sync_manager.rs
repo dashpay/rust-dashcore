@@ -183,10 +183,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
 
     async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
         // Handle timeouts
-        let timed_out = self.pipeline.handle_timeouts();
-        if !timed_out.is_empty() {
-            tracing::debug!("Re-queued {} timed out block downloads", timed_out.len());
-        }
+        self.pipeline.handle_timeouts();
 
         self.send_pending(requests).await?;
 

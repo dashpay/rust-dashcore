@@ -245,18 +245,11 @@ impl FiltersPipeline {
 
     /// Check for timed out batches and handle retries.
     ///
-    /// Returns batch starts that timed out and were re-queued.
-    /// Note: Does not remove batch trackers — keeps them to receive any late-arriving filters.
-    pub(super) fn handle_timeouts(&mut self) -> Vec<u32> {
-        let mut timed_out_starts = Vec::new();
-
+    /// Does not remove batch trackers — keeps them to receive any late-arriving filters.
+    pub(super) fn handle_timeouts(&mut self) {
         for start in self.coordinator.check_timeouts() {
             self.coordinator.enqueue_retry(start);
-            tracing::warn!("Filter batch at {} timed out, queued for retry", start);
-            timed_out_starts.push(start);
         }
-
-        timed_out_starts
     }
 }
 
@@ -650,8 +643,7 @@ mod tests {
     #[test]
     fn test_handle_timeouts_no_batches() {
         let mut pipeline = FiltersPipeline::new();
-        let timed_out = pipeline.handle_timeouts();
-        assert!(timed_out.is_empty());
+        pipeline.handle_timeouts();
     }
 
     #[test]
@@ -666,9 +658,8 @@ mod tests {
         // Wait for timeout
         std::thread::sleep(Duration::from_millis(5));
 
-        let timed_out = pipeline.handle_timeouts();
+        pipeline.handle_timeouts();
 
-        assert_eq!(timed_out, vec![0]);
         // Batch should be re-queued in coordinator's pending queue
         assert_eq!(pipeline.coordinator.pending_count(), 1);
         assert_eq!(pipeline.coordinator.active_count(), 0);
@@ -690,10 +681,9 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let timed_out = pipeline.handle_timeouts();
+        pipeline.handle_timeouts();
 
         // Should timeout but tracker is preserved for late arrivals
-        assert_eq!(timed_out, vec![0]);
         assert!(pipeline.batch_trackers.contains_key(&0));
         assert_eq!(pipeline.batch_trackers.get(&0).unwrap().received(), 10);
     }
@@ -728,8 +718,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
 
         // Handle timeouts - all 3 should timeout and be re-queued
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 3);
+        pipeline.handle_timeouts();
 
         // All 3 batches should be in the pending queue, not duplicated
         assert_eq!(pipeline.coordinator.pending_count(), 3);
@@ -929,8 +918,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
 
         // Handle timeout - should re-queue the batch via coordinator
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 1);
+        pipeline.handle_timeouts();
         assert_eq!(pipeline.coordinator.pending_count(), 1);
         assert_eq!(pipeline.coordinator.active_count(), 0);
 

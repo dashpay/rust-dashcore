@@ -169,16 +169,8 @@ impl BlocksPipeline {
     }
 
     /// Check for timed out downloads and re-queue them.
-    ///
-    /// Returns the list of timed out block hashes.
-    pub(super) fn handle_timeouts(&mut self) -> Vec<BlockHash> {
-        let timed_out = self.coordinator.check_and_retry_timeouts();
-
-        if !timed_out.is_empty() {
-            tracing::debug!("Re-queued {} timed out block downloads", timed_out.len());
-        }
-
-        timed_out
+    pub(super) fn handle_timeouts(&mut self) {
+        self.coordinator.check_and_retry_timeouts();
     }
 }
 
@@ -320,10 +312,8 @@ mod tests {
         // Wait for timeout
         std::thread::sleep(Duration::from_millis(20));
 
-        let timed_out = pipeline.handle_timeouts();
+        pipeline.handle_timeouts();
 
-        assert_eq!(timed_out.len(), 1);
-        assert_eq!(timed_out[0], hash);
         assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.coordinator.pending_count(), 1);
     }
