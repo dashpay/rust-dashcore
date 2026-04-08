@@ -14,28 +14,20 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 dash-spv = { path = "../dash-spv" }
 dashcore = { path = "../dash", package = "dashcore" }
-libc = "0.2"
-once_cell = "1.19"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-log = "0.4"
 hex = "0.4"
-env_logger = "0.10"
 tracing = "0.1"
 # Use key-wallet-ffi for all wallet-related FFI types
 key-wallet-ffi = { path = "../key-wallet-ffi" }
 # Still need these for SPV client internals (not for FFI types)
 key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager" }
-rand = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]
 dash-spv = { path = "../dash-spv", features = ["test-utils"] }
 serial_test = "3.0"
-env_logger = "0.10"
 tempfile = "3.8"
 
 [build-dependencies]
