@@ -500,7 +500,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             let end = batch.end_height();
             if end > self.progress.committed_height() {
                 self.progress.update_committed_height(end);
-                self.wallet.write().await.update_filter_committed_height(end);
+                self.wallet.write().await.update_filter_committed_height(end).await;
             }
             self.processing_height = end + 1;
 
@@ -675,7 +675,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         // Match against wallet's current addresses
         let wallet = self.wallet.read().await;
-        let addresses = wallet.monitored_addresses();
+        let addresses = wallet.monitored_addresses().await;
         let matches = check_compact_filters_for_addresses(batch.filters(), addresses);
         drop(wallet);
 
@@ -821,7 +821,7 @@ mod tests {
 
         // Set wallet committed height via synced_height (MockWallet default delegates)
         let mut wallet = MockWallet::new();
-        wallet.update_synced_height(50);
+        wallet.update_synced_height(50).await;
         let wallet = Arc::new(RwLock::new(wallet));
 
         // Pre-populate filter storage with filters at heights 1..=100
@@ -1049,7 +1049,7 @@ mod tests {
         assert_eq!(manager.state(), SyncState::WaitForEvents);
 
         // Wallet committed to height 100, so scan_start will be 101
-        manager.wallet.write().await.update_synced_height(100);
+        manager.wallet.write().await.update_synced_height(100).await;
         // Filter headers only reached 50, so its below scan_start
         manager.progress.update_filter_header_tip_height(50);
         // Chain tip higher so the Synced early-return is not taken
@@ -1126,7 +1126,7 @@ mod tests {
         // Simulate restart where everything is already synced but state is WaitForEvents.
         // committed == stored == filter_header_tip — start_download detects synced state.
         manager.set_state(SyncState::WaitForEvents);
-        manager.wallet.write().await.update_synced_height(100);
+        manager.wallet.write().await.update_synced_height(100).await;
         manager.progress.update_committed_height(100);
         manager.progress.update_stored_height(100);
         manager.progress.update_filter_header_tip_height(100);

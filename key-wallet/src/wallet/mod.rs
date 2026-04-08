@@ -191,7 +191,6 @@ mod tests {
     use crate::account::account_collection::AccountCollection;
     use crate::account::{AccountType, StandardAccountType};
     use crate::mnemonic::Language;
-    use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
     #[test]
     fn test_wallet_creation() {

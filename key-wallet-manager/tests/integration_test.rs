@@ -6,28 +6,27 @@
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{mnemonic::Language, Mnemonic, Network};
 use key_wallet_manager::WalletInterface;
-use key_wallet_manager::{WalletError, WalletManager};
+use key_wallet_manager::{ManagedWalletState, WalletError, WalletManager};
 
-#[test]
-fn test_wallet_manager_creation() {
+#[tokio::test]
+async fn test_wallet_manager_creation() {
     // Create a wallet manager
-    let manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+    let manager = WalletManager::<ManagedWalletState>::new(Network::Testnet);
 
-    // WalletManager::new returns Self, not Result
-    assert_eq!(manager.synced_height(), 0);
+    // WalletManager::<ManagedWalletState>::new returns Self, not Result
+    assert_eq!(WalletInterface::synced_height(&manager), 0);
     assert_eq!(manager.wallet_count(), 0); // No wallets created yet
-    assert_eq!(manager.monitor_revision(), 0);
+    assert_eq!(manager.monitor_revision().await, 0);
 }
 
-#[test]
-fn test_wallet_manager_from_mnemonic() {
+#[tokio::test]
+async fn test_wallet_manager_from_mnemonic() {
     // Create from a test mnemonic
     let mnemonic = Mnemonic::generate(12, Language::English).unwrap();
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
-    assert_eq!(manager.monitor_revision(), 0);
+    let mut manager = WalletManager::<ManagedWalletState>::new(Network::Testnet);
+    assert_eq!(manager.monitor_revision().await, 0);
 
     // Create a wallet from mnemonic
     let wallet_result = manager.create_wallet_from_mnemonic(
@@ -38,42 +37,44 @@ fn test_wallet_manager_from_mnemonic() {
     );
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     assert_eq!(manager.wallet_count(), 1);
-    assert_eq!(manager.monitor_revision(), 1);
+    assert_eq!(manager.monitor_revision().await, 1);
 }
 
-#[test]
-fn test_account_management() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+#[tokio::test]
+async fn test_account_management() {
+    let mut manager = WalletManager::<ManagedWalletState>::new(Network::Testnet);
 
     // Create a wallet first
     let wallet_result =
         manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default);
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     let wallet_id = wallet_result.unwrap();
-    assert_eq!(manager.monitor_revision(), 1);
+    assert_eq!(manager.monitor_revision().await, 1);
 
     // Add accounts to the wallet
     // Note: Index 0 already exists from wallet creation, so use index 1
-    let result = manager.create_account(
-        &wallet_id,
-        key_wallet::AccountType::Standard {
-            index: 1,
-            standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
-        },
-        None,
-    );
+    let result = manager
+        .create_account(
+            &wallet_id,
+            key_wallet::AccountType::Standard {
+                index: 1,
+                standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
+            },
+            None,
+        )
+        .await;
     assert!(result.is_ok());
-    assert_eq!(manager.monitor_revision(), 2);
+    assert_eq!(manager.monitor_revision().await, 2);
 
     // Get accounts from wallet - Default creates 11 accounts (including PlatformPayment), plus the one we added
-    let accounts = manager.get_accounts(&wallet_id);
+    let accounts = manager.get_accounts(&wallet_id).await;
     assert!(accounts.is_ok());
     assert_eq!(accounts.unwrap().len(), 12); // 11 from Default + 1 we added
 }
 
-#[test]
-fn test_address_generation() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+#[tokio::test]
+async fn test_address_generation() {
+    let mut manager = WalletManager::<ManagedWalletState>::new(Network::Testnet);
 
     // Create a wallet first
     let wallet_result =
@@ -85,7 +86,9 @@ fn test_address_generation() {
     // But the managed wallet info might not have the account collection initialized
 
     // Test address generation - it may fail if accounts aren't initialized
-    let address1 = manager.get_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
+    let address1 = manager
+        .get_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, false)
+        .await;
     // This might fail with InvalidNetwork if the account collection isn't initialized
     // We'll check if it's the expected error
     if let Err(ref e) = address1 {
@@ -99,7 +102,9 @@ fn test_address_generation() {
         }
     }
 
-    let change = manager.get_change_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
+    let change = manager
+        .get_change_address(&wallet_id, 0, AccountTypePreference::BIP44, false)
+        .await;
     // Same check for change address
     if let Err(ref e) = change {
         match e {
@@ -109,11 +114,9 @@ fn test_address_generation() {
     }
 }
 
-#[test]
-fn test_utxo_management() {
-    // Unused imports removed - UTXOs are created by processing transactions
-
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+#[tokio::test]
+async fn test_utxo_management() {
+    let mut manager = WalletManager::<ManagedWalletState>::new(Network::Testnet);
 
     // Create a wallet first
     let wallet_result =
@@ -125,19 +128,19 @@ fn test_utxo_management() {
     // The WalletManager doesn't have an add_utxo method directly
     // Instead, UTXOs are created by processing transactions
 
-    let utxos = manager.wallet_utxos(&wallet_id);
+    let utxos = manager.wallet_utxos(&wallet_id).await;
     assert!(utxos.is_ok());
     // Initially empty
     assert_eq!(utxos.unwrap().len(), 0);
 
-    let balance = manager.get_wallet_balance(&wallet_id);
+    let balance = manager.get_wallet_balance(&wallet_id).await;
     assert!(balance.is_ok());
     assert_eq!(balance.unwrap().total(), 0);
 }
 
-#[test]
-fn test_balance_calculation() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+#[tokio::test]
+async fn test_balance_calculation() {
+    let mut manager = WalletManager::<ManagedWalletState>::new(Network::Testnet);
 
     // Create a wallet first
     let wallet_result =
@@ -149,7 +152,7 @@ fn test_balance_calculation() {
     // The WalletManager doesn't have add_utxo directly
 
     // Check wallet balance (should be 0 initially)
-    let balance = manager.get_wallet_balance(&wallet_id);
+    let balance = manager.get_wallet_balance(&wallet_id).await;
     assert!(balance.is_ok());
     assert_eq!(balance.unwrap().total(), 0);
 
@@ -158,16 +161,16 @@ fn test_balance_calculation() {
     assert_eq!(total, 0);
 }
 
-#[test]
-fn test_block_height_tracking() {
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+#[tokio::test]
+async fn test_block_height_tracking() {
+    let mut manager = WalletManager::<ManagedWalletState>::new(Network::Testnet);
 
     // Initial state
-    assert_eq!(manager.synced_height(), 0);
+    assert_eq!(WalletInterface::synced_height(&manager), 0);
 
     // Set height before adding wallets
-    manager.update_synced_height(1000);
-    assert_eq!(manager.synced_height(), 1000);
+    WalletInterface::update_synced_height(&mut manager, 1000).await;
+    assert_eq!(WalletInterface::synced_height(&manager), 1000);
 
     let mnemonic1 = Mnemonic::generate(12, Language::English).unwrap();
     let wallet_id1 = manager
@@ -192,45 +195,70 @@ fn test_block_height_tracking() {
     assert_eq!(manager.wallet_count(), 2);
 
     // Verify both wallets have synced_height of 0 initially
-    for wallet_info in manager.get_all_wallet_infos().values() {
-        assert_eq!(wallet_info.synced_height(), 0);
+    for arc in manager.get_all_wallet_arcs().values() {
+        let state = arc.read().await;
+        assert_eq!(state.synced_height(), 0);
     }
 
     // Update height - should propagate to all wallets
-    manager.update_synced_height(12345);
-    assert_eq!(manager.synced_height(), 12345);
+    WalletInterface::update_synced_height(&mut manager, 12345).await;
+    assert_eq!(WalletInterface::synced_height(&manager), 12345);
 
     // Verify all wallets got updated
-    let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
-    let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
-    assert_eq!(wallet_info1.synced_height(), 12345);
-    assert_eq!(wallet_info2.synced_height(), 12345);
+    {
+        let arc1 = manager.get_wallet_arc(&wallet_id1).unwrap();
+        let state1 = arc1.read().await;
+        assert_eq!(state1.synced_height(), 12345);
+    }
+    {
+        let arc2 = manager.get_wallet_arc(&wallet_id2).unwrap();
+        let state2 = arc2.read().await;
+        assert_eq!(state2.synced_height(), 12345);
+    }
 
     // Update again - verify subsequent updates work
-    manager.update_synced_height(20000);
-    assert_eq!(manager.synced_height(), 20000);
+    WalletInterface::update_synced_height(&mut manager, 20000).await;
+    assert_eq!(WalletInterface::synced_height(&manager), 20000);
 
-    for wallet_info in manager.get_all_wallet_infos().values() {
-        assert_eq!(wallet_info.synced_height(), 20000);
+    for arc in manager.get_all_wallet_arcs().values() {
+        let state = arc.read().await;
+        assert_eq!(state.synced_height(), 20000);
     }
 
     // Update wallets individually to different heights
-    let wallet_info1 = manager.get_wallet_info_mut(&wallet_id1).unwrap();
-    wallet_info1.update_synced_height(30000);
-
-    let wallet_info2 = manager.get_wallet_info_mut(&wallet_id2).unwrap();
-    wallet_info2.update_synced_height(25000);
+    {
+        let arc1 = manager.get_wallet_arc(&wallet_id1).unwrap();
+        let mut state1 = arc1.write().await;
+        state1.update_synced_height(30000);
+    }
+    {
+        let arc2 = manager.get_wallet_arc(&wallet_id2).unwrap();
+        let mut state2 = arc2.write().await;
+        state2.update_synced_height(25000);
+    }
 
     // Verify each wallet has its own synced_height
-    let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
-    let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
-    assert_eq!(wallet_info1.synced_height(), 30000);
-    assert_eq!(wallet_info2.synced_height(), 25000);
+    {
+        let arc1 = manager.get_wallet_arc(&wallet_id1).unwrap();
+        let state1 = arc1.read().await;
+        assert_eq!(state1.synced_height(), 30000);
+    }
+    {
+        let arc2 = manager.get_wallet_arc(&wallet_id2).unwrap();
+        let state2 = arc2.read().await;
+        assert_eq!(state2.synced_height(), 25000);
+    }
 
     // Manager update_height still syncs all wallets
-    manager.update_synced_height(40000);
-    let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
-    let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
-    assert_eq!(wallet_info1.synced_height(), 40000);
-    assert_eq!(wallet_info2.synced_height(), 40000);
+    WalletInterface::update_synced_height(&mut manager, 40000).await;
+    {
+        let arc1 = manager.get_wallet_arc(&wallet_id1).unwrap();
+        let state1 = arc1.read().await;
+        assert_eq!(state1.synced_height(), 40000);
+    }
+    {
+        let arc2 = manager.get_wallet_arc(&wallet_id2).unwrap();
+        let state2 = arc2.read().await;
+        assert_eq!(state2.synced_height(), 40000);
+    }
 }

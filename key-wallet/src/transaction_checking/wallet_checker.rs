@@ -12,14 +12,19 @@ use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
 
-/// Extension trait for ManagedWalletInfo to add transaction checking capabilities
+/// Extension trait for wallet state types that can check transactions.
+///
+/// Implementors combine wallet info (accounts, UTXOs, balances) with a
+/// reference to the immutable `Wallet` (keys, xpubs) so that gap-limit
+/// maintenance can derive new addresses during transaction processing.
+///
+/// The `wallet` parameter has been removed from the trait method because
+/// implementors of this trait (e.g. `ManagedWalletState`) own both the
+/// `Wallet` and the `ManagedWalletInfo` and can access the wallet
+/// internally.
 #[async_trait]
 pub trait WalletTransactionChecker {
-    /// Check if a transaction belongs to this wallet with optimized routing
-    /// Only checks relevant account types based on transaction type
-    ///
-    /// The mutable wallet reference is required to support address generation and potential
-    /// platform queries (e.g., for DashPay transactions).
+    /// Check if a transaction belongs to this wallet with optimized routing.
     ///
     /// If `update_state` is true, updates account state (transactions, UTXOs, balances, addresses).
     /// If `update_state` is false, only checks relevance without modifying state (useful for previews).
@@ -29,24 +34,28 @@ pub trait WalletTransactionChecker {
     /// and refresh once at the end via `update_synced_height`.
     ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
-    ///
     async fn check_core_transaction(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,
-        wallet: &mut Wallet,
         update_state: bool,
         update_balance: bool,
     ) -> TransactionCheckResult;
 }
 
-#[async_trait]
-impl WalletTransactionChecker for ManagedWalletInfo {
-    async fn check_core_transaction(
+impl ManagedWalletInfo {
+    /// Check a transaction against this wallet info using the provided wallet
+    /// for gap-limit maintenance (xpub lookups).
+    ///
+    /// This is the core implementation extracted from the former
+    /// `WalletTransactionChecker` impl on `ManagedWalletInfo`.
+    /// Composite types like `ManagedWalletState` call this method, passing
+    /// `&self.wallet`, and then persist any resulting changeset.
+    pub async fn check_core_transaction_with_wallet(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,
-        wallet: &mut Wallet,
+        wallet: &Wallet,
         update_state: bool,
         update_balance: bool,
     ) -> TransactionCheckResult {
@@ -321,7 +330,6 @@ mod tests {
     use crate::transaction_checking::BlockInfo;
     use crate::transaction_checking::TransactionType;
     use crate::wallet::initialization::WalletAccountCreationOptions;
-    use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use crate::wallet::{ManagedWalletInfo, Wallet};
     use crate::Network;
     use dashcore::blockdata::script::ScriptBuf;
@@ -352,9 +360,8 @@ mod tests {
 
         let context = TransactionContext::Mempool;
 
-        let mut wallet_mut = wallet;
         let result =
-            managed_wallet.check_core_transaction(&tx, context, &mut wallet_mut, true, true).await;
+            managed_wallet.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
         // Should return default result with no relevance
         assert!(!result.is_relevant);
@@ -433,7 +440,7 @@ mod tests {
 
             // This should exercise BIP32 account branch in the update logic
             let result =
-                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+                managed_wallet.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
             // Should be relevant since it's our address
             assert!(result.is_relevant);
@@ -468,7 +475,7 @@ mod tests {
 
             // This should exercise CoinJoin account branch in the update logic
             let result =
-                managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+                managed_wallet.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
             // Since this is not a coinjoin looking transaction, we should not pick up on it.
             assert!(!result.is_relevant);
@@ -481,7 +488,7 @@ mod tests {
     async fn test_wallet_checker_coinbase_immature_handling() {
         let TestWalletContext {
             mut managed_wallet,
-            mut wallet,
+            wallet,
             receive_address: address,
             ..
         } = TestWalletContext::new_random();
@@ -516,7 +523,7 @@ mod tests {
         ));
 
         let result = managed_wallet
-            .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
+            .check_core_transaction_with_wallet(&coinbase_tx, context, &wallet, true, true)
             .await;
         // Set synced_height to block where coinbase was received to trigger balance updates.
         managed_wallet.update_synced_height(block_height);
@@ -557,7 +564,7 @@ mod tests {
     async fn test_wallet_checker_detects_spend_only_transaction() {
         let TestWalletContext {
             mut managed_wallet,
-            mut wallet,
+            wallet,
             receive_address,
             ..
         } = TestWalletContext::new_random();
@@ -572,7 +579,7 @@ mod tests {
         ));
 
         let funding_result = managed_wallet
-            .check_core_transaction(&funding_tx, funding_context, &mut wallet, true, true)
+            .check_core_transaction_with_wallet(&funding_tx, funding_context, &wallet, true, true)
             .await;
         assert!(funding_result.is_relevant, "Funding transaction must be relevant");
         assert_eq!(funding_result.total_received, funding_value);
@@ -608,7 +615,7 @@ mod tests {
         ));
 
         let spend_result = managed_wallet
-            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
+            .check_core_transaction_with_wallet(&spend_tx, spend_context, &wallet, true, true)
             .await;
 
         assert!(spend_result.is_relevant, "Spend transaction should be detected");
@@ -636,7 +643,7 @@ mod tests {
     async fn test_wallet_checker_immature_transaction_flow() {
         let TestWalletContext {
             mut managed_wallet,
-            mut wallet,
+            wallet,
             receive_address: address,
             ..
         } = TestWalletContext::new_random();
@@ -671,7 +678,7 @@ mod tests {
 
         // Process the coinbase transaction
         let result = managed_wallet
-            .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
+            .check_core_transaction_with_wallet(&coinbase_tx, context, &wallet, true, true)
             .await;
         // Set synced_height to block where coinbase was received to trigger balance updates.
         managed_wallet.update_synced_height(block_height);
@@ -740,7 +747,7 @@ mod tests {
     async fn test_wallet_checker_mempool_context() {
         let TestWalletContext {
             mut managed_wallet,
-            mut wallet,
+            wallet,
             receive_address: address,
             ..
         } = TestWalletContext::new_random();
@@ -750,7 +757,7 @@ mod tests {
         let context = TransactionContext::Mempool;
 
         let result =
-            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+            managed_wallet.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -774,7 +781,7 @@ mod tests {
     async fn test_transaction_rescan_marks_as_existing() {
         let TestWalletContext {
             mut managed_wallet,
-            mut wallet,
+            wallet,
             receive_address: address,
             ..
         } = TestWalletContext::new_random();
@@ -788,7 +795,7 @@ mod tests {
 
         // First processing - should be marked as new
         let result1 =
-            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+            managed_wallet.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
         assert!(result1.is_relevant, "Transaction should be relevant");
         assert!(
@@ -813,7 +820,7 @@ mod tests {
 
         // Second processing (simulating rescan) - should be marked as existing
         let result2 =
-            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+            managed_wallet.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
         assert!(result2.is_relevant, "Transaction should still be relevant on rescan");
         assert!(
@@ -849,7 +856,7 @@ mod tests {
     async fn test_utxo_not_created_when_already_spent() {
         let TestWalletContext {
             mut managed_wallet,
-            mut wallet,
+            wallet,
             receive_address,
             xpub,
         } = TestWalletContext::new_random();
@@ -894,7 +901,7 @@ mod tests {
         ));
 
         let spend_result = managed_wallet
-            .check_core_transaction(&spend_tx, spend_context, &mut wallet, true, true)
+            .check_core_transaction_with_wallet(&spend_tx, spend_context, &wallet, true, true)
             .await;
 
         // Spending tx should be detected because of the change output
@@ -923,7 +930,7 @@ mod tests {
         ));
 
         let fund_result = managed_wallet
-            .check_core_transaction(&funding_tx, fund_context, &mut wallet, true, true)
+            .check_core_transaction_with_wallet(&funding_tx, fund_context, &wallet, true, true)
             .await;
 
         // Funding tx should be detected
@@ -1654,7 +1661,7 @@ mod tests {
             1_700_000_000,
         ));
         let result =
-            managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+            managed_wallet.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
         assert!(result.is_relevant, "CoinJoin tx should be relevant");
 
         let account = managed_wallet.first_coinjoin_managed_account().expect("coinjoin account");

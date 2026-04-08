@@ -135,8 +135,8 @@ impl<W: WalletInterface> MempoolManager<W> {
         requests: &RequestSender,
     ) -> SyncResult<()> {
         let wallet = self.wallet.read().await;
-        let addresses = wallet.monitored_addresses();
-        let outpoints = wallet.watched_outpoints();
+        let addresses = wallet.monitored_addresses().await;
+        let outpoints = wallet.watched_outpoints().await;
         drop(wallet);
 
         if addresses.is_empty() && outpoints.is_empty() {
@@ -379,7 +379,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         drop(state);
         if marked {
             let mut wallet = self.wallet.write().await;
-            wallet.process_instant_send_lock(*txid);
+            wallet.process_instant_send_lock(*txid).await;
         }
     }
 

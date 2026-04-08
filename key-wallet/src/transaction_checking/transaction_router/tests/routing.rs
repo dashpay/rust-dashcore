@@ -8,7 +8,7 @@ use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+use crate::transaction_checking::TransactionContext;
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
@@ -28,7 +28,7 @@ fn test_standard_transaction_routing() {
 async fn test_transaction_routing_to_bip44_account() {
     let TestWalletContext {
         managed_wallet: mut managed_wallet_info,
-        mut wallet,
+        wallet,
         receive_address: address,
         ..
     } = TestWalletContext::new_random();
@@ -48,10 +48,10 @@ async fn test_transaction_routing_to_bip44_account() {
 
     // Check the transaction using the managed wallet info
     let result = managed_wallet_info
-        .check_core_transaction(
+        .check_core_transaction_with_wallet(
             &tx,
             context,
-            &mut wallet,
+            &wallet,
             true, // update state
             true, // update balance
         )
@@ -112,7 +112,7 @@ async fn test_transaction_routing_to_bip32_account() {
 
     // Check with update_state = false
     let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, false, true).await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Transaction should be relevant to the BIP32 account");
@@ -132,10 +132,10 @@ async fn test_transaction_routing_to_bip32_account() {
 
     // Now check with update_state = true
     let result = managed_wallet_info
-        .check_core_transaction(
+        .check_core_transaction_with_wallet(
             &tx,
             context,
-            &mut wallet,
+            &wallet,
             true, // update state
             true, // update balance
         )
@@ -227,7 +227,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
     let context = TransactionContext::InBlock(test_block_info(100000));
 
     let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
     // This test may fail if CoinJoin detection is not properly implemented
     println!(
@@ -325,10 +325,10 @@ async fn test_transaction_affects_multiple_accounts() {
 
     // Check the transaction
     let result = managed_wallet_info
-        .check_core_transaction(
+        .check_core_transaction_with_wallet(
             &tx,
             context,
-            &mut wallet,
+            &wallet,
             true, // update state
             true, // update balance
         )
@@ -348,7 +348,7 @@ async fn test_transaction_affects_multiple_accounts() {
 
     // Test with update_state = false to ensure state isn't modified
     let result2 =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, false, true).await;
 
     assert_eq!(
         result2.total_received, result.total_received,

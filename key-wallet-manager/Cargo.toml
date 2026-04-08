@@ -12,12 +12,15 @@ default = []
 parallel-filters = ["dep:rayon"]
 bincode = ["key-wallet/bincode", "dep:bincode"]
 test-utils = ["key-wallet/test-utils"]
+bls = ["key-wallet/bls"]
+eddsa = ["key-wallet/eddsa"]
 
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false }
 dashcore = { path = "../dash" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
+tracing = "0.1"
 zeroize = { version = "1.8", features = ["derive"] }
 rayon = { version = "1.11", optional = true }
 bincode = { version = "2.0.1", optional = true }

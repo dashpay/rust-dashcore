@@ -11,7 +11,7 @@ use key_wallet::transaction_checking::BlockInfo;
 
 #[tokio::test]
 async fn test_mempool_to_confirmed_event_flow() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xaa);
 
@@ -177,7 +177,7 @@ async fn test_mempool_after_instantsend_is_suppressed() {
 
 #[tokio::test]
 async fn test_mempool_tx_emits_balance_updated() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf1);
 
@@ -204,7 +204,7 @@ async fn test_mempool_tx_emits_balance_updated() {
 
 #[tokio::test]
 async fn test_instantsend_tx_emits_balance_updated_spendable() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf2);
 
@@ -231,7 +231,7 @@ async fn test_instantsend_tx_emits_balance_updated_spendable() {
 
 #[tokio::test]
 async fn test_mempool_to_instantsend_transitions_balance() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf3);
 
@@ -253,7 +253,7 @@ async fn test_mempool_to_instantsend_transitions_balance() {
     );
 
     // IS lock: balance should move from unconfirmed to spendable
-    manager.process_instant_send_lock(tx.txid());
+    WalletInterface::process_instant_send_lock(&mut manager, tx.txid()).await;
     let events = drain_events(&mut rx);
     assert!(
         events.iter().any(|e| matches!(
@@ -276,29 +276,37 @@ async fn test_mempool_to_instantsend_transitions_balance() {
 
 #[tokio::test]
 async fn test_process_instant_send_lock_for_unknown_txid() {
-    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
 
     let unknown_txid = dashcore::Txid::from_byte_array([0xee; 32]);
-    let balance_before = manager.wallet_infos.get(&wallet_id).unwrap().balance();
+    let balance_before = {
+        let arc = manager.get_wallet_arc(&wallet_id).unwrap();
+        let guard = arc.try_read().unwrap();
+        guard.balance()
+    };
 
-    manager.process_instant_send_lock(unknown_txid);
+    WalletInterface::process_instant_send_lock(&mut manager, unknown_txid).await;
 
     assert_no_events(&mut rx);
-    let balance_after = manager.wallet_infos.get(&wallet_id).unwrap().balance();
+    let balance_after = {
+        let arc = manager.get_wallet_arc(&wallet_id).unwrap();
+        let guard = arc.try_read().unwrap();
+        guard.balance()
+    };
     assert_eq!(balance_before, balance_after);
 }
 
 #[tokio::test]
 async fn test_process_instant_send_lock_dedup() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let tx = create_tx_paying_to(&addr, 0xe1);
 
     manager.process_mempool_transaction(&tx, false).await;
     let mut rx = manager.subscribe_events();
 
     // First IS lock should emit events
-    manager.process_instant_send_lock(tx.txid());
+    WalletInterface::process_instant_send_lock(&mut manager, tx.txid()).await;
     let events = drain_events(&mut rx);
     assert!(
         events.iter().any(|e| matches!(
@@ -321,13 +329,13 @@ async fn test_process_instant_send_lock_dedup() {
     );
 
     // Second IS lock should be a no-op
-    manager.process_instant_send_lock(tx.txid());
+    WalletInterface::process_instant_send_lock(&mut manager, tx.txid()).await;
     assert_no_events(&mut rx);
 }
 
 #[tokio::test]
 async fn test_process_instant_send_lock_after_block_confirmation() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let tx = create_tx_paying_to(&addr, 0xe2);
 
     // Process as IS mempool tx, then confirm in block
@@ -341,11 +349,11 @@ async fn test_process_instant_send_lock_after_block_confirmation() {
 
     // IS lock after block confirmation is a no-op (already tracked via mempool IS)
     let mut rx = manager.subscribe_events();
-    manager.process_instant_send_lock(tx.txid());
+    WalletInterface::process_instant_send_lock(&mut manager, tx.txid()).await;
     assert_no_events(&mut rx);
 
     // Confirm height preserved
-    let history = manager.wallet_transaction_history(&wallet_id).unwrap();
+    let history = manager.wallet_transaction_history(&wallet_id).await.unwrap();
     let records: Vec<_> = history.iter().filter(|r| r.txid == tx.txid()).collect();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].height(), Some(500));
@@ -353,7 +361,7 @@ async fn test_process_instant_send_lock_after_block_confirmation() {
 
 #[tokio::test]
 async fn test_mixed_instantsend_paths_no_duplicate_events() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf0);
 
@@ -362,7 +370,7 @@ async fn test_mixed_instantsend_paths_no_duplicate_events() {
     drain_events(&mut rx);
 
     // IS lock via process_instant_send_lock (network IS lock message)
-    manager.process_instant_send_lock(tx.txid());
+    WalletInterface::process_instant_send_lock(&mut manager, tx.txid()).await;
     let events = drain_events(&mut rx);
     assert!(
         events.iter().any(|e| matches!(
@@ -387,7 +395,7 @@ async fn test_mixed_instantsend_paths_no_duplicate_events() {
 
 #[tokio::test]
 async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf1);
 
@@ -414,7 +422,7 @@ async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
     );
 
     // Same IS lock via process_instant_send_lock — should be suppressed
-    manager.process_instant_send_lock(tx.txid());
+    WalletInterface::process_instant_send_lock(&mut manager, tx.txid()).await;
     assert_no_events(&mut rx);
 }
 
@@ -424,7 +432,7 @@ async fn test_process_block_emits_events() {
     use dashcore::hashes::Hash;
     use dashcore::{BlockHash, CompactTarget, TxMerkleNode};
 
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xe3);
 
@@ -486,7 +494,7 @@ async fn test_process_block_emits_events() {
 async fn test_irrelevant_mempool_tx_emits_no_events() {
     use dashcore::{PublicKey, ScriptBuf};
 
-    let (mut manager, _wallet_id, _addr) = setup_manager_with_wallet();
+    let (mut manager, _wallet_id, _addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
 
     // Create a tx paying to a random script that doesn't match any wallet address
@@ -540,7 +548,7 @@ async fn test_instantsend_to_chainlocked_event_flow() {
 
 #[tokio::test]
 async fn test_mempool_to_block_to_chainlocked_event_flow() {
-    let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, _wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xc4);
 
@@ -590,7 +598,7 @@ async fn test_mempool_to_block_to_chainlocked_event_flow() {
 
 #[tokio::test]
 async fn test_chainlocked_block_event_flow() {
-    let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, _wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xc1);
 
@@ -614,7 +622,7 @@ async fn test_chainlocked_block_event_flow() {
 
 #[tokio::test]
 async fn test_check_transaction_dry_run_does_not_persist_state() {
-    let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, _wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xd1);
 

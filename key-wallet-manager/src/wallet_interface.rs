@@ -68,11 +68,11 @@ pub trait WalletInterface: Send + Sync + 'static {
     ) -> MempoolTransactionResult;
 
     /// Get all addresses the wallet is monitoring for incoming transactions
-    fn monitored_addresses(&self) -> Vec<Address>;
+    async fn monitored_addresses(&self) -> Vec<Address>;
 
     /// Get all outpoints the wallet is watching (unspent outputs).
     /// Used for bloom filter construction to detect spends of our UTXOs.
-    fn watched_outpoints(&self) -> Vec<OutPoint>;
+    async fn watched_outpoints(&self) -> Vec<OutPoint>;
 
     /// Return the wallet's per-transaction net change and involved addresses if known.
     /// Returns (net_amount, addresses) where net_amount is received - sent in satoshis.
@@ -92,30 +92,31 @@ pub trait WalletInterface: Send + Sync + 'static {
     }
 
     /// Return the last fully processed height of the wallet.
+    /// Reads a plain field on WalletManager — no per-wallet lock needed.
     fn synced_height(&self) -> CoreBlockHeight;
 
-    /// Update the wallet's synced height. This also triggers balance updates.
-    fn update_synced_height(&mut self, height: CoreBlockHeight);
+    /// Update the wallet's synced height. This also triggers balance updates
+    /// on each wallet (requires per-wallet locks, hence async).
+    async fn update_synced_height(&mut self, height: CoreBlockHeight);
 
     /// Return the height at which filter scanning was last committed.
-    /// Defaults to `synced_height()` for implementations that don't separate these concepts.
-    // TODO: This can probably somehow be combined with synced_height().
+    /// Reads a plain field on WalletManager — no per-wallet lock needed.
     fn filter_committed_height(&self) -> CoreBlockHeight {
         self.synced_height()
     }
 
     /// Update the filter committed height. Call when a height is fully processed
     /// (including any rescans for newly discovered addresses).
-    fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
+    async fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
         if height > self.synced_height() {
-            self.update_synced_height(height);
+            self.update_synced_height(height).await;
         }
     }
 
     /// Return a revision counter that increments whenever the set of monitored
     /// addresses or watched outpoints changes. The mempool manager uses this to
     /// detect when its bloom filter is stale without requiring an external signal.
-    fn monitor_revision(&self) -> u64 {
+    async fn monitor_revision(&self) -> u64 {
         0
     }
 
@@ -124,7 +125,7 @@ pub trait WalletInterface: Send + Sync + 'static {
 
     /// Process an InstantSend lock for a transaction already in the wallet.
     /// Marks UTXOs as IS-locked, emits status change and balance update events.
-    fn process_instant_send_lock(&mut self, _txid: Txid) {}
+    async fn process_instant_send_lock(&mut self, _txid: Txid) {}
 
     /// Provide a human-readable description of the wallet implementation.
     ///

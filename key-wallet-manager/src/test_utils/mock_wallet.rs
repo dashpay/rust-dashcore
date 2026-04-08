@@ -152,11 +152,11 @@ impl WalletInterface for MockWallet {
         map.get(&tx.txid()).cloned()
     }
 
-    fn monitored_addresses(&self) -> Vec<Address> {
+    async fn monitored_addresses(&self) -> Vec<Address> {
         self.addresses.clone()
     }
 
-    fn watched_outpoints(&self) -> Vec<OutPoint> {
+    async fn watched_outpoints(&self) -> Vec<OutPoint> {
         self.outpoints.clone()
     }
 
@@ -164,11 +164,11 @@ impl WalletInterface for MockWallet {
         self.synced_height
     }
 
-    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+    async fn update_synced_height(&mut self, height: CoreBlockHeight) {
         self.synced_height = height;
     }
 
-    fn monitor_revision(&self) -> u64 {
+    async fn monitor_revision(&self) -> u64 {
         self.monitor_revision
     }
 
@@ -176,7 +176,7 @@ impl WalletInterface for MockWallet {
         self.event_sender.subscribe()
     }
 
-    fn process_instant_send_lock(&mut self, txid: Txid) {
+    async fn process_instant_send_lock(&mut self, txid: Txid) {
         let mut changes =
             self.status_changes.try_lock().expect("status_changes lock contention in test helper");
         changes.push((txid, TransactionContext::InstantSend));
@@ -219,11 +219,11 @@ impl WalletInterface for NonMatchingMockWallet {
         MempoolTransactionResult::default()
     }
 
-    fn monitored_addresses(&self) -> Vec<Address> {
+    async fn monitored_addresses(&self) -> Vec<Address> {
         Vec::new()
     }
 
-    fn watched_outpoints(&self) -> Vec<OutPoint> {
+    async fn watched_outpoints(&self) -> Vec<OutPoint> {
         Vec::new()
     }
 
@@ -231,7 +231,7 @@ impl WalletInterface for NonMatchingMockWallet {
         self.synced_height
     }
 
-    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+    async fn update_synced_height(&mut self, height: CoreBlockHeight) {
         self.synced_height = height;
     }
 

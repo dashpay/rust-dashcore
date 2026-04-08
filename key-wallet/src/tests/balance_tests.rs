@@ -1,7 +1,6 @@
 //! Tests for update_balance() UTXO categorization.
 
 use crate::managed_account::ManagedCoreAccount;
-use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{Utxo, WalletCoreBalance};
 

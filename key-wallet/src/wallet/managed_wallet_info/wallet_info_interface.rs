@@ -5,11 +5,9 @@
 use std::collections::BTreeSet;
 
 use super::managed_account_operations::ManagedAccountOperations;
-use crate::account::ManagedAccountTrait;
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::TransactionRecord;
-use crate::wallet::ManagedWalletInfo;
 use crate::changeset::UtxoChangeSet;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
 
@@ -25,6 +23,12 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Create a wallet info from an existing wallet with proper account initialization
     /// Default implementation just uses with_name (backward compatibility)
     fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self;
+
+    /// Get a reference to the underlying Wallet
+    fn wallet(&self) -> &Wallet;
+
+    /// Get a mutable reference to the underlying Wallet
+    fn wallet_mut(&mut self) -> &mut Wallet;
 
     /// Get the wallet's network
     fn network(&self) -> Network;
@@ -103,168 +107,5 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Increments whenever the monitored address set changes.
     fn monitor_revision(&self) -> u64 {
         0
-    }
-}
-
-/// Default implementation for ManagedWalletInfo
-impl WalletInfoInterface for ManagedWalletInfo {
-    fn from_wallet(wallet: &Wallet) -> Self {
-        Self::from_wallet_with_name(wallet, String::new())
-    }
-
-    fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self {
-        Self::from_wallet_with_name(wallet, name)
-    }
-
-    fn network(&self) -> Network {
-        self.network
-    }
-
-    fn wallet_id(&self) -> [u8; 32] {
-        self.wallet_id
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-
-    fn set_name(&mut self, name: String) {
-        self.name = Some(name);
-    }
-
-    fn description(&self) -> Option<&str> {
-        self.description.as_deref()
-    }
-
-    fn set_description(&mut self, description: Option<String>) {
-        self.description = description;
-    }
-
-    fn birth_height(&self) -> CoreBlockHeight {
-        self.metadata.birth_height
-    }
-
-    fn set_birth_height(&mut self, height: CoreBlockHeight) {
-        self.metadata.birth_height = height;
-    }
-
-    fn synced_height(&self) -> CoreBlockHeight {
-        self.metadata.synced_height
-    }
-
-    fn first_loaded_at(&self) -> u64 {
-        self.metadata.first_loaded_at
-    }
-
-    fn set_first_loaded_at(&mut self, timestamp: u64) {
-        self.metadata.first_loaded_at = timestamp;
-    }
-
-    fn update_last_synced(&mut self, timestamp: u64) {
-        self.metadata.last_synced = Some(timestamp);
-    }
-
-    fn monitored_addresses(&self) -> Vec<DashAddress> {
-        let mut addresses = Vec::new();
-        for account in self.accounts.all_accounts() {
-            addresses.extend(account.all_addresses());
-        }
-        addresses
-    }
-
-    fn utxos(&self) -> BTreeSet<&Utxo> {
-        let mut utxos = BTreeSet::new();
-        for account in self.accounts.all_accounts() {
-            utxos.extend(account.utxos.values());
-        }
-        utxos
-    }
-    fn get_spendable_utxos(&self) -> BTreeSet<&Utxo> {
-        self.utxos().into_iter().filter(|utxo| utxo.is_spendable(self.synced_height())).collect()
-    }
-
-    fn balance(&self) -> WalletCoreBalance {
-        self.balance
-    }
-
-    fn update_balance(&mut self) {
-        let mut balance = WalletCoreBalance::default();
-        let synced_height = self.synced_height();
-        for account in self.accounts.all_accounts_mut() {
-            let _balance_cs = account.update_balance(synced_height);
-            balance += *account.balance();
-        }
-        self.balance = balance;
-    }
-
-    fn transaction_history(&self) -> Vec<&TransactionRecord> {
-        let mut transactions = Vec::new();
-        for account in self.accounts.all_accounts() {
-            transactions.extend(account.transactions.values());
-        }
-        transactions
-    }
-
-    fn accounts_mut(&mut self) -> &mut ManagedAccountCollection {
-        &mut self.accounts
-    }
-
-    fn accounts(&self) -> &ManagedAccountCollection {
-        &self.accounts
-    }
-
-    fn immature_transactions(&self) -> Vec<Transaction> {
-        let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
-
-        // Find txids of immature coinbase UTXOs
-        for account in self.accounts.all_accounts() {
-            for utxo in account.utxos.values() {
-                if utxo.is_coinbase && !utxo.is_mature(self.synced_height()) {
-                    immature_txids.insert(utxo.outpoint.txid);
-                }
-            }
-        }
-
-        // Get the actual transactions
-        let mut transactions = Vec::new();
-        for account in self.accounts.all_accounts() {
-            for (txid, record) in &account.transactions {
-                if immature_txids.contains(txid) {
-                    transactions.push(record.transaction.clone());
-                }
-            }
-        }
-        transactions
-    }
-
-    fn update_synced_height(&mut self, current_height: u32) {
-        self.metadata.synced_height = current_height;
-        // Update cached balance
-        self.update_balance();
-    }
-
-    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> (bool, UtxoChangeSet) {
-        use crate::changeset::Merge;
-
-        if !self.instant_send_locks.insert(*txid) {
-            return (false, UtxoChangeSet::default());
-        }
-        let mut any_changed = false;
-        let mut combined_utxo_cs = UtxoChangeSet::default();
-        for account in self.accounts.all_accounts_mut() {
-            let (changed, utxo_cs) = account.mark_utxos_instant_send(txid);
-            if changed {
-                any_changed = true;
-            }
-            combined_utxo_cs.merge(utxo_cs);
-        }
-        if any_changed {
-            self.update_balance();
-        }
-        (any_changed, combined_utxo_cs)
-    }
-
-    fn monitor_revision(&self) -> u64 {
-        self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
     }
 }

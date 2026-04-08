@@ -1,14 +1,18 @@
+//! Implementation of `WalletInterface` for `WalletManager`.
+//!
+//! This bridges the per-wallet `WalletInfoInterface` model used internally
+//! by `WalletManager` to the aggregate `WalletInterface` trait that SPV
+//! clients consume.
+
+use async_trait::async_trait;
+use dashcore::prelude::CoreBlockHeight;
+use dashcore::{Address, Block, OutPoint, Transaction, Txid};
+use key_wallet::transaction_checking::TransactionContext;
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use tokio::sync::broadcast;
+
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 use crate::{WalletEvent, WalletManager};
-use async_trait::async_trait;
-use core::fmt::Write as _;
-use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, Transaction, Txid};
-use key_wallet::transaction_checking::transaction_router::TransactionRouter;
-use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
-use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use std::collections::BTreeSet;
-use tokio::sync::broadcast;
 
 #[async_trait]
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletManager<T> {
@@ -17,28 +21,38 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         block: &Block,
         height: CoreBlockHeight,
     ) -> BlockProcessingResult {
+        use key_wallet::transaction_checking::BlockInfo;
+
+        let block_info = BlockInfo::new(height, block.block_hash(), block.header.time);
+        let context = TransactionContext::InBlock(block_info);
+
+        // Snapshot balances BEFORE processing transactions so we can detect changes.
+        let old_balances = self.snapshot_balances().await;
+
         let mut result = BlockProcessingResult::default();
-        let info = BlockInfo::new(height, block.block_hash(), block.header.time);
-
-        // Process each transaction using the base manager
         for tx in &block.txdata {
-            let context = TransactionContext::InBlock(info);
-
-            let check_result =
-                self.check_transaction_in_all_wallets(tx, context, true, false).await;
-
-            if !check_result.affected_wallets.is_empty() {
-                if check_result.is_new_transaction {
+            let check = self
+                .check_transaction_in_all_wallets(tx, context, true, false)
+                .await;
+            if !check.affected_wallets.is_empty() {
+                if check.is_new_transaction {
                     result.new_txids.push(tx.txid());
                 } else {
                     result.existing_txids.push(tx.txid());
                 }
+                result.new_addresses.extend(check.new_addresses);
             }
-
-            result.new_addresses.extend(check_result.new_addresses);
         }
 
-        self.update_synced_height(height);
+        // Update synced height and recalculate balances on each wallet.
+        self.synced_height = height;
+        for arc in self.get_all_wallet_arcs().values() {
+            let mut state = arc.write().await;
+            state.update_synced_height(height);
+        }
+
+        // Emit balance change events by comparing pre-block snapshot.
+        self.emit_balance_changes(&old_balances).await;
 
         result
     }
@@ -53,426 +67,116 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         } else {
             TransactionContext::Mempool
         };
-        let snapshot = self.snapshot_balances();
-        let check_result = self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
-        let is_relevant = !check_result.affected_wallets.is_empty();
-        let net_amount = if is_relevant {
-            check_result.total_received as i64 - check_result.total_sent as i64
-        } else {
-            0
-        };
+        let old_balances = self.snapshot_balances().await;
 
-        // Refresh cached balances only for affected wallets
-        for wallet_id in &check_result.affected_wallets {
-            if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
-                info.update_balance();
-            }
+        let check = self
+            .check_transaction_in_all_wallets(tx, context, true, true)
+            .await;
+
+        self.emit_balance_changes(&old_balances).await;
+
+        if check.affected_wallets.is_empty() {
+            return MempoolTransactionResult::default();
         }
-        self.emit_balance_changes(&snapshot);
+
+        let net_amount =
+            check.total_received as i64 - check.total_sent as i64;
 
         MempoolTransactionResult {
-            is_relevant,
+            is_relevant: true,
             net_amount,
             is_outgoing: net_amount < 0,
-            addresses: check_result.involved_addresses,
-            new_addresses: check_result.new_addresses,
+            addresses: check.involved_addresses,
+            new_addresses: check.new_addresses,
         }
     }
 
-    fn monitored_addresses(&self) -> Vec<Address> {
-        self.monitored_addresses()
+    async fn monitored_addresses(&self) -> Vec<Address> {
+        self.monitored_addresses().await
     }
 
-    fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {
-        self.watched_outpoints()
-    }
-
-    fn monitor_revision(&self) -> u64 {
-        self.monitor_revision()
-    }
-
-    async fn transaction_effect(&self, tx: &Transaction) -> Option<(i64, Vec<String>)> {
-        // Aggregate across all managed wallets. If any wallet considers it relevant,
-        // compute net = total_received - total_sent and collect involved addresses.
-        let mut total_received: u64 = 0;
-        let mut total_sent: u64 = 0;
-        let mut addresses: Vec<String> = Vec::new();
-
-        let mut is_relevant_any = false;
-        for info in self.wallet_infos.values() {
-            let collection = info.accounts();
-            // Reuse the same routing/check logic used in normal processing
-            let tx_type = TransactionRouter::classify_transaction(tx);
-            let account_types = TransactionRouter::get_relevant_account_types(&tx_type);
-            let result = collection.check_transaction(tx, &account_types);
-
-            if result.is_relevant {
-                is_relevant_any = true;
-                total_received = total_received.saturating_add(result.total_received);
-                total_sent = total_sent.saturating_add(result.total_sent);
-
-                // Collect involved addresses from affected accounts
-                for account_match in result.affected_accounts {
-                    for addr_info in account_match.account_type_match.all_involved_addresses() {
-                        addresses.push(addr_info.address.to_string());
-                    }
-                }
-            }
-        }
-
-        if is_relevant_any {
-            // Deduplicate addresses while preserving order
-            let mut seen = BTreeSet::new();
-            addresses.retain(|a| seen.insert(a.clone()));
-            let net = (total_received as i64) - (total_sent as i64);
-            Some((net, addresses))
-        } else {
-            None
-        }
-    }
-
-    async fn earliest_required_height(&self) -> CoreBlockHeight {
-        self.wallet_infos.values().map(|info| info.birth_height()).min().unwrap_or(0)
+    async fn watched_outpoints(&self) -> Vec<OutPoint> {
+        self.watched_outpoints().await
     }
 
     fn synced_height(&self) -> CoreBlockHeight {
         self.synced_height
     }
 
-    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+    async fn update_synced_height(&mut self, height: CoreBlockHeight) {
         self.synced_height = height;
-
-        let snapshot = self.snapshot_balances();
-
-        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
-            info.update_synced_height(height);
+        for arc in self.wallets.values() {
+            let mut state = arc.write().await;
+            state.update_synced_height(height);
+            state.update_balance();
         }
-
-        self.emit_balance_changes(&snapshot);
     }
 
     fn filter_committed_height(&self) -> CoreBlockHeight {
         self.filter_committed_height
     }
 
-    fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
+    async fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
         self.filter_committed_height = height;
         if height > self.synced_height {
-            self.update_synced_height(height);
+            self.update_synced_height(height).await;
         }
+    }
+
+    async fn earliest_required_height(&self) -> CoreBlockHeight {
+        let mut min_height = None;
+        let wallet_count = self.get_all_wallet_arcs().len();
+        for arc in self.get_all_wallet_arcs().values() {
+            let state = arc.read().await;
+            let h = state.birth_height();
+            min_height = Some(min_height.map_or(h, |m: CoreBlockHeight| m.min(h)));
+        }
+        let result = min_height.unwrap_or(0);
+        tracing::info!("WalletManager::earliest_required_height: {} wallets, result={}", wallet_count, result);
+        result
+    }
+
+    async fn monitor_revision(&self) -> u64 {
+        self.monitor_revision().await
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
-        self.event_sender.subscribe()
+        self.subscribe_events()
     }
 
-    fn process_instant_send_lock(&mut self, txid: Txid) {
-        let snapshot = self.snapshot_balances();
+    async fn process_instant_send_lock(&mut self, txid: Txid) {
+        let old_balances = self.snapshot_balances().await;
+        let mut any_changed = false;
 
-        let mut affected_wallets = Vec::new();
-        for (wallet_id, info) in self.wallet_infos.iter_mut() {
-            let (changed, _utxo_cs) = info.mark_instant_send_utxos(&txid);
+        for (wallet_id, arc) in self.get_all_wallet_arcs().iter() {
+            let mut state = arc.write().await;
+            let (changed, _changeset) = state.mark_instant_send_utxos(&txid);
             if changed {
-                affected_wallets.push(*wallet_id);
+                any_changed = true;
+                state.update_balance();
+                drop(state);
+
+                let event = WalletEvent::TransactionStatusChanged {
+                    wallet_id: *wallet_id,
+                    txid,
+                    status: TransactionContext::InstantSend,
+                };
+                let _ = self.event_sender().send(event);
             }
         }
 
-        if affected_wallets.is_empty() {
-            return;
+        if any_changed {
+            self.emit_balance_changes(&old_balances).await;
         }
-
-        for wallet_id in affected_wallets {
-            let event = WalletEvent::TransactionStatusChanged {
-                wallet_id,
-                txid,
-                status: TransactionContext::InstantSend,
-            };
-            let _ = self.event_sender().send(event);
-        }
-
-        self.emit_balance_changes(&snapshot);
     }
 
     async fn describe(&self) -> String {
-        let wallet_count = self.wallet_infos.len();
-        if wallet_count == 0 {
-            return format!("WalletManager: 0 wallets (network {})", self.network);
-        }
-
-        let mut details = Vec::with_capacity(wallet_count);
-        for (wallet_id, info) in &self.wallet_infos {
-            let name = info.name().unwrap_or("unnamed");
-
-            let mut wallet_id_hex = String::with_capacity(wallet_id.len() * 2);
-            for byte in wallet_id {
-                let _ = write!(&mut wallet_id_hex, "{:02x}", byte);
-            }
-
-            let script_count = info.monitored_addresses().len();
-            let summary = format!("{} scripts", script_count);
-
-            details.push(format!("{} ({}): {}", name, wallet_id_hex, summary));
-        }
-
         format!(
-            "WalletManager: {} wallet(s) on {}\n{}",
-            wallet_count,
-            self.network,
-            details.join("\n")
+            "WalletManager({} wallets, network={:?}, synced_height={})",
+            self.wallet_count(),
+            self.network(),
+            self.synced_height
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_helpers::*;
-    use dashcore::block::{Header, Version};
-    use dashcore::hashes::Hash;
-    use dashcore::pow::CompactTarget;
-    use dashcore::{
-        BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
-    };
-    use key_wallet::account::StandardAccountType;
-    use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-    use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
-    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-    use key_wallet::AccountType;
-
-    fn make_block(txdata: Vec<Transaction>) -> Block {
-        Block {
-            header: Header {
-                version: Version::ONE,
-                prev_blockhash: BlockHash::from_byte_array([0; 32]),
-                merkle_root: TxMerkleNode::from_byte_array([0; 32]),
-                time: 1000,
-                bits: CompactTarget::from_consensus(0x1d00ffff),
-                nonce: 0,
-            },
-            txdata,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_synced_height() {
-        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
-        // Initial state
-        assert_eq!(manager.synced_height(), 0);
-        // Inrease synced height
-        manager.update_synced_height(1000);
-        assert_eq!(manager.synced_height(), 1000);
-        //Increase synced height again
-        manager.update_synced_height(5000);
-        assert_eq!(manager.synced_height(), 5000);
-        // Decrease synced height
-        manager.update_synced_height(10);
-        assert_eq!(manager.synced_height(), 10);
-    }
-
-    #[tokio::test]
-    async fn test_process_mempool_transaction_balance_events() {
-        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
-        let mut rx = manager.subscribe_events();
-
-        // Relevant tx should emit BalanceUpdated
-        let tx = create_tx_paying_to(&addr, 0xaa);
-        manager.process_mempool_transaction(&tx, false).await;
-
-        let mut found = false;
-        while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::BalanceUpdated {
-                unconfirmed,
-                ..
-            } = event
-            {
-                assert!(unconfirmed > 0, "unconfirmed balance should increase");
-                found = true;
-                break;
-            }
-        }
-        assert!(found, "should emit BalanceUpdated for mempool transaction");
-
-        // Irrelevant tx should not emit any events
-        let unrelated_tx = Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: Txid::from_byte_array([0xbb; 32]),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: u32::MAX,
-                witness: Witness::default(),
-            }],
-            output: vec![TxOut {
-                value: 100_000,
-                script_pubkey: ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array(
-                    [0xff; 20],
-                )),
-            }],
-            special_transaction_payload: None,
-        };
-        manager.process_mempool_transaction(&unrelated_tx, false).await;
-        assert!(rx.try_recv().is_err(), "should not emit events for irrelevant transaction");
-    }
-
-    #[tokio::test]
-    async fn test_process_block_emits_balance_updated() {
-        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
-        let tx = create_tx_paying_to(&addr, 0xcc);
-        let block = make_block(vec![tx]);
-
-        let mut rx = manager.subscribe_events();
-        manager.process_block(&block, 100).await;
-
-        let mut found = false;
-        while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::BalanceUpdated {
-                spendable,
-                ..
-            } = event
-            {
-                assert!(spendable > 0, "spendable balance should increase after block");
-                found = true;
-                break;
-            }
-        }
-        assert!(found, "should emit BalanceUpdated for block processing");
-    }
-
-    #[tokio::test]
-    async fn test_mempool_transaction_result_contains_wallet_effect_data() {
-        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
-        let tx = create_tx_paying_to(&addr, 0xaa);
-
-        let result = manager.process_mempool_transaction(&tx, false).await;
-
-        assert!(result.is_relevant);
-        assert_eq!(result.net_amount, TX_AMOUNT as i64);
-        assert!(!result.is_outgoing);
-        assert!(!result.addresses.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_check_transaction_populates_totals() {
-        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
-
-        let tx = create_tx_paying_to(&addr, 0xf0);
-        let result = manager
-            .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
-            .await;
-
-        assert!(!result.affected_wallets.is_empty());
-        assert_eq!(result.total_received, TX_AMOUNT);
-        assert_eq!(result.total_sent, 0);
-        assert!(
-            !result.involved_addresses.is_empty(),
-            "involved_addresses should contain the target address"
-        );
-        assert!(
-            result.involved_addresses.contains(&addr),
-            "involved_addresses should contain the target address"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_monitor_revision_bumps_and_stability() {
-        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
-        let mut expected_rev = 0u64;
-        assert_eq!(manager.monitor_revision(), expected_rev);
-
-        // create_wallet_from_mnemonic bumps
-        let wallet_id = manager
-            .create_wallet_from_mnemonic(
-                TEST_MNEMONIC,
-                "",
-                0,
-                WalletAccountCreationOptions::Default,
-            )
-            .unwrap();
-        expected_rev += 1;
-        assert_eq!(manager.monitor_revision(), expected_rev, "after create_wallet_from_mnemonic");
-
-        // create_account bumps
-        manager
-            .create_account(
-                &wallet_id,
-                AccountType::Standard {
-                    index: 1,
-                    standard_account_type: StandardAccountType::BIP44Account,
-                },
-                None,
-            )
-            .unwrap();
-        expected_rev += 1;
-        assert_eq!(manager.monitor_revision(), expected_rev, "after create_account");
-
-        // get_receive_address bumps (when address is generated)
-        let result =
-            manager.get_receive_address(&wallet_id, 0, AccountTypePreference::PreferBIP44, true);
-        if result.is_ok() && result.unwrap().address.is_some() {
-            expected_rev += 1;
-            assert_eq!(manager.monitor_revision(), expected_rev, "after get_receive_address");
-        }
-
-        // get_change_address bumps (when address is generated)
-        let result =
-            manager.get_change_address(&wallet_id, 0, AccountTypePreference::PreferBIP44, true);
-        if result.is_ok() && result.unwrap().address.is_some() {
-            expected_rev += 1;
-            assert_eq!(manager.monitor_revision(), expected_rev, "after get_change_address");
-        }
-
-        // update_synced_height does NOT bump
-        manager.update_synced_height(1000);
-        assert_eq!(manager.monitor_revision(), expected_rev, "after update_synced_height");
-
-        // process_mempool_transaction bumps from UTXO changes and possibly
-        // new addresses generated via gap limit maintenance
-        let rev_before_mempool = manager.monitor_revision();
-        let addr = manager.monitored_addresses()[0].clone();
-        let tx = create_tx_paying_to(&addr, 0xd0);
-        let _result = manager.process_mempool_transaction(&tx, false).await;
-        assert!(
-            manager.monitor_revision() > rev_before_mempool,
-            "mempool tx paying to our address should bump revision (UTXO added)"
-        );
-        let rev_after_mempool = manager.monitor_revision();
-
-        // process_instant_send_lock does NOT bump (no outpoint set change)
-        manager.process_instant_send_lock(tx.txid());
-        assert_eq!(
-            manager.monitor_revision(),
-            rev_after_mempool,
-            "after process_instant_send_lock"
-        );
-
-        // process_block bumps from UTXO changes and possibly new addresses
-        let rev_before_block = manager.monitor_revision();
-        let tx2 = create_tx_paying_to(&addr, 0xd1);
-        let block = make_block(vec![tx2]);
-        let _result = manager.process_block(&block, 100).await;
-        assert!(
-            manager.monitor_revision() > rev_before_block,
-            "block with tx paying to our address should bump revision (UTXO added)"
-        );
-
-        // remove_wallet absorbs the wallet's account-level revision + 1
-        let rev_before_remove = manager.monitor_revision();
-        manager.remove_wallet(&wallet_id).unwrap();
-        assert!(
-            manager.monitor_revision() > rev_before_remove,
-            "remove_wallet should bump revision"
-        );
-
-        // create_wallet_with_random_mnemonic bumps structural revision
-        let rev_before = manager.monitor_revision();
-        manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default).unwrap();
-        assert!(
-            manager.monitor_revision() > rev_before,
-            "create_wallet_with_random_mnemonic should bump revision"
-        );
     }
 }

@@ -2,7 +2,7 @@ use dashcore::{Address, Network, Transaction, Txid};
 
 use crate::{
     account::{ManagedCoreAccount, TransactionRecord},
-    transaction_checking::{TransactionCheckResult, TransactionContext, WalletTransactionChecker},
+    transaction_checking::{TransactionCheckResult, TransactionContext},
     wallet::{initialization::WalletAccountCreationOptions, ManagedWalletInfo},
     ExtendedPubKey, Utxo, Wallet,
 };
@@ -75,7 +75,7 @@ impl TestWalletContext {
         tx: &Transaction,
         context: TransactionContext,
     ) -> TransactionCheckResult {
-        self.managed_wallet.check_core_transaction(tx, context, &mut self.wallet, true, true).await
+        self.managed_wallet.check_core_transaction_with_wallet(tx, context, &self.wallet, true, true).await
     }
 
     /// Funds the wallet's receive address via a mempool transaction and

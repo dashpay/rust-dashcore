@@ -4,7 +4,7 @@ use super::helpers::*;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
+use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
@@ -132,7 +132,7 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
     let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -232,7 +232,7 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
     ));
 
     let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
     println!(
         "Provider registration transaction result: is_relevant={}, received={}",
@@ -267,7 +267,7 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
     let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -367,7 +367,7 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
     ));
 
     let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (voting): is_relevant={}, received={}",
@@ -402,7 +402,7 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
     let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -503,7 +503,7 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
     ));
 
     let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (operator): is_relevant={}, received={}",
@@ -583,7 +583,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
     let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -706,7 +706,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
     ));
 
     let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (platform): is_relevant={}, received={}",
@@ -781,7 +781,7 @@ fn test_provider_update_service_with_operator_key() {
 #[tokio::test]
 async fn test_provider_update_registrar_with_voting_and_operator() {
     // Test provider update registrar classification and routing
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -830,7 +830,7 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
     ));
 
     let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
     // Should be recognized as relevant due to voting and operator keys
     assert!(result.is_relevant, "Provider update registrar should be relevant");
@@ -854,7 +854,7 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
 #[tokio::test]
 async fn test_provider_revocation_classification_and_routing() {
     // Test that provider revocation transactions are properly classified and routed
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -925,7 +925,7 @@ async fn test_provider_revocation_classification_and_routing() {
     ));
 
     let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+        managed_wallet_info.check_core_transaction_with_wallet(&tx, context, &wallet, true, true).await;
 
     // Should be recognized as relevant due to collateral return
     assert!(result.is_relevant, "Provider revocation with collateral return should be relevant");

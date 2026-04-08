@@ -120,6 +120,187 @@ impl ManagedWalletInfo {
         self.network
     }
 
+    /// Return the last fully processed height of the wallet.
+    pub fn synced_height(&self) -> CoreBlockHeight {
+        self.metadata.synced_height
+    }
+
+    /// Get the wallet's unique ID
+    pub fn wallet_id(&self) -> [u8; 32] {
+        self.wallet_id
+    }
+
+    /// Get the wallet's name
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Set the wallet's name
+    pub fn set_name(&mut self, name: String) {
+        self.name = Some(name);
+    }
+
+    /// Get the wallet's description
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Set the wallet's description
+    pub fn set_description(&mut self, description: Option<String>) {
+        self.description = description;
+    }
+
+    /// Get the birth height of the wallet
+    pub fn birth_height(&self) -> CoreBlockHeight {
+        self.metadata.birth_height
+    }
+
+    /// Set the birth height
+    pub fn set_birth_height(&mut self, height: CoreBlockHeight) {
+        self.metadata.birth_height = height;
+    }
+
+    /// Get the timestamp when first loaded
+    pub fn first_loaded_at(&self) -> u64 {
+        self.metadata.first_loaded_at
+    }
+
+    /// Set the timestamp when first loaded
+    pub fn set_first_loaded_at(&mut self, timestamp: u64) {
+        self.metadata.first_loaded_at = timestamp;
+    }
+
+    /// Update last synced timestamp
+    pub fn update_last_synced(&mut self, timestamp: u64) {
+        self.metadata.last_synced = Some(timestamp);
+    }
+
+    /// Get accounts (mutable)
+    pub fn accounts_mut(&mut self) -> &mut ManagedAccountCollection {
+        &mut self.accounts
+    }
+
+    /// Get accounts (immutable)
+    pub fn accounts(&self) -> &ManagedAccountCollection {
+        &self.accounts
+    }
+
+    /// Get the wallet balance
+    pub fn balance(&self) -> WalletCoreBalance {
+        self.balance
+    }
+
+    /// Update the wallet balance from account state.
+    pub fn update_balance(&mut self) {
+        let mut balance = WalletCoreBalance::default();
+        let synced_height = self.synced_height();
+        for account in self.accounts.all_accounts_mut() {
+            let _balance_cs = account.update_balance(synced_height);
+            balance += account.balance;
+        }
+        self.balance = balance;
+    }
+
+    /// Get all UTXOs for the wallet
+    pub fn utxos(&self) -> std::collections::BTreeSet<&Utxo> {
+        let mut utxos = std::collections::BTreeSet::new();
+        for account in self.accounts.all_accounts() {
+            utxos.extend(account.utxos.values());
+        }
+        utxos
+    }
+
+    /// Get spendable UTXOs (confirmed and not locked)
+    pub fn get_spendable_utxos(&self) -> std::collections::BTreeSet<&Utxo> {
+        self.utxos().into_iter().filter(|utxo| utxo.is_spendable(self.synced_height())).collect()
+    }
+
+    /// Get all monitored addresses
+    pub fn monitored_addresses(&self) -> Vec<dashcore::Address> {
+        let mut addresses = Vec::new();
+        for account in self.accounts.all_accounts() {
+            addresses.extend(account.all_addresses());
+        }
+        addresses
+    }
+
+    /// Get transaction history
+    pub fn transaction_history(&self) -> Vec<&TransactionRecord> {
+        let mut transactions = Vec::new();
+        for account in self.accounts.all_accounts() {
+            transactions.extend(account.transactions.values());
+        }
+        transactions
+    }
+
+    /// Get immature transactions
+    pub fn immature_transactions(&self) -> Vec<dashcore::Transaction> {
+        let mut immature_txids: std::collections::BTreeSet<dashcore::Txid> =
+            std::collections::BTreeSet::new();
+
+        // Find txids of immature coinbase UTXOs
+        for account in self.accounts.all_accounts() {
+            for utxo in account.utxos.values() {
+                if utxo.is_coinbase && !utxo.is_mature(self.synced_height()) {
+                    immature_txids.insert(utxo.outpoint.txid);
+                }
+            }
+        }
+
+        // Get the actual transactions
+        let mut transactions = Vec::new();
+        for account in self.accounts.all_accounts() {
+            for (txid, record) in &account.transactions {
+                if immature_txids.contains(txid) {
+                    transactions.push(record.transaction.clone());
+                }
+            }
+        }
+        transactions
+    }
+
+    /// Update chain state and process any matured transactions.
+    /// This should be called when the chain tip advances to a new height.
+    pub fn update_synced_height(&mut self, current_height: u32) {
+        self.metadata.synced_height = current_height;
+        // Update cached balance
+        self.update_balance();
+    }
+
+    /// Mark UTXOs for a transaction as InstantSend-locked across all accounts.
+    /// Returns `(changed, utxo_changeset)` where `changed` indicates if any
+    /// UTXO was newly marked, and `utxo_changeset` captures the IS-lock deltas
+    /// for persistence.
+    pub fn mark_instant_send_utxos(
+        &mut self,
+        txid: &dashcore::Txid,
+    ) -> (bool, crate::changeset::UtxoChangeSet) {
+        use crate::changeset::Merge;
+
+        if !self.instant_send_locks.insert(*txid) {
+            return (false, crate::changeset::UtxoChangeSet::default());
+        }
+        let mut any_changed = false;
+        let mut combined_utxo_cs = crate::changeset::UtxoChangeSet::default();
+        for account in self.accounts.all_accounts_mut() {
+            let (changed, utxo_cs) = account.mark_utxos_instant_send(txid);
+            if changed {
+                any_changed = true;
+            }
+            combined_utxo_cs.merge(utxo_cs);
+        }
+        if any_changed {
+            self.update_balance();
+        }
+        (any_changed, combined_utxo_cs)
+    }
+
+    /// Return the aggregated monitor revision across all accounts.
+    /// Increments whenever the monitored address set changes.
+    pub fn monitor_revision(&self) -> u64 {
+        self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
+    }
+
     /// Increment the transaction count
     pub fn increment_transactions(&mut self) {
         self.metadata.total_transactions += 1;

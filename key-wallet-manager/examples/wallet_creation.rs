@@ -8,30 +8,29 @@
 use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
-use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Network};
-use key_wallet_manager::WalletInterface;
-use key_wallet_manager::WalletManager;
+use key_wallet_manager::{ManagedWalletState, WalletInterface, WalletManager};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     println!("=== Wallet Creation Example ===\n");
 
     // Example 1: Basic wallet creation with WalletManager
     println!("1. Creating a basic wallet with WalletManager...");
 
-    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+    let mut manager = WalletManager::<ManagedWalletState>::new(Network::Testnet);
 
     let result = manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default);
 
     let wallet_id = match result {
         Ok(wallet_id) => {
-            println!("✅ Wallet created successfully!");
+            println!("Wallet created successfully!");
             println!("   Wallet ID: {}", hex::encode(wallet_id));
             println!("   Total wallets: {}", manager.wallet_count());
             wallet_id
         }
         Err(e) => {
-            println!("❌ Failed to create wallet: {:?}", e);
+            println!("Failed to create wallet: {:?}", e);
             return;
         }
     };
@@ -50,12 +49,12 @@ fn main() {
 
     let wallet_id2 = match result {
         Ok(wallet_id2) => {
-            println!("✅ Wallet created from mnemonic!");
+            println!("Wallet created from mnemonic!");
             println!("   Wallet ID: {}", hex::encode(wallet_id2));
             wallet_id2
         }
         Err(e) => {
-            println!("❌ Failed to create wallet from mnemonic: {:?}", e);
+            println!("Failed to create wallet from mnemonic: {:?}", e);
             return;
         }
     };
@@ -64,26 +63,28 @@ fn main() {
     println!("\n3. Managing wallet accounts...");
 
     // Add a new account to the first wallet
-    let account_result = manager.create_account(
-        &wallet_id, // Account index 1 (0 is created by default)
-        AccountType::Standard {
-            index: 1,
-            standard_account_type: StandardAccountType::BIP44Account,
-        },
-        None,
-    );
+    let account_result = manager
+        .create_account(
+            &wallet_id, // Account index 1 (0 is created by default)
+            AccountType::Standard {
+                index: 1,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            None,
+        )
+        .await;
 
     match account_result {
         Ok(_) => {
-            println!("✅ Account created successfully!");
+            println!("Account created successfully!");
 
             // Get all accounts
-            if let Ok(accounts) = manager.get_accounts(&wallet_id) {
+            if let Ok(accounts) = manager.get_accounts(&wallet_id).await {
                 println!("   Total accounts: {}", accounts.len());
             }
         }
         Err(e) => {
-            println!("❌ Failed to create account: {:?}", e);
+            println!("Failed to create account: {:?}", e);
         }
     }
 
@@ -92,26 +93,28 @@ fn main() {
 
     // Note: This might fail with InvalidNetwork error if the account collection
     // isn't properly initialized in the managed wallet info
-    let address_result = manager.get_receive_address(
-        &wallet_id,
-        0, // Account index
-        AccountTypePreference::BIP44,
-        false, // Don't advance index
-    );
+    let address_result = manager
+        .get_receive_address(
+            &wallet_id,
+            0, // Account index
+            AccountTypePreference::BIP44,
+            false, // Don't advance index
+        )
+        .await;
 
     match address_result {
         Ok(result) => {
             if let Some(address) = result.address {
-                println!("✅ Receive address: {}", address);
+                println!("Receive address: {}", address);
                 if let Some(account_type) = result.account_type_used {
                     println!("   Account type used: {:?}", account_type);
                 }
             } else {
-                println!("⚠️  No address generated");
+                println!("No address generated");
             }
         }
         Err(e) => {
-            println!("⚠️  Could not get address: {:?}", e);
+            println!("Could not get address: {:?}", e);
             println!("   (This is expected with the current implementation)");
         }
     }
@@ -125,8 +128,8 @@ fn main() {
     // Example 6: Getting wallet balance
     println!("\n6. Checking wallet balances...");
 
-    for (i, wallet_id) in [wallet_id, wallet_id2].iter().enumerate() {
-        match manager.get_wallet_balance(wallet_id) {
+    for (i, wid) in [wallet_id, wallet_id2].iter().enumerate() {
+        match manager.get_wallet_balance(wid).await {
             Ok(balance) => {
                 println!("   Wallet {}: {} satoshis", i + 1, balance.total());
             }
@@ -142,13 +145,13 @@ fn main() {
     // Example 7: Block height tracking
     println!("\n7. Block height tracking...");
 
-    println!("   Current height (Testnet): {:?}", manager.synced_height());
+    println!("   Current height (Testnet): {:?}", WalletInterface::synced_height(&manager));
 
     // Update height
-    manager.update_synced_height(850_000);
-    println!("   Updated height to: {:?}", manager.synced_height());
+    WalletInterface::update_synced_height(&mut manager, 850_000).await;
+    println!("   Updated height to: {:?}", WalletInterface::synced_height(&manager));
 
     println!("\n=== Summary ===");
     println!("Total wallets created: {}", manager.wallet_count());
-    println!("✅ Example completed successfully!");
+    println!("Example completed successfully!");
 }

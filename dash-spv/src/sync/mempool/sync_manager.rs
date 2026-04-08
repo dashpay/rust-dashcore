@@ -127,7 +127,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         // shared `SyncManager::run` loop or a `WalletEvent` bridge — complexity
         // that isn't justified given the 100ms tick latency is negligible for bloom
         // filter rebuilds and the read lock is non-contending.
-        let current_revision = self.wallet.read().await.monitor_revision();
+        let current_revision = self.wallet.read().await.monitor_revision().await;
         if current_revision != self.last_monitor_revision {
             tracing::info!("Wallet monitor revision changed, rebuilding bloom filter");
             self.rebuild_filter(requests).await?;
@@ -621,7 +621,7 @@ mod tests {
 
         let mut mock = MockWallet::new();
         mock.set_addresses(vec![addr.clone()]);
-        let initial_revision = mock.monitor_revision();
+        let initial_revision = mock.monitor_revision().await;
         let wallet = Arc::new(RwLock::new(mock));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
@@ -734,7 +734,7 @@ mod tests {
 
         let mut mock = MockWallet::new();
         mock.set_addresses(vec![addr]);
-        let initial_revision = mock.monitor_revision();
+        let initial_revision = mock.monitor_revision().await;
         let wallet = Arc::new(RwLock::new(mock));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
@@ -785,7 +785,7 @@ mod tests {
         ]);
         let addr = dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap();
         mock.set_addresses(vec![addr]);
-        let initial_revision = mock.monitor_revision();
+        let initial_revision = mock.monitor_revision().await;
         let wallet = Arc::new(RwLock::new(mock));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx_chan, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();

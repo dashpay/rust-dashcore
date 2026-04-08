@@ -2,7 +2,6 @@ use super::*;
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, TxIn, TxOut, Txid, Witness};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
 use tokio::sync::broadcast;
 
@@ -11,12 +10,12 @@ pub(crate) const TEST_MNEMONIC: &str =
 
 pub(crate) const TX_AMOUNT: u64 = 100_000;
 
-pub(crate) fn setup_manager_with_wallet() -> (WalletManager<ManagedWalletInfo>, WalletId, Address) {
+pub(crate) async fn setup_manager_with_wallet() -> (WalletManager, WalletId, Address) {
     let mut manager = WalletManager::new(Network::Testnet);
     let wallet_id = manager
         .create_wallet_from_mnemonic(TEST_MNEMONIC, "", 0, WalletAccountCreationOptions::Default)
         .unwrap();
-    let addresses = manager.monitored_addresses();
+    let addresses = manager.monitored_addresses().await;
     assert!(!addresses.is_empty(), "wallet should have monitored addresses");
     let addr = addresses[0].clone();
     (manager, wallet_id, addr)
@@ -71,7 +70,7 @@ pub(crate) fn assert_no_events(rx: &mut broadcast::Receiver<WalletEvent>) {
 pub(crate) async fn assert_lifecycle_flow(contexts: &[TransactionContext], input_seed: u8) {
     assert!(!contexts.is_empty(), "at least one context required");
 
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, input_seed);
 
@@ -108,7 +107,7 @@ pub(crate) async fn assert_context_suppressed(
     expected_height: Option<u32>,
     input_seed: u8,
 ) {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet().await;
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, input_seed);
 
@@ -120,7 +119,7 @@ pub(crate) async fn assert_context_suppressed(
     manager.check_transaction_in_all_wallets(&tx, suppressed_context, true, true).await;
     assert_no_events(&mut rx);
 
-    let history = manager.wallet_transaction_history(&wallet_id).unwrap();
+    let history = manager.wallet_transaction_history(&wallet_id).await.unwrap();
     let records: Vec<_> = history.iter().filter(|r| r.txid == tx.txid()).collect();
     assert_eq!(records.len(), 1);
     if let Some(height) = expected_height {
