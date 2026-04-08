@@ -83,7 +83,7 @@ impl NetworkLLMQExt for Network {
     fn get_all_dkg_windows(&self, start: u32, end: u32) -> BTreeMap<u32, Vec<DKGWindow>> {
         let mut windows_by_height: BTreeMap<u32, Vec<DKGWindow>> = BTreeMap::new();
 
-        log::debug!(
+        tracing::debug!(
             "get_all_dkg_windows: Calculating DKG windows for range {}-{} on network {:?}",
             start,
             end,
@@ -92,7 +92,7 @@ impl NetworkLLMQExt for Network {
 
         for llmq_type in self.enabled_llmq_types() {
             let type_windows = llmq_type.get_dkg_windows_in_range(start, end);
-            log::debug!(
+            tracing::debug!(
                 "LLMQ type {:?}: found {} DKG windows in range {}-{}",
                 llmq_type,
                 type_windows.len(),
@@ -103,7 +103,7 @@ impl NetworkLLMQExt for Network {
             for window in type_windows {
                 // Skip platform quorums before activation if needed
                 if self.should_skip_quorum_type(&llmq_type, window.mining_start) {
-                    log::trace!(
+                    tracing::trace!(
                         "Skipping {:?} for height {} (activation threshold not met)",
                         llmq_type,
                         window.mining_start
@@ -116,7 +116,7 @@ impl NetworkLLMQExt for Network {
             }
         }
 
-        log::info!(
+        tracing::info!(
             "get_all_dkg_windows: Total {} unique mining heights with DKG windows for range {}-{}",
             windows_by_height.len(),
             start,

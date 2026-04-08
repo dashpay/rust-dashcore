@@ -52,9 +52,6 @@ dashcore-rpc = { path = "../rpc-client", optional = true }
 # DNS (trust-dns-resolver was renamed to hickory_resolver)
 hickory-resolver = "0.25"
 
-# Also add log to main dependencies for consistency
-log = "0.4"
-
 [dev-dependencies]
 dash-spv = { path = ".", features = ["test-utils"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
@@ -63,7 +60,6 @@ key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"]
 criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
 tokio-test = "0.4"
-env_logger = "0.10"
 hex = "0.4"
 test-case = "3.3"
 

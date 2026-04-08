@@ -89,7 +89,7 @@ impl PeerNetworkManager {
         let reputation_manager = Arc::new(PeerReputationManager::new());
 
         if let Err(e) = reputation_manager.load_from_storage(&peer_store).await {
-            log::warn!("Failed to load peer reputation data: {}", e);
+            tracing::warn!("Failed to load peer reputation data: {}", e);
         }
 
         // Determine exclusive mode: either explicitly requested or peers were provided
@@ -141,7 +141,7 @@ impl PeerNetworkManager {
 
     /// Start the network manager
     pub async fn start(&self) -> Result<(), Error> {
-        log::info!("Starting peer network manager for {:?}", self.network);
+        tracing::info!("Starting peer network manager for {:?}", self.network);
 
         let mut peer_addresses: Vec<AddrV2Message> = self
             .initial_peers
@@ -150,7 +150,7 @@ impl PeerNetworkManager {
             .collect();
 
         if self.exclusive_mode {
-            log::info!(
+            tracing::info!(
                 "Exclusive peer mode: connecting ONLY to {} specified peer(s)",
                 self.initial_peers.len()
             );
@@ -164,7 +164,7 @@ impl PeerNetworkManager {
 
             // If we still have no peers, immediately discover via DNS
             if peer_addresses.is_empty() {
-                log::info!(
+                tracing::info!(
                     "No peers configured, performing immediate DNS discovery for {:?}",
                     self.network
                 );
@@ -176,13 +176,13 @@ impl PeerNetworkManager {
                         .take(TARGET_PEERS)
                         .map(|addr| AddrV2Message::new(addr, ServiceFlags::NETWORK)),
                 );
-                log::info!(
+                tracing::info!(
                     "DNS discovery found {} peers, using {} for startup",
                     dns_peers_found,
                     peer_addresses.len()
                 );
             } else {
-                log::info!(
+                tracing::info!(
                     "Starting with {} peers from disk (DNS discovery will be used later if needed)",
                     peer_addresses.len()
                 );
@@ -204,7 +204,7 @@ impl PeerNetworkManager {
     async fn connect_to_peer(&self, addr: SocketAddr) {
         // Check reputation first
         if !self.reputation_manager.should_connect_to_peer(&addr).await {
-            log::warn!("Not connecting to {} due to bad reputation", addr);
+            tracing::warn!("Not connecting to {} due to bad reputation", addr);
             return;
         }
 
@@ -241,12 +241,12 @@ impl PeerNetworkManager {
             }
         };
         tasks.spawn(async move {
-            log::debug!("Attempting to connect to {}", addr);
+            tracing::debug!("Attempting to connect to {}", addr);
 
             let connect_result = tokio::select! {
                 result = Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network) => result,
                 _ = shutdown_token.cancelled() => {
-                    log::debug!("Connection to {} cancelled by shutdown", addr);
+                    tracing::debug!("Connection to {} cancelled by shutdown", addr);
                     pool.remove_peer(&addr).await;
                     return;
                 }
@@ -258,11 +258,11 @@ impl PeerNetworkManager {
                     let mut handshake_manager = HandshakeManager::new(network, user_agent);
                     match handshake_manager.perform_handshake(&mut peer).await {
                         Ok(_) => {
-                            log::info!("Successfully connected to {}", addr);
+                            tracing::info!("Successfully connected to {}", addr);
 
                             // Request addresses from the peer for discovery
                             if let Err(e) = peer.send_message(NetworkMessage::GetAddr).await {
-                                log::warn!("Failed to send GetAddr to {}: {}", addr, e);
+                                tracing::warn!("Failed to send GetAddr to {}: {}", addr, e);
                             }
 
                             // Record successful connection
@@ -270,7 +270,7 @@ impl PeerNetworkManager {
 
                             // Add to pool
                             if let Err(e) = pool.add_peer(addr, peer).await {
-                                log::error!("Failed to add peer to pool: {}", e);
+                                tracing::error!("Failed to add peer to pool: {}", e);
                                 return;
                             }
 
@@ -308,7 +308,7 @@ impl PeerNetworkManager {
                             .await;
                         }
                         Err(e) => {
-                            log::warn!("Handshake failed with {}: {}", addr, e);
+                            tracing::warn!("Handshake failed with {}: {}", addr, e);
                             // Only clears connecting set. Peer was never added, so no count/event needed.
                             pool.remove_peer(&addr).await;
                             // Update reputation for handshake failure
@@ -325,7 +325,7 @@ impl PeerNetworkManager {
                     }
                 }
                 Err(e) => {
-                    log::debug!("Failed to connect to {}: {}", addr, e);
+                    tracing::debug!("Failed to connect to {}: {}", addr, e);
                     // Only clears connecting set. Peer was never added, so no count/event needed.
                     pool.remove_peer(&addr).await;
                     // Minor reputation penalty for connection failure
@@ -352,7 +352,7 @@ impl PeerNetworkManager {
             connected_peer_count
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_sub(1));
         if sub_result.is_err() {
-            log::warn!("Peer count already zero when removing {}", addr);
+            tracing::warn!("Peer count already zero when removing {}", addr);
         }
         let count = connected_peer_count.load(Ordering::Relaxed);
         let addresses = pool.get_connected_addresses().await;
@@ -394,7 +394,7 @@ impl PeerNetworkManager {
         network_event_sender: broadcast::Sender<NetworkEvent>,
     ) {
         tokio::spawn(async move {
-            log::debug!("Starting peer reader loop for {}", addr);
+            tracing::debug!("Starting peer reader loop for {}", addr);
             let mut loop_iteration = 0;
             let mut headers2_state = CompressionState::default();
 
@@ -403,7 +403,7 @@ impl PeerNetworkManager {
 
                 // Check shutdown signal first with detailed logging
                 if shutdown_token.is_cancelled() {
-                    log::info!("Breaking peer reader loop for {} - shutdown signal received (iteration {})", addr, loop_iteration);
+                    tracing::info!("Breaking peer reader loop for {} - shutdown signal received (iteration {})", addr, loop_iteration);
                     break;
                 }
 
@@ -411,7 +411,7 @@ impl PeerNetworkManager {
                 let peer = match pool.get_peer(&addr).await {
                     Some(peer) => peer,
                     None => {
-                        log::warn!("Breaking peer reader loop for {} - peer no longer in pool (iteration {})", addr, loop_iteration);
+                        tracing::warn!("Breaking peer reader loop for {} - peer no longer in pool (iteration {})", addr, loop_iteration);
                         break;
                     }
                 };
@@ -421,7 +421,7 @@ impl PeerNetworkManager {
                     // Try to get a read lock first to check if peer is available
                     let peer_guard = peer.read().await;
                     if !peer_guard.is_connected() {
-                        log::warn!("Breaking peer reader loop for {} - peer no longer connected (iteration {})", addr, loop_iteration);
+                        tracing::warn!("Breaking peer reader loop for {} - peer no longer connected (iteration {})", addr, loop_iteration);
                         drop(peer_guard);
                         break;
                     }
@@ -437,7 +437,7 @@ impl PeerNetworkManager {
                             Ok(None)
                         },
                         _ = shutdown_token.cancelled() => {
-                            log::info!("Breaking peer reader loop for {} - shutdown signal received while reading (iteration {})", addr, loop_iteration);
+                            tracing::info!("Breaking peer reader loop for {} - shutdown signal received while reading (iteration {})", addr, loop_iteration);
                             break;
                         }
                     }
@@ -446,7 +446,7 @@ impl PeerNetworkManager {
                 match msg_result {
                     Ok(Some(msg)) => {
                         // Log all received messages at debug level to help troubleshoot
-                        log::debug!("Received {:?} from {}", msg.cmd(), addr);
+                        tracing::debug!("Received {:?} from {}", msg.cmd(), addr);
 
                         // Handle some messages directly
                         match &msg.inner() {
@@ -456,7 +456,7 @@ impl PeerNetworkManager {
                             }
                             NetworkMessage::SendHeaders2 => {
                                 // Peer is indicating they will send us compressed headers
-                                log::info!(
+                                tracing::info!(
                                     "Peer {} sent SendHeaders2 - they will send compressed headers",
                                     addr
                                 );
@@ -470,7 +470,7 @@ impl PeerNetworkManager {
                                 continue; // Don't forward to client
                             }
                             NetworkMessage::GetAddr => {
-                                log::trace!(
+                                tracing::trace!(
                                     "Received GetAddr from {}, sending known addresses",
                                     addr
                                 );
@@ -478,7 +478,11 @@ impl PeerNetworkManager {
                                 let response = addrv2_handler.build_addr_response().await;
                                 let mut peer_guard = peer.write().await;
                                 if let Err(e) = peer_guard.send_message(response).await {
-                                    log::error!("Failed to send addr response to {}: {}", addr, e);
+                                    tracing::error!(
+                                        "Failed to send addr response to {}: {}",
+                                        addr,
+                                        e
+                                    );
                                 }
                                 continue; // Don't forward GetAddr to client
                             }
@@ -486,10 +490,10 @@ impl PeerNetworkManager {
                                 // Handle ping directly
                                 let mut peer_guard = peer.write().await;
                                 if let Err(e) = peer_guard.handle_ping(*nonce).await {
-                                    log::error!("Failed to handle ping from {}: {}", addr, e);
+                                    tracing::error!("Failed to handle ping from {}: {}", addr, e);
                                     // If we can't send pong, connection is likely broken
                                     if matches!(e, NetworkError::ConnectionFailed(_)) {
-                                        log::warn!("Breaking peer reader loop for {} - failed to send pong response (iteration {})", addr, loop_iteration);
+                                        tracing::warn!("Breaking peer reader loop for {} - failed to send pong response (iteration {})", addr, loop_iteration);
                                         break;
                                     }
                                 }
@@ -499,13 +503,13 @@ impl PeerNetworkManager {
                                 // Handle pong directly
                                 let mut peer_guard = peer.write().await;
                                 if let Err(e) = peer_guard.handle_pong(*nonce) {
-                                    log::error!("Failed to handle pong from {}: {}", addr, e);
+                                    tracing::error!("Failed to handle pong from {}: {}", addr, e);
                                 }
                                 continue; // Don't forward pong to client
                             }
                             NetworkMessage::Version(_) | NetworkMessage::Verack => {
                                 // These are handled during handshake, ignore here
-                                log::trace!(
+                                tracing::trace!(
                                     "Ignoring handshake message {:?} from {}",
                                     msg.cmd(),
                                     addr
@@ -531,7 +535,7 @@ impl PeerNetworkManager {
                                     })
                                     .collect();
                                 if !converted.is_empty() {
-                                    log::debug!(
+                                    tracing::debug!(
                                         "Converted {} legacy addr entries from {}",
                                         converted.len(),
                                         addr
@@ -542,7 +546,7 @@ impl PeerNetworkManager {
                             }
                             NetworkMessage::Headers(headers) => {
                                 // Log headers messages specifically
-                                log::info!(
+                                tracing::info!(
                                     "📨 Received Headers message from {} with {} headers! (regular uncompressed)",
                                     addr,
                                     headers.len()
@@ -550,14 +554,14 @@ impl PeerNetworkManager {
                                 // Check if peer supports headers2
                                 let peer_guard = peer.read().await;
                                 if peer_guard.supports_headers2() {
-                                    log::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
+                                    tracing::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
                                 }
                                 drop(peer_guard);
                                 // Forward to client
                             }
                             NetworkMessage::Headers2(headers2) => {
                                 // Decompress headers in network layer and forward as regular Headers
-                                log::info!(
+                                tracing::info!(
                                     "Received Headers2 from {} with {} compressed headers - decompressing",
                                     addr,
                                     headers2.headers.len()
@@ -565,7 +569,7 @@ impl PeerNetworkManager {
 
                                 match headers2_state.process_headers(&headers2.headers) {
                                     Ok(headers) => {
-                                        log::info!(
+                                        tracing::info!(
                                             "Decompressed {} headers from {} - forwarding as regular Headers",
                                             headers.len(),
                                             addr
@@ -577,7 +581,7 @@ impl PeerNetworkManager {
                                         continue; // Already sent, don't forward the original Headers2
                                     }
                                     Err(e) => {
-                                        log::error!(
+                                        tracing::error!(
                                             "Headers2 decompression failed from {}: {} - disabling headers2",
                                             addr,
                                             e
@@ -597,7 +601,7 @@ impl PeerNetworkManager {
                             }
                             NetworkMessage::GetHeaders(_) => {
                                 // SPV clients don't serve headers to peers
-                                log::debug!(
+                                tracing::debug!(
                                     "Received GetHeaders from {} - ignoring (SPV client)",
                                     addr
                                 );
@@ -605,7 +609,7 @@ impl PeerNetworkManager {
                             }
                             NetworkMessage::GetHeaders2(_) => {
                                 // SPV clients don't serve compressed headers to peers
-                                log::debug!(
+                                tracing::debug!(
                                     "Received GetHeaders2 from {} - ignoring (SPV client)",
                                     addr
                                 );
@@ -616,13 +620,17 @@ impl PeerNetworkManager {
                                 payload,
                             } => {
                                 // Log unknown messages with more detail
-                                log::warn!("Received unknown message from {}: command='{}', payload_len={}",
+                                tracing::warn!("Received unknown message from {}: command='{}', payload_len={}",
                                          addr, command, payload.len());
                                 // Still forward to client
                             }
                             _ => {
                                 // Forward other messages to client
-                                log::trace!("Forwarding {:?} from {} to client", msg.cmd(), addr);
+                                tracing::trace!(
+                                    "Forwarding {:?} from {} to client",
+                                    msg.cmd(),
+                                    addr
+                                );
                             }
                         }
 
@@ -636,11 +644,11 @@ impl PeerNetworkManager {
                     Err(e) => {
                         match e {
                             NetworkError::PeerDisconnected => {
-                                log::info!("Peer {} disconnected", addr);
+                                tracing::info!("Peer {} disconnected", addr);
                                 break;
                             }
                             NetworkError::Timeout => {
-                                log::debug!("Timeout reading from {}, continuing...", addr);
+                                tracing::debug!("Timeout reading from {}, continuing...", addr);
                                 // Minor reputation penalty for timeout
                                 reputation_manager
                                     .update_reputation(
@@ -652,14 +660,14 @@ impl PeerNetworkManager {
                                 continue;
                             }
                             _ => {
-                                log::error!("Fatal error reading from {}: {}", addr, e);
+                                tracing::error!("Fatal error reading from {}: {}", addr, e);
 
                                 // Check if this is a serialization error that might have context
                                 if let NetworkError::Serialization(ref decode_error) = e {
                                     let error_msg = decode_error.to_string();
                                     if error_msg.contains("unknown special transaction type") {
-                                        log::warn!("Peer {} sent block with unsupported transaction type: {}", addr, decode_error);
-                                        log::error!(
+                                        tracing::warn!("Peer {} sent block with unsupported transaction type: {}", addr, decode_error);
+                                        tracing::error!(
                                             "BLOCK DECODE FAILURE - Error details: {}",
                                             error_msg
                                         );
@@ -675,7 +683,7 @@ impl PeerNetworkManager {
                                         .contains("Failed to decode transactions for block")
                                     {
                                         // The error now includes the block hash
-                                        log::error!("Peer {} sent block that failed transaction decoding: {}", addr, decode_error);
+                                        tracing::error!("Peer {} sent block that failed transaction decoding: {}", addr, decode_error);
                                         // Try to extract the block hash from the error message
                                         if let Some(hash_start) = error_msg.find("block ") {
                                             if let Some(hash_end) =
@@ -683,19 +691,22 @@ impl PeerNetworkManager {
                                             {
                                                 let block_hash = &error_msg
                                                     [hash_start + 6..hash_start + 6 + hash_end];
-                                                log::error!("FAILING BLOCK HASH: {}", block_hash);
+                                                tracing::error!(
+                                                    "FAILING BLOCK HASH: {}",
+                                                    block_hash
+                                                );
                                             }
                                         }
                                     } else if error_msg.contains("IO error") {
                                         // This might be our wrapped error - log it prominently
-                                        log::error!("BLOCK DECODE FAILURE - IO error (possibly unknown transaction type) from peer {}", addr);
-                                        log::error!(
+                                        tracing::error!("BLOCK DECODE FAILURE - IO error (possibly unknown transaction type) from peer {}", addr);
+                                        tracing::error!(
                                             "Serialization error from {}: {}",
                                             addr,
                                             decode_error
                                         );
                                     } else {
-                                        log::error!(
+                                        tracing::error!(
                                             "Serialization error from {}: {}",
                                             addr,
                                             decode_error
@@ -711,7 +722,7 @@ impl PeerNetworkManager {
             }
 
             // Remove from pool and notify consumers
-            log::warn!("Disconnecting from {} (peer reader loop ended)", addr);
+            tracing::warn!("Disconnecting from {} (peer reader loop ended)", addr);
             Self::remove_peer_and_notify(
                 &pool,
                 &addr,
@@ -742,7 +753,7 @@ impl PeerNetworkManager {
         };
 
         let Some(mut request_rx) = request_rx else {
-            log::warn!("Request processor already started or receiver unavailable");
+            tracing::warn!("Request processor already started or receiver unavailable");
             return;
         };
 
@@ -751,13 +762,13 @@ impl PeerNetworkManager {
 
         let mut tasks = self.tasks.lock().await;
         tasks.spawn(async move {
-            log::info!("Starting request processor task");
+            tracing::info!("Starting request processor task");
             loop {
                 tokio::select! {
                     request = request_rx.recv() => {
                         match request {
                             Some(NetworkRequest::SendMessage(msg)) => {
-                                log::debug!("Request processor: sending {}", msg.cmd());
+                                tracing::debug!("Request processor: sending {}", msg.cmd());
                                 // Spawn each send concurrently to allow parallel requests across peers.
                                 let this = this.clone();
                                 tokio::spawn(async move {
@@ -777,12 +788,12 @@ impl PeerNetworkManager {
                                         }
                                     };
                                     if let Err(e) = result {
-                                        log::error!("Request processor: failed to send message: {}", e);
+                                        tracing::error!("Request processor: failed to send message: {}", e);
                                     }
                                 });
                             }
                             Some(NetworkRequest::SendMessageToPeer(msg, peer_address)) => {
-                                log::debug!("Request processor: sending {} to peer {}", msg.cmd(), peer_address);
+                                tracing::debug!("Request processor: sending {} to peer {}", msg.cmd(), peer_address);
                                 let this = this.clone();
                                 tokio::spawn(async move {
                                     let fallback_msg = msg.clone();
@@ -790,7 +801,7 @@ impl PeerNetworkManager {
                                         Some(peer) => match this.send_message_to_peer(&peer_address, &peer, msg).await {
                                             Ok(()) => Ok(()),
                                             Err(err) => {
-                                                log::warn!(
+                                                tracing::warn!(
                                                     "Target peer {} send failed ({}), falling back to distributed send",
                                                     peer_address,
                                                     err
@@ -799,7 +810,7 @@ impl PeerNetworkManager {
                                             }
                                         },
                                         None => {
-                                            log::warn!(
+                                            tracing::warn!(
                                                 "Target peer {} disconnected, falling back to distributed send",
                                                 peer_address
                                             );
@@ -807,18 +818,18 @@ impl PeerNetworkManager {
                                         }
                                     };
                                     if let Err(e) = result {
-                                        log::error!("Request processor: failed to send message to peer {}: {}", peer_address, e);
+                                        tracing::error!("Request processor: failed to send message to peer {}: {}", peer_address, e);
                                     }
                                 });
                             }
                             None => {
-                                log::info!("Request processor: channel closed");
+                                tracing::info!("Request processor: channel closed");
                                 break;
                             }
                         }
                     }
                     _ = shutdown_token.cancelled() => {
-                        log::info!("Request processor: shutting down");
+                        tracing::info!("Request processor: shutting down");
                         break;
                     }
                 }
@@ -831,7 +842,7 @@ impl PeerNetworkManager {
         // This should not trigger under normal operation.
         let unhealthy = self.pool.remove_unhealthy().await;
         for addr in &unhealthy {
-            log::warn!("Maintenance removed stale peer {} - reader loop missed cleanup", addr);
+            tracing::warn!("Maintenance removed stale peer {} - reader loop missed cleanup", addr);
             Self::notify_peer_removed(
                 &self.pool,
                 addr,
@@ -842,14 +853,14 @@ impl PeerNetworkManager {
         }
 
         let count = self.pool.peer_count().await;
-        log::debug!("Connected peers: {}", count);
+        tracing::debug!("Connected peers: {}", count);
         // Keep the cached counter in sync with actual pool count
         self.connected_peer_count.store(count, Ordering::Relaxed);
         if self.exclusive_mode {
             // In exclusive mode, only reconnect to originally specified peers
             for addr in self.initial_peers.iter() {
                 if !self.pool.is_connected(addr).await && !self.pool.is_connecting(addr).await {
-                    log::info!("Reconnecting to exclusive peer: {}", addr);
+                    tracing::info!("Reconnecting to exclusive peer: {}", addr);
                     self.connect_to_peer(*addr).await;
                 }
             }
@@ -885,7 +896,7 @@ impl PeerNetworkManager {
             let mut peer_guard = peer.write().await;
             if peer_guard.should_ping() {
                 if let Err(e) = peer_guard.send_ping().await {
-                    log::error!("Failed to ping {}: {}", addr, e);
+                    tracing::error!("Failed to ping {}: {}", addr, e);
                     // Update reputation for ping failure
                     self.reputation_manager
                         .update_reputation(addr, misbehavior_scores::TIMEOUT, "Ping failed")
@@ -904,13 +915,13 @@ impl PeerNetworkManager {
             let addresses = self.addrv2_handler.get_known_addresses().await;
             if !addresses.is_empty() {
                 if let Err(e) = self.peer_store.save_peers(&addresses).await {
-                    log::warn!("Failed to save peers: {}", e);
+                    tracing::warn!("Failed to save peers: {}", e);
                 }
             }
 
             // Save reputation data periodically
             if let Err(e) = self.reputation_manager.save_to_storage(&*self.peer_store).await {
-                log::warn!("Failed to save reputation data: {}", e);
+                tracing::warn!("Failed to save reputation data: {}", e);
             }
         }
     }
@@ -923,12 +934,12 @@ impl PeerNetworkManager {
         let dns_peers = tokio::select! {
             peers = self.discovery.discover_peers(self.network) => peers,
             _ = self.shutdown_token.cancelled() => {
-                log::info!("Maintenance loop shutting down during DNS discovery");
+                tracing::info!("Maintenance loop shutting down during DNS discovery");
                 return
             }
         };
         let needed = TARGET_PEERS.saturating_sub(count);
-        log::debug!("DNS fallback tick found {} addresses. Needed {}", dns_peers.len(), needed);
+        tracing::debug!("DNS fallback tick found {} addresses. Needed {}", dns_peers.len(), needed);
         let mut dns_attempted = 0;
         for addr in dns_peers.iter() {
             if !self.pool.is_connected(addr).await && !self.pool.is_connecting(addr).await {
@@ -955,7 +966,7 @@ impl PeerNetworkManager {
             while !this.shutdown_token.is_cancelled() {
                 tokio::select! {
                     _ = maintenance_interval.tick() => {
-                        log::debug!("Maintenance interval elapsed");
+                        tracing::debug!("Maintenance interval elapsed");
                         this.maintenance_tick().await;
                     }
                     _ = dns_interval.tick(), if !this.exclusive_mode => {
@@ -964,7 +975,7 @@ impl PeerNetworkManager {
                     event = network_events.recv() => {
                         match event {
                             Ok(event) => {
-                                log::debug!("Network event in maintenance loop: {}", event.description());
+                                tracing::debug!("Network event in maintenance loop: {}", event.description());
                                 dns_interval.reset();
                                 this.maintenance_tick().await;
                             }
@@ -975,7 +986,7 @@ impl PeerNetworkManager {
                         }
                     }
                     _ = this.shutdown_token.cancelled() => {
-                        log::info!("Maintenance loop shutting down");
+                        tracing::info!("Maintenance loop shutting down");
                         break;
                     }
                 }
@@ -1007,11 +1018,16 @@ impl PeerNetworkManager {
         let (addr, peer) = if let Some((flags, required)) = preferred_service {
             match self.pool.peer_with_service(flags).await {
                 Some((address, peer)) => {
-                    log::debug!("Selected peer {} with {} for {}", address, flags, message.cmd());
+                    tracing::debug!(
+                        "Selected peer {} with {} for {}",
+                        address,
+                        flags,
+                        message.cmd()
+                    );
                     (address, peer)
                 }
                 None if required => {
-                    log::warn!("No peers support {}, cannot send {}", flags, message.cmd());
+                    tracing::warn!("No peers support {}, cannot send {}", flags, message.cmd());
                     return Err(NetworkError::ProtocolError(format!("No peers support {}", flags)));
                 }
                 None => self.next_peer(&peers),
@@ -1072,7 +1088,7 @@ impl PeerNetworkManager {
 
         let (addr, peer) = self.next_peer(&selected_peers);
 
-        log::debug!("Distributing {} request to peer {}", message.cmd(), addr);
+        tracing::debug!("Distributing {} request to peer {}", message.cmd(), addr);
 
         self.send_message_to_peer(&addr, &peer, message).await
     }
@@ -1098,7 +1114,7 @@ impl PeerNetworkManager {
             NetworkMessage::GetHeaders(get_headers) => {
                 let supports_headers2 = peer.read().await.can_request_headers2();
                 if supports_headers2 && !self.headers2_disabled.lock().await.contains(addr) {
-                    log::debug!("Upgrading GetHeaders to GetHeaders2 for peer {}", addr);
+                    tracing::debug!("Upgrading GetHeaders to GetHeaders2 for peer {}", addr);
                     NetworkMessage::GetHeaders2(get_headers)
                 } else {
                     NetworkMessage::GetHeaders(get_headers)
@@ -1124,10 +1140,10 @@ impl PeerNetworkManager {
             // Reduce verbosity for common sync messages
             match &message {
                 NetworkMessage::GetHeaders(_) | NetworkMessage::GetCFilters(_) => {
-                    log::debug!("Broadcasting {} to {}", message.cmd(), addr);
+                    tracing::debug!("Broadcasting {} to {}", message.cmd(), addr);
                 }
                 _ => {
-                    log::trace!("Broadcasting {:?} to {}", message.cmd(), addr);
+                    tracing::trace!("Broadcasting {:?} to {}", message.cmd(), addr);
                 }
             }
             let msg = message.clone();
@@ -1155,7 +1171,7 @@ impl PeerNetworkManager {
 
     /// Disconnect a specific peer
     pub async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
-        log::info!("Disconnecting peer {} - reason: {}", addr, reason);
+        tracing::info!("Disconnecting peer {} - reason: {}", addr, reason);
 
         Self::remove_peer_and_notify(
             &self.pool,
@@ -1176,7 +1192,7 @@ impl PeerNetworkManager {
 
     /// Ban a specific peer manually
     pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
-        log::info!("Manually banning peer {} - reason: {}", addr, reason);
+        tracing::info!("Manually banning peer {} - reason: {}", addr, reason);
 
         // Disconnect the peer first
         self.disconnect_peer(addr, reason).await?;
@@ -1200,20 +1216,20 @@ impl PeerNetworkManager {
 
     /// Shutdown the network manager
     pub async fn shutdown(&self) {
-        log::info!("Shutting down peer network manager");
+        tracing::info!("Shutting down peer network manager");
         self.shutdown_token.cancel();
 
         // Save known peers before shutdown
         let addresses = self.addrv2_handler.get_addresses_for_peer(MAX_ADDR_TO_STORE).await;
         if !addresses.is_empty() {
             if let Err(e) = self.peer_store.save_peers(&addresses).await {
-                log::warn!("Failed to save peers on shutdown: {}", e);
+                tracing::warn!("Failed to save peers on shutdown: {}", e);
             }
         }
 
         // Save reputation data before shutdown
         if let Err(e) = self.reputation_manager.save_to_storage(&*self.peer_store).await {
-            log::warn!("Failed to save reputation data on shutdown: {}", e);
+            tracing::warn!("Failed to save reputation data on shutdown: {}", e);
         }
 
         // Drain tasks while holding the lock.  connect_to_peer() already uses
@@ -1222,7 +1238,7 @@ impl PeerNetworkManager {
         let mut tasks = self.tasks.lock().await;
         while let Some(result) = tasks.join_next().await {
             if let Err(e) = result {
-                log::error!("Task join error: {}", e);
+                tracing::error!("Task join error: {}", e);
             }
         }
 

@@ -525,7 +525,7 @@ impl LLMQType {
         let first_possible_cycle =
             ((start.saturating_sub(params.dkg_params.mining_window_end)) / interval) * interval;
 
-        log::trace!(
+        tracing::trace!(
             "get_dkg_windows_in_range for {:?}: start={}, end={}, interval={}, first_cycle={}",
             self,
             start,
@@ -542,7 +542,7 @@ impl LLMQType {
             // Include this window if its mining period overlaps with [start, end]
             if window.mining_end >= start && window.mining_start <= end {
                 windows.push(window.clone());
-                log::trace!(
+                tracing::trace!(
                     "  Added window: cycle={}, mining={}-{}",
                     window.cycle_start,
                     window.mining_start,
@@ -554,7 +554,7 @@ impl LLMQType {
             _cycles_checked += 1;
         }
 
-        log::trace!(
+        tracing::trace!(
             "get_dkg_windows_in_range for {:?}: checked {} cycles, found {} windows",
             self,
             _cycles_checked,
