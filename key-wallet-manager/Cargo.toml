@@ -12,6 +12,8 @@ default = []
 parallel-filters = ["dep:rayon"]
 bincode = ["key-wallet/bincode", "dep:bincode"]
 test-utils = ["key-wallet/test-utils"]
+bls = ["key-wallet/bls"]
+eddsa = ["key-wallet/eddsa"]
 
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false }
