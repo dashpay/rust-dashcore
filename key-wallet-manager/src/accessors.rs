@@ -33,6 +33,33 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         }
     }
 
+    /// Get immutable wallet + mutable info by ID (split borrow on two maps).
+    pub fn get_wallet_and_info_mut(
+        &mut self,
+        wallet_id: &WalletId,
+    ) -> Option<(&Wallet, &mut T)> {
+        match (self.wallets.get(wallet_id), self.wallet_infos.get_mut(wallet_id)) {
+            (Some(wallet), Some(info)) => Some((wallet, info)),
+            _ => None,
+        }
+    }
+
+    /// Insert a pre-built wallet and info pair.
+    pub fn insert_wallet(
+        &mut self,
+        wallet: Wallet,
+        info: T,
+    ) -> Result<WalletId, WalletError> {
+        let wallet_id = wallet.compute_wallet_id();
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+        self.wallets.insert(wallet_id, wallet);
+        self.wallet_infos.insert(wallet_id, info);
+        self.bump_structural_revision();
+        Ok(wallet_id)
+    }
+
     /// Remove a wallet
     pub fn remove_wallet(&mut self, wallet_id: &WalletId) -> Result<(Wallet, T), WalletError> {
         let wallet =
