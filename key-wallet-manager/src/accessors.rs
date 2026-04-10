@@ -278,14 +278,19 @@ impl WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo> {
     pub fn apply_changeset(
         &mut self,
         wallet_id: &WalletId,
-        changeset: &key_wallet::changeset::WalletChangeSet,
+        changeset: key_wallet::changeset::WalletChangeSet,
     ) -> Result<(), WalletError> {
         use key_wallet::changeset::Merge;
+        // Capture is_empty before consuming so we can decide whether to
+        // bump the structural revision. After this point `changeset` is
+        // moved into the apply path; no clones happen anywhere on the
+        // way down.
+        let was_non_empty = !changeset.is_empty();
         let (wallet, info) = self
             .get_wallet_mut_and_info_mut(wallet_id)
             .ok_or(WalletError::WalletNotFound(*wallet_id))?;
         info.apply_changeset(wallet, changeset)?;
-        if !changeset.is_empty() {
+        if was_non_empty {
             self.bump_structural_revision();
         }
         Ok(())
@@ -306,7 +311,7 @@ mod apply_tests {
         let unknown_id = [0u8; 32];
         let cs = WalletChangeSet::default();
 
-        let err = wm.apply_changeset(&unknown_id, &cs).unwrap_err();
+        let err = wm.apply_changeset(&unknown_id, cs).unwrap_err();
         assert!(matches!(err, WalletError::WalletNotFound(_)));
     }
 
@@ -320,7 +325,7 @@ mod apply_tests {
         let wallet_id = wm.insert_wallet(wallet, info).expect("insert");
 
         let rev_before = wm.structural_revision;
-        wm.apply_changeset(&wallet_id, &WalletChangeSet::default()).expect("apply");
+        wm.apply_changeset(&wallet_id, WalletChangeSet::default()).expect("apply");
         assert_eq!(
             wm.structural_revision, rev_before,
             "empty changeset must not bump structural_revision"
@@ -345,7 +350,7 @@ mod apply_tests {
             }),
             ..Default::default()
         };
-        wm.apply_changeset(&wallet_id, &cs).expect("apply");
+        wm.apply_changeset(&wallet_id, cs).expect("apply");
         assert!(
             wm.structural_revision > rev_before,
             "non-empty changeset must bump structural_revision"

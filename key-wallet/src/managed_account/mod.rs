@@ -722,50 +722,67 @@ impl ManagedCoreAccount {
     pub fn apply_changeset(
         &mut self,
         expected_account_type: AccountType,
-        cs: &AccountChangeSet,
+        cs: AccountChangeSet,
     ) {
         debug_assert_eq!(
             self.account_type.to_account_type(),
             expected_account_type,
             "apply_changeset called on the wrong account — routing bug"
         );
+        // Destructure the changeset so every field is a fresh owned value
+        // we can drain into the wallet maps. No clones — `Utxo` and
+        // `TransactionRecord` (which contains a full `Transaction`) move
+        // straight from the persisted blob into in-memory state.
+        let AccountChangeSet {
+            addresses_used,
+            highest_used,
+            utxos_added,
+            utxos_spent,
+            utxos_instant_locked,
+            transactions,
+        } = cs;
+
         // Addresses marked used — mark_address_used is idempotent.
-        for address in &cs.addresses_used {
-            let _ = self.account_type.mark_address_used(address);
+        for address in addresses_used {
+            let _ = self.account_type.mark_address_used(&address);
         }
         // Highest-used watermark per pool type — max-wins via the
         // pool's own `set_highest_used`.
         for pool in self.account_type.address_pools_mut() {
-            if let Some(&highest_used) = cs.highest_used.get(&pool.pool_type) {
+            if let Some(highest_used) = highest_used.get(&pool.pool_type).copied() {
                 pool.set_highest_used(highest_used);
             }
         }
         // UTXO additions / upgrades. Monotonic state flags: true wins.
-        for (outpoint, utxo) in &cs.utxos_added {
-            let mut merged = utxo.clone();
-            if let Some(existing) = self.utxos.get(outpoint) {
-                merged.is_confirmed |= existing.is_confirmed;
-                merged.is_instantlocked |= existing.is_instantlocked;
+        // Move each `Utxo` directly into the map; if an entry already
+        // exists at this outpoint, OR its existing flags into the
+        // incoming UTXO before insertion (no clone of either side).
+        for (outpoint, mut utxo) in utxos_added {
+            if let Some(existing) = self.utxos.get(&outpoint) {
+                utxo.is_confirmed |= existing.is_confirmed;
+                utxo.is_instantlocked |= existing.is_instantlocked;
             }
-            self.utxos.insert(*outpoint, merged);
+            self.utxos.insert(outpoint, utxo);
         }
         // UTXO removals.
-        for outpoint in &cs.utxos_spent {
-            self.utxos.remove(outpoint);
-            self.spent_outpoints.insert(*outpoint);
+        for outpoint in utxos_spent {
+            self.utxos.remove(&outpoint);
+            self.spent_outpoints.insert(outpoint);
         }
         // UTXO instant-lock transitions. Only flips false → true; a
         // UTXO already spent (removed above) is silently skipped, which
         // is correct because we don't track IS state for spent outputs.
-        for outpoint in &cs.utxos_instant_locked {
-            if let Some(utxo) = self.utxos.get_mut(outpoint) {
+        for outpoint in utxos_instant_locked {
+            if let Some(utxo) = self.utxos.get_mut(&outpoint) {
                 utxo.is_instantlocked = true;
             }
         }
         // Transaction records. Last write wins per txid — apply is
         // idempotent because identical records insert over themselves.
-        for (txid, record) in &cs.transactions {
-            self.transactions.insert(*txid, record.clone());
+        // Move each `TransactionRecord` (and its embedded `Transaction`)
+        // directly from the changeset into the map.
+        for (txid, record) in transactions {
+            self.transactions.insert(txid, record);
         }
     }
 
