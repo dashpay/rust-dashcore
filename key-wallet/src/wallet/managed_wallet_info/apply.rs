@@ -427,10 +427,7 @@ mod tests {
             .await
             .changeset;
 
-        // B lands the mempool tx first, then confirms it live. Clone
-        // explicitly because the second apply below replays the same
-        // changeset — apply consumes by value to avoid hidden clones in
-        // the persister-load hot path.
+        // B lands the mempool tx first, then confirms it live.
         info_b.apply_changeset(&mut wallet_b, mempool_cs.clone()).expect("apply mempool");
         {
             let account = info_b.first_bip44_managed_account_mut().expect("bip44");
