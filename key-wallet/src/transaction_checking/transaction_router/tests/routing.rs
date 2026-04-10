@@ -93,7 +93,7 @@ async fn test_transaction_routing_to_bip32_account() {
             .first_bip32_managed_account_mut()
             .expect("Failed to get first BIP32 managed account");
         managed_account
-            .next_receive_address(Some(&xpub), true)
+            .next_receive_address(Some(&xpub))
             .expect("Failed to generate receive address from BIP32 account")
     };
 
@@ -185,7 +185,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
                 ..
             } = &mut managed_account.account_type
             {
-                addresses.next_unused(&KeySource::Public(xpub), true).unwrap_or_else(|_| {
+                addresses.next_unused(&KeySource::Public(xpub)).unwrap_or_else(|_| {
                     // If that fails, generate a dummy address for testing
                     dashcore::Address::p2pkh(
                         &dashcore::PublicKey::from_slice(&[0x02; 33])
@@ -273,7 +273,7 @@ async fn test_transaction_affects_multiple_accounts() {
         .bip44_managed_account_at_index_mut(0)
         .expect("Failed to get BIP44 managed account at index 0");
     let address0 = managed_account0
-        .next_receive_address(Some(&xpub0), true)
+        .next_receive_address(Some(&xpub0))
         .expect("Failed to generate receive address for account 0");
 
     // BIP44 account 1
@@ -287,7 +287,7 @@ async fn test_transaction_affects_multiple_accounts() {
         .bip44_managed_account_at_index_mut(1)
         .expect("Failed to get BIP44 managed account at index 1");
     let address1 = managed_account1
-        .next_receive_address(Some(&xpub1), true)
+        .next_receive_address(Some(&xpub1))
         .expect("Failed to generate receive address for account 1");
 
     // BIP32 account
@@ -301,7 +301,7 @@ async fn test_transaction_affects_multiple_accounts() {
         .first_bip32_managed_account_mut()
         .expect("Failed to get first BIP32 managed account");
     let address2 = managed_account2
-        .next_receive_address(Some(&xpub2), true)
+        .next_receive_address(Some(&xpub2))
         .expect("Failed to generate receive address for BIP32 account");
 
     // Create a transaction that sends to multiple accounts
@@ -376,7 +376,7 @@ fn test_next_address_method_restrictions() {
             .first_bip44_managed_account_mut()
             .expect("Failed to get first BIP44 managed account");
 
-        let result = managed_account.next_address(Some(&xpub), true);
+        let result = managed_account.next_address(Some(&xpub));
         assert!(result.is_err(), "Standard BIP44 accounts should reject next_address");
         assert_eq!(
             result.expect_err("Expected an error when calling next_address on BIP44 account"),
@@ -384,15 +384,15 @@ fn test_next_address_method_restrictions() {
         );
 
         // But next_receive_address and next_change_address should work
-        assert!(managed_account.next_receive_address(Some(&xpub), true).is_ok());
-        assert!(managed_account.next_change_address(Some(&xpub), true).is_ok());
+        assert!(managed_account.next_receive_address(Some(&xpub)).is_ok());
+        assert!(managed_account.next_change_address(Some(&xpub)).is_ok());
     }
 
     // Test that standard BIP32 accounts reject next_address (if present)
     if let Some(bip32_account) = wallet.accounts.standard_bip32_accounts.get(&0) {
         let xpub = bip32_account.account_xpub;
         if let Some(managed_account) = managed_wallet_info.first_bip32_managed_account_mut() {
-            let result = managed_account.next_address(Some(&xpub), true);
+            let result = managed_account.next_address(Some(&xpub));
             assert!(result.is_err(), "Standard BIP32 accounts should reject next_address");
             assert_eq!(
                 result.expect_err("Expected an error when calling next_address on BIP44 account"),
@@ -408,7 +408,7 @@ fn test_next_address_method_restrictions() {
             .identity_registration_managed_account_mut()
             .expect("Failed to get identity registration managed account");
 
-        let result = managed_account.next_address(Some(&xpub), true);
+        let result = managed_account.next_address(Some(&xpub));
         // This should either succeed or fail with "No unused addresses available"
         // but NOT with "Standard accounts must use..."
         if let Err(e) = result {

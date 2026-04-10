@@ -122,7 +122,7 @@ async fn test_immature_balance_matures_during_block_processing() {
         wallet_info
             .first_bip44_managed_account_mut()
             .expect("Should have managed account")
-            .next_receive_address(Some(&account_xpub), true)
+            .next_receive_address(Some(&account_xpub))
             .expect("Should get address")
     };
 

@@ -43,7 +43,7 @@ impl TestWalletContext {
         let receive_address = managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have managed account")
-            .next_receive_address(Some(&xpub), true)
+            .next_receive_address(Some(&xpub))
             .expect("Should get address");
 
         Self {
