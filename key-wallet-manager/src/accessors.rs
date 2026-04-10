@@ -254,12 +254,10 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 }
 
 // ---------------------------------------------------------------------------
-// apply_changeset — generic over any info type that implements ApplyChangeSet.
+// apply_changeset — concrete-type wrapper for WalletManager<ManagedWalletInfo>.
 // ---------------------------------------------------------------------------
 
-impl<T: WalletInfoInterface + key_wallet::wallet::managed_wallet_info::apply::ApplyChangeSet>
-    WalletManager<T>
-{
+impl WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo> {
     /// Apply a [`key_wallet::changeset::WalletChangeSet`] to the given
     /// wallet, replaying its deltas idempotently onto the in-memory state.
     ///

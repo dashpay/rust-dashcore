@@ -25,7 +25,19 @@ pub enum StandardAccountType {
     BIP32Account,
 }
 
-/// Account types supported by the wallet
+/// Account types supported by the wallet.
+///
+/// # Ordering and storage format stability
+///
+/// `AccountType` derives `PartialOrd`/`Ord`/`Hash` because it's used as
+/// the key in `WalletChangeSet::per_account` (a `BTreeMap<AccountType, _>`)
+/// and must serialize deterministically under bincode. **The derived order
+/// follows variant declaration order, then field declaration order.**
+/// Reordering variants or fields here is a persistent storage-format
+/// break: it silently changes `BTreeMap` iteration order (affecting any
+/// serialization that depends on it) and flips bincode variant
+/// discriminants, corrupting on-disk data. Add new variants at the end
+/// only; never reorder, never insert in the middle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]

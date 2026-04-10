@@ -22,7 +22,7 @@ use crate::{KeySource, Network};
 use serde::{Deserialize, Serialize};
 
 /// Macro to look up an account by CoreAccountTypeMatch, parameterized by accessor methods
-macro_rules! get_by_account_type_match_impl {
+macro_rules! get_by_account_type_matching_impl {
     ($self:expr, $match:expr, $get:ident, $as_opt:ident, $values:ident) => {
         match $match {
             CoreAccountTypeMatch::StandardBIP44 {
@@ -868,48 +868,189 @@ impl ManagedAccountCollection {
         None
     }
 
-    /// Get an account reference by CoreAccountTypeMatch
-    pub fn get_by_account_type_match(
+    /// Get an account reference by pattern-matching against a
+    /// [`CoreAccountTypeMatch`]. Used by the transaction checker to route
+    /// account_match results.
+    pub fn get_by_account_type_matching(
         &self,
         account_type_match: &CoreAccountTypeMatch,
     ) -> Option<&ManagedCoreAccount> {
-        get_by_account_type_match_impl!(self, account_type_match, get, as_ref, values)
+        get_by_account_type_matching_impl!(self, account_type_match, get, as_ref, values)
     }
 
-    /// Get a mutable account reference by AccountTypeMatch
-    pub fn get_by_account_type_match_mut(
+    /// Get a mutable account reference by pattern-matching against a
+    /// [`CoreAccountTypeMatch`].
+    pub fn get_by_account_type_matching_mut(
         &mut self,
         account_type_match: &CoreAccountTypeMatch,
     ) -> Option<&mut ManagedCoreAccount> {
-        get_by_account_type_match_impl!(self, account_type_match, get_mut, as_mut, values_mut)
+        get_by_account_type_matching_impl!(
+            self,
+            account_type_match,
+            get_mut,
+            as_mut,
+            values_mut
+        )
     }
 
-    /// Get a mutable account reference by [`AccountType`].
+    /// Check whether an account of the given [`AccountType`] exists
+    /// anywhere in this collection, including the separate
+    /// [`ManagedPlatformAccount`] storage for
+    /// [`AccountType::PlatformPayment`].
+    ///
+    /// Used by `apply_changeset` to decide whether re-deriving an HD
+    /// account would be idempotent (already present) or would fail via
+    /// the "already exists" check inside `add_managed_account`.
+    pub fn contains_account_type(&self, account_type: AccountType) -> bool {
+        use crate::account::StandardAccountType;
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP44Account,
+            } => self.standard_bip44_accounts.contains_key(&index),
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP32Account,
+            } => self.standard_bip32_accounts.contains_key(&index),
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.contains_key(&index),
+            AccountType::IdentityRegistration => self.identity_registration.is_some(),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => self.identity_topup.contains_key(&registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => {
+                self.identity_topup_not_bound.is_some()
+            }
+            AccountType::IdentityInvitation => self.identity_invitation.is_some(),
+            AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.is_some(),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                self.asset_lock_shielded_address_topup.is_some()
+            }
+            AccountType::ProviderVotingKeys => self.provider_voting_keys.is_some(),
+            AccountType::ProviderOwnerKeys => self.provider_owner_keys.is_some(),
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.is_some(),
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.is_some(),
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_receival_accounts.contains_key(&DashpayAccountKey {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            }),
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_external_accounts.contains_key(&DashpayAccountKey {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            }),
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => self.platform_payment_accounts.contains_key(&PlatformPaymentAccountKey {
+                account,
+                key_class,
+            }),
+        }
+    }
+
+    /// Get an immutable account reference by exact [`AccountType`].
+    ///
+    /// Companion to [`Self::get_by_account_type_mut`]. Returns `None`
+    /// for [`AccountType::PlatformPayment`] because those accounts live
+    /// in the separate `platform_payment_accounts` map with a different
+    /// managed type; use [`Self::contains_account_type`] for a uniform
+    /// existence check.
+    pub fn get_by_account_type(
+        &self,
+        account_type: AccountType,
+    ) -> Option<&ManagedCoreAccount> {
+        use crate::account::StandardAccountType;
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP44Account,
+            } => self.standard_bip44_accounts.get(&index),
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP32Account,
+            } => self.standard_bip32_accounts.get(&index),
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get(&index),
+            AccountType::IdentityRegistration => self.identity_registration.as_ref(),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => self.identity_topup.get(&registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => {
+                self.identity_topup_not_bound.as_ref()
+            }
+            AccountType::IdentityInvitation => self.identity_invitation.as_ref(),
+            AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_ref(),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                self.asset_lock_shielded_address_topup.as_ref()
+            }
+            AccountType::ProviderVotingKeys => self.provider_voting_keys.as_ref(),
+            AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_ref(),
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_ref(),
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_ref(),
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_receival_accounts.get(&DashpayAccountKey {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            }),
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_external_accounts.get(&DashpayAccountKey {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            }),
+            AccountType::PlatformPayment {
+                ..
+            } => None,
+        }
+    }
+
+    /// Get a mutable account reference by exact [`AccountType`].
     ///
     /// Used by `apply_changeset` to route per-account buckets from a
     /// [`crate::changeset::WalletChangeSet`] directly to the owning
-    /// managed account without address-based scanning.
+    /// managed account without address-based scanning. Returns `None`
+    /// for [`AccountType::PlatformPayment`] — see
+    /// [`Self::get_by_account_type`] and [`Self::contains_account_type`].
     pub fn get_by_account_type_mut(
         &mut self,
-        account_type: &AccountType,
+        account_type: AccountType,
     ) -> Option<&mut ManagedCoreAccount> {
         use crate::account::StandardAccountType;
         match account_type {
             AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP44Account,
-            } => self.standard_bip44_accounts.get_mut(index),
+            } => self.standard_bip44_accounts.get_mut(&index),
             AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP32Account,
-            } => self.standard_bip32_accounts.get_mut(index),
+            } => self.standard_bip32_accounts.get_mut(&index),
             AccountType::CoinJoin {
                 index,
-            } => self.coinjoin_accounts.get_mut(index),
+            } => self.coinjoin_accounts.get_mut(&index),
             AccountType::IdentityRegistration => self.identity_registration.as_mut(),
             AccountType::IdentityTopUp {
                 registration_index,
-            } => self.identity_topup.get_mut(registration_index),
+            } => self.identity_topup.get_mut(&registration_index),
             AccountType::IdentityTopUpNotBoundToIdentity => {
                 self.identity_topup_not_bound.as_mut()
             }
@@ -927,22 +1068,19 @@ impl ManagedAccountCollection {
                 user_identity_id,
                 friend_identity_id,
             } => self.dashpay_receival_accounts.get_mut(&DashpayAccountKey {
-                index: *index,
-                user_identity_id: *user_identity_id,
-                friend_identity_id: *friend_identity_id,
+                index,
+                user_identity_id,
+                friend_identity_id,
             }),
             AccountType::DashpayExternalAccount {
                 index,
                 user_identity_id,
                 friend_identity_id,
             } => self.dashpay_external_accounts.get_mut(&DashpayAccountKey {
-                index: *index,
-                user_identity_id: *user_identity_id,
-                friend_identity_id: *friend_identity_id,
+                index,
+                user_identity_id,
+                friend_identity_id,
             }),
-            // Platform payment accounts use a different managed type —
-            // they don't hold UTXO or transaction state, so changeset
-            // routing bypasses them.
             AccountType::PlatformPayment {
                 ..
             } => None,

@@ -112,7 +112,7 @@ async fn update_transaction_context_emits_record_only_when_context_changes() {
     let cs = account.update_transaction_context(&txid, block_ctx.clone());
     let bucket = cs.per_account.get(&bip44_0()).expect("bip44-0 bucket");
     assert_eq!(bucket.transactions.len(), 1);
-    assert!(bucket.transactions[0].is_confirmed());
+    assert!(bucket.transactions.get(&txid).expect("record").is_confirmed());
 
     // Second call with the same context — no-op.
     let cs = account.update_transaction_context(&txid, block_ctx);
@@ -205,7 +205,7 @@ async fn check_core_transaction_populates_bucket_and_balance_on_new_funding() {
         .get(&bip44_0())
         .expect("bip44-0 bucket must be populated");
     assert_eq!(bucket.transactions.len(), 1);
-    assert_eq!(bucket.transactions[0].transaction.txid(), funding_tx.txid());
+    assert!(bucket.transactions.contains_key(&funding_tx.txid()));
     assert_eq!(bucket.utxos_added.len(), 1);
     assert!(bucket.utxos_spent.is_empty());
     assert!(
@@ -246,8 +246,7 @@ async fn check_core_transaction_confirmation_emits_transaction_delta() {
         .expect("bip44-0 bucket must carry the updated record");
     let updated = bucket
         .transactions
-        .iter()
-        .find(|r| r.transaction.txid() == txid)
+        .get(&txid)
         .expect("updated record must be present");
     assert!(updated.is_confirmed());
 }
