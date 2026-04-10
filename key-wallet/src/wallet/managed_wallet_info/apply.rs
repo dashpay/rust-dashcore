@@ -76,6 +76,15 @@ impl ManagedWalletInfo {
     /// `wallet` as the source of HD key material for any account types
     /// that need to be re-derived.
     ///
+    /// Consumes the changeset by value so every owned field
+    /// (`Utxo`s, `TransactionRecord`s, etc.) moves directly into the
+    /// in-memory maps with no clones. The borrow form was deliberately
+    /// removed — the persister-load case (deserialize → apply once →
+    /// drop) makes any clone pure waste, and a `&` variant existing
+    /// alongside this one would just invite the wrong overload to be
+    /// reached for. Tests that need to apply the same changeset twice
+    /// `.clone()` it explicitly at the call site.
+    ///
     /// See the module docs for invariants. Typical caller is
     /// `WalletManager::apply_changeset`, which performs the split borrow
     /// of `(&mut Wallet, &mut ManagedWalletInfo)` under a single write
@@ -83,8 +92,15 @@ impl ManagedWalletInfo {
     pub fn apply_changeset(
         &mut self,
         wallet: &mut Wallet,
-        cs: &WalletChangeSet,
+        cs: WalletChangeSet,
     ) -> Result<(), ApplyError> {
+        let WalletChangeSet {
+            account_keys,
+            chain,
+            balance: _, // see step 4 — recomputed from UTXOs, deltas ignored
+            per_account,
+        } = cs;
+
         // ------------------------------------------------------------------
         // 1. account_keys — re-derive HD accounts from the seed and mirror
         //    them into `self.accounts`. Must run first so every subsequent
@@ -92,8 +108,8 @@ impl ManagedWalletInfo {
         //    Errors are fatal because a missing account cascades into
         //    dropping every downstream bucket.
         // ------------------------------------------------------------------
-        if let Some(account_keys) = &cs.account_keys {
-            for &account_type in &account_keys.added {
+        if let Some(account_keys) = account_keys {
+            for account_type in account_keys.added {
                 if let Err(e) = wallet.add_account(account_type, None) {
                     return Err(ApplyError::AccountDerivationFailed {
                         account_type,
@@ -125,7 +141,7 @@ impl ManagedWalletInfo {
         //    split-brain between step 1 and the bucket loop) are skipped
         //    with a warning so the condition is observable.
         // ------------------------------------------------------------------
-        for (&account_type, bucket) in &cs.per_account {
+        for (account_type, bucket) in per_account {
             match self.accounts.get_by_account_type_mut(account_type) {
                 Some(account) => account.apply_changeset(account_type, bucket),
                 None => {
@@ -142,7 +158,7 @@ impl ManagedWalletInfo {
         //    authoritative block hash lives on the confirmed transactions'
         //    contexts, already restored via the per_account buckets.
         // ------------------------------------------------------------------
-        if let Some(chain) = &cs.chain {
+        if let Some(chain) = chain {
             if let Some(height) = chain.synced_height {
                 if height > self.metadata.synced_height {
                     self.metadata.synced_height = height;
@@ -193,7 +209,7 @@ mod tests {
         assert!(result.is_new_transaction);
 
         // Apply A's changeset to B.
-        info_b.apply_changeset(&mut wallet_b, &result.changeset).expect("apply");
+        info_b.apply_changeset(&mut wallet_b, result.changeset).expect("apply");
 
         // Balance must match.
         assert_eq!(info_b.balance.unconfirmed(), ctx.managed_wallet.balance.unconfirmed());
@@ -246,8 +262,10 @@ mod tests {
             dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[321_000]);
         let result = ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await;
 
-        // First apply.
-        info_b.apply_changeset(&mut wallet_b, &result.changeset).expect("apply");
+        // First apply. Clone explicitly because the second apply below
+        // needs the same changeset — apply consumes by value to avoid
+        // hidden clones in the persister-load hot path.
+        info_b.apply_changeset(&mut wallet_b, result.changeset.clone()).expect("apply");
         let snapshot_balance = info_b.balance;
         let snapshot_utxo_count =
             info_b.first_bip44_managed_account().expect("bip44").utxos.len();
@@ -255,7 +273,7 @@ mod tests {
             info_b.first_bip44_managed_account().expect("bip44").transactions.len();
 
         // Second apply — state must be identical.
-        info_b.apply_changeset(&mut wallet_b, &result.changeset).expect("re-apply");
+        info_b.apply_changeset(&mut wallet_b, result.changeset).expect("re-apply");
         assert_eq!(info_b.balance, snapshot_balance);
         assert_eq!(
             info_b.first_bip44_managed_account().expect("bip44").utxos.len(),
@@ -303,7 +321,7 @@ mod tests {
             .insert(dashcore::Address::dummy(dashcore::Network::Testnet, 7));
         cs.per_account.insert(unknown_type, unknown);
 
-        info_b.apply_changeset(&mut wallet_b, &cs).expect("apply");
+        info_b.apply_changeset(&mut wallet_b, cs).expect("apply");
 
         // Known bucket landed: BIP44-0 external pool's highest_used == 5.
         let account = info_b.first_bip44_managed_account().expect("bip44");
@@ -344,7 +362,7 @@ mod tests {
             ..Default::default()
         };
 
-        info_b.apply_changeset(&mut wallet_b, &cs).expect("apply");
+        info_b.apply_changeset(&mut wallet_b, cs).expect("apply");
 
         // The account must now exist on the target.
         assert!(
@@ -372,7 +390,7 @@ mod tests {
             dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[600_000]);
         let mempool_cs =
             ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await.changeset;
-        info_b.apply_changeset(&mut wallet_b, &mempool_cs).expect("apply mempool");
+        info_b.apply_changeset(&mut wallet_b, mempool_cs).expect("apply mempool");
         let account_b = info_b.first_bip44_managed_account().expect("bip44");
         let utxo_b = account_b.utxos.values().next().expect("utxo");
         assert!(!utxo_b.is_confirmed, "precondition: mempool utxo is unconfirmed");
@@ -383,7 +401,7 @@ mod tests {
         let block_ctx =
             TransactionContext::InBlock(BlockInfo::new(800, block_hash, 1_700_000_000));
         let block_cs = ctx.check_transaction(&funding_tx, block_ctx).await.changeset;
-        info_b.apply_changeset(&mut wallet_b, &block_cs).expect("apply block");
+        info_b.apply_changeset(&mut wallet_b, block_cs).expect("apply block");
 
         // The UTXO must still be present and now confirmed.
         let account_b = info_b.first_bip44_managed_account().expect("bip44");
@@ -409,8 +427,11 @@ mod tests {
             .await
             .changeset;
 
-        // B lands the mempool tx first, then confirms it live.
-        info_b.apply_changeset(&mut wallet_b, &mempool_cs).expect("apply mempool");
+        // B lands the mempool tx first, then confirms it live. Clone
+        // explicitly because the second apply below replays the same
+        // changeset — apply consumes by value to avoid hidden clones in
+        // the persister-load hot path.
+        info_b.apply_changeset(&mut wallet_b, mempool_cs.clone()).expect("apply mempool");
         {
             let account = info_b.first_bip44_managed_account_mut().expect("bip44");
             for utxo in account.utxos.values_mut() {
@@ -420,7 +441,7 @@ mod tests {
 
         // Re-applying the stale mempool changeset must NOT regress
         // is_confirmed back to false.
-        info_b.apply_changeset(&mut wallet_b, &mempool_cs).expect("apply stale");
+        info_b.apply_changeset(&mut wallet_b, mempool_cs).expect("apply stale");
         let account_b = info_b.first_bip44_managed_account().expect("bip44");
         let utxo_b = account_b.utxos.values().next().expect("utxo");
         assert!(utxo_b.is_confirmed, "stale replay must not downgrade confirmed utxo");
