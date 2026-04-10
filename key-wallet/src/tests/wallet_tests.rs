@@ -288,7 +288,8 @@ fn test_wallet_duplicate_account_error() {
         )
         .unwrap();
 
-    // Try to add the same account twice
+    // Try to add the same account twice with derivation — now idempotent
+    // to support `apply(changeset)` replay.
     let result = wallet.add_account(
         AccountType::Standard {
             index: 0,
@@ -297,7 +298,7 @@ fn test_wallet_duplicate_account_error() {
         None,
     );
 
-    assert!(result.is_err());
+    assert!(result.is_ok(), "Duplicate add with derivation should be a no-op");
 }
 
 #[test]

@@ -30,6 +30,27 @@ impl Wallet {
         account_type: AccountType,
         account_xpub: Option<ExtendedPubKey>,
     ) -> Result<()> {
+        let already_exists = self.accounts.contains_account_type(&account_type);
+
+        // Idempotent for deterministic derivation: if the same account type
+        // already exists and no explicit xpub was provided, return Ok without
+        // re-deriving. The xpub is deterministic from (seed, derivation_path),
+        // so re-adding would produce the exact same account. This allows
+        // `apply(changeset)` to replay account_keys without erroring.
+        if already_exists && account_xpub.is_none() {
+            return Ok(());
+        }
+
+        // If an explicit xpub is provided for an account type that already
+        // exists, reject to prevent silently overwriting it with different
+        // keys.
+        if already_exists && account_xpub.is_some() {
+            return Err(Error::InvalidParameter(format!(
+                "Account type {:?} already exists for network {:?}",
+                account_type, self.network
+            )));
+        }
+
         // Get a unique wallet ID for this wallet first
         let wallet_id = self.get_wallet_id();
 
@@ -49,14 +70,6 @@ impl Wallet {
 
             Account::from_xpriv(Some(wallet_id), account_type, account_xpriv, self.network)?
         };
-
-        // Check if account already exists
-        if self.accounts.contains_account_type(&account_type) {
-            return Err(Error::InvalidParameter(format!(
-                "Account type {:?} already exists for network {:?}",
-                account_type, self.network
-            )));
-        }
 
         // Insert into the collection
         self.accounts.insert(account).map_err(|e| Error::InvalidParameter(e.to_string()))

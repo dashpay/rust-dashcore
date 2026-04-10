@@ -4,6 +4,8 @@ use super::ManagedWalletInfo;
 use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreAccount;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
+use crate::Address;
+use dashcore::OutPoint;
 
 impl ManagedWalletInfo {
     // BIP44 Account Helpers
@@ -300,5 +302,41 @@ impl ManagedWalletInfo {
     /// Get all accounts
     pub fn all_managed_accounts(&self) -> Vec<&ManagedCoreAccount> {
         self.accounts.all_accounts()
+    }
+
+    // ------------------------------------------------------------------
+    // Changeset routing helpers — used by WalletManager::apply()
+    // ------------------------------------------------------------------
+
+    /// Find the managed account whose address pool contains the given address.
+    ///
+    /// Used by `apply(changeset)` to route UTXO additions to the correct
+    /// account via `UtxoEntry.address`.
+    pub fn find_account_by_address_mut(
+        &mut self,
+        address: &Address,
+    ) -> Option<&mut ManagedCoreAccount> {
+        for account in self.accounts.all_accounts_mut() {
+            if account.contains_address(address) {
+                return Some(account);
+            }
+        }
+        None
+    }
+
+    /// Find the managed account that holds the given outpoint as a UTXO.
+    ///
+    /// Used by `apply(changeset)` to route UTXO removals and instant-lock
+    /// updates to the correct account.
+    pub fn find_account_with_utxo_mut(
+        &mut self,
+        outpoint: &OutPoint,
+    ) -> Option<&mut ManagedCoreAccount> {
+        for account in self.accounts.all_accounts_mut() {
+            if account.utxos.contains_key(outpoint) {
+                return Some(account);
+            }
+        }
+        None
     }
 }
