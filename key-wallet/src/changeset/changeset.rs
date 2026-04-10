@@ -32,7 +32,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dashcore::{BlockHash, OutPoint};
+use dashcore::{BlockHash, OutPoint, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -132,11 +132,10 @@ pub struct AccountChangeSet {
     /// UTXOs that transitioned to InstantSend-locked.
     pub utxos_instant_locked: BTreeSet<OutPoint>,
 
-    /// Transaction records inserted or updated. `Vec` rather than a map
-    /// keyed by `Txid` because a single account holds at most one record
-    /// per txid; within a single changeset the mutation side pushes the
-    /// record exactly once.
-    pub transactions: Vec<TransactionRecord>,
+    /// Transaction records inserted or updated, keyed by `Txid`. A single
+    /// account holds at most one record per txid, so the map encoding
+    /// gives last-write-wins dedup via `extend` on merge for free.
+    pub transactions: BTreeMap<Txid, TransactionRecord>,
 }
 
 impl Merge for AccountChangeSet {
@@ -151,20 +150,8 @@ impl Merge for AccountChangeSet {
         self.utxos_added.extend(other.utxos_added);
         self.utxos_spent.extend(other.utxos_spent);
         self.utxos_instant_locked.extend(other.utxos_instant_locked);
-        // Deduplicate transaction records by txid on merge: the mutation
-        // side pushes at most once per txid per account, so a duplicate
-        // here comes from re-merging the same cs. Last-write-wins preserves
-        // the newest record for the same (account, txid) pair.
-        for record in other.transactions {
-            let txid = record.transaction.txid();
-            if let Some(slot) =
-                self.transactions.iter_mut().find(|r| r.transaction.txid() == txid)
-            {
-                *slot = record;
-            } else {
-                self.transactions.push(record);
-            }
-        }
+        // Last-write-wins dedup per txid, free via `BTreeMap::extend`.
+        self.transactions.extend(other.transactions);
     }
 
     fn is_empty(&self) -> bool {
@@ -341,47 +328,9 @@ mod tests {
         assert_eq!(a.highest_used.get(&AddressPoolType::Internal), Some(&8));
     }
 
-    #[test]
-    fn account_changeset_merge_dedups_transactions_by_txid() {
-        use crate::managed_account::transaction_record::{TransactionDirection, TransactionRecord};
-        use crate::transaction_checking::transaction_router::TransactionType;
-        use crate::transaction_checking::TransactionContext;
-
-        // Build two records with the same txid but different contexts —
-        // simulates a record being re-emitted with an updated block context.
-        let addr = dashcore::Address::dummy(dashcore::Network::Testnet, 1);
-        let tx = dashcore::Transaction::dummy(&addr, 0..1, &[100]);
-
-        let r1 = TransactionRecord::new(
-            tx.clone(),
-            TransactionContext::Mempool,
-            TransactionType::Standard,
-            TransactionDirection::Incoming,
-            vec![],
-            vec![],
-            100,
-        );
-        let r2 = TransactionRecord::new(
-            tx.clone(),
-            TransactionContext::Mempool,
-            TransactionType::Standard,
-            TransactionDirection::Incoming,
-            vec![],
-            vec![],
-            200, // different net_amount to tell the records apart
-        );
-
-        let mut a = AccountChangeSet::default();
-        a.transactions.push(r1);
-        let mut b = AccountChangeSet::default();
-        b.transactions.push(r2);
-
-        a.merge(b);
-
-        // Same txid → merged into one slot, last write wins.
-        assert_eq!(a.transactions.len(), 1);
-        assert_eq!(a.transactions[0].net_amount, 200);
-    }
+    // Dedicated dedup test removed: `AccountChangeSet::transactions` is a
+    // `BTreeMap<Txid, TransactionRecord>`, so last-write-wins on merge is
+    // guaranteed by `BTreeMap::extend` — no custom dedup logic to cover.
 
     #[test]
     fn wallet_changeset_merge_merges_per_account_buckets() {
