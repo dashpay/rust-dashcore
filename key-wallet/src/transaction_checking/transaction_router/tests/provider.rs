@@ -145,25 +145,25 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
     let managed_owner = managed_wallet_info
         .provider_owner_keys_managed_account_mut()
         .expect("Failed to get provider owner keys managed account");
-    let owner_address = managed_owner.next_address(None, true).expect("expected owner address");
+    let owner_address = managed_owner.next_address(None).expect("expected owner address");
 
     let voting_address = other_managed_wallet_info
         .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account")
-        .next_address(None, true)
+        .next_address(None)
         .expect("expected voting address");
 
     let operator_public_key = other_managed_wallet_info
         .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("expected voting address");
 
     // Payout addresses for providers are just regular addresses, not a separate account
     // For testing, we'll use the first standard account's address
     let payout_address = other_managed_wallet_info
         .first_bip44_managed_account_mut()
-        .and_then(|acc| acc.next_receive_address(None, true).ok())
+        .and_then(|acc| acc.next_receive_address(None).ok())
         .unwrap_or_else(|| {
             dashcore::Address::p2pkh(
                 &dashcore::PublicKey::from_slice(&[0x02; 33])
@@ -280,25 +280,25 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
     let owner_address = other_managed_wallet_info
         .provider_owner_keys_managed_account_mut()
         .expect("Failed to get provider owner keys managed account")
-        .next_address(None, true)
+        .next_address(None)
         .expect("expected owner address");
 
     let managed_voting = managed_wallet_info
         .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account");
-    let voting_address = managed_voting.next_address(None, true).expect("expected voting address");
+    let voting_address = managed_voting.next_address(None).expect("expected voting address");
 
     let operator_public_key = other_managed_wallet_info
         .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("expected operator key");
 
     // Payout addresses for providers are just regular addresses, not a separate account
     // For testing, we'll use the first standard account's address
     let payout_address = other_managed_wallet_info
         .first_bip44_managed_account_mut()
-        .and_then(|acc| acc.next_receive_address(None, true).ok())
+        .and_then(|acc| acc.next_receive_address(None).ok())
         .unwrap_or_else(|| {
             dashcore::Address::p2pkh(
                 &dashcore::PublicKey::from_slice(&[0x02; 33])
@@ -415,26 +415,26 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
     let owner_address = other_managed_wallet_info
         .provider_owner_keys_managed_account_mut()
         .expect("Failed to get provider owner keys managed account")
-        .next_address(None, true)
+        .next_address(None)
         .expect("expected owner address");
 
     let voting_address = other_managed_wallet_info
         .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account")
-        .next_address(None, true)
+        .next_address(None)
         .expect("expected voting address");
 
     let managed_operator = managed_wallet_info
         .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account");
     let operator_public_key =
-        managed_operator.next_bls_operator_key(None, true).expect("expected operator key");
+        managed_operator.next_bls_operator_key(None).expect("expected operator key");
 
     // Payout addresses for providers are just regular addresses, not a separate account
     // For testing, we'll use the first standard account's address
     let payout_address = other_managed_wallet_info
         .first_bip44_managed_account_mut()
-        .and_then(|acc| acc.next_receive_address(None, true).ok())
+        .and_then(|acc| acc.next_receive_address(None).ok())
         .unwrap_or_else(|| {
             dashcore::Address::p2pkh(
                 &dashcore::PublicKey::from_slice(&[0x02; 33])
@@ -596,19 +596,19 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
     let owner_address = other_managed_wallet_info
         .provider_owner_keys_managed_account_mut()
         .expect("Failed to get provider owner keys managed account")
-        .next_address(None, true)
+        .next_address(None)
         .expect("expected owner address");
 
     let voting_address = other_managed_wallet_info
         .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account")
-        .next_address(None, true)
+        .next_address(None)
         .expect("expected voting address");
 
     let operator_public_key = other_managed_wallet_info
         .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("expected operator key");
 
     // Get platform key from our wallet
@@ -623,7 +623,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
     let eddsa_extended_key =
         root_key.to_eddsa_extended_priv_key(network).expect("expected EdDSA key");
     let (_platform_key, info) = managed_platform
-        .next_eddsa_platform_key(eddsa_extended_key, true)
+        .next_eddsa_platform_key(eddsa_extended_key)
         .expect("expected platform key");
 
     let platform_node_id = info.address;
@@ -632,7 +632,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
     // For testing, we'll use the first standard account's address
     let payout_address = other_managed_wallet_info
         .first_bip44_managed_account_mut()
-        .and_then(|acc| acc.next_receive_address(None, true).ok())
+        .and_then(|acc| acc.next_receive_address(None).ok())
         .unwrap_or_else(|| {
             dashcore::Address::p2pkh(
                 &dashcore::PublicKey::from_slice(&[0x02; 33])
@@ -791,14 +791,14 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
     let voting_address = managed_wallet_info
         .provider_voting_keys_managed_account_mut()
         .expect("Failed to get provider voting keys managed account")
-        .next_address(None, true)
+        .next_address(None)
         .expect("expected voting address");
 
     // Get BLS operator key
     let operator_public_key = managed_wallet_info
         .provider_operator_keys_managed_account_mut()
         .expect("Failed to get provider operator keys managed account")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("expected operator key");
 
     let addr = test_addr();
@@ -873,7 +873,7 @@ async fn test_provider_revocation_classification_and_routing() {
         .expect("Failed to get first BIP44 managed account");
 
     let return_address = managed_account
-        .next_receive_address(Some(&xpub), true)
+        .next_receive_address(Some(&xpub))
         .expect("Failed to generate receive address");
 
     let addr = test_addr();

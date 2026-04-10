@@ -42,7 +42,7 @@ fn test_next_unused_multiple() {
     let (key_source, _) = test_key_source();
 
     // Test getting multiple unused addresses
-    let addresses = pool.next_unused_multiple(5, &key_source, true);
+    let addresses = pool.next_unused_multiple(5, &key_source);
     assert_eq!(addresses.len(), 5);
     assert_eq!(pool.highest_generated, Some(4));
 
@@ -55,7 +55,7 @@ fn test_next_unused_multiple() {
     pool.mark_used(&addresses[2]);
 
     // Request more addresses - should get 3 unused + 2 new
-    let more_addresses = pool.next_unused_multiple(5, &key_source, true);
+    let more_addresses = pool.next_unused_multiple(5, &key_source);
     assert_eq!(more_addresses.len(), 5);
     assert_eq!(more_addresses[0], addresses[1]); // First unused
     assert_eq!(more_addresses[1], addresses[3]); // Second unused
@@ -77,7 +77,7 @@ fn test_next_unused_multiple_with_info() {
     let (key_source, _) = test_key_source();
 
     // Test getting multiple addresses with info
-    let address_infos = pool.next_unused_multiple_with_info(3, &key_source, true);
+    let address_infos = pool.next_unused_multiple_with_info(3, &key_source);
     assert_eq!(address_infos.len(), 3);
 
     // Verify the info contains correct data
@@ -92,7 +92,7 @@ fn test_next_unused_multiple_with_info() {
     pool.mark_used(&address_infos[0].0);
 
     // Get more with info - should skip the used one
-    let more_infos = pool.next_unused_multiple_with_info(3, &key_source, true);
+    let more_infos = pool.next_unused_multiple_with_info(3, &key_source);
     assert_eq!(more_infos.len(), 3);
     assert_eq!(more_infos[0].0, address_infos[1].0); // Should skip the first (used) one
     assert_eq!(more_infos[1].0, address_infos[2].0);
@@ -111,22 +111,22 @@ fn test_next_unused_multiple_no_key_source() {
     let no_key_source = KeySource::NoKeySource;
 
     // With NoKeySource and no pre-generated addresses, should return empty vec
-    let addresses = pool.next_unused_multiple(5, &no_key_source, true);
+    let addresses = pool.next_unused_multiple(5, &no_key_source);
     assert_eq!(addresses.len(), 0);
 
     // Generate some addresses first with a real key source
     let (key_source, _) = test_key_source();
-    pool.generate_addresses(3, &key_source, true).unwrap();
+    pool.generate_addresses(3, &key_source).unwrap();
 
     // Now with NoKeySource, should return existing unused addresses
-    let addresses = pool.next_unused_multiple(5, &no_key_source, true);
+    let addresses = pool.next_unused_multiple(5, &no_key_source);
     assert_eq!(addresses.len(), 3); // Only the 3 we generated
 
     // Mark one as used
     pool.mark_used(&addresses[0]);
 
     // Should now return only 2 unused addresses
-    let addresses = pool.next_unused_multiple(5, &no_key_source, true);
+    let addresses = pool.next_unused_multiple(5, &no_key_source);
     assert_eq!(addresses.len(), 2);
 }
 
@@ -142,7 +142,7 @@ fn test_next_unused_multiple_large_batch() {
     let (key_source, _) = test_key_source();
 
     // Test generating a large batch efficiently
-    let addresses = pool.next_unused_multiple(100, &key_source, true);
+    let addresses = pool.next_unused_multiple(100, &key_source);
     assert_eq!(addresses.len(), 100);
     assert_eq!(pool.highest_generated, Some(99));
 
@@ -163,7 +163,7 @@ fn test_next_unused_multiple_mixed_usage() {
     let (key_source, _) = test_key_source();
 
     // Generate initial batch
-    let initial = pool.next_unused_multiple(10, &key_source, true);
+    let initial = pool.next_unused_multiple(10, &key_source);
     assert_eq!(initial.len(), 10);
 
     // Mark every other address as used
@@ -172,7 +172,7 @@ fn test_next_unused_multiple_mixed_usage() {
     }
 
     // Request 8 addresses - should get 5 unused + 3 new
-    let next_batch = pool.next_unused_multiple(8, &key_source, true);
+    let next_batch = pool.next_unused_multiple(8, &key_source);
     assert_eq!(next_batch.len(), 8);
 
     // First 5 should be the unused ones from initial batch

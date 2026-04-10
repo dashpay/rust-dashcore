@@ -59,7 +59,7 @@ async fn test_identity_registration_account_routing() {
         .expect("Failed to get identity registration managed account");
 
     // Use the new next_address method for identity registration account
-    let address = managed_account.next_address(Some(&xpub), true).expect("expected an address");
+    let address = managed_account.next_address(Some(&xpub)).expect("expected an address");
 
     // Create an Asset Lock transaction that funds identity registration
     use dashcore::opcodes;
@@ -169,7 +169,7 @@ async fn test_normal_payment_to_identity_address_not_detected() {
         .expect("Failed to get identity registration managed account");
 
     // Get an identity registration address
-    let address = managed_account.next_address(Some(&xpub), true).unwrap_or_else(|_| {
+    let address = managed_account.next_address(Some(&xpub)).unwrap_or_else(|_| {
         // Generate a dummy address for testing
         dashcore::Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[0x03; 33])

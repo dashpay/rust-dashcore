@@ -555,7 +555,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
                     let current = external_addresses.highest_generated.unwrap_or(0);
                     if target_index > current {
                         let needed = target_index - current;
-                        external_addresses.generate_addresses(needed, &key_source, true)
+                        external_addresses.generate_addresses(needed, &key_source)
                     } else {
                         Ok(Vec::new())
                     }
@@ -579,7 +579,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
                     let current = internal_addresses.highest_generated.unwrap_or(0);
                     if target_index > current {
                         let needed = target_index - current;
-                        internal_addresses.generate_addresses(needed, &key_source, true)
+                        internal_addresses.generate_addresses(needed, &key_source)
                     } else {
                         Ok(Vec::new())
                     }
@@ -609,7 +609,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
                 let current = pool.highest_generated.unwrap_or(0);
                 if target_index > current {
                     let needed = target_index - current;
-                    pool.generate_addresses(needed, &key_source, true)
+                    pool.generate_addresses(needed, &key_source)
                 } else {
                     Ok(Vec::new())
                 }

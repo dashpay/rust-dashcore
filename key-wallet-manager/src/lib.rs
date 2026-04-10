@@ -576,7 +576,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
+                        .next_receive_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
                         Err(_) => (None, None),
@@ -591,7 +591,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
+                        .next_receive_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
                         Err(_) => (None, None),
@@ -607,7 +607,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
+                        .next_receive_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
                         Err(_) => {
@@ -617,7 +617,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                                 wallet.get_bip32_account(account_index),
                             ) {
                                 match managed_account
-                                    .next_receive_address(Some(&wallet_account.account_xpub), true)
+                                    .next_receive_address(Some(&wallet_account.account_xpub))
                                 {
                                     Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
                                     Err(_) => (None, None),
@@ -632,7 +632,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
+                        .next_receive_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
                         Err(_) => (None, None),
@@ -648,7 +648,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
+                        .next_receive_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
                         Err(_) => {
@@ -658,7 +658,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                                 wallet.get_bip44_account(account_index),
                             ) {
                                 match managed_account
-                                    .next_receive_address(Some(&wallet_account.account_xpub), true)
+                                    .next_receive_address(Some(&wallet_account.account_xpub))
                                 {
                                     Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
                                     Err(_) => (None, None),
@@ -673,7 +673,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
+                        .next_receive_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
                         Err(_) => (None, None),
@@ -740,7 +740,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
+                        .next_change_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
                         Err(_) => (None, None),
@@ -755,7 +755,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
+                        .next_change_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
                         Err(_) => (None, None),
@@ -771,7 +771,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
+                        .next_change_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
                         Err(_) => {
@@ -781,7 +781,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                                 wallet.get_bip32_account(account_index),
                             ) {
                                 match managed_account
-                                    .next_change_address(Some(&wallet_account.account_xpub), true)
+                                    .next_change_address(Some(&wallet_account.account_xpub))
                                 {
                                     Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
                                     Err(_) => (None, None),
@@ -796,7 +796,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
+                        .next_change_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
                         Err(_) => (None, None),
@@ -812,7 +812,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip32_account(account_index),
                 ) {
                     match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
+                        .next_change_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
                         Err(_) => {
@@ -822,7 +822,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                                 wallet.get_bip44_account(account_index),
                             ) {
                                 match managed_account
-                                    .next_change_address(Some(&wallet_account.account_xpub), true)
+                                    .next_change_address(Some(&wallet_account.account_xpub))
                                 {
                                     Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
                                     Err(_) => (None, None),
@@ -837,7 +837,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     wallet.get_bip44_account(account_index),
                 ) {
                     match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
+                        .next_change_address(Some(&wallet_account.account_xpub))
                     {
                         Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
                         Err(_) => (None, None),

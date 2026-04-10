@@ -316,7 +316,7 @@ mod tests {
                 let xpub = bip32_account.account_xpub;
                 if let Some(managed_account) = managed_wallet.first_bip32_managed_account_mut() {
                     let address = managed_account
-                        .next_receive_address(Some(&xpub), true)
+                        .next_receive_address(Some(&xpub))
                         .expect("Should get BIP32 address");
                     (Some(xpub), Some(address))
                 } else {
@@ -351,7 +351,7 @@ mod tests {
                 let xpub = coinjoin_account.account_xpub;
                 if let Some(managed_account) = managed_wallet.first_coinjoin_managed_account_mut() {
                     let address = managed_account
-                        .next_address(Some(&xpub), true)
+                        .next_address(Some(&xpub))
                         .expect("Should get CoinJoin address");
                     (Some(xpub), Some(address))
                 } else {
@@ -763,7 +763,7 @@ mod tests {
         let change_address = managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have managed account")
-            .next_change_address(Some(&xpub), true)
+            .next_change_address(Some(&xpub))
             .expect("Should get change address");
 
         // Create the funding transaction
@@ -1177,7 +1177,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_receive_address(Some(&ctx.xpub), true)
+            .next_receive_address(Some(&ctx.xpub))
             .expect("second receive address");
 
         let multi_tx = Transaction {
@@ -1224,7 +1224,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         let send_amount = 600_000u64;
@@ -1280,13 +1280,13 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_receive_address(Some(&ctx.xpub), true)
+            .next_receive_address(Some(&ctx.xpub))
             .expect("self address");
         let change_address = ctx
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         let self_amount = 800_000u64;
@@ -1373,7 +1373,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         let send_amount = 400_000u64;
@@ -1526,7 +1526,7 @@ mod tests {
             ..
         } = &mut managed_account.account_type
         {
-            addresses.next_unused(&KeySource::Public(xpub), true).expect("coinjoin address")
+            addresses.next_unused(&KeySource::Public(xpub)).expect("coinjoin address")
         } else {
             panic!("Expected CoinJoin account type");
         };

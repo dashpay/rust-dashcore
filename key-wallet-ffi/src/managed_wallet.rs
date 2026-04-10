@@ -103,7 +103,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
 
     // Generate the next receive address
     let xpub = account.extended_public_key();
-    match managed_account.next_receive_address(Some(&xpub), true) {
+    match managed_account.next_receive_address(Some(&xpub)) {
         Ok(address) => {
             let address_str = address.to_string();
             match CString::new(address_str) {
@@ -196,7 +196,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
 
     // Generate the next change address
     let xpub = account.extended_public_key();
-    match managed_account.next_change_address(Some(&xpub), true) {
+    match managed_account.next_change_address(Some(&xpub)) {
         Ok(address) => {
             let address_str = address.to_string();
             match CString::new(address_str) {
