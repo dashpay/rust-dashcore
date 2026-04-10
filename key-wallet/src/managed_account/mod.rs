@@ -1069,7 +1069,7 @@ impl ManagedCoreAccount {
     }
 
     /// Get the current timestamp (for metadata)
-    fn current_timestamp() -> u64 {
+    pub fn current_timestamp() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -1175,6 +1175,21 @@ impl ManagedCoreAccount {
                 ..
             } => Some(addresses.gap_limit),
         }
+    }
+
+    /// Idempotent UTXO insert. Returns true if this is a new UTXO, false if
+    /// an entry already existed for this outpoint (in which case the old
+    /// value is replaced). Used by `apply(changeset)` to route UTXO additions
+    /// from a persisted changeset back into the account state.
+    pub fn insert_utxo(&mut self, outpoint: OutPoint, utxo: Utxo) -> bool {
+        self.utxos.insert(outpoint, utxo).is_none()
+    }
+
+    /// Idempotent UTXO remove. Returns the removed UTXO if it was present,
+    /// or `None` if the outpoint wasn't in this account. Used by
+    /// `apply(changeset)` to route UTXO spends.
+    pub fn remove_utxo(&mut self, outpoint: &OutPoint) -> Option<Utxo> {
+        self.utxos.remove(outpoint)
     }
 }
 
