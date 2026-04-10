@@ -231,24 +231,24 @@ impl ManagedPlatformAccount {
         self.addresses.all_addresses()
     }
 
-    /// Get the next unused address from the pool
+    /// Get the next unused address from the pool, persisting it into
+    /// the pool's state.
     pub fn next_unused_address(
         &mut self,
         key_source: &super::address_pool::KeySource,
-        add_to_state: bool,
     ) -> Result<Address> {
         self.addresses
-            .next_unused(key_source, add_to_state)
+            .next_unused(key_source)
             .map_err(|e| Error::InvalidParameter(format!("Failed to get next address: {}", e)))
     }
 
-    /// Get the next unused platform address
+    /// Get the next unused platform address, persisting it into the
+    /// pool's state.
     pub fn next_unused_platform_address(
         &mut self,
         key_source: &super::address_pool::KeySource,
-        add_to_state: bool,
     ) -> Result<PlatformP2PKHAddress> {
-        let addr = self.next_unused_address(key_source, add_to_state)?;
+        let addr = self.next_unused_address(key_source)?;
         PlatformP2PKHAddress::from_address(&addr)
     }
 
