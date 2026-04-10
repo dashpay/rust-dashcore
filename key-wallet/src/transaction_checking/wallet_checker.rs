@@ -69,7 +69,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         let mut is_new = true;
         for account_match in &result.affected_accounts {
             if let Some(account) =
-                self.accounts.get_by_account_type_match(&account_match.account_type_match)
+                self.accounts.get_by_account_type_matching(&account_match.account_type_match)
             {
                 if account.transactions.contains_key(&txid) {
                     is_new = false;
@@ -88,7 +88,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 // Only accept IS transitions for unconfirmed transactions
                 let already_confirmed = result.affected_accounts.iter().any(|am| {
                     self.accounts
-                        .get_by_account_type_match(&am.account_type_match)
+                        .get_by_account_type_matching(&am.account_type_match)
                         .and_then(|a| a.transactions.get(&txid))
                         .map_or(false, |r| r.is_confirmed())
                 });
@@ -99,7 +99,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 for account_match in &result.affected_accounts {
                     if let Some(account) = self
                         .accounts
-                        .get_by_account_type_match_mut(&account_match.account_type_match)
+                        .get_by_account_type_matching_mut(&account_match.account_type_match)
                     {
                         let (_, cs) = account.mark_utxos_instant_send(&txid);
                         result.changeset.merge(cs);
@@ -122,7 +122,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // Process each affected account
         for account_match in result.affected_accounts.clone() {
             let Some(account) =
-                self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
+                self.accounts.get_by_account_type_matching_mut(&account_match.account_type_match)
             else {
                 continue;
             };

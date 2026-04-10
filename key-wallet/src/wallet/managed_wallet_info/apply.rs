@@ -71,35 +71,6 @@ impl core::fmt::Display for ApplyError {
 
 impl std::error::Error for ApplyError {}
 
-/// Trait for info types that can have a [`WalletChangeSet`] applied to them.
-///
-/// Implemented by [`ManagedWalletInfo`] directly. Higher-level info types
-/// (e.g. `PlatformWalletInfo` in the platform-wallet crate) implement this
-/// by delegating to their inner [`ManagedWalletInfo`] and then applying any
-/// platform-specific sub-changesets on top.
-///
-/// The companion `WalletManager<T>::apply_changeset` wrapper is generic over
-/// this trait, so any info type with a sensible restore path gets the
-/// wallet-manager integration for free.
-pub trait ApplyChangeSet {
-    /// See [`ManagedWalletInfo::apply_changeset`].
-    fn apply_changeset(
-        &mut self,
-        wallet: &mut Wallet,
-        cs: &WalletChangeSet,
-    ) -> Result<(), ApplyError>;
-}
-
-impl ApplyChangeSet for ManagedWalletInfo {
-    fn apply_changeset(
-        &mut self,
-        wallet: &mut Wallet,
-        cs: &WalletChangeSet,
-    ) -> Result<(), ApplyError> {
-        ManagedWalletInfo::apply_changeset(self, wallet, cs)
-    }
-}
-
 impl ManagedWalletInfo {
     /// Apply a [`WalletChangeSet`] onto this managed wallet info, using
     /// `wallet` as the source of HD key material for any account types
@@ -122,18 +93,22 @@ impl ManagedWalletInfo {
         //    dropping every downstream bucket.
         // ------------------------------------------------------------------
         if let Some(account_keys) = &cs.account_keys {
-            for account_type in &account_keys.added {
-                if let Err(e) = wallet.add_account(*account_type, None) {
+            for &account_type in &account_keys.added {
+                if let Err(e) = wallet.add_account(account_type, None) {
                     return Err(ApplyError::AccountDerivationFailed {
-                        account_type: *account_type,
+                        account_type,
                         reason: e.to_string(),
                     });
                 }
                 // Mirror into the managed collection if not already present.
-                if self.accounts.get_by_account_type_mut(account_type).is_none() {
-                    if let Err(e) = self.add_managed_account(wallet, *account_type) {
+                // `contains_account_type` checks both the ManagedCoreAccount
+                // collections and the separate ManagedPlatformAccount map,
+                // so PlatformPayment replays don't double-call add and hit
+                // the "already exists" error from add_managed_account.
+                if !self.accounts.contains_account_type(account_type) {
+                    if let Err(e) = self.add_managed_account(wallet, account_type) {
                         return Err(ApplyError::AccountDerivationFailed {
-                            account_type: *account_type,
+                            account_type,
                             reason: e.to_string(),
                         });
                     }
@@ -146,12 +121,19 @@ impl ManagedWalletInfo {
         //    owning account's bucket at mutation time, so routing is a
         //    direct `get_by_account_type_mut` lookup. No address scanning,
         //    no txid scanning, no fallbacks. Buckets that don't resolve
-        //    to an account (orphaned persisted data, wrong-network replay)
-        //    are silently skipped — the persister is authoritative.
+        //    to an account (orphaned persisted data, wrong-network replay,
+        //    split-brain between step 1 and the bucket loop) are skipped
+        //    with a warning so the condition is observable.
         // ------------------------------------------------------------------
-        for (account_type, bucket) in &cs.per_account {
-            if let Some(account) = self.accounts.get_by_account_type_mut(account_type) {
-                account.apply(bucket);
+        for (&account_type, bucket) in &cs.per_account {
+            match self.accounts.get_by_account_type_mut(account_type) {
+                Some(account) => account.apply_changeset(account_type, bucket),
+                None => {
+                    tracing::warn!(
+                        ?account_type,
+                        "dropping per_account bucket during apply: no owning managed account"
+                    );
+                }
             }
         }
 
@@ -285,39 +267,53 @@ mod tests {
         );
     }
 
-    /// Per-account buckets keyed by an `AccountType` that the target
-    /// doesn't own must be silently skipped. Apply still succeeds.
+    /// A mixed changeset with one bucket the target owns and one it
+    /// doesn't must apply the known bucket and silently skip the
+    /// unknown one — no partial failure, no exception.
     #[tokio::test]
-    async fn apply_skips_buckets_for_unknown_account_types() {
+    async fn apply_routes_known_bucket_and_skips_unknown() {
         use crate::account::StandardAccountType;
         use crate::changeset::{AccountChangeSet, WalletChangeSet};
-        use crate::wallet::initialization::WalletAccountCreationOptions;
+        use crate::managed_account::address_pool::AddressPoolType;
 
-        // Target has no BIP44 accounts at all.
-        let mut wallet_b = crate::wallet::Wallet::new_random(
-            crate::Network::Testnet,
-            WalletAccountCreationOptions::None,
-        )
-        .expect("wallet b");
+        let ctx = TestWalletContext::new_random();
+        let mut wallet_b = ctx.wallet.clone();
         let mut info_b = ManagedWalletInfo::from_wallet(&wallet_b);
-        let balance_before = info_b.balance;
 
-        // Build a changeset carrying a per_account bucket for an account
-        // type the target doesn't know about.
+        // Target owns BIP44-0 (installed by TestWalletContext::new_random).
+        let known_type = AccountType::Standard {
+            index: 0,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        // Target does NOT own BIP44-99.
         let unknown_type = AccountType::Standard {
             index: 99,
             standard_account_type: StandardAccountType::BIP44Account,
         };
+
         let mut cs = WalletChangeSet::default();
-        let mut bucket = AccountChangeSet::default();
-        bucket
+        // Known bucket: bump external pool's highest_used to 5.
+        let mut known = AccountChangeSet::default();
+        known.highest_used.insert(AddressPoolType::External, 5);
+        cs.per_account.insert(known_type, known);
+        // Unknown bucket: should be silently dropped.
+        let mut unknown = AccountChangeSet::default();
+        unknown
             .addresses_used
             .insert(dashcore::Address::dummy(dashcore::Network::Testnet, 7));
-        cs.per_account.insert(unknown_type, bucket);
+        cs.per_account.insert(unknown_type, unknown);
 
-        info_b.apply_changeset(&mut wallet_b, &cs).expect("apply must not fail");
-        assert_eq!(info_b.balance, balance_before);
-        assert_eq!(info_b.accounts.all_accounts().len(), 0);
+        info_b.apply_changeset(&mut wallet_b, &cs).expect("apply");
+
+        // Known bucket landed: BIP44-0 external pool's highest_used == 5.
+        let account = info_b.first_bip44_managed_account().expect("bip44");
+        let pool = account
+            .account_type
+            .address_pools()
+            .into_iter()
+            .find(|p| p.pool_type == AddressPoolType::External)
+            .expect("external pool");
+        assert_eq!(pool.highest_used, Some(5));
     }
 
     /// G2: applying a changeset whose `account_keys.added` carries a new

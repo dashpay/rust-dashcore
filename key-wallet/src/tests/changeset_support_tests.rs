@@ -162,7 +162,7 @@ fn get_by_account_type_mut_finds_bip44_account() {
         index: 0,
         standard_account_type: StandardAccountType::BIP44Account,
     };
-    let found = info.accounts.get_by_account_type_mut(&ty);
+    let found = info.accounts.get_by_account_type_mut(ty);
     assert!(found.is_some(), "default wallet must expose BIP44-0 by AccountType");
 }
 
@@ -177,5 +177,5 @@ fn get_by_account_type_mut_returns_none_for_missing_account_type() {
         index: 42,
         standard_account_type: StandardAccountType::BIP44Account,
     };
-    assert!(info.accounts.get_by_account_type_mut(&ty).is_none());
+    assert!(info.accounts.get_by_account_type_mut(ty).is_none());
 }
