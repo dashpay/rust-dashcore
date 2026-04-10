@@ -37,6 +37,25 @@ use serde::{Deserialize, Serialize};
 /// The mnListDiffH in QRInfo is at (cycle_height - WORK_DIFF_DEPTH), not at the cycle boundary itself
 pub const WORK_DIFF_DEPTH: u32 = 8;
 
+/// Callers can use this to log what happened during the call, or to decide whether a
+/// rotation cycle has been freshly validated this round.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QRInfoFeedResult {
+    /// Total number of rotated quorums in `last_commitment_per_index` for this QRInfo.
+    pub rotated_quorum_count: usize,
+    /// Rotated quorums that went through the fresh-validation path this call, using
+    /// the four rotation CL signatures supplied by this QRInfo.
+    pub freshly_validated_count: usize,
+    /// Height of the cycle under which rotated quorums were stored in
+    /// `rotated_quorums_per_cycle`. `None` when nothing was stored, either
+    /// because `last_commitment_per_index` was empty or its first entry's
+    /// `quorum_hash` could not be resolved to a height.
+    ///
+    /// This is the first entry's `quorum_hash` height, which carries the
+    /// previous cycle when the current cycle's DKG has not completed yet.
+    pub stored_cycle_height: Option<CoreBlockHeight>,
+}
+
 #[derive(Clone, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -504,7 +523,7 @@ impl MasternodeListEngine {
         qr_info: QRInfo,
         verify_tip_non_rotated_quorums: bool,
         verify_rotated_quorums: bool,
-    ) -> Result<(), QuorumValidationError> {
+    ) -> Result<Option<QRInfoFeedResult>, QuorumValidationError> {
         #[allow(unused_variables)]
         let QRInfo {
             quorum_snapshot_at_h_minus_c,
@@ -552,6 +571,14 @@ impl MasternodeListEngine {
             .map(|quorum_entry| quorum_entry.llmq_type)
             .unwrap_or(self.network.isd_llmq_type());
 
+        #[cfg(feature = "quorum_validation")]
+        let stored_cycle_height = last_commitment_per_index
+            .first()
+            .and_then(|q| self.block_container.get_height(&q.quorum_hash));
+        #[cfg(feature = "quorum_validation")]
+        let rotated_quorum_count = last_commitment_per_index.len();
+        #[cfg(feature = "quorum_validation")]
+        let mut freshly_validated_count: usize = 0;
         if let Some((quorum_snapshot_at_h_minus_4c, mn_list_diff_at_h_minus_4c)) =
             quorum_snapshot_and_mn_list_diff_at_h_minus_4c
         {
@@ -597,6 +624,7 @@ impl MasternodeListEngine {
                 {
                     Ok(qualified_quorum_entry)
                 } else {
+                    freshly_validated_count += 1;
                     let sigm2 = maybe_sigm2.ok_or(
                         QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
                             3,
@@ -795,7 +823,18 @@ impl MasternodeListEngine {
             ));
         }
 
-        Ok(())
+        #[cfg(feature = "quorum_validation")]
+        {
+            Ok(Some(QRInfoFeedResult {
+                rotated_quorum_count,
+                freshly_validated_count,
+                stored_cycle_height,
+            }))
+        }
+        #[cfg(not(feature = "quorum_validation"))]
+        {
+            Ok(None)
+        }
     }
 
     /// Applies a masternode list diff to create or update a masternode list.

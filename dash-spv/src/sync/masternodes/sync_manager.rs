@@ -235,43 +235,48 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
-                if let Err(e) = engine.feed_qr_info(qr_info.clone(), true, true) {
-                    // Check if this is a tip ChainLock error (h - 0 means the tip block)
-                    // The QRInfo response always includes `mn_list_diff_tip` which is the current
-                    // chain tip. If the tip was just mined, the ChainLock hasn't propagated yet.
-                    let is_tip_chainlock_error = matches!(
-                        e,
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, _)
-                    );
+                let summary = match engine.feed_qr_info(qr_info.clone(), true, true) {
+                    Ok(summary) => summary,
+                    Err(e) => {
+                        // Check if this is a tip ChainLock error (h - 0 means the tip block)
+                        // The QRInfo response always includes `mn_list_diff_tip` which is the
+                        // current chain tip. If the tip was just mined, the ChainLock hasn't
+                        // propagated yet.
+                        let is_tip_chainlock_error = matches!(
+                            e,
+                            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, _)
+                        );
 
-                    if is_tip_chainlock_error {
-                        self.sync_state.qrinfo_retry_count += 1;
+                        if is_tip_chainlock_error {
+                            self.sync_state.qrinfo_retry_count += 1;
 
-                        if self.sync_state.qrinfo_retry_count <= MAX_RETRY_ATTEMPTS {
-                            tracing::info!(
-                                "ChainLock not yet available for tip, scheduling retry {}/{} in {}s",
-                                self.sync_state.qrinfo_retry_count,
-                                MAX_RETRY_ATTEMPTS,
-                                CHAINLOCK_RETRY_DELAY_SECS
-                            );
-                            // Schedule a delayed retry - the tick handler will trigger it
-                            self.sync_state.chainlock_retry_after = Some(
-                                Instant::now() + Duration::from_secs(CHAINLOCK_RETRY_DELAY_SECS),
-                            );
-                            drop(engine);
-                            self.set_state(SyncState::Syncing);
-                            return Ok(vec![]);
+                            if self.sync_state.qrinfo_retry_count <= MAX_RETRY_ATTEMPTS {
+                                tracing::info!(
+                                    "ChainLock not yet available for tip, scheduling retry {}/{} in {}s",
+                                    self.sync_state.qrinfo_retry_count,
+                                    MAX_RETRY_ATTEMPTS,
+                                    CHAINLOCK_RETRY_DELAY_SECS
+                                );
+                                // Schedule a delayed retry - the tick handler will trigger it
+                                self.sync_state.chainlock_retry_after = Some(
+                                    Instant::now()
+                                        + Duration::from_secs(CHAINLOCK_RETRY_DELAY_SECS),
+                                );
+                                drop(engine);
+                                self.set_state(SyncState::Syncing);
+                                return Ok(vec![]);
+                            }
                         }
-                    }
 
-                    // For other errors or max retries reached, fail
-                    tracing::error!(
-                        "QRInfo failed after {} retries: {}",
-                        self.sync_state.qrinfo_retry_count,
-                        e
-                    );
-                    return Err(SyncError::MasternodeSyncFailed(e.to_string()));
-                }
+                        // For other errors or max retries reached, fail
+                        tracing::error!(
+                            "QRInfo failed after {} retries: {}",
+                            self.sync_state.qrinfo_retry_count,
+                            e
+                        );
+                        return Err(SyncError::MasternodeSyncFailed(e.to_string()));
+                    }
+                };
 
                 // Populate known_mn_list_heights from engine after QRInfo processing
                 self.sync_state.known_mn_list_heights =
@@ -295,6 +300,15 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Drop locks before potentially long operations
                 drop(engine);
                 drop(storage);
+
+                if let Some(summary) = summary {
+                    tracing::info!(
+                        "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}, freshly_validated_count={}",
+                        summary.stored_cycle_height,
+                        summary.rotated_quorum_count,
+                        summary.freshly_validated_count,
+                    );
+                }
 
                 // Queue and send MnListDiff requests via pipeline
                 self.sync_state.mnlistdiff_pipeline.queue_requests(request_pairs);
